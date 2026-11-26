@@ -3,26 +3,16 @@ import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { toast } from 'sonner'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureData } from '@/api/fixtures/data/model'
+import { sharedSpace } from '@/api/fixtures/data/model'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { SpaceGate } from '@/components/layout/SpaceGate'
 import { ta } from '@/i18n/admin'
 import { tc } from '@/i18n/console'
 import { ts } from '@/i18n/storage'
 import { tt } from '@/i18n/tenants'
-import {
-  adminRequests,
-  byLabel,
-  click,
-  installDomShims,
-  makePerson,
-  mount,
-  press,
-  putSettings,
-  settle,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { byLabel, click, installDomShims, mount, press, settle, type, type FxMounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // The administrators' page for the storage policy, what the spaces list shows of each space's copy
@@ -31,7 +21,7 @@ import { AdminGate } from './AdminGate'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   toast.dismiss()
   await m?.unmount()
@@ -62,11 +52,18 @@ const puts = () =>
   m!.requests
     .filter((r) => r.method === 'PUT' && r.url.startsWith(SETTING))
     .map((r) => [r.url.slice(SETTING.length), JSON.parse(r.body!).value])
-// A remote required of every space, with a grace period.
-const require = (graceDays: number) => ({
-  'storage.remotes.require': 'any',
-  'storage.remotes.scope': 'all',
-  'storage.remotes.graceDays': graceDays,
+// The platforms people can connect an account to (their own page of connections lists them).
+const platforms = (fx: FixtureServer) =>
+  fx.reply('GET', '/api/connections', {
+    providers: [
+      { id: 'github', type: 'github', host: 'github.com', name: 'GitHub', configured: true, connection: null },
+    ],
+  })
+// What the server works out for a space that must have a remote by a day: its notice.
+const notice = (overdue: boolean) => ({
+  required: 'any',
+  deadline: new Date(Date.now() + (overdue ? -1 : 30) * 86_400_000).toISOString(),
+  overdue,
 })
 
 async function openMenu(name: string) {
@@ -90,12 +87,8 @@ async function openMenu(name: string) {
   if (!open()) throw new Error('never happened: the actions')
 }
 
-const storagePage = (setup?: NonNullable<Parameters<typeof mount>[1]>['entries']) =>
-  mount(routes, {
-    entries: setup ?? ['/admin/storage/rules'],
-    signIn: true,
-    server: { mode: 'accounts', github: { configured: true } },
-  })
+const storagePage = () =>
+  mount(routes, { entries: ['/admin/storage/rules'], signIn: true, fixtures: { mode: 'accounts' } })
 
 describe('the storage page', () => {
   it('is a section of the administration, with the defaults of the policy', async () => {
@@ -120,6 +113,9 @@ describe('the storage page', () => {
     await type(byLabel(ts.admin.remotes.scope) as HTMLSelectElement, 'all')
     await type(byLabel(ts.admin.remotes.graceDays) as HTMLInputElement, '10')
     await type(byLabel(ts.admin.cache.evictAfter) as HTMLInputElement, '')
+    // How many spaces the requirement asks something of is the server's to count.
+    const stored = m.fx.call('GET', '/api/admin/storage').body
+    m.fx.reply('GET', '/api/admin/storage', { ...stored, affected: { inGrace: 1, overdue: 0, exempt: 0 } })
     await click(buttonIn(document, ts.admin.save))
     await settle(() => puts().length === 4, 'the save')
     expect(puts()).toEqual([
@@ -136,7 +132,15 @@ describe('the storage page', () => {
   })
 
   it('stops at the first refusal, keeps what was typed and shows it above the button', async () => {
-    m = await mount(routes, { entries: ['/admin/storage/rules'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, {
+      entries: (fx) => {
+        platforms(fx)
+        fx.fail('PUT', '/api/admin/settings/storage.remotes.require', 409, { code: 'provider_not_configured' })
+        return ['/admin/storage/rules']
+      },
+      signIn: true,
+      fixtures: { mode: 'accounts' },
+    })
     await settle(() => byLabel(ts.admin.remotes.require) !== null, 'the form')
     await settle(
       () => (byLabel(ts.admin.remotes.require) as HTMLSelectElement).querySelector('option[value="github"]') !== null,
@@ -195,9 +199,17 @@ describe('the storage page', () => {
   })
 
   it('shows what the server refuses in its own words', async () => {
-    m = await mount(routes, { entries: ['/admin/storage/rules'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, {
+      entries: (fx) => {
+        platforms(fx)
+        fx.fail('PUT', '/api/admin/settings/storage.remotes.require', 409, { code: 'provider_not_configured' })
+        return ['/admin/storage/rules']
+      },
+      signIn: true,
+      fixtures: { mode: 'accounts' },
+    })
     await settle(() => byLabel(ts.admin.remotes.require) !== null, 'the form')
-    // The platforms come from the connections; the mock lists GitHub, not set up.
+    // The platforms come from the connections; the server lists GitHub, not set up.
     await settle(
       () => (byLabel(ts.admin.remotes.require) as HTMLSelectElement).querySelector('option[value="github"]') !== null,
       'the platform',
@@ -211,45 +223,34 @@ describe('the storage page', () => {
 describe('the spaces list and the copy of each space', () => {
   const open = () =>
     mount(routes, {
-      entries: (server) => {
-        adminRequests(server)('POST', '/api/spaces', { name: '团队空间' })
-        return ['/admin/spaces']
-      },
+      entries: ['/admin/spaces'],
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: {
+        mode: 'accounts',
+        data: (d) => void sharedSpace(d, 'owner', '团队空间'),
+      },
     })
-  const connect = async (server: Mounted['server'], name: string) => {
-    const admin = adminRequests(server)
-    const list = admin('GET', '/api/admin/spaces').body as { items: { id: string; name: string }[] }
-    const id = list.items.find((s) => s.name === name)!.id
-    const r = admin('PUT', `/api/spaces/${id}/remote`, {
-      url: 'https://github.com/a/b.git',
-      credential: { type: 'token', token: 'x' },
-    })
-    expect(r.status).toBe(200)
+  // The space follows a remote now: its copy on the server is a partial clone.
+  const connect = async (fx: FixtureServer, name: string) => {
+    const id = fx.data.spaces.find((s) => s.info.name === name)!.info.id
+    fx.data.admin.spaceExtra[id] = { storage: { cache: 'partial' } as never }
     return id
   }
 
   it("says why a space in use is not evicted, in the page's words and then the server's reason, once each", async () => {
     m = await open()
     await settle(() => rows().length === 2, 'the spaces')
-    await connect(m.server, '团队空间')
+    await connect(m.fx, '团队空间')
     await m.qc.invalidateQueries({ queryKey: ['admin', 'spaces'] })
     await settle(
       () =>
         rowOf('团队空间').querySelector('[data-slot="space-cache"]')!.textContent!.includes(ts.spaces.caches.partial),
       'a partial clone',
     )
-    const real = globalThis.fetch
-    globalThis.fetch = async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url
-      if (/\/evict$/.test(url))
-        return new Response(JSON.stringify({ error: 'busy', message: 'The space is not evicted: it has drafts.' }), {
-          status: 409,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      return real(input, init)
-    }
+    m.fx.fail('POST', '/api/admin/spaces/:id/evict', 409, {
+      code: 'busy',
+      message: 'The space is not evicted: it has drafts.',
+    })
     await openMenu('团队空间')
     await click(menuItem(ts.spaces.evict))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the confirmation')
@@ -258,7 +259,6 @@ describe('the spaces list and the copy of each space', () => {
     await settle(() => dialog().includes('it has drafts'), 'the reason')
     expect(dialog().split(ts.spaces.errors.busy)).toHaveLength(2)
     expect(dialog().split('it has drafts')).toHaveLength(2)
-    globalThis.fetch = real
   })
 
   it('says what each copy is, keeps a local space out of eviction, and evicts one that follows a remote', async () => {
@@ -270,7 +270,7 @@ describe('the spaces list and the copy of each space', () => {
     expect(menuItem(ts.spaces.evict).getAttribute('aria-disabled')).toBe('true')
     await press(document.activeElement ?? document, 'Escape')
     await settle(() => document.querySelectorAll('[role="menuitem"]').length === 0, 'the menu closed')
-    await connect(m.server, '团队空间')
+    await connect(m.fx, '团队空间')
     await m.qc.invalidateQueries({ queryKey: ['admin', 'spaces'] })
     await settle(
       () =>
@@ -298,9 +298,10 @@ describe('the spaces list and the copy of each space', () => {
     await openMenu('团队空间')
     await click(menuItem(ts.spaces.exemptOn))
     await settle(() => rowOf('团队空间').textContent!.includes(ts.spaces.exempt), 'the exemption')
-    // Require a remote of every space at once: the space that is not exempt is past its deadline.
-    const admin = adminRequests(m.server)
-    putSettings(admin, require(0))
+    // Require a remote of every space at once: the space that is not exempt is past its deadline (the server works
+    // that out; here the personal space has the notice).
+    const personal = m.fx.data.spaces[0].info.id
+    m.fx.data.admin.spaceExtra[personal] = { storage: { remote: notice(true) } as never }
     await m.qc.invalidateQueries({ queryKey: ['admin', 'spaces'] })
     await settle(
       () =>
@@ -316,15 +317,15 @@ describe('the spaces list and the copy of each space', () => {
 })
 
 describe('the notice of a space that needs a remote', () => {
-  const sceneOf = (graceDays: number) => (server: MockServer) => {
-    const admin = adminRequests(server)
-    const list = admin('GET', '/api/spaces').body as { spaces: { id: string; personal: boolean }[] }
-    putSettings(admin, require(graceDays))
-    return [`/s/${list.spaces[0].id}`]
+  // The server tells each space what the policy asks of it: here the first space is asked, or it is not.
+  const sceneOf = (remote: ReturnType<typeof notice> | null) => (d: FixtureData) => {
+    d.spaces[0].info.storage = { cache: 'local', assets: 'space', remote }
   }
+  const openSpace = (scene: (d: FixtureData) => void, path = '/s/default') =>
+    mount(routes, { entries: [path], signIn: true, fixtures: { mode: 'accounts', data: scene } })
 
   it('shows the deadline in its grace period, and can be put away for the day', async () => {
-    m = await mount(routes, { entries: sceneOf(30), signIn: true, server: { mode: 'accounts' } })
+    m = await openSpace(sceneOf(notice(false)))
     await settle(() => document.querySelector('[data-slot="storage-notice"]') !== null, 'the notice')
     const note = document.querySelector<HTMLElement>('[data-slot="storage-notice"]')!
     expect(note.dataset.overdue).toBe('false')
@@ -335,7 +336,7 @@ describe('the notice of a space that needs a remote', () => {
   })
 
   it('says the space is read only once the deadline has passed, and cannot be put away', async () => {
-    m = await mount(routes, { entries: sceneOf(0), signIn: true, server: { mode: 'accounts' } })
+    m = await openSpace(sceneOf(notice(true)))
     await settle(() => document.querySelector('[data-slot="storage-notice"]') !== null, 'the notice')
     const note = document.querySelector<HTMLElement>('[data-slot="storage-notice"]')!
     expect(note.dataset.overdue).toBe('true')
@@ -344,37 +345,17 @@ describe('the notice of a space that needs a remote', () => {
     expect(note.querySelector(`button[aria-label="${ts.notice.dismiss}"]`)).toBeNull()
   })
 
-  it('shows nothing to someone who is not asked: a space that follows a remote, or one that is exempt', async () => {
-    m = await mount(routes, {
-      entries: (server) => {
-        const admin = adminRequests(server)
-        const id = (admin('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-        admin('PUT', `/api/spaces/${id}/remote`, {
-          url: 'https://github.com/a/b.git',
-          credential: { type: 'token', token: 'x' },
-        })
-        putSettings(admin, require(0))
-        return [`/s/${id}`]
-      },
-      signIn: true,
-      server: { mode: 'accounts' },
-    })
+  it('shows nothing when the server asks nothing of the space', async () => {
+    m = await openSpace(sceneOf(null))
     await settle(() => text().includes('the pages of the space'), 'the space')
     expect(document.querySelector('[data-slot="storage-notice"]')).toBeNull()
   })
 
   it('a member sees it too, without the way to connect', async () => {
-    m = await mount(routes, {
-      entries: (server) => {
-        const owner = makePerson(server, 'sharer')
-        const id = (owner.request('POST', '/api/spaces', { name: '共享' }).body as { id: string }).id
-        owner.request('POST', `/api/spaces/${id}/members`, { username: 'admin', role: 'viewer' })
-        putSettings(adminRequests(server), require(5))
-        return [`/s/${id}`]
-      },
-      signIn: true,
-      server: { mode: 'accounts' },
-    })
+    m = await openSpace((d) => {
+      const shared = sharedSpace(d, 'viewer', '共享')
+      shared.info.storage = { cache: 'local', assets: 'space', remote: notice(false) }
+    }, '/s/01FSHARE1')
     await settle(() => document.querySelector('[data-slot="storage-notice"]') !== null, 'the notice')
     const note = document.querySelector<HTMLElement>('[data-slot="storage-notice"]')!
     expect(note.textContent).toContain(ts.notice.graceTitle)

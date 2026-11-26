@@ -1,29 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureData } from '@/api/fixtures/data/model'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tt } from '@/i18n/tenants'
 import { absoluteTime } from '@/lib/time'
-import {
-  adminRequests,
-  click,
-  installDomShims,
-  mount,
-  settle,
-  type,
-  type Mounted,
-  openTenantPage,
-} from '@/testing/harness'
+import { ownRule, tenancyOn, DEFAULT_TENANT } from '@/testing/adminScene'
+import { click, installDomShims, mount, settle, type, type FxMounted, openTenantPage } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // A tenant's rules: each setting with where its value comes from and its window, the edit dialog, and the warning
-// when a dated rule replaces an undated one, against the mock server.
+// when a dated rule replaces an undated one, against the fixture server. Which rule is in force, and when a window
+// opens, is the server's to work out: a scene puts the rules as the server would list them.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -48,16 +41,18 @@ const sheet = () => document.querySelector<HTMLElement>('[data-slot="tenant-rule
 // The table is the wide layout's, the list the phone's: the same key is in both, so look in the table's.
 const rowOf = (key: string) => sheet().querySelector<HTMLElement>(`.max-sm\\:hidden [data-key="${key}"]`)!
 
-async function openSheet(scene: (server: MockServer) => void) {
+async function openSheet(scene: (d: FixtureData) => void) {
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts', empty: true },
-    entries: (server) => {
-      const admin = adminRequests(server)
-      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
-      scene(server)
-      return ['/admin/tenants']
+    fixtures: {
+      mode: 'accounts',
+      empty: true,
+      data: (d) => {
+        tenancyOn(d)
+        scene(d)
+      },
     },
+    entries: ['/admin/tenants'],
   })
   await openTenantPage(`${tt.list.open}: Default`, tt.detail.tabs.plan)
   await settle(
@@ -71,11 +66,23 @@ const UNTIL = '2099-01-01T00:00:00Z'
 
 describe('the rules of a tenant', () => {
   it('shows each setting with its source, a window in force, what lies under it, and a rule that waits', async () => {
-    await openSheet((server) => {
-      const admin = adminRequests(server)
-      admin('PUT', PUT('quota.people'), { siteRule: { value: 7 } })
-      admin('PUT', PUT('quota.spaces'), { siteRule: { value: 3, from: FROM, until: UNTIL } })
-      admin('PUT', PUT('quota.pages'), { siteRule: { value: 9, from: '2098-01-01T00:00:00Z', until: UNTIL } })
+    await openSheet((d) => {
+      ownRule(d, DEFAULT_TENANT, 'quota.people', {
+        value: 7,
+        rules: [{ source: 'manual', value: 7, lower: null, inEffect: true }],
+      })
+      ownRule(d, DEFAULT_TENANT, 'quota.spaces', {
+        value: 3,
+        next: UNTIL,
+        rules: [{ source: 'manual', value: 3, lower: null, from: FROM, until: UNTIL, inEffect: true }],
+      })
+      // Its window has not begun: the site's value applies, and the rule waits.
+      ownRule(d, DEFAULT_TENANT, 'quota.pages', {
+        next: '2098-01-01T00:00:00Z',
+        rules: [
+          { source: 'manual', value: 9, lower: null, from: '2098-01-01T00:00:00Z', until: UNTIL, inEffect: false },
+        ],
+      })
     })
     // An undated manual rule: its source, and no window.
     expect(rowOf('quota.people').getAttribute('data-source')).toBe('manual')
@@ -98,8 +105,11 @@ describe('the rules of a tenant', () => {
   })
 
   it('edits one setting in a dialog that starts from the manual rule, and removes it', async () => {
-    await openSheet((server) => {
-      adminRequests(server)('PUT', PUT('quota.people'), { siteRule: { value: 7 } })
+    await openSheet((d) => {
+      ownRule(d, DEFAULT_TENANT, 'quota.people', {
+        value: 7,
+        rules: [{ source: 'manual', value: 7, lower: null, inEffect: true }],
+      })
     })
     await click(button(tx.editFor('quota.people'), sheet()))
     await settle(() => dlg()?.querySelector('[data-slot="rule-form"]') !== null, 'the form')
@@ -137,14 +147,27 @@ describe('the rules of a tenant', () => {
   })
 
   it('says so when a dated rule replaced the undated one', async () => {
-    await openSheet((server) => {
-      adminRequests(server)('PUT', PUT('quota.spaces'), { siteRule: { value: 5 } })
+    await openSheet((d) => {
+      ownRule(d, DEFAULT_TENANT, 'quota.spaces', {
+        value: 5,
+        rules: [{ source: 'manual', value: 5, lower: null, inEffect: true }],
+      })
     })
     await click(button(tx.editFor('quota.spaces'), sheet()))
     await settle(() => dlg()?.querySelector('[data-slot="rule-form"]') !== null, 'the form')
     // A window: the dialog warns before saving that it replaces the undated rule.
     await type(dlg().querySelector<HTMLInputElement>('#rule-until')!, '2099-01-01T00:00')
     expect(dlg().textContent).toContain(tx.replaceNote)
+    // The server says it replaced the undated rule.
+    const written = m!.fx
+      .call('GET', '/api/admin/tenants/0000000000/settings')
+      .body.settings.find((x: { key: string }) => x.key === 'quota.spaces')
+    m!.fx.reply(
+      'PUT',
+      PUT('quota.spaces'),
+      { ...written, warning: { code: 'replaced_undated_rule', keys: ['quota.spaces'], message: 'replaced' } },
+      { times: 1 },
+    )
     await click(button(tx.save, dlg()))
     await settle(() => document.querySelector('[role="dialog"]') === null, 'saved')
     // After it, the block tells which setting was replaced.

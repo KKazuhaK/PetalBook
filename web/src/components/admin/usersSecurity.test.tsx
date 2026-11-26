@@ -5,26 +5,18 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { tc } from '@/i18n/console'
 import { tp } from '@/i18n/people'
 import { tsec } from '@/i18n/security'
-import {
-  adminRequests,
-  byLabel,
-  click,
-  installDomShims,
-  makePerson,
-  mount,
-  settle,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { byLabel, click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
+import type { FixtureData } from '@/api/fixtures/data/model'
+import { MOCK_ADMIN } from '@/api/fixtures/data/people'
+import { addPerson, setSite } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
-import { MOCK_ADMIN } from '@/api/mock/server'
 
 // The users list and a person's page: passkeys, the email and what a person has.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -42,23 +34,28 @@ const calls = (method: string, url: string) => m!.requests.filter((r) => r.metho
 
 // A person with a passkey, made before the page opens (at `where`: the list, or a page of the person).
 async function open(
-  where: (id: string, admin: ReturnType<typeof adminRequests>) => string = () => '/admin/users',
-  scene?: (admin: ReturnType<typeof adminRequests>) => void,
+  where: (id: string, d: FixtureData) => string = () => '/admin/users',
+  scene?: (d: FixtureData) => void,
+  carolExtra: Parameters<typeof addPerson>[2] = {},
 ) {
-  let carol!: ReturnType<typeof makePerson>
+  let carol!: ReturnType<typeof addPerson>
+  let at = ''
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts' },
-    entries: (server) => {
-      carol = makePerson(server, 'carol')
-      const ceremony = (
-        carol.request('POST', '/api/account/passkeys/begin', { name: 'Lost phone' }).body as { ceremony: string }
-      ).ceremony
-      carol.request('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-carol' })
-      const admin = adminRequests(server)
-      scene?.(admin)
-      return [where(carol.id, admin)]
+    fixtures: {
+      mode: 'accounts',
+      data: (d) => {
+        carol = addPerson(d, 'carol', carolExtra)
+        d.admin.people[carol.id] = {
+          sessions: [],
+          identities: [],
+          passkeys: [{ id: 'cred-carol', name: 'Lost phone', created: '2026-11-20T08:00:00Z', synced: false }],
+        }
+        scene?.(d)
+        at = where(carol.id, d)
+      },
     },
+    entries: () => [at],
   })
   return carol
 }
@@ -94,14 +91,11 @@ describe('users and their sign-in', () => {
   it("a passkey required by the person's role shows as on, cannot be switched off, and says why", async () => {
     const sw = (name: string) => byLabel(tsec.users.passkeyRequiredFor(name))
     await open(
-      (_id, admin) =>
-        `/admin/user/${(admin('GET', '/api/users?q=admin').body as { users: { id: string }[] }).users[0].id}/security`,
-      (admin) => {
-        // The administrator has a passkey first, so the requirement does not hold their own session.
-        const ceremony = (admin('POST', '/api/account/passkeys/begin', { name: 'Laptop' }).body as { ceremony: string })
-          .ceremony
-        admin('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-admin' })
-        admin('PUT', '/api/admin/settings/signin.passkeyRoles', { value: ['admin'] })
+      (_id, d) => `/admin/user/${d.auth.users[0].id}/security`,
+      (d) => {
+        setSite(d, 'signin.passkeyRoles', ['admin'])
+        // The server counts the administrator as required, by their role.
+        d.auth.users[0].passkeyRequired = true
       },
     )
     await settle(() => sw(MOCK_ADMIN.name)?.getAttribute('aria-disabled') === 'true', 'the switch, held by the role')
@@ -112,9 +106,7 @@ describe('users and their sign-in', () => {
   })
 
   it('a member is not required by the role: their switch works and says nothing of it', async () => {
-    await open(person('security'), (admin) =>
-      admin('PUT', '/api/admin/settings/signin.passkeyRoles', { value: ['admin'] }),
-    )
+    await open(person('security'), (d) => setSite(d, 'signin.passkeyRoles', ['admin']))
     await settle(() => byLabel(tsec.users.passkeyRequiredFor('名 carol')) != null, 'the switch')
     const sw = byLabel(tsec.users.passkeyRequiredFor('名 carol'))!
     expect(sw.getAttribute('aria-disabled')).toBeNull()
@@ -137,15 +129,11 @@ describe('users and their sign-in', () => {
     )
     await settle(() => document.querySelector('[data-slot="person-security"] [data-passkey]') === null, 'deleted')
     expect(calls('DELETE', `/api/users/${carol.id}/passkeys/`)).toHaveLength(1)
-    // It is in the audit log.
-    const audit = adminRequests(m!.server)('GET', '/api/admin/audit?kind=passkey_removed').body as {
-      items: { detail: { by: string } }[]
-    }
-    expect(audit.items[0].detail.by).toBe('admin')
   })
 
   it('edits the email, and says whether it is verified', async () => {
-    const carol = await open(person(''))
+    // A person with no address yet, whose address is not verified.
+    const carol = await open(person(''), undefined, { email: '', emailVerified: false })
     await settle(() => document.querySelector('[data-slot="person-values"]') !== null, 'the details')
     // The values are read-only; the address has its own button, which opens a dialog.
     expect(document.querySelector('[data-slot="person-profile"] input[type="email"]')).toBeNull()

@@ -5,27 +5,19 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { tc } from '@/i18n/console'
 import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
-import {
-  adminRequests,
-  byLabel,
-  click,
-  installDomShims,
-  locationText,
-  makePerson,
-  mount,
-  settle,
-  type,
-  type Mounted,
-} from '@/testing/harness'
-import type { MockServer } from '@/api/mock/server'
+import { byLabel, click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
+import type { FixtureData } from '@/api/fixtures/data/model'
+import { addGroup, addPerson, addSpace, asTenantAdmin } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
-// The list of people (paged, searched, filtered and sorted by the server) and a person's page with its tabs.
+// The list of people (paged, searched, filtered and sorted by the server) and a person's page with its tabs, against
+// the fixture server: what the server does with the questions the page asks (which rows match, in what order) is its
+// own Go tests'; here the page is checked to ask them and to show what comes back.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -49,30 +41,29 @@ const button = (label: string) =>
   [...document.querySelectorAll('button')].find((b) => b.textContent === label) as HTMLButtonElement
 const select = (label: string) => document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!
 
-async function open(path: string, scene?: (server: MockServer) => unknown) {
+async function open(path: string, scene?: (d: FixtureData) => unknown) {
+  let where: unknown
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts' },
-    entries: (server) => {
-      const where = scene?.(server)
-      return [typeof where === 'string' ? where : path]
-    },
+    fixtures: { mode: 'accounts', data: (d) => void (where = scene?.(d)) },
+    entries: () => [typeof where === 'string' ? where : path],
   })
 }
-const asTenantAdmin = (server: MockServer) => {
-  const admin = adminRequests(server)
-  makePerson(server, 'second', 'admin')
-  const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
-    (u) => u.username === 'admin',
-  )!
-  admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
-}
+// Somebody with a sign-in, as the person's page lists it.
+const session = (id: string, method = 'invite', extra = {}) => ({
+  id,
+  userAgent: 'Firefox',
+  method,
+  created: '2026-11-20T08:00:00Z',
+  lastUsed: '2026-11-20T08:00:00Z',
+  ...extra,
+})
 
 describe('the list of people', () => {
   it('is cut into pages by the server, and next and previous ask for the page by its cursor', async () => {
-    await open('/admin/users', (server) => {
+    await open('/admin/users', (d) => {
       localStorage.setItem('pb.table.users', JSON.stringify({ pageSize: 25 }))
-      for (let i = 0; i < 27; i++) makePerson(server, `p${String(i).padStart(2, '0')}`)
+      for (let i = 0; i < 27; i++) addPerson(d, `p${String(i).padStart(2, '0')}`)
     })
     await settle(() => rows().length === 25, 'the first page')
     expect(userCalls()[0].get('limit')).toBe('25')
@@ -80,7 +71,7 @@ describe('the list of people', () => {
     expect(button(tc.table.previous).disabled).toBe(true)
     await click(button(tc.table.next))
     await settle(() => rows().length === 3 && text().includes(tc.table.page(2)), 'the second page')
-    expect(userCalls().some((q) => q.get('cursor')?.startsWith('users.created.asc:'))).toBe(true)
+    expect(userCalls().some((q) => q.get('cursor'))).toBe(true)
     expect(button(tc.table.next).disabled).toBe(true)
     await click(button(tc.table.previous))
     await settle(() => rows().length === 25, 'back')
@@ -91,11 +82,10 @@ describe('the list of people', () => {
   })
 
   it('searches, filters and sorts on the server, and starts again from the first page each time', async () => {
-    await open('/admin/users', (server) => {
-      makePerson(server, 'amy')
-      makePerson(server, 'bob', 'admin')
-      const carol = makePerson(server, 'carol')
-      adminRequests(server)('PATCH', `/api/users/${carol.id}`, { disabled: true })
+    await open('/admin/users', (d) => {
+      addPerson(d, 'amy')
+      addPerson(d, 'bob', { role: 'admin' })
+      addPerson(d, 'carol', { disabled: true })
     })
     await settle(() => rows().length === 4, 'everyone')
     await type(document.querySelector<HTMLInputElement>(`input[aria-label="${tc.users.search}"]`)!, 'am')
@@ -124,7 +114,7 @@ describe('the list of people', () => {
   })
 
   it('has the common actions at the end of a row: a link to the person, and a menu that disables', async () => {
-    await open('/admin/users', (server) => makePerson(server, 'amy'))
+    await open('/admin/users', (d) => void addPerson(d, 'amy'))
     await settle(() => rows().length === 2, 'two people')
     const row = rows().find((r) => r.textContent!.includes('amy'))!
     const view = row.querySelector<HTMLAnchorElement>(`a[aria-label="${t.fmt.labelled(tc.table.view, '名 amy')}"]`)!
@@ -148,7 +138,7 @@ describe('the list of people', () => {
   })
 
   it('shows the invite button, and the bulk actions once someone is ticked', async () => {
-    await open('/admin/users', (server) => makePerson(server, 'amy'))
+    await open('/admin/users', (d) => void addPerson(d, 'amy'))
     await settle(() => rows().length === 2, 'two people')
     const invite = [...document.querySelectorAll('a')].find((a) => a.textContent === tc.users.invite)!
     expect(invite.getAttribute('href')).toBe('/admin/users/invites')
@@ -158,7 +148,10 @@ describe('the list of people', () => {
   })
 
   it('a tenant administrator is not offered the site administrators as a role to look for', async () => {
-    await open('/admin/users', asTenantAdmin)
+    await open('/admin/users', (d) => {
+      addPerson(d, 'second', { role: 'admin', siteAdmin: true })
+      asTenantAdmin(d)
+    })
     await settle(() => rows().length >= 1, 'people')
     expect([...select(tc.users.role).options].map((o) => o.value)).toEqual(['', 'member', 'admin'])
   })
@@ -167,8 +160,8 @@ describe('the list of people', () => {
 describe("a person's page", () => {
   it('has the person in its header and a tab for each part of them, and the way back to the list', async () => {
     let id = ''
-    await open('/admin', (server) => {
-      const amy = makePerson(server, 'amy')
+    await open('/admin', (d) => {
+      const amy = addPerson(d, 'amy', { email: '' })
       id = amy.id
       return `/admin/user/${amy.id}`
     })
@@ -203,7 +196,7 @@ describe("a person's page", () => {
   })
 
   it('disables and enables from the header, and says why a change is refused', async () => {
-    await open('/admin', (server) => `/admin/user/${makePerson(server, 'amy').id}`)
+    await open('/admin', (d) => `/admin/user/${addPerson(d, 'amy').id}`)
     await settle(() => document.querySelector('[data-slot="person-page"]') !== null, 'the page')
     await click(byLabel(t.fmt.labelled(t.users.disable, '名 amy')))
     await settle(() => text().includes(t.users.disabled), 'disabled')
@@ -211,22 +204,17 @@ describe("a person's page", () => {
     await settle(() => !text().includes(t.users.disabled), 'enabled again')
     // An administrator cannot disable themself: there is no button for it on their own page.
     await m!.unmount()
-    await open('/admin', (server) => {
-      const me = (adminRequests(server)('GET', '/api/users').body as { users: { id: string; username: string }[] })
-        .users[0]
-      return `/admin/user/${me.id}`
-    })
+    await open('/admin', (d) => `/admin/user/${d.auth.users[0].id}`)
     await settle(() => document.querySelector('[data-slot="person-page"]') !== null, 'own page')
     expect(byLabel(t.fmt.labelled(t.users.disable, '管理员'))).toBeNull()
   })
 
   it('lists the spaces they belong to and the groups they are in, and what they hold', async () => {
-    await open('/admin', (server) => {
-      const amy = makePerson(server, 'amy')
-      amy.request('POST', '/api/spaces', { name: '她的团队' })
-      adminRequests(server)('POST', '/api/admin/groups', { name: '编辑组', source: 'local' })
-      const group = (adminRequests(server)('GET', '/api/admin/groups').body as { items: { id: string }[] }).items[0]
-      adminRequests(server)('POST', `/api/admin/groups/${group.id}/members`, { userIds: [amy.id] })
+    await open('/admin', (d) => {
+      const amy = addPerson(d, 'amy')
+      addSpace(d, '她的空间', { owner: amy, personal: true })
+      addSpace(d, '她的团队', { owner: amy })
+      addGroup(d, '编辑组', 'local', { members: [amy.id] })
       return `/admin/user/${amy.id}/spaces`
     })
     await settle(
@@ -243,10 +231,21 @@ describe("a person's page", () => {
   })
 
   it('lists the audit rows about the person, a page at a time', async () => {
-    await open('/admin', (server) => {
-      const amy = makePerson(server, 'amy')
+    await open('/admin', (d) => {
+      const amy = addPerson(d, 'amy')
       for (let i = 0; i < 3; i++)
-        adminRequests(server)('PATCH', `/api/users/${amy.id}`, { emailVerified: false, email: `a${i}@x.test` })
+        d.admin.audit.push({
+          id: `A0000010${i}`,
+          at: '2026-11-20T08:00:00Z',
+          kind: 'user_changed',
+          category: 'admin',
+          capacity: 'site_admin',
+          actor: d.auth.users[0].id,
+          user: amy.id,
+          username: 'amy',
+          ip: '203.0.113.7',
+          detail: { fields: ['email'] },
+        })
       return `/admin/user/${amy.id}/audit`
     })
     await settle(() => document.querySelectorAll('[data-slot="person-audit"] tbody tr[data-audit]').length >= 3, 'rows')
@@ -257,27 +256,13 @@ describe("a person's page", () => {
   })
 })
 
-describe('the search of people', () => {
-  it('finds a person by their email address too, and takes no cursor of another list', async () => {
-    await open('/admin/users', (server) => {
-      const amy = makePerson(server, 'amy')
-      adminRequests(server)('PATCH', `/api/users/${amy.id}`, { email: 'Zed.Mail@Example.org' })
-    })
-    const ask = adminRequests(m!.server)
-    const found = (ask('GET', '/api/users?q=zed.mail@exam').body as { users: { username: string }[] }).users
-    expect(found.map((u) => u.username)).toEqual(['amy'])
-    expect(() => ask('GET', '/api/users?cursor=spaces.created.asc:1')).toThrow(/400/)
-  })
-})
-
 describe("a person's sessions and connected accounts", () => {
   it('lists the devices, with how they signed in; ends one and then all', async () => {
     let id = ''
-    await open('/admin', (server) => {
-      const amy = makePerson(server, 'amy')
+    await open('/admin', (d) => {
+      const amy = addPerson(d, 'amy')
       id = amy.id
-      // A second sign-in of the same person.
-      adminRequests(server)
+      d.admin.people[amy.id] = { sessions: [session('s1')], identities: [], passkeys: [] }
       return `/admin/user/${amy.id}/sessions`
     })
     await settle(() => document.querySelectorAll('[data-slot="sessions"] li').length === 1, 'the session')
@@ -295,17 +280,12 @@ describe("a person's sessions and connected accounts", () => {
     const sent = m!.requests.filter((r) => r.method === 'DELETE' && r.url.startsWith(`/api/users/${id}/sessions/`))
     expect(sent).toHaveLength(1)
     expect(text()).toContain(tc.person.sessions.none)
-    // It is in the audit log.
-    const audit = adminRequests(m!.server)('GET', '/api/admin/audit?kind=sessions_ended').body as {
-      items: { detail: { by: string; count: number } }[]
-    }
-    expect(audit.items[0].detail).toEqual({ by: 'admin', count: 1 })
   })
 
   it('ends every session at once, after asking', async () => {
-    await open('/admin', (server) => {
-      const amy = makePerson(server, 'amy')
-      amy.request('POST', '/api/login', { username: 'amy', password: amy.password })
+    await open('/admin', (d) => {
+      const amy = addPerson(d, 'amy')
+      d.admin.people[amy.id] = { sessions: [session('s1'), session('s2', 'password')], identities: [], passkeys: [] }
       return `/admin/user/${amy.id}/sessions`
     })
     await settle(() => document.querySelectorAll('[data-slot="sessions"] li').length >= 1, 'the sessions')
@@ -321,8 +301,13 @@ describe("a person's sessions and connected accounts", () => {
   })
 
   it("marks the administrator's own session, and says so before it is ended", async () => {
-    await open('/admin', (server) => {
-      const me = (adminRequests(server)('GET', '/api/session').body as { user: { id: string } }).user
+    await open('/admin', (d) => {
+      const me = d.auth.users[0]
+      d.admin.people[me.id] = {
+        sessions: [session('s1', 'password', { current: true }), session('s2', 'password')],
+        identities: [],
+        passkeys: [],
+      }
       return `/admin/user/${me.id}/sessions`
     })
     await settle(() => document.querySelectorAll('[data-slot="sessions"] li').length >= 1, 'the sessions')
@@ -347,9 +332,22 @@ describe("a person's sessions and connected accounts", () => {
   })
 
   it('lists the connected accounts and disconnects one after asking', async () => {
-    await open('/admin', (server) => {
-      const amy = makePerson(server, 'amy')
-      server.addIdentity(amy.id, { id: 'IDENT00001', label: 'amy@idp.example', providerSlug: 'company' })
+    await open('/admin', (d) => {
+      const amy = addPerson(d, 'amy')
+      d.admin.people[amy.id] = {
+        sessions: [],
+        identities: [
+          {
+            id: 'IDENT00001',
+            provider: 'company',
+            slug: 'company',
+            kind: 'oidc',
+            label: 'amy@idp.example',
+            created: '2026-11-20T08:00:00Z',
+          },
+        ],
+        passkeys: [],
+      }
       return `/admin/user/${amy.id}/security`
     })
     await settle(() => document.querySelector('[data-identity="IDENT00001"]') !== null, 'the account')
@@ -366,9 +364,9 @@ describe("a person's sessions and connected accounts", () => {
   })
 
   it("are a site administrator's alone: a tenant's administrator has no tab, no address and no calls", async () => {
-    await open('/admin', (server) => {
-      const amy = makePerson(server, 'amy')
-      asTenantAdmin(server)
+    await open('/admin', (d) => {
+      const amy = addPerson(d, 'amy')
+      asTenantAdmin(d)
       return `/admin/user/${amy.id}/sessions`
     })
     // The address of the tab goes to the person's profile.
@@ -381,17 +379,5 @@ describe("a person's sessions and connected accounts", () => {
     expect(document.querySelector('[data-slot="identities"]')).toBeNull()
     expect(text()).not.toContain(tc.person.security.connected)
     expect(m!.requests.filter((r) => /\/(sessions|identities)/.test(r.url))).toEqual([])
-  })
-
-  it('the server answers a tenant administrator as for nobody', async () => {
-    await open('/admin', (server) => {
-      const amy = makePerson(server, 'amy')
-      asTenantAdmin(server)
-      return `/admin/user/${amy.id}`
-    })
-    await settle(() => document.querySelector('[data-slot="person-page"]') !== null, 'the page')
-    const amy = (adminRequests(m!.server)('GET', '/api/users?q=amy').body as { users: { id: string }[] }).users[0]
-    for (const path of ['/sessions', '/identities'])
-      expect(() => adminRequests(m!.server)('GET', `/api/users/${amy.id}${path}`)).toThrow(/404/)
   })
 })

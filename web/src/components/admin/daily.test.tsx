@@ -6,13 +6,13 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import { ta } from '@/i18n/admin'
-import { adminRequests, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -27,14 +27,16 @@ const routes = (
     </Routes>
   </SidebarProvider>
 )
-const open = async (scene?: (admin: ReturnType<typeof adminRequests>) => void) => {
+// The scene is made through the fixture's own routes, before the page opens: what a person would have saved.
+type Admin = (method: string, path: string, body?: unknown) => unknown
+const open = async (scene?: (admin: Admin) => void) => {
   m = await mount(routes, {
-    entries: (server) => {
-      scene?.(adminRequests(server))
+    entries: (fx) => {
+      scene?.((method, path, body) => fx.call(method, path, body))
       return ['/admin/daily']
     },
     signIn: true,
-    server: { mode: 'accounts' },
+    fixtures: { mode: 'accounts' },
   })
   await settle(() => document.querySelector('[data-slot="admin-daily"]') !== null, 'the page')
 }
@@ -91,9 +93,7 @@ describe("the administrators' daily text page", () => {
     )
     await m!.unmount()
     // A member never gets it, nor fetches it.
-    m = await mount(routes, { entries: ['/admin/daily'], server: { mode: 'accounts' } })
-    const person = makePerson(m.server, 'carol')
-    void person
+    m = await mount(routes, { entries: ['/admin/daily'], fixtures: { mode: 'accounts' } })
     expect(document.querySelector('[data-slot="admin-daily"]')).toBeNull()
   })
 
@@ -261,6 +261,13 @@ describe("the administrators' daily text page", () => {
   it('lines are split into text, author and source for a preview that can be corrected before it is kept', async () => {
     await open()
     const lines = [...document.querySelectorAll('textarea')].find((t) => t.getAttribute('aria-label') === d.linesText)!
+    // The server splits a line into its text, its author and its source (a dash inside a sentence is not a split).
+    m!.fx.reply('POST', '/api/admin/daily/lines/preview', {
+      lines: [
+        { text: '人到情多情转薄，而今真个不多情。', author: '纳兰性德', source: '山花子' },
+        { text: 'I think — therefore I am', author: '' },
+      ],
+    })
     await type(lines, '人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》\nI think — therefore I am')
     await click(byText('button', d.linesPreview))
     await settle(() => document.querySelectorAll('[data-slot="lines-row"]').length === 2, 'two rows')
@@ -493,6 +500,13 @@ describe("the administrators' daily text page", () => {
 
     it("the link template says that request headers cannot be used in it, and a refusal by code is shown in the page's language", async () => {
       await open()
+      // The server refuses a link that uses a header, by code.
+      m!.fx.reply(
+        'PUT',
+        '/api/admin/daily/apis/quotes',
+        { error: 'link_uses_header', message: 'x', field: 'link' },
+        { status: 400 },
+      )
       await click(byText('button', d.addApi))
       await settle(() => input('api-link') !== null, 'form')
       expect(input('api-link').parentElement!.textContent).toContain(d.fieldLinkNoHeaders)
@@ -510,6 +524,7 @@ describe("the administrators' daily text page", () => {
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
       await settle(() => input('api-url') !== null, 'form')
+      m!.fx.reply('POST', '/api/admin/daily/try', { ok: true, status: 200, url: 'https://new.example.net/q' })
       await type(input('api-url'), 'https://new.example.net/q')
       expect(document.querySelector('[data-slot="try-host"]')).toBeNull()
       expect(document.body.textContent).not.toContain('允许列表')
@@ -545,6 +560,12 @@ describe("the administrators' daily text page", () => {
         langMap: { 'zh-Hans': 'zh', 'zh-Hant': 'zh_tw' },
       })
       // A language that is not a tag is refused by code, in the page's words.
+      m!.fx.reply(
+        'PUT',
+        '/api/admin/daily/apis/quotes',
+        { error: 'bad_language', message: 'x', field: 'langMap' },
+        { status: 400 },
+      )
       await click(api('quotes')!.querySelector('button'))
       await settle(() => rows().length > 0, 'form again')
       await type(rows()[0].querySelectorAll('input')[0], 'chinese')
@@ -561,6 +582,14 @@ describe("the administrators' daily text page", () => {
         })(),
       )
       await settle(() => byText('button', d.tryButton) !== null, 'try')
+      // What the interface answered, and the fields the paths found in it.
+      m!.fx.reply('POST', '/api/admin/daily/try', {
+        ok: true,
+        status: 200,
+        url: GOOD.url,
+        raw: '{"hitokoto":"山色空蒙雨亦奇","from":"饮湖上初晴后雨","from_who":"苏轼"}',
+        quote: { text: '山色空蒙雨亦奇', source: '饮湖上初晴后雨', author: '苏轼' },
+      })
       await click(byText('button', d.tryButton))
       await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
       const r = document.querySelector<HTMLElement>('[data-slot="try-result"]')!
@@ -579,6 +608,15 @@ describe("the administrators' daily text page", () => {
       await click(api('quotes')!.querySelector('button'))
       await settle(() => input('api-text') !== null, 'form')
       await type(input('api-text'), 'missing')
+      // The path finds nothing in the answer: the server says which one, and shows the others.
+      m!.fx.reply('POST', '/api/admin/daily/try', {
+        ok: false,
+        status: 200,
+        url: GOOD.url,
+        raw: '{"hitokoto":"x"}',
+        quote: { source: '饮湖上初晴后雨', author: '苏轼' },
+        pathErrors: [{ field: 'text', code: 'path_error', message: 'no value' }],
+      })
       await click(byText('button', d.tryButton))
       await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
       const r = document.querySelector<HTMLElement>('[data-slot="try-result"]')!
@@ -592,6 +630,13 @@ describe("the administrators' daily text page", () => {
       await click(api('quotes')!.querySelector('button'))
       await settle(() => input('api-author') !== null, 'form')
       await type(input('api-author'), 'null')
+      m!.fx.reply('POST', '/api/admin/daily/try', {
+        ok: true,
+        status: 200,
+        url: GOOD.url,
+        raw: '{"hitokoto":"山色空蒙雨亦奇","from":null}',
+        quote: { text: '山色空蒙雨亦奇' },
+      })
       await click(byText('button', d.tryButton))
       await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
       const r = document.querySelector<HTMLElement>('[data-slot="try-result"]')!
@@ -629,6 +674,13 @@ describe("the administrators' daily text page", () => {
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
       await settle(() => byText('button', d.tryButton) !== null, 'try')
+      m!.fx.reply('POST', '/api/admin/daily/try', {
+        ok: true,
+        status: 200,
+        url: long,
+        raw: '{"hitokoto":"山色空蒙雨亦奇"}',
+        quote: { text: '山色空蒙雨亦奇' },
+      })
       await click(byText('button', d.tryButton))
       await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
       const page = document.querySelector<HTMLElement>('[data-slot="admin-daily"]')!
@@ -665,6 +717,12 @@ describe("the administrators' daily text page", () => {
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
       await settle(() => byText('button', d.tryButton) !== null, 'try')
+      m!.fx.reply('POST', '/api/admin/daily/try', {
+        ok: false,
+        status: 503,
+        url: 'https://example.org/down',
+        message: 'status 503',
+      })
       await click(byText('button', d.tryButton))
       await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
       expect(document.querySelector('[data-slot="try-result"]')!.textContent).toContain('status 503')
@@ -672,6 +730,11 @@ describe("the administrators' daily text page", () => {
 
     it("a refused interface (an address on the network inside) shows the server's reason and creates nothing", async () => {
       await open()
+      // The server refuses an address on the network inside, and says why.
+      m!.fx.fail('PUT', '/api/admin/daily/apis/bad', 400, {
+        code: 'invalid',
+        message: '这个地址在内网，不能用作每日文案的来源',
+      })
       await click(byText('button', d.addApi))
       await type(input('api-id'), 'bad')
       await type(input('api-name'), 'x')

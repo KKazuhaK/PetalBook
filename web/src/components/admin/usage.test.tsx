@@ -1,30 +1,24 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureData } from '@/api/fixtures/data/model'
+import { sharedSpace } from '@/api/fixtures/data/model'
+import type { UserRec } from '@/api/fixtures/data/people'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { tt } from '@/i18n/tenants'
 import { tu } from '@/i18n/usage'
-import {
-  adminRequests,
-  click,
-  installDomShims,
-  makePerson,
-  mount,
-  settle,
-  type,
-  type Mounted,
-  openTenantPage,
-} from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted, openTenantPage } from '@/testing/harness'
+import { addPerson, addTenant, asTenantAdmin, measured, setting, tenancyOn } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
-// The administration's Usage page, the limits on a user, and the usage of a tenant, against the mock server.
+// The administration's Usage page, the limits on a user, and the usage of a tenant, against the fixture server. Which people are over a limit, and what a tenant uses, are what the server
+// measured: a scene puts the numbers the page lists.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -50,37 +44,36 @@ const usageCalls = () =>
   m!.requests.filter((r) => r.method === 'GET' && r.url.startsWith('/api/admin/usage')).map((r) => r.url)
 const switchOf = (label: string) => document.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`)!
 
-async function open(section: string, scene?: (server: MockServer) => unknown, server = {}) {
+async function open(section: string, scene?: (d: FixtureData) => unknown, flag?: (d: FixtureData) => void) {
+  let where: unknown
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts', empty: true, ...server },
-    entries: (s) => {
-      const where = scene?.(s)
-      // A scene may send the page to one person's own address.
-      return [typeof where === 'string' ? where : `/admin/${section}`]
+    fixtures: {
+      mode: 'accounts',
+      empty: true,
+      data: (d) => {
+        where = scene?.(d)
+        flag?.(d)
+      },
     },
+    // A scene may send the page to one person's own address.
+    entries: () => [typeof where === 'string' ? where : `/admin/${section}`],
   })
 }
 
-// Somebody with a measured space of a given size.
-function sized(server: MockServer, username: string, chars: number, role: 'member' | 'admin' = 'member') {
-  const person = makePerson(server, username, role)
-  const space = (person.request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-  person.request('POST', `/api/spaces/${space}/pages`, {
-    folder: '',
-    meta: { title: username },
-    body: 'x'.repeat(chars),
-  })
-  adminRequests(server)('POST', `/api/admin/spaces/${space}/size`)
+// Somebody with a measured space of a given size (a page of `chars` characters is that many bytes).
+function sized(d: FixtureData, username: string, chars: number, extra: Partial<UserRec> = {}) {
+  const person = addPerson(d, username, extra)
+  measured(d, person, { bytes: chars, pages: 1, spaces: 1 })
   return person
 }
 
 describe('the Usage page', () => {
   it('lists people with the most disk first, their numbers against their limits, and says when nothing was measured; the tenant list is not shown while there is one tenant', async () => {
-    await open('storage/usage', (server) => {
-      sized(server, 'amy', 100)
-      sized(server, 'bob', 9000)
-      makePerson(server, 'cat')
+    await open('storage/usage', (d) => {
+      sized(d, 'amy', 100)
+      sized(d, 'bob', 9000)
+      addPerson(d, 'cat')
     })
     await settle(() => people().length === 4, 'four people')
     // bob is the largest, then amy; cat and the administrator were never measured.
@@ -99,10 +92,11 @@ describe('the Usage page', () => {
   })
 
   it('narrows to the people over a limit and says so when nobody is', async () => {
-    await open('storage/usage', (server) => {
-      sized(server, 'amy', 100)
-      const admin = adminRequests(server)
-      admin('PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 1 })
+    await open('storage/usage', (d) => {
+      const amy = sized(d, 'amy', 100)
+      setting(d, 'quota.bytesPerPerson').site.value = 1
+      // The server counts amy over the disk limit.
+      measured(d, amy, { bytes: 100, pages: 1, spaces: 1, over: ['bytes'] })
     })
     await settle(() => people().length === 2, 'two people')
     expect(personRow('名 amy').querySelector('[data-slot="over"]')!.textContent).toBe(tu.admin.overFor(tu.quotas.bytes))
@@ -112,14 +106,15 @@ describe('the Usage page', () => {
     expect(people()[0].textContent).toContain('名 amy')
     expect(usageCalls().some((u) => u.includes('over=1'))).toBe(true)
     // Raise the limit: nobody is over.
-    adminRequests(m!.server)('PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 1024 * 1024 * 1024 })
+    m!.fx.call('PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 1024 * 1024 * 1024 })
+    m!.fx.data.admin.people[m!.fx.data.auth.users.find((u) => u.username === 'amy')!.id].usage!.over = []
     await m!.qc.invalidateQueries()
     await settle(() => text().includes(tu.admin.noneOver), 'nobody over')
   })
 
   it("loads more people on request, and edits one person's own limits in a dialog", async () => {
-    await open('storage/usage', (server) => {
-      for (let i = 1; i <= 55; i++) makePerson(server, `p${String(i).padStart(2, '0')}`)
+    await open('storage/usage', (d) => {
+      for (let i = 1; i <= 55; i++) addPerson(d, `p${String(i).padStart(2, '0')}`)
     })
     await settle(() => people().length === 50, 'the first page')
     await click(button(tu.admin.more))
@@ -144,7 +139,7 @@ describe('the Usage page', () => {
   })
 
   it('refuses what is not a number, before asking the server', async () => {
-    await open('storage/usage', (server) => makePerson(server, 'amy'))
+    await open('storage/usage', (d) => void addPerson(d, 'amy'))
     await settle(() => people().length === 2, 'two people')
     await click(button(tu.admin.editLimitsFor('名 amy')))
     await settle(() => dlg()?.querySelector('[data-slot="own-limits"]') !== null, 'the form')
@@ -155,12 +150,13 @@ describe('the Usage page', () => {
   })
 
   it("shows a site administrator the tenants with what each uses, and a tenant's people when it is picked", async () => {
-    await open('storage/usage', (server) => {
-      const admin = adminRequests(server)
-      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
-      admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
-      sized(server, 'amy', 100)
-      admin('PUT', '/api/admin/tenants/0000000000/settings/quota.people', { siteRule: { value: 1 } })
+    await open('storage/usage', (d) => {
+      tenancyOn(d)
+      addTenant(d, 'acme', 'Acme')
+      sized(d, 'amy', 100)
+      // The default tenant is limited to one person and has two: the server counts it over.
+      d.admin.tenants[0].quota.people = 1
+      d.admin.tenants[0].usage.over = ['people']
     })
     await settle(() => document.querySelectorAll('[data-slot="tenant-usage"] > li').length === 2, 'two tenants')
     const rows = [...document.querySelectorAll('[data-slot="tenant-usage"] > li')]
@@ -179,10 +175,10 @@ describe('the Usage page', () => {
   })
 
   it('nothing on it can be wider than a phone: rows wrap and shrink, the numbers stack in one column', async () => {
-    await open('storage/usage', (server) => {
-      sized(server, 'amy', 100)
-      adminRequests(server)('PUT', '/api/admin/settings/features.tenancy', { value: true })
-      adminRequests(server)('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
+    await open('storage/usage', (d) => {
+      sized(d, 'amy', 100)
+      tenancyOn(d)
+      addTenant(d, 'acme', 'Acme')
     })
     await settle(
       () => people().length === 2 && document.querySelectorAll('[data-slot="tenant-usage"] > li').length === 2,
@@ -206,15 +202,9 @@ describe('the Usage page', () => {
   })
 
   it('shows a tenant administrator only their people, with no tenant list', async () => {
-    await open('storage/usage', (server) => {
-      const admin = adminRequests(server)
-      sized(server, 'amy', 100)
-      makePerson(server, 'second', 'admin') // another site administrator must remain
-      admin(
-        'PATCH',
-        `/api/users/${(admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find((u) => u.username === 'admin')!.id}`,
-        { siteAdmin: false },
-      )
+    await open('storage/usage', (d) => {
+      sized(d, 'amy', 100)
+      asTenantAdmin(d)
     })
     await settle(() => people().length > 0, 'the people')
     expect(document.querySelector('[data-slot="tenant-usage"]')).toBeNull()
@@ -224,7 +214,7 @@ describe('the Usage page', () => {
 
 describe('limits on a user, and the usage of a tenant', () => {
   it("the user's details have the person's own limits, which are saved with the other details of the person unchanged", async () => {
-    await open('users', (server) => `/admin/user/${makePerson(server, 'amy').id}`)
+    await open('users', (d) => `/admin/user/${addPerson(d, 'amy').id}`)
     await settle(() => document.querySelector('[data-slot="own-limits"]') !== null, 'the limits form')
     const fields = [...document.querySelectorAll<HTMLInputElement>('[data-slot="own-limits"] input')]
     await type(fields[2], '5000')
@@ -236,9 +226,14 @@ describe('limits on a user, and the usage of a tenant', () => {
 
   it('sends only the limits the administrator changed, so a disk limit that is no whole number of GB is kept to the byte', async () => {
     const exact = 1234567891
-    await open('users', (server) => {
-      const amy = makePerson(server, 'amy')
-      adminRequests(server)('PATCH', `/api/users/${amy.id}`, { quota: { spaces: 7, bytes: exact } })
+    await open('users', (d) => {
+      const amy = addPerson(d, 'amy')
+      d.admin.people[amy.id] = {
+        sessions: [],
+        identities: [],
+        passkeys: [],
+        quota: { spaces: 7, bytes: exact, pages: null },
+      }
       return `/admin/user/${amy.id}`
     })
     await settle(() => document.querySelector('[data-slot="own-limits"]') !== null, 'the limits form')
@@ -254,24 +249,20 @@ describe('limits on a user, and the usage of a tenant', () => {
     await click(button(tu.own.save))
     await settle(() => patches().length === 2, 'the second save')
     expect(JSON.parse(patches()[1].body!)).toEqual({ quota: { spaces: null } })
-    const users = adminRequests(m!.server)('GET', '/api/users').body as {
+    const users = m!.fx.call('GET', '/api/users').body as {
       users: { username: string; quota: { bytes: number | null } }[]
     }
     expect(users.users.find((u) => u.username === 'amy')!.quota.bytes).toBe(exact)
   })
 
   it('says what a refusal means: only a site administrator goes above the tenant', async () => {
-    await open('users', (server) => {
-      const admin = adminRequests(server)
-      const amy = makePerson(server, 'amy')
-      admin('PUT', '/api/admin/settings/quota.spacesPerPerson', { value: 3 })
-      const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
-        (u) => u.username === 'admin',
-      )!
-      makePerson(server, 'boss', 'admin')
-      admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
+    await open('users', (d) => {
+      const amy = addPerson(d, 'amy')
+      asTenantAdmin(d)
       return `/admin/user/${amy.id}`
     })
+    // The server refuses a limit above the tenant's to a tenant administrator.
+    m!.fx.fail('PATCH', '/api/users/:id', 403, { code: 'forbidden' })
     await settle(() => document.querySelector('[data-slot="own-limits"]') !== null, 'the limits form')
     await type(document.querySelectorAll<HTMLInputElement>('[data-slot="own-limits"] input')[0], '9')
     await click(button(tu.own.save))
@@ -279,10 +270,10 @@ describe('limits on a user, and the usage of a tenant', () => {
   })
 
   it("a tenant's details show what it uses and its totals, which a site administrator sets", async () => {
-    await open('tenants', (server) => {
-      const admin = adminRequests(server)
-      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
-      sized(server, 'amy', 100)
+    await open('tenants', (d) => {
+      tenancyOn(d)
+      sized(d, 'amy', 100)
+      sharedSpace(d, 'owner', '团队')
     })
     await openTenantPage(`${tt.list.open}: Default`, tt.detail.tabs.plan)
     await settle(() => document.querySelector('[data-slot="tenant-usage-block"]') !== null, 'the usage block')
@@ -318,7 +309,9 @@ describe('limits on a user, and the usage of a tenant', () => {
     const bytesUrl = '/api/admin/tenants/0000000000/settings/quota.bytes'
     const puts = m!.requests.filter((r) => r.method === 'PUT' && r.url === bytesUrl)
     expect(JSON.parse(puts[0].body!)).toEqual({ siteRule: { value: 2 * 1024 ** 3 } })
-    // Now it is over for people: the block says so.
+    // Now the server counts it over for people: the block says so.
+    m!.fx.data.admin.tenants[0].usage.over = ['people']
+    await m!.qc.invalidateQueries()
     await settle(
       () =>
         document
@@ -347,7 +340,11 @@ describe('the quotas on the Settings page', () => {
   })
 
   it('--max-spaces makes the site value of the number of spaces read only, and says so', async () => {
-    await open('settings', undefined, { maxSpaces: 7 })
+    await open('settings', undefined, (d) => {
+      const s = setting(d, 'quota.spacesPerPerson')
+      s.site.value = 7
+      s.site.fromFlag = true
+    })
     await settle(() => rows('quota.spacesPerPerson').length === 2, 'the quota rows')
     const site = rows('quota.spacesPerPerson')[0]
     expect(site.querySelector<HTMLInputElement>('input[type="number"]')!.value).toBe('7')

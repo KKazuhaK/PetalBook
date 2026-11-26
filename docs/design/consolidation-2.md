@@ -155,7 +155,23 @@ lines, down from 16k):
       400 (`routes/sync.ts:54`, `:117`): the offline copy's resync;
     - an unknown username on sign-in is 401 (`routes/auth.ts:59`): the sign-in
       form's error state.
+    - a fix of a problem with a stale `baseRev` is 409 (`routes/check.ts:45`):
+      the check page's "changed elsewhere" state.
     Everything else the real server refuses stays out.
+  - **Derived answers the fixtures keep on purpose.** Each is worked out from
+    the data in `routes/admin.ts` because a test reads the result of its own
+    write or of a scene it set up, so a seeded constant would make that test
+    prove nothing (all five were tried as seeded values and 9 tests failed):
+    - a tenant setting's `effective` (`:144`): the tenant rules and the forced
+      values are tested by saving a rule and reading what is in force;
+    - `deletionPlan` (`:162`): the heir flow (a shared space needs one, an
+      owned space goes to the bin) follows the spaces the person owns;
+    - the usage limits fallback to the site's quota settings (`:637`): the
+      usage page shows numbers against the limits a setting gives;
+    - `effectiveMode` (`:1309`): the security page's notice that a mode falls
+      back to the password when no provider is enabled;
+    - `mail.hasPassword` (`:1124`): the mail and secrets pages save a password
+      and expect it to be reported as set, and never shown.
 - `server.ts`: one `createFixtureServer({ data, user, overrides })`, with:
   - `fx.fail(method, path, status, {code, …})` and `fx.reply(method, path, body)`
     for a test that needs an error or an exact answer;

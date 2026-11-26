@@ -93,7 +93,7 @@ describe('the groups of a space: an owner', () => {
   it('asks for a group before adding, and changes a role and removes a group after asking', async () => {
     await openAsOwner((fx, space) => {
       fx.on(space)('POST', '/groups', {
-        groupId: fx.data.area.groups.find((g) => g.name === 'Engineering')!.id,
+        groupId: fx.data.admin.groups.find((g) => g.name === 'Engineering')!.id,
         role: 'viewer',
       })
     })
@@ -118,7 +118,7 @@ describe('the groups of a space: an owner', () => {
   it('shows everyone who can reach the space with how, and filters them', async () => {
     await openAsOwner((fx, space) => {
       fx.on(space)('POST', '/groups', {
-        groupId: fx.data.area.groups.find((g) => g.name === 'Engineering')!.id,
+        groupId: fx.data.admin.groups.find((g) => g.name === 'Engineering')!.id,
         role: 'editor',
       })
     })
@@ -141,7 +141,7 @@ describe('the groups of a space: an owner', () => {
     await openAsOwner((fx, space) => {
       fx.on(space)('POST', '/members', { username: 'tang', role: 'viewer' })
       fx.on(space)('POST', '/groups', {
-        groupId: fx.data.area.groups.find((g) => g.name === 'Engineering')!.id,
+        groupId: fx.data.admin.groups.find((g) => g.name === 'Engineering')!.id,
         role: 'editor',
       })
     })

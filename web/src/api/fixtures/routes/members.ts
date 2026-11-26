@@ -33,7 +33,7 @@ const groupsIn = (d: FixtureData, s: SpaceData) => (d.area.spaceGroups[s.info.id
 function viaGroups(d: FixtureData, s: SpaceData, userId: string): SpaceRole | '' {
   let role: SpaceRole | '' = ''
   for (const g of groupsIn(d, s)) {
-    const group = d.area.groups.find((x) => x.id === g.groupId)
+    const group = d.admin.groups.find((x) => x.id === g.groupId)
     if (group?.members.includes(userId)) role = strongest(role, g.role)
   }
   return role
@@ -69,7 +69,7 @@ function memberOf(d: FixtureData, s: SpaceData, row: { userId: string; role: Spa
 }
 
 function groupMember(d: FixtureData, g: { groupId: string; role: SpaceRole }): GroupMember {
-  const group = d.area.groups.find((x) => x.id === g.groupId)
+  const group = d.admin.groups.find((x) => x.id === g.groupId)
   const me = meOf(d)
   return {
     groupId: g.groupId,
@@ -161,7 +161,7 @@ export const memberRoutes: Route[] = [
       const q = c.query.get('q') ?? ''
       const ids = new Set(direct(c.data, s).map((m) => m.userId))
       for (const g of groupsIn(c.data, s))
-        for (const id of c.data.area.groups.find((x) => x.id === g.groupId)?.members ?? []) ids.add(id)
+        for (const id of c.data.admin.groups.find((x) => x.id === g.groupId)?.members ?? []) ids.add(id)
       const items: EffectiveMember[] = [...ids]
         .map((id) => userOf(c.data, id))
         .filter((u): u is UserRec => !!u && matches(u, q))
@@ -174,10 +174,10 @@ export const memberRoutes: Route[] = [
             role: strongest(own, viaGroups(c.data, s, u.id)),
             directRole: own,
             groups: groupsIn(c.data, s)
-              .filter((g) => c.data.area.groups.find((x) => x.id === g.groupId)?.members.includes(u.id))
+              .filter((g) => c.data.admin.groups.find((x) => x.id === g.groupId)?.members.includes(u.id))
               .map((g) => ({
                 groupId: g.groupId,
-                name: c.data.area.groups.find((x) => x.id === g.groupId)!.name,
+                name: c.data.admin.groups.find((x) => x.id === g.groupId)!.name,
                 role: g.role,
               })),
             you: u.id === meOf(c.data)?.id,
@@ -270,7 +270,7 @@ export const memberRoutes: Route[] = [
     'GET',
     '/api/groups',
     (c) => ({
-      groups: c.data.area.groups
+      groups: c.data.admin.groups
         .filter((g) => g.name.toLowerCase().includes((c.query.get('q') ?? '').toLowerCase()))
         .slice(0, 20)
         .map(({ id, name, source }) => ({ id, name, source })),

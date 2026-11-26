@@ -4,7 +4,8 @@
 import type { SpaceRole } from '../../types.ts'
 import { newId } from '../kit.ts'
 import type { FixtureServer } from '../server.ts'
-import { addNotification, type GroupRec } from './area.ts'
+import type { GroupRec } from './admin.ts'
+import { addNotification } from './area.ts'
 import { emptySpace, sharedSpace, type FixtureData } from './model.ts'
 import { DEMO_MEMBER, type UserRec } from './people.ts'
 
@@ -30,8 +31,21 @@ export function addGroup(
   members: string[] = [],
   source: GroupRec['source'] = 'local',
 ): GroupRec {
-  const group: GroupRec = { id: newId(d, '01FG'), name, source, members }
-  d.area.groups.push(group)
+  const at = '2026-11-01T08:00:00Z'
+  const group: GroupRec = {
+    id: newId(d, '01FG'),
+    name,
+    description: '',
+    source,
+    people: members.length,
+    spaces: 0,
+    mappedFrom: [],
+    created: at,
+    updated: at,
+    members,
+    spaceRefs: [],
+  }
+  d.admin.groups.push(group)
   return group
 }
 

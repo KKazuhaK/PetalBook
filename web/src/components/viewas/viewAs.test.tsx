@@ -2,14 +2,15 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { api, ApiError, request } from '@/api/client'
 import { manageApi } from '@/api/manage'
-import type { SessionInfo, SpaceInfo } from '@/api/types'
 import { t } from '@/i18n'
 import { forgetViewAs, startViewAs, viewAsId } from '@/lib/viewAs'
-import { click, installDomShims, makePerson, mount, settle, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
+import { addPerson, addSpace } from '@/testing/adminScene'
 import { ViewAsBanner, exitViewAs } from './Banner'
 
 // Viewing the app as a person (docs/api.md, "Viewing as a person"): the tab opened at /as/<id> keeps the id in its own
-// sessionStorage and sends it on every request; the banner says so and leads out; the mock answers as the server does.
+// sessionStorage and sends it on every request; the banner says so and leads out. What the server answers a view (the
+// person's session, their read-only spaces, the refusals) is its own Go tests': here the refusals are declared.
 
 beforeAll(installDomShims)
 beforeEach(() => {
@@ -17,7 +18,7 @@ beforeEach(() => {
   forgetViewAs()
 })
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   forgetViewAs()
   await m?.unmount()
@@ -29,13 +30,15 @@ async function scene() {
   let amy = { id: '', space: '' }
   m = await mount(<div />, {
     signIn: true,
-    server: { mode: 'accounts', empty: true },
-    entries: (server) => {
-      const p = makePerson(server, 'amy')
-      const space = (p.request('POST', '/api/spaces', { name: '团队' }).body as { id: string }).id
-      amy = { id: p.id, space }
-      return ['/']
+    fixtures: {
+      mode: 'accounts',
+      empty: true,
+      data: (d) => {
+        const person = addPerson(d, 'amy')
+        amy = { id: person.id, space: addSpace(d, '团队', { owner: person }).info.id }
+      },
     },
+    entries: ['/'],
   })
   const view = await manageApi.startViewAs(amy.id, '检查一个问题')
   return { amy, view }
@@ -63,24 +66,30 @@ describe('a tab that views the app as a person', () => {
 
     history.replaceState(null, '', `/as/${view.id}`)
     startViewAs()
-    const session = await request<SessionInfo>('/session')
+    await request('/session')
     expect(m!.requests.at(-1)!.viewAs).toBe(view.id)
-    expect(session.user?.username).toBe('amy')
-    expect(session.user?.email).toBe('')
-    expect(session.user?.permissions).toEqual([])
-    expect(session.viewAs?.id).toBe(view.id)
-    expect(session.viewAs?.hidden).toBeGreaterThanOrEqual(1)
-    // The person's organisation's space, read only; never their personal one.
-    const { spaces } = await api.spaces()
-    expect(spaces.map((s: SpaceInfo) => s.id)).toEqual([amy.space])
-    expect(spaces[0].permissions).toEqual(['read'])
-    // Every write and everything of the person's own is refused.
+    await api.spaces()
+    expect(m!.requests.at(-1)!.viewAs).toBe(view.id)
+    // Every write and everything of the person's own is refused by the server: the client says so by the code.
+    m!.fx.fail('POST', '/api/spaces', 403, { code: 'view_as_read_only' })
+    m!.fx.fail('GET', '/api/notifications', 403, { code: 'view_as_read_only' })
+    m!.fx.fail('GET', '/api/account', 403, { code: 'view_as_read_only' })
     for (const call of [
       () => request('/spaces', { method: 'POST', body: { name: 'x' } }),
       () => request('/notifications'),
       () => request('/account'),
     ])
       await expect(call()).rejects.toMatchObject({ code: 'view_as_read_only' })
+    // The three refused requests were made with the header, so the server knew whose view they were.
+    const refused = m!.requests.filter((r) =>
+      [
+        ['POST', '/api/spaces'],
+        ['GET', '/api/notifications'],
+        ['GET', '/api/account'],
+      ].some(([method, url]) => r.method === method && r.url === url),
+    )
+    expect(refused).toHaveLength(3)
+    expect(refused.map((r) => r.viewAs)).toEqual([view.id, view.id, view.id])
 
     // Leaving: the server is told without the header, and the tab leaves.
     let left = false
@@ -91,7 +100,8 @@ describe('a tab that views the app as a person', () => {
     const end = m!.requests.slice(before).find((r) => r.method === 'DELETE')!
     expect(end.url).toBe(`/api/admin/users/${amy.id}/view-as`)
     expect(end.viewAs).toBeNull()
-    // The view is over: its id is refused.
+    // The view is over: the server refuses its id.
+    m!.fx.fail('GET', '/api/spaces', 403, { code: 'view_as_ended' })
     history.replaceState(null, '', `/as/${view.id}`)
     startViewAs()
     await expect(api.spaces()).rejects.toBeInstanceOf(ApiError)
@@ -111,6 +121,7 @@ describe('a tab that views the app as a person', () => {
         name="名 amy"
         leave={() => (left = true)}
       />,
+      { fixtures: true },
     )
     const banner = document.querySelector('[data-slot="view-as-banner"]')!
     expect(banner.getAttribute('aria-label')).toBe(t.viewAs.region)

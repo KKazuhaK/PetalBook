@@ -11,6 +11,7 @@ import { addNotification, addToken, approveApp, withAuthorizationServer } from '
 import { githubProvider, leaveRepository } from './data/connections'
 import { addGroup, addPerson } from './data/scenes'
 import { match } from './kit'
+import { ADMIN_UNRECORDED, adminProbes } from './probesAdmin'
 import { createFixtureServer, type FixtureServer } from './server'
 
 const recorded = JSON.parse(readFileSync('src/api/fixtures/recorded/shapes.json', 'utf8')) as Record<string, Shape>
@@ -72,10 +73,11 @@ function probes(fx: FixtureServer): Call[] {
   const other = space.pages.find((p) => p.id !== page.id && p.folder === page.folder) ?? space.pages[1]
   const P = `/api/spaces/default/pages/${page.id}`
   const olive = fx.data.auth.users.find((u) => u.username === 'olive')!
-  const group = fx.data.area.groups[0]
+  const group = fx.data.admin.groups[0]
   const rev = () => fx.call('GET', P).body.rev as string
   const meta = () => fx.call('GET', P).body.meta as Record<string, unknown>
   return [
+    ...adminProbes(fx),
     ['GET', '/api/session'],
     ['GET', '/api/meta'],
     ['GET', '/api/settings'],
@@ -255,10 +257,6 @@ function probes(fx: FixtureServer): Call[] {
     ['GET', `/api/spaces/default/pages/${other.id}/backlinks`],
     ['POST', '/api/spaces/default/types/task/rename-field', { baseRev: 'x', from: 'status', to: 'state' }],
     ['GET', '/api/spaces/default/templates/diary'],
-    // the audited view of a space
-    ['GET', '/api/admin/spaces/default'],
-    ['POST', '/api/admin/spaces/default/view', { reason: 'r' }],
-    ['DELETE', '/api/admin/spaces/default/view'],
     // the remote repository
     ['PUT', '/api/spaces/default/remote', { url: 'https://example.test/n.git', credential: { type: 'token' } }],
     ['GET', '/api/spaces/default/remote'],
@@ -291,6 +289,7 @@ const UNRECORDED: Record<string, string> = {
   'GET /api/oauth/consent 200': 'needs an authorization client',
   'POST /api/oauth/consent 200': 'needs an authorization client',
   'POST /api/setup 200': 'needs a server with no account',
+  ...ADMIN_UNRECORDED,
   'PATCH /api/account/passkeys/{} 200': 'needs a passkey',
   'POST /api/account/emails 202': 'needs mail',
   'POST /api/account/emails/verify 200': 'needs mail',
@@ -300,7 +299,6 @@ const UNRECORDED: Record<string, string> = {
   'POST /api/spaces/default/groups 200':
     'needs a group, which the contract suite makes only through the administration',
   'POST /api/spaces/default/types/task/rename-field 200': 'the contract suite does not rename a field yet',
-  'POST /api/admin/spaces/default/view 200': 'the contract suite does not open a view yet',
   'PUT /api/spaces/default/remote 200': 'needs a remote repository',
   'GET /api/spaces/default/remote 200': 'needs a remote repository',
   'POST /api/spaces/default/remote/sync 200': 'needs a remote repository',

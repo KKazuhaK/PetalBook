@@ -3,17 +3,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tc } from '@/i18n/console'
-import {
-  adminRequests,
-  click,
-  installDomShims,
-  locationText,
-  makePerson,
-  mount,
-  settle,
-  type Mounted,
-} from '@/testing/harness'
-import type { MockServer } from '@/api/mock/server'
+import { click, installDomShims, locationText, mount, settle, type FxMounted } from '@/testing/harness'
+import type { FixtureData } from '@/api/fixtures/data/model'
+import { addPerson, asTenantAdmin } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
 // The frame of the administration: a sidebar of sections with the pages of each along its top, a drawer on a phone, a
@@ -22,7 +14,7 @@ import { AdminGate } from './AdminGate'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -38,8 +30,13 @@ const routes = (
     </Routes>
   </SidebarProvider>
 )
-const open = (path: string, scene?: (s: MockServer) => void) =>
-  mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: (s) => (scene?.(s), [path]) })
+const open = (path: string, scene?: (d: FixtureData) => void) =>
+  mount(routes, { signIn: true, fixtures: { mode: 'accounts', data: (d) => void scene?.(d) }, entries: [path] })
+// The signed-in person administers their own tenant only.
+const tenantAdmin = (d: FixtureData) => {
+  addPerson(d, 'second', { role: 'admin', siteAdmin: true })
+  asTenantAdmin(d)
+}
 const sidebar = () => document.querySelector<HTMLElement>('aside[data-collapsed], aside')!
 const links = (root: ParentNode = document) =>
   [...root.querySelectorAll(`nav[aria-label="${tc.nav}"] a`)].map((a) => a.textContent?.trim())
@@ -97,27 +94,13 @@ describe('the administration frame', () => {
   })
 
   it('shows a tenant administrator the sections and pages of their tenant only', async () => {
-    m = await open('/admin/storage', (server) => {
-      const admin = adminRequests(server)
-      makePerson(server, 'second', 'admin')
-      const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
-        (u) => u.username === 'admin',
-      )!
-      admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
-    })
+    m = await open('/admin/storage', tenantAdmin)
     await settle(() => tabs().length > 0, 'the tabs')
     expect(tabs()).toEqual([tc.tabs.storage.manage, tc.tabs.storage.usage])
     expect(links()).not.toContain(tc.sections.security)
     // The pages of the server's own are not theirs: the address goes to the section.
     await m.unmount()
-    m = await open('/admin/storage/rules', (server) => {
-      const admin = adminRequests(server)
-      makePerson(server, 'second', 'admin')
-      const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
-        (u) => u.username === 'admin',
-      )!
-      admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
-    })
+    m = await open('/admin/storage/rules', tenantAdmin)
     await settle(() => locationText() === '/admin/storage', 'sent back to the section')
   })
 

@@ -22,7 +22,7 @@ import { matches, sortValue } from './query.ts'
 export const spaceOf = (c: Ctx): SpaceData =>
   c.params.space === 'default'
     ? c.data.spaces[0]
-    : find(c.data.spaces, (s) => s.info.id === c.params.space, 'the space')
+    : find([...c.data.spaces, ...c.data.admin.otherSpaces], (s) => s.info.id === c.params.space, 'the space')
 export const pageOf = (s: SpaceData, id: string): StoredPage => find(s.pages, (p) => p.id === id, 'the page')
 
 const str = (m: PageMeta, key: string): string | undefined =>
@@ -286,7 +286,15 @@ export const fileRoutes: Route[] = [
     'POST',
     '/api/spaces',
     (c) => {
-      const s = { ...structuredClone(c.data.spaces[0]), pages: [], folders: [], favorites: [], views: {}, drafts: {} }
+      const s = {
+        ...structuredClone(c.data.spaces[0]),
+        pages: [],
+        folders: [],
+        favorites: [],
+        views: {},
+        drafts: {},
+        checks: [],
+      }
       s.info = newSpace(c, c.body.name)
       c.data.spaces.push(s)
       return reply(201, s.info)

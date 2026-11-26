@@ -55,7 +55,7 @@ export const accountRoutes: Route[] = [
         hasPassword: true,
         identities: a.identities,
         passkeys,
-        groups: c.data.area.groups
+        groups: c.data.admin.groups
           .filter((g) => g.members.includes(u.id))
           .map((g) => ({ id: g.id, name: g.name, source: g.source })),
         emails: emailsOf(c),

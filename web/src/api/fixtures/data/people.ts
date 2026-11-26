@@ -18,7 +18,7 @@ export const MOCK_ADMIN = { username: 'admin', password: 'petalbook-admin', name
 export const SETUP_TOKEN = 'setup-token'
 export const INVITE_TOKEN = 'invite-token'
 
-const tenant = { id: 'default', name: 'Default', slug: 'default' }
+const tenant = { id: '0000000000', name: 'Default', slug: 'default' }
 const created = '2026-01-05T08:00:00Z'
 
 export const DEMO_ADMIN: UserRec = {

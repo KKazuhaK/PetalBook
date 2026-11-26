@@ -1,20 +1,21 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import { MOCK_ADMIN } from '@/api/mock/server'
+import { MOCK_ADMIN } from '@/api/fixtures/data/people'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tc } from '@/i18n/console'
 import { tm } from '@/i18n/mail'
-import { click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // The administration's Mail page (SMTP settings, state, the test message) and the reset link on a user, against
-// the mock server, which never sends: what would have been sent is in its outbox.
+// the fixture server, which never sends: what would have been sent is in `fx.sent.mail`. What the server refuses
+// (a missing sender, an unsafe security setting, mail that is not set up) is declared with `fx.fail`.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -35,19 +36,8 @@ const field = (label: string) =>
   [...document.querySelectorAll<HTMLInputElement>('input')].find(
     (i) => document.querySelector(`label[for="${i.id}"]`)?.textContent?.trim() === label,
   )!
-const rootCall = (method: string, path: string, body?: unknown) => {
-  const login = m!.server.handle('POST', '/api/login', JSON.stringify(MOCK_ADMIN), 'application/json')
-  return m!.server.handle(
-    method,
-    `/api${path}`,
-    body === undefined ? undefined : JSON.stringify(body),
-    'application/json',
-    login.headers!['Set-Cookie'].split(';')[0],
-  )
-}
-
 async function open(section: string) {
-  m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: [`/admin/${section}`] })
+  m = await mount(routes, { signIn: true, fixtures: { mode: 'accounts' }, entries: [`/admin/${section}`] })
 }
 
 describe('the Mail page', () => {
@@ -57,11 +47,12 @@ describe('the Mail page', () => {
     expect(document.querySelector(`nav[aria-label="${tc.nav}"]`)?.textContent).toContain(tc.sections.mail)
     expect(text()).toContain(tm.admin.statusNever)
     expect(text()).toContain(tm.admin.queue(0, 0, 0))
-    expect(m!.server.mail.outbox).toHaveLength(0)
+    expect(m!.fx.sent.mail).toHaveLength(0)
   })
 
   it('saves the settings, never shows the password, and enabling needs the sender address', async () => {
     await open('mail')
+    m!.fx.fail('PUT', '/api/admin/mail', 400, { code: 'mail_from_required' }, { times: 1 })
     await settle(() => field(tm.admin.host) !== undefined, 'the form')
     await type(field(tm.admin.host), 'smtp.example.test')
     await type(field(tm.admin.password), 'hunter2-secret')
@@ -71,7 +62,7 @@ describe('the Mail page', () => {
     await type(field(tm.admin.from), 'notes@example.test')
     await click(button(tm.admin.save))
     await settle(() => text().includes(tm.admin.saved), 'saved')
-    const stored = rootCall('GET', '/admin/mail').body as Record<string, unknown>
+    const stored = m!.fx.call('GET', '/api/admin/mail').body as Record<string, unknown>
     expect(stored).toMatchObject({
       enabled: true,
       host: 'smtp.example.test',
@@ -85,24 +76,27 @@ describe('the Mail page', () => {
 
   it('security none is refused for a host that is not on this machine', async () => {
     await open('mail')
+    m!.fx.fail('PUT', '/api/admin/mail', 400, { code: 'mail_insecure' })
     await settle(() => field(tm.admin.host) !== undefined, 'the form')
     await type(field(tm.admin.host), 'mail.example.test')
     const select = document.querySelector<HTMLSelectElement>('#mail-security')!
     await type(select, 'none')
     await click(button(tm.admin.save))
     await settle(() => text().includes(tm.admin.errors.mail_insecure), 'the refusal')
+    const put = m!.requests.find((r) => r.method === 'PUT' && r.url === '/api/admin/mail')!
+    expect(JSON.parse(put.body!)).toMatchObject({ host: 'mail.example.test', security: 'none' })
   })
 
   it('the test message goes to the address typed, works while mail is off, and says it was sent', async () => {
     await open('mail')
+    m!.fx.fail('POST', '/api/admin/mail/test', 409, { code: 'mail_not_configured' }, { times: 1 })
     await settle(() => field(tm.admin.host) !== undefined, 'the form')
     await type(field(tm.admin.testTo), 'admin@example.test')
     await click(button(tm.admin.testSend))
     await settle(() => text().includes(tm.admin.errors.mail_not_configured), 'not configured yet')
-    rootCall('PUT', '/admin/mail', { host: 'smtp.example.test', from: 'notes@example.test' })
     await click(button(tm.admin.testSend))
     await settle(() => text().includes(tm.admin.testOk), 'sent')
-    expect(m!.server.mail.outbox.map((x) => [x.kind, x.to])).toEqual([['test', 'admin@example.test']])
+    expect(m!.fx.sent.mail.map((x) => [x.kind, x.to])).toEqual([['test', 'admin@example.test']])
   })
 })
 
@@ -111,6 +105,6 @@ describe('a reset link from the users page', () => {
     await open('users')
     await settle(() => text().includes(MOCK_ADMIN.username), 'the users')
     expect(button(tm.users.sendReset)).toBeNull()
-    expect(m!.server.mail.outbox).toHaveLength(0)
+    expect(m!.fx.sent.mail).toHaveLength(0)
   })
 })

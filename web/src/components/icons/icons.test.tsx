@@ -4,7 +4,7 @@ import { Route, Routes } from 'react-router'
 import { act } from 'react'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { AppShell } from '@/components/layout/AppShell'
-import { adminRequests, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { PageIcon } from './PageIcon'
 import IconPickerBody from './IconPickerBody'
 import { IconPicker } from './IconPicker'
@@ -22,7 +22,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -39,6 +39,7 @@ describe('the icon of a name', () => {
         <PageIcon icon="atom" />
         <PageIcon icon="drum" color="red" />
       </>,
+      { fixtures: true },
     )
     expect(document.querySelector('[data-icon="book-open"]')).not.toBeNull()
     expect((document.querySelector('[data-icon="book-open"]') as SVGElement).style.color).toBe('var(--icon-teal)')
@@ -73,6 +74,7 @@ describe('a name that is a key of every object', () => {
         <PageIcon icon="book-open" color="constructor" />
         <PageIcon icon="drum" />
       </>,
+      { fixtures: true },
     )
     await settle(() => document.querySelector('svg[data-icon="drum"]') !== null, 'the whole set')
     expect(document.querySelector('svg[data-icon="constructor"]')).toBeNull()
@@ -83,7 +85,7 @@ describe('a name that is a key of every object', () => {
 
   it('in the recent icons does not break the picker', async () => {
     localStorage.setItem('pb.icons.recent', JSON.stringify(['constructor', 'valueof', 'book-open']))
-    m = await mount(<IconPickerBody icon="" color="" onChange={() => {}} />)
+    m = await mount(<IconPickerBody icon="" color="" onChange={() => {}} />, { fixtures: true })
     const recent = document.querySelector('[data-slot="icon-picker"] section [role="listbox"]')!
     const titles = [...recent.querySelectorAll('[role="option"]')].map((o) => o.getAttribute('title'))
     expect(titles).toEqual(['book-open'])
@@ -108,6 +110,7 @@ describe('the emoji of the picker', () => {
         color=""
         onSave={async (icon) => void saved.push(icon)}
       />,
+      { fixtures: true },
     )
     const input = document.querySelector<HTMLInputElement>(`input[aria-label="${t.icons.emoji}"]`)!
     // A family is 11 UTF-16 units; 15 keycaps and a book cut at 16 would end in half a surrogate pair.
@@ -156,13 +159,8 @@ describe('the picker', () => {
   const openPicker = async () => {
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const ask = adminRequests(server)
-        const spaces = (ask('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces
-        ask('POST', `/api/spaces/${spaces[0].id}/folders`, { path: 'Tang' })
-        return [`/s/${spaces[0].id}/f/Tang`]
-      },
+      fixtures: { mode: 'accounts', data: (d) => void d.spaces[0].folders.push('Tang') },
+      entries: ['/s/default/f/Tang'],
     })
     await settle(() => document.querySelector('[data-file-key="f:Tang"]') !== null, 'the folder in the tree')
   }
@@ -212,9 +210,9 @@ describe('the picker', () => {
     expect(
       (document.querySelector('[data-file-key="f:Tang"] svg[data-icon="calendar"]') as SVGElement).style.color,
     ).toBe('var(--icon-blue)')
-    const spaces = (adminRequests(m!.server)('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces
-    const a = adminRequests(m!.server)('GET', `/api/spaces/${spaces[0].id}/appearance`).body as { folders: unknown[] }
-    expect(a.folders).toEqual([{ folder: 'Tang', icon: 'calendar', color: 'blue' }])
+    expect(m!.fx.requests.find((r) => r.url.endsWith('/folders/style'))?.body).toBe(
+      JSON.stringify({ folder: 'Tang', icon: 'calendar', color: 'blue' }),
+    )
     expect(readRecent()[0]).toBe('calendar')
   })
 })

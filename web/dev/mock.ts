@@ -4,6 +4,7 @@
 // `npm run dev` against `serve`. Data lives in memory and is reset on restart. MOCK_DELAY_MS adds latency to every call.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
+import { seedAdminDemo } from '../src/api/fixtures/data/adminDemo.ts'
 import { addNotification, addProblems, approveApp, withAuthorizationServer } from '../src/api/fixtures/data/area.ts'
 import { githubProvider } from '../src/api/fixtures/data/connections.ts'
 import { sharedSpace, type FixtureData, type FixtureOptions } from '../src/api/fixtures/data/model.ts'
@@ -43,6 +44,7 @@ function optionsFromEnv(): FixtureOptions {
       { slug: 'campus', kind: 'saml', name: 'Campus login', order: 1 },
     ],
     invite: { token: INVITE_TOKEN, role: 'member' },
+    // The administration console has people, a group, a plan and a space to show; the settings have a shared space.
     data: mode === 'setup' ? undefined : seedAccounts,
   }
 }
@@ -52,6 +54,7 @@ const REMOTE_STATES = ['ok', 'offline', 'rewritten', 'error'] as const
 // Accounts mode starts with something to look at in the settings: another person who shares a space with the
 // administrator (and the notification of it), a group, GitHub set up on the server, and a space with a problem.
 function seedAccounts(d: FixtureData) {
+  seedAdminDemo(d)
   const olive = addPerson(d, 'olive')
   const team = sharedSpace(d, 'editor', '团队')
   d.area.members[team.info.id] = [

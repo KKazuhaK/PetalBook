@@ -728,19 +728,23 @@ describe('the GitHub section of the administration', () => {
 
   it("lists the installations and shares an organisation's with the tenants picked", async () => {
     m = await mount(routes, {
-      entries: (fx) => {
-        // The tenants the site has: the default one and one made after the rows were read.
-        fx.reply('GET', '/api/admin/tenants', {
-          items: [
-            { id: 'default-id', slug: 'default', name: 'Default', default: true },
-            { id: 'acme-id', slug: 'acme', name: 'Acme', default: false },
-          ],
-          next: '',
-        })
-        return ['/admin/storage/connections']
-      },
+      entries: ['/admin/storage/connections'],
       signIn: true,
-      fixtures: { mode: 'accounts', data: (d) => githubApp(d) },
+      fixtures: {
+        mode: 'accounts',
+        data: (d) => {
+          githubApp(d)
+          // The tenants the site has: the default one and Acme.
+          d.admin.tenants.push({
+            ...structuredClone(d.admin.tenants[0]),
+            id: 'acme-id',
+            slug: 'acme',
+            name: 'Acme',
+            default: false,
+            origin: 'admin',
+          })
+        },
+      },
     })
     await settle(() => document.querySelectorAll('li [data-testid="share-choose"]').length === 3, 'the installations')
     const choose = (login: string) => byLabel(tg.admin.chooseFor(login))!
@@ -772,7 +776,7 @@ describe('the GitHub section of the administration', () => {
     await click(box('Default'))
     await click(button(tg.admin.shareSave, dialog()!)!)
     await settle(() => dialog() === null, 'the dialog closing again')
-    expect(puts().map((r) => JSON.parse(r.body!).tenants)).toEqual([['acme-id'], ['acme-id', 'default-id']])
+    expect(puts().map((r) => JSON.parse(r.body!).tenants)).toEqual([['acme-id'], ['acme-id', '0000000000']])
   })
 
   it('refuses to remove the App while a space syncs through it', async () => {

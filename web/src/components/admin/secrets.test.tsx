@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tt } from '@/i18n/tenants'
-import { adminRequests, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // The secrets of the site and of a tenant on the settings page: write-only, so they show whether one is set and never
@@ -12,7 +12,7 @@ import { AdminGate } from './AdminGate'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -39,12 +39,19 @@ const dlg = () => document.querySelector<HTMLElement>('[role="dialog"]')
 const writes = () =>
   m!.requests.filter((r) => r.method !== 'GET' && r.url.includes('/secrets')).map((r) => `${r.method} ${r.url}`)
 
-const open = (scene: (server: Mounted['server']) => void = () => undefined) =>
+// The GitHub App is set up in this scene; `scene` makes the rest.
+const open = (scene: (fx: FxMounted['fx']) => void = () => undefined) =>
   mount(routes, {
     signIn: true,
-    server: { mode: 'accounts', github: { configured: true } },
-    entries: (server) => {
-      scene(server)
+    fixtures: {
+      mode: 'accounts',
+      data: (d) => {
+        for (const name of ['github.appKey', 'github.clientSecret', 'github.webhookSecret'])
+          d.admin.secrets.site[name] = { name, set: true }
+      },
+    },
+    entries: (fx) => {
+      scene(fx)
       return ['/admin/settings']
     },
   })
@@ -82,14 +89,12 @@ describe('the secrets of the site', () => {
     // Not on the page, not in the list the server answered, and not in the dialog when it is opened again.
     await settle(() => dlg() === null, 'the dialog is closed')
     expect(document.body.innerHTML).not.toContain('smtp-secret-1')
-    expect(JSON.stringify(adminRequests(m.server)('GET', '/api/admin/secrets').body)).not.toContain('smtp-secret-1')
+    expect(JSON.stringify(m.fx.call('GET', '/api/admin/secrets').body)).not.toContain('smtp-secret-1')
     await click(button(rowOf('mail.password'), ts.replaceFor(ts.names['mail.password'])))
     await settle(() => dlg() !== null, 'the dialog again')
     expect(dlg()!.querySelector<HTMLInputElement>('input')!.value).toBe('')
     await click(button(dlg(), ts.cancel))
     await settle(() => dlg() === null, 'closed')
-    // The mail page says the password is set, as before.
-    expect((adminRequests(m.server)('GET', '/api/admin/mail').body as { hasPassword: boolean }).hasPassword).toBe(true)
 
     await click(button(rowOf('mail.password'), ts.clearFor(ts.names['mail.password'])))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
@@ -118,10 +123,8 @@ describe('the secrets of a tenant', () => {
   })
 
   it('is replaced and cleared once the site allows the tenant its own sender', async () => {
-    m = await open((server) => {
-      adminRequests(server)('PUT', '/api/admin/tenants/0000000000/settings/mail.ownSender', {
-        siteRule: { value: true },
-      })
+    m = await open((fx) => {
+      fx.call('PUT', '/api/admin/tenants/0000000000/settings/mail.ownSender', { siteRule: { value: true } })
     })
     await settle(() => rowOf('mail.password', 'tenant') !== null, 'the tenant secrets')
     const row = () => rowOf('mail.password', 'tenant')!
@@ -134,16 +137,5 @@ describe('the secrets of a tenant', () => {
     await settle(() => row().textContent!.includes(ts.set), 'set')
     expect(writes()).toEqual(['PUT /api/admin/tenants/0000000000/secrets/mail.password'])
     expect(document.body.innerHTML).not.toContain('tenant-pass')
-  })
-
-  it('answers feature_off for a write the site has not allowed, and 404 for a secret a tenant cannot hold', async () => {
-    m = await open()
-    const admin = adminRequests(m.server)
-    expect(() => admin('PUT', '/api/admin/tenants/0000000000/secrets/mail.password', { value: 'x' })).toThrow(
-      /feature_off/,
-    )
-    expect(() => admin('PUT', '/api/admin/tenants/0000000000/secrets/captcha.secret', { value: 'x' })).toThrow(/404/)
-    expect(() => admin('PUT', '/api/admin/secrets/github.appKey', { value: 'x' })).toThrow(/409/)
-    expect(() => admin('PUT', '/api/admin/secrets/mail.password', {})).toThrow(/400/)
   })
 })

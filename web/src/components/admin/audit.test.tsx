@@ -3,14 +3,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tsec } from '@/i18n/security'
-import { click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 import { auditFiltersOf } from './AuditSection'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -30,7 +30,11 @@ const listCalls = () => m!.requests.filter((r) => r.method === 'GET' && r.url.st
 const lastList = () => listCalls().at(-1)?.url ?? ''
 
 async function open(path: string) {
-  m = await mount(routes, { entries: [path], signIn: true, server: { mode: 'accounts' } })
+  m = await mount(routes, {
+    entries: [path],
+    signIn: true,
+    fixtures: { mode: 'accounts', data: (d) => void (d.features['features.auditDownload'] = true) },
+  })
   await settle(() => q('#audit-kind') !== null && lastList() !== '', 'the audit log')
 }
 

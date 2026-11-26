@@ -10,7 +10,6 @@ import { memberRoutes } from './members.ts'
 import { notifyRoutes } from './notify.ts'
 import { remoteRoutes } from './remote.ts'
 import { settingsRoutes } from './settings.ts'
-import { spaceViewRoutes } from './spaceView.ts'
 
 export const areaRoutes: Route[] = [
   ...editorRoutes,
@@ -18,7 +17,6 @@ export const areaRoutes: Route[] = [
   ...memberRoutes,
   ...settingsRoutes,
   ...dailyRoutes,
-  ...spaceViewRoutes,
   ...notifyRoutes,
   ...connectionRoutes,
   ...remoteRoutes,

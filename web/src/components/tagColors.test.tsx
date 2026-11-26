@@ -12,7 +12,7 @@ import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { TAG_COLORS } from '@/lib/tagColors'
 import { t } from '@/i18n'
-import { byLabel, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { byLabel, click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { TagChip } from './TagChip'
 
 // The colour menu is built only when opened, so it is opened here: by the
@@ -21,7 +21,7 @@ import { TagChip } from './TagChip'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -68,7 +68,7 @@ describe('tag chips', () => {
     </Routes>
   )
   it('wear the colour the space gave the tag; a given colour wins, null forces none', async () => {
-    m = await mount(ui, { entries: ['/s/default/recent'], server: { mode: 'single' } })
+    m = await mount(ui, { entries: ['/s/default/recent'], fixtures: { mode: 'single' } })
     await settle(() => document.querySelector('[data-testid="colors"]')?.textContent !== '', 'colours loaded')
     const chips = [...document.querySelectorAll<HTMLElement>('span[data-tag-color], span.rounded-full')].filter((e) =>
       /随笔|日常/.test(e.textContent ?? ''),
@@ -96,7 +96,7 @@ describe('tag chips', () => {
           }
         />
       </Routes>,
-      { entries: ['/s/default/recent'], server: { mode: 'single' } },
+      { entries: ['/s/default/recent'], fixtures: { mode: 'single' } },
     )
     const chip = (name: string) =>
       [...document.querySelectorAll<HTMLElement>('span.rounded-full')].find((e) => e.textContent === name)!
@@ -122,7 +122,7 @@ describe('tag chips', () => {
           }
         />
       </Routes>,
-      { entries: ['/s/default/f/随笔'], server: { mode: 'single' } },
+      { entries: ['/s/default/f/随笔'], fixtures: { mode: 'single' } },
     )
     await settle(() => document.querySelector('[class*="tag-rose"]') !== null, 'coloured tag in the listing')
   })
@@ -130,14 +130,14 @@ describe('tag chips', () => {
 
 describe('the sidebar tags', () => {
   it('draw each tag in its colour', async () => {
-    m = await mount(sidebar, { entries: ['/s/default/recent'], server: { mode: 'single' } })
+    m = await mount(sidebar, { entries: ['/s/default/recent'], fixtures: { mode: 'single' } })
     await settle(() => tagLink('随笔') !== null && tagLink('随笔')!.className.includes('tag-rose'), 'rose tag')
     expect(tagLink('待办')!.className).toContain('tag-amber')
     expect(tagLink('日常')!.className).not.toMatch(/tag-/)
   })
 
   it('a right-click opens the colour menu: the ten colours, "custom" and "no colour"', async () => {
-    m = await mount(sidebar, { entries: ['/s/default/recent'], server: { mode: 'single' } })
+    m = await mount(sidebar, { entries: ['/s/default/recent'], fixtures: { mode: 'single' } })
     await settle(() => tagLink('日常') !== null, 'tags')
     await contextMenu(tagLink('日常')!)
     await settle(() => menuItems().length > 0, 'menu')
@@ -154,7 +154,7 @@ describe('the sidebar tags', () => {
   })
 
   it('choosing a colour sets it on the server and repaints the tag; "no colour" takes it off', async () => {
-    m = await mount(sidebar, { entries: ['/s/default/recent'], server: { mode: 'single' } })
+    m = await mount(sidebar, { entries: ['/s/default/recent'], fixtures: { mode: 'single' } })
     await settle(() => tagLink('日常') !== null, 'tags')
     await contextMenu(tagLink('日常')!)
     await settle(() => menuItems().length > 0, 'menu')
@@ -175,7 +175,7 @@ describe('the sidebar tags', () => {
   })
 
   it('Custom… opens a hex dialog; Apply sends the lower-case colour and the tag is tinted and marked', async () => {
-    m = await mount(sidebar, { entries: ['/s/default/recent'], server: { mode: 'single' } })
+    m = await mount(sidebar, { entries: ['/s/default/recent'], fixtures: { mode: 'single' } })
     await settle(() => tagLink('日常') !== null, 'tags')
     await contextMenu(tagLink('日常')!)
     await settle(() => menuItems().length > 0, 'menu')
@@ -204,33 +204,26 @@ describe('the sidebar tags', () => {
   })
 
   it('the "…" on a tag opens the same menu', async () => {
-    m = await mount(sidebar, { entries: ['/s/default/recent'], server: { mode: 'single' } })
+    m = await mount(sidebar, { entries: ['/s/default/recent'], fixtures: { mode: 'single' } })
     await settle(() => tagLink('日常') !== null, 'tags')
     await click(byLabel(t.tagColor.more('日常')))
     await settle(() => menuItems().length === 12, 'menu')
   })
 
   it('a failed change says so and leaves the colour', async () => {
-    m = await mount(sidebar, { entries: ['/s/default/recent'], server: { mode: 'single' } })
+    m = await mount(sidebar, { entries: ['/s/default/recent'], fixtures: { mode: 'single' } })
     await settle(() => tagLink('日常') !== null, 'tags')
     await contextMenu(tagLink('日常')!)
     await settle(() => menuItems().length > 0, 'menu')
-    const real = globalThis.fetch
-    globalThis.fetch = async (input, init) =>
-      init?.method === 'PUT'
-        ? new Response(JSON.stringify({ error: 'invalid', message: '不行' }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' },
-          })
-        : real(input, init)
+    // The server refuses the change.
+    m!.fx.fail('PUT', '/api/spaces/:space/tags/:tag', 400, { code: 'invalid', message: '不行' })
     await click(byLabel(t.tagColor.names.red))
     await settle(() => document.body.textContent!.includes(t.tagColor.failed), 'toast')
     expect(tagLink('日常')!.className).not.toMatch(/tag-/)
-    globalThis.fetch = real
   })
 
   it('with many tags there is a filter box, and the list scrolls by itself', async () => {
-    m = await mount(sidebar, { entries: ['/s/default/recent'], server: { mode: 'single' } })
+    m = await mount(sidebar, { entries: ['/s/default/recent'], fixtures: { mode: 'single' } })
     await settle(() => tagLink('随笔') !== null, 'tags')
     // A few tags: no filter box.
     expect(document.querySelector(`input[aria-label="${t.nav.filterTags}"]`)).toBeNull()

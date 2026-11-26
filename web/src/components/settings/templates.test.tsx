@@ -291,7 +291,7 @@ describe('the templates section: someone who manages the space', () => {
 describe('the templates section: what the server refuses', () => {
   it('says that a space has at most 200 templates, in words', async () => {
     await openSingle()
-    m!.fx.fail('PUT', '/api/spaces/default/templates/:name', 422, { code: 'template_limit' })
+    m!.fx.fail('PUT', '/api/spaces/default/templates/:name', 400, { code: 'template_limit' })
     await click(button(tt.settings.newTemplate))
     await type(field('template-name'), '多一个')
     await click(button(tt.settings.create))
@@ -301,7 +301,7 @@ describe('the templates section: what the server refuses', () => {
 
   it('says that a template is too large, in words', async () => {
     await openSingle()
-    m!.fx.fail('PUT', '/api/spaces/default/templates/:name', 413, { code: 'template_too_large' })
+    m!.fx.fail('PUT', '/api/spaces/default/templates/:name', 400, { code: 'template_too_large' })
     await click(button(tt.settings.newTemplate))
     await type(field('template-name'), '大')
     await type(field('template-body'), 'x'.repeat(257 * 1024))
@@ -316,7 +316,7 @@ describe('the templates section: what the server refuses', () => {
     const rev = listed().templates.find((x) => x.name === '会议')!.rev
     expect(m!.fx.call('DELETE', `/api/spaces/default/templates/会议?baseRev=${rev}`).status).toBe(204)
     // The server no longer has it, so setting it as the default is refused.
-    m!.fx.fail('PUT', '/api/spaces/default/templates/defaults', 404, { code: 'template_not_found' }, { times: 1 })
+    m!.fx.fail('PUT', '/api/spaces/default/templates/defaults', 400, { code: 'template_not_found' }, { times: 1 })
     await type(field('template-quick'), '会议')
     await settle(() => document.body.textContent!.includes(tt.errors.template_not_found), 'the message')
     // What the server has is read again: the box is back to what it was.

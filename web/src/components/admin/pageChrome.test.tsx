@@ -4,7 +4,7 @@ import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
-import { click, installDomShims, mount, settle, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // What every administration page shares: the title at its top, the brand and the version in the sidebar.
@@ -12,7 +12,7 @@ import { AdminGate } from './AdminGate'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -27,7 +27,7 @@ const routes = (
     </Routes>
   </SidebarProvider>
 )
-const open = (path: string) => mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: [path] })
+const open = (path: string) => mount(routes, { signIn: true, fixtures: { mode: 'accounts' }, entries: [path] })
 const header = () => document.querySelector<HTMLElement>('[data-slot="admin-page-header"]')
 
 describe('the page header', () => {
@@ -70,7 +70,7 @@ describe('the sidebar', () => {
     await click(document.querySelector('[data-slot="version-badge"]'))
     await settle(() => document.querySelector('[data-slot="popover-content"]') !== null, 'the popover')
     const text = document.querySelector('[data-slot="popover-content"]')!.textContent!
-    expect(text).toContain('mock')
+    expect(text).toContain('fixture')
     expect(text).toContain('3f9c2ab')
     expect(text).toContain(tc.version.commitTime)
     expect(text).toContain(Intl.DateTimeFormat().resolvedOptions().timeZone)

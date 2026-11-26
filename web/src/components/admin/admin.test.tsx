@@ -10,27 +10,17 @@ import { tp } from '@/i18n/people'
 import { tc } from '@/i18n/console'
 import { ta } from '@/i18n/admin'
 import { tg } from '@/i18n/manage'
-import {
-  adminRequests,
-  byLabel,
-  click,
-  installDomShims,
-  locationText,
-  makePerson,
-  mount,
-  PERSON_PASSWORD,
-  settle,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { byLabel, click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
+import type { FixtureData } from '@/api/fixtures/data/model'
+import { addPerson, addSpace } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
-// The administration pages, against the mock server.
+// The administration pages, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -76,7 +66,7 @@ async function openMenu(name: string) {
 
 describe('who can reach the administration', () => {
   it('an administrator of an accounts server has it: users and invites first, and /admin goes there', async () => {
-    m = await mount(routes, { entries: ['/admin'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/admin'], signIn: true, fixtures: { mode: 'accounts' } })
     await settle(() => locationText() === '/admin/users' && text().includes(tc.users.invite), 'users and invites')
     expect(heading()).toBe(tc.sections.users)
     expect(navLinks()).toEqual([
@@ -97,10 +87,12 @@ describe('who can reach the administration', () => {
 
   it('a member gets the page every unknown address gets, and nothing of the administration is asked for', async () => {
     // Nobody is signed in when the page opens; then a member signs in.
-    m = await mount(routes, { entries: ['/admin/spaces'], server: { mode: 'accounts' } })
-    const person = makePerson(m.server, 'carol')
+    m = await mount(routes, {
+      entries: ['/admin/spaces'],
+      fixtures: { mode: 'accounts', data: (d) => void addPerson(d, 'carol') },
+    })
     await act(async () => {
-      applySession(m!.qc, (await api.login({ username: person.username, password: PERSON_PASSWORD })).user)
+      applySession(m!.qc, (await api.login({ username: 'carol', password: 'a-long-password' })).user)
     })
     await settle(() => text().includes(t.notFound), 'not found')
     expect(heading()).toBeUndefined()
@@ -109,14 +101,14 @@ describe('who can reach the administration', () => {
   })
 
   it('a single-user server has no administration: the address is not found', async () => {
-    m = await mount(routes, { entries: ['/admin/spaces'], server: { mode: 'single' } })
+    m = await mount(routes, { entries: ['/admin/spaces'], fixtures: { mode: 'single' } })
     await settle(() => text().includes(t.notFound), 'not found')
     expect(heading()).toBeUndefined()
     expect(adminCalls()).toEqual([])
   })
 
   it('someone not signed in does not get it either', async () => {
-    m = await mount(routes, { entries: ['/admin'], server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/admin'], fixtures: { mode: 'accounts' } })
     await settle(() => text().includes(t.notFound), 'not found')
     expect(adminCalls()).toEqual([])
     markSignedIn()
@@ -124,22 +116,18 @@ describe('who can reach the administration', () => {
 })
 
 describe('all spaces', () => {
-  const open = (setup?: (server: Mounted['server']) => void) =>
+  const open = (setup?: (d: FixtureData) => void) =>
     mount(routes, {
-      entries: (server) => {
-        setup?.(server)
-        return ['/admin/spaces']
-      },
+      entries: ['/admin/spaces'],
       signIn: true,
-      // No limit on the number of spaces (--max-spaces 0): this page is about lists, not quotas.
-      server: { mode: 'accounts', maxSpaces: 0 },
+      fixtures: { mode: 'accounts', data: (d) => void setup?.(d) },
     })
 
   it('is a table with the owner, the members, a dash for a size not measured, sync and the state; personal spaces are marked', async () => {
-    m = await open((server) => {
-      const tang = makePerson(server, 'tang')
-      const id = (tang.request('POST', '/api/spaces', { name: '团队空间' }).body as { id: string }).id
-      tang.request('POST', `/api/spaces/${id}/members`, { username: 'admin', role: 'viewer' })
+    m = await open((d) => {
+      const tang = addPerson(d, 'tang')
+      addSpace(d, 'tang 的空间', { owner: tang, personal: true })
+      addSpace(d, '团队空间', { owner: tang, extra: { members: 2 } })
     })
     await settle(() => rows().length === 3, 'three spaces')
     const team = rowOf('团队空间')
@@ -165,6 +153,8 @@ describe('all spaces', () => {
     await settle(() => rows().length === 1, 'the personal space')
     const row = rows()[0]
     expect(row.textContent).toContain(ta.spaces.notMeasured)
+    // Measuring finds 2 KB in it.
+    m.fx.data.admin.spaceExtra[m.fx.data.spaces[0].info.id] = { sizeBytes: 2048, sizeAt: '2026-11-20T08:00:00Z' }
     await click(
       row.querySelector(
         `button[aria-label="${t.fmt.labelled(ta.spaces.measure, row.querySelector('th')!.textContent!.replace(ta.spaces.personal, ''))}"]`,
@@ -176,9 +166,8 @@ describe('all spaces', () => {
   })
 
   it("shows 50 at a time, pages on with next and previous, and the page size is the reader's own", async () => {
-    m = await open((server) => {
-      const admin = adminRequests(server)
-      for (let i = 1; i <= 55; i++) admin('POST', '/api/spaces', { name: `空间 ${String(i).padStart(2, '0')}` })
+    m = await open((d) => {
+      for (let i = 1; i <= 55; i++) addSpace(d, `空间 ${String(i).padStart(2, '0')}`)
     })
     await settle(() => rows().length === 50, 'the first page')
     expect(text()).toContain(tc.table.page(1))
@@ -203,9 +192,8 @@ describe('all spaces', () => {
   })
 
   it('searches by name once typing stops, and says when nothing matches', async () => {
-    m = await open((server) => {
-      const admin = adminRequests(server)
-      for (const name of ['苹果园', '苹果酱', '香蕉']) admin('POST', '/api/spaces', { name })
+    m = await open((d) => {
+      for (const name of ['苹果园', '苹果酱', '香蕉']) addSpace(d, name)
     })
     await settle(() => rows().length === 4, 'all spaces')
     const box = document.querySelector<HTMLInputElement>(`input[aria-label="${ta.spaces.search}"]`)!
@@ -218,11 +206,12 @@ describe('all spaces', () => {
 
   it('transfers ownership to a chosen user', async () => {
     let space = ''
-    m = await open((server) => {
-      makePerson(server, 'tang')
-      space = (adminRequests(server)('POST', '/api/spaces', { name: '转让' }).body as { id: string }).id
+    let tang = ''
+    m = await open((d) => {
+      tang = addPerson(d, 'tang').id
+      space = addSpace(d, '转让').info.id
     })
-    await settle(() => rows().length === 3, 'spaces')
+    await settle(() => rows().length === 2, 'spaces')
     await openMenu('转让')
     await click(menuItem(ta.spaces.transfer))
     await settle(() => document.querySelector('#transfer-to') !== null, 'the dialog')
@@ -239,15 +228,15 @@ describe('all spaces', () => {
     await click(confirm())
     await settle(() => rowOf('转让').textContent!.includes('名 tang'), 'the new owner')
     const sent = m.requests.find((r) => r.method === 'POST' && r.url === `/api/admin/spaces/${space}/transfer`)!
-    expect(JSON.parse(sent.body!)).toEqual({ userId: m.server.userId('tang') })
+    expect(JSON.parse(sent.body!)).toEqual({ userId: tang })
   })
 
   it('looks for the new owner by name on the server, never loading every user', async () => {
-    m = await open((server) => {
-      for (const name of ['tang', 'tangerine', 'mei']) makePerson(server, name)
-      adminRequests(server)('POST', '/api/spaces', { name: '转让' })
+    m = await open((d) => {
+      for (const name of ['tang', 'tangerine', 'mei']) addPerson(d, name)
+      addSpace(d, '转让')
     })
-    await settle(() => rows().length === 5, 'spaces')
+    await settle(() => rows().length === 2, 'spaces')
     await openMenu('转让')
     await click(menuItem(ta.spaces.transfer))
     await settle(() => document.querySelector('#transfer-search') !== null, 'the dialog')
@@ -279,7 +268,7 @@ describe('all spaces', () => {
   })
 
   it('disables a space after asking, and enables it again', async () => {
-    m = await open((server) => void adminRequests(server)('POST', '/api/spaces', { name: '停用我' }))
+    m = await open((d) => void addSpace(d, '停用我'))
     await settle(() => rows().length === 2, 'spaces')
     await openMenu('停用我')
     await click(menuItem(ta.spaces.disable))
@@ -298,7 +287,7 @@ describe('all spaces', () => {
   })
 
   it('deletes a space once its name is typed: it goes to the recycle bin, with the days it stays', async () => {
-    m = await open((server) => void adminRequests(server)('POST', '/api/spaces', { name: '删掉我' }))
+    m = await open((d) => void addSpace(d, '删掉我'))
     await settle(() => rows().length === 2, 'spaces')
     await openMenu('删掉我')
     await click(menuItem(tg.spaces.delete))
@@ -319,12 +308,12 @@ describe('all spaces', () => {
     await settle(() => text().includes(tg.del.space.deleted('删掉我')), 'the result')
     await click([...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === tg.bulk.close))
     await settle(() => rows().length === 1, 'the space is out of the table')
-    expect(m.server.manage.recycled().map((i) => i.name)).toEqual(['删掉我'])
+    expect(m.fx.data.admin.recycle.map((i) => i.space?.name)).toEqual(['删掉我'])
   })
 
   it('compares the typed name trimmed and normalised, and shows the name to copy', async () => {
     const name = 'Caf\u00e9'
-    m = await open((server) => void adminRequests(server)('POST', '/api/spaces', { name }))
+    m = await open((d) => void addSpace(d, name))
     await settle(() => rows().length === 2, 'spaces')
     await openMenu(name)
     await click(menuItem(tg.spaces.delete))
@@ -360,7 +349,7 @@ describe('all spaces', () => {
 
 describe('server status and users', () => {
   it('shows what the server says about itself', async () => {
-    m = await mount(routes, { entries: ['/admin/status'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/admin/status'], signIn: true, fixtures: { mode: 'accounts' } })
     await settle(() => text().includes(ta.status.goVersion), 'the status')
     const rows = Object.fromEntries(
       [...document.querySelectorAll('dl > div')].map((r) => [
@@ -368,7 +357,7 @@ describe('server status and users', () => {
         r.querySelector('dd')!.textContent,
       ]),
     )
-    expect(rows[ta.status.version]).toBe('mock')
+    expect(rows[ta.status.version]).toBe('fixture')
     expect(rows[ta.status.database]).toBe('sqlite')
     expect(rows[ta.status.spaces]).toBe('1')
     expect(rows[ta.status.users]).toBe('1')
@@ -377,7 +366,7 @@ describe('server status and users', () => {
   })
 
   it('users and invites are here: the list, the roles and the invite form', async () => {
-    m = await mount(routes, { entries: ['/admin/users'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/admin/users'], signIn: true, fixtures: { mode: 'accounts' } })
     await settle(() => text().includes(tc.users.invite), 'users')
     expect(text()).toContain('管理员')
     // The invites are a page of the section, with the form.

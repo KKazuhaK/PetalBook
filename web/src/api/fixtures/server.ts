@@ -16,11 +16,12 @@ import type { ErrorCode } from '../types.ts'
 import { createData, type FixtureData, type FixtureOptions } from './data/model.ts'
 import { isReply, match, Refusal, type Route } from './kit.ts'
 import type { Reply } from './kit.ts'
+import { adminRoutes } from './routes/admin.ts'
 import { authRoutes } from './routes/auth.ts'
 import { draftRoutes } from './routes/drafts.ts'
 import { fileRoutes } from './routes/files.ts'
 import { syncRoutes } from './routes/sync.ts'
-import { quietRoutes } from './routes/quiet.ts'
+import { checkRoutes } from './routes/check.ts'
 import { viewRoutes } from './routes/views.ts'
 import { areaRoutes } from './routes/area.ts'
 
@@ -52,7 +53,7 @@ export interface FixtureServer {
     method: string,
     path: string,
     status: number,
-    error: { code: ErrorCode; message?: string; [extra: string]: unknown },
+    error: { code: ErrorCode | (string & {}); message?: string; [extra: string]: unknown },
     opts?: { times?: number; headers?: Record<string, string> },
   ): void
   reply(method: string, path: string, body: unknown, opts?: { status?: number; times?: number }): void
@@ -67,8 +68,16 @@ export function createFixtureServer(options: FixtureOptions = {}): FixtureServer
   const data = createData({ ...options, now })
   const requests: Sent[] = []
   const overrides: Override[] = []
-  const routes: Route[] = [...authRoutes, ...fileRoutes, ...draftRoutes, ...viewRoutes, ...syncRoutes, ...quietRoutes]
-  routes.push(...areaRoutes)
+  const routes: Route[] = [
+    ...authRoutes,
+    ...fileRoutes,
+    ...draftRoutes,
+    ...viewRoutes,
+    ...syncRoutes,
+    ...checkRoutes,
+    ...areaRoutes,
+    ...adminRoutes,
+  ]
 
   function handle(
     method: string,
@@ -144,7 +153,7 @@ export function createFixtureServer(options: FixtureOptions = {}): FixtureServer
       method: string,
       path: string,
       status: number,
-      error: { code: ErrorCode; message?: string; [extra: string]: unknown },
+      error: { code: ErrorCode | (string & {}); message?: string; [extra: string]: unknown },
       opts: { times?: number; headers?: Record<string, string> } = {},
     ) {
       const { code, message, ...extra } = error

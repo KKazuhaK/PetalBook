@@ -9,10 +9,8 @@ import type {
   DailySettings,
   DailySpaceSource,
   Grant,
-  AdminViewState,
   ConnectionOwner,
   ConnectionRepo,
-  GroupSource,
   Identity,
   NotificationItem,
   Passkey,
@@ -35,14 +33,6 @@ export interface AccountData {
   tokens: ApiToken[]
   // null: the server has no authorization server, and the grants answer 404.
   grants: Grant[] | null
-}
-
-export interface GroupRec {
-  id: string
-  name: string
-  source: GroupSource
-  // User ids.
-  members: string[]
 }
 
 export interface DailyData {
@@ -85,12 +75,9 @@ export interface AreaData {
   remotes: Record<string, { remote: Remote | null; assets: AssetsRemote | null }>
   account: AccountData
   daily: DailyData
-  groups: GroupRec[]
   // The notifications of the signed-in person, and the preferences they keep.
   notifications: NotificationItem[]
   prefs: Record<string, unknown>
-  // The audited views an administrator has open, by space id.
-  views: Record<string, AdminViewState>
   // The people of a space and the groups in it, by space id. A space with no entry has the signed-in person alone, in
   // the role the space's info says.
   members: Record<string, { userId: string; role: SpaceRole }[]>
@@ -115,10 +102,8 @@ export function createArea(): AreaData {
       installations: [],
       githubSide: null,
     },
-    groups: [],
     notifications: [],
     prefs: {},
-    views: {},
     members: {},
     spaceGroups: {},
   }

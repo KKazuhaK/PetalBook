@@ -10,6 +10,7 @@ import type {
   PageMeta,
   PageType,
   PageTemplate,
+  Problem,
   Permission,
   SpaceRole,
   SavedView,
@@ -17,6 +18,7 @@ import type {
   SpaceInfo,
   TemplateDefaults,
 } from '../../types.ts'
+import { createAdminData, type AdminData } from './admin.ts'
 import { createArea, type AreaData } from './area.ts'
 import { DEMO_EMPTY_FOLDERS, DEMO_NAME, DEMO_PAGES, DEMO_TAG_COLORS } from './demo.ts'
 import { DEMO_SINGLE_USER, DEMO_ADMIN, SETUP_TOKEN, type UserRec } from './people.ts'
@@ -60,6 +62,8 @@ export interface SpaceData {
   settingsNotices: SettingsNotice[]
   // One signed-in person, so one draft per page.
   drafts: Record<string, DraftRec>
+  // What the server found wrong in the space (the check page lists them).
+  checks: Problem[]
   // The change feed: the epoch changes with a reindex; each write numbers the page it touched.
   feed: {
     epoch: string
@@ -130,6 +134,8 @@ export const DEFAULT_FEATURES: Record<string, boolean> = {
 export interface FixtureData {
   auth: AuthData
   features: Record<string, boolean>
+  // What the administration console reads (data/admin.ts).
+  admin: AdminData
   spaces: SpaceData[]
   // The person's account, the people and groups around it, and what the settings pages read.
   area: AreaData
@@ -186,6 +192,7 @@ export function emptySpace(info: Partial<SpaceInfo> & Pick<SpaceInfo, 'id' | 'na
     sourcePresets: null,
     settingsNotices: [],
     drafts: {},
+    checks: [],
     feed: { epoch: '00000000', seq: 0, floor: 0, seen: {}, gone: [] },
   }
 }
@@ -248,7 +255,7 @@ export function createData(options: FixtureOptions = {}): FixtureData {
       mode: options.mode ?? 'single',
       setup: options.setup ?? false,
       setupToken: SETUP_TOKEN,
-      users: options.setup ? [] : [user],
+      users: options.setup ? [] : [structuredClone(user)],
       signedIn: accounts ? (options.signedIn ? user.id : null) : user.id,
       hold: null,
       providers: options.providers ?? [],
@@ -262,6 +269,7 @@ export function createData(options: FixtureOptions = {}): FixtureData {
       consents: {},
     },
     features: { ...DEFAULT_FEATURES },
+    admin: createAdminData(now, user),
     spaces: [space],
     area: createArea(),
     counter: 0,

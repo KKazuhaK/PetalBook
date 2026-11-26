@@ -60,6 +60,9 @@ export const apiErrorsEn: ApiErrorTexts = {
   group_not_synced: 'This group is not synced from the sign-in service, so that cannot be set.',
   member_via_group: 'This person is a member through a group. Remove them from the group.',
   default_tenant: 'The default organisation cannot be changed that way.',
+  template_limit: 'A space has at most 200 templates. Delete one you do not use first.',
+  template_too_large: 'The template is too large: 256 KiB at most.',
+  template_not_found: 'That template does not exist. It may have just been deleted.',
   tenant_limit: 'The limit on organisations is reached.',
   feature_off: (p) =>
     p.feature

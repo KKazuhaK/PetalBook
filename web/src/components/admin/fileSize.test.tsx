@@ -2,7 +2,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Route, Routes } from 'react-router'
-import { ApiError, api, spaceApi } from '@/api/client'
+import { ApiError, spaceApi } from '@/api/client'
 import type { DraftInput, DraftReceipt, Page } from '@/api/types'
 import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { SidebarProvider } from '@/components/ui/sidebar'
@@ -12,7 +12,8 @@ import { tg } from '@/i18n/manage'
 import { tt } from '@/i18n/tenants'
 import { fileTooLargeText } from '@/lib/fileTooLarge'
 import { failureText } from '@/lib/failure'
-import { adminRequests, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
+import { asTenantAdmin } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
 // files.maxBytes: the tenant's setting in the settings page, the refusal 413 file_too_large and what is said of it, and
@@ -21,7 +22,7 @@ import { AdminGate } from './AdminGate'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -123,7 +124,7 @@ describe('a save that is refused for its size', () => {
   })
 })
 
-describe("the mock server refuses over the tenant's limit, and the setting is in the settings page", () => {
+describe("the tenant's limit is in the settings page, and the refusal over it reaches the app with its numbers", () => {
   const routes = (
     <SidebarProvider>
       <Routes>
@@ -131,22 +132,24 @@ describe("the mock server refuses over the tenant's limit, and the setting is in
       </Routes>
     </SidebarProvider>
   )
-  const asTenantAdmin = (server: Mounted['server']) => {
-    const admin = adminRequests(server)
-    makePerson(server, 'second', 'admin')
-    const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
-      (u) => u.username === 'admin',
-    )!
-    admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
-  }
   const rowOf = (key: string) => document.querySelector<HTMLElement>(`[data-slot="setting-row"][data-key="${key}"]`)!
   const text = () => document.body.textContent ?? ''
 
-  it('lets a tenant administrator set it up to the ceiling, and refuses a value above it', async () => {
+  it('lets a tenant administrator set it up to the ceiling, and shows the refusal of a value above it', async () => {
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts', maxUpload: 10 * 1024 * 1024 },
-      entries: (s) => (asTenantAdmin(s), ['/admin/settings']),
+      fixtures: { mode: 'accounts', data: asTenantAdmin },
+      // The server refuses a value above the site's ceiling, once.
+      entries: (fx) => {
+        fx.fail(
+          'PUT',
+          '/api/admin/tenants/:id/settings/files.maxBytes',
+          409,
+          { code: 'setting_restricted' },
+          { times: 1 },
+        )
+        return ['/admin/settings']
+      },
     })
     await settle(() => rowOf('files.maxBytes') !== null, 'the setting')
     const row = rowOf('files.maxBytes')
@@ -167,36 +170,51 @@ describe("the mock server refuses over the tenant's limit, and the setting is in
     )
     await click([...row.querySelectorAll('button')].find((b) => b.textContent === tt.settings.save))
     await settle(() => row.textContent!.includes(tt.settings.saved), 'saved')
-    // What the app is told it may upload follows the tenant's value.
-    expect((await api.meta()).maxUpload).toBe(2048)
+    const puts = m.requests.filter((r) => r.method === 'PUT' && r.url.endsWith('/settings/files.maxBytes'))
+    expect(JSON.parse(puts.at(-1)!.body!)).toMatchObject({ value: 2048 })
     // The recycle days are the site's: a tenant administrator is not offered them.
     expect(text()).not.toContain(tt.settings.names['recycle.days'])
   })
 
-  it('refuses a page, a draft and an upload over the limit with 413 and the numbers, and a smaller write of an over-limit page', async () => {
-    m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: ['/admin/settings'] })
-    const admin = adminRequests(m.server)
-    const tenant = (admin('GET', '/api/session').body as { user: { tenant: { id: string } } }).user.tenant.id
-    admin('PUT', `/api/admin/tenants/${tenant}/settings/files.maxBytes`, { value: 1024 })
-    const space = m.server.spaceIds()[0]
+  it('carries the limit, the size and the name of what was refused to the page, the draft and the upload', async () => {
+    m = await mount(routes, { signIn: true, fixtures: { mode: 'accounts' }, entries: ['/admin/settings'] })
+    const space = m.fx.data.spaces[0].info.id
     const pagesApi = spaceApi(space)
+    const small = await pagesApi.createPage({ meta: { title: '小页' }, body: 'x' })
+    // The server refuses what is over the tenant's limit (1 KB) with 413 and the numbers.
+    m.fx.fail('POST', '/api/spaces/:space/pages', 413, {
+      code: 'file_too_large',
+      limit: 1024,
+      size: 2000,
+      name: '大页',
+    })
+    m.fx.fail('PUT', '/api/spaces/:space/pages/:id', 413, {
+      code: 'file_too_large',
+      limit: 1024,
+      size: 2000,
+      name: '小页',
+    })
+    m.fx.fail('POST', '/api/spaces/:space/pages/:id/assets', 413, {
+      code: 'file_too_large',
+      limit: 1024,
+      size: 2000,
+      name: 'big.bin',
+    })
     const refused = await pagesApi
       .createPage({ meta: { title: '大页' }, body: 'x'.repeat(2000) })
       .catch((e: unknown) => e as ApiError)
     expect(refused).toBeInstanceOf(ApiError)
     expect([(refused as ApiError).status, (refused as ApiError).code]).toEqual([413, 'file_too_large'])
-    expect((refused as ApiError).body).toMatchObject({ limit: 1024, name: '大页' })
-    expect((refused as ApiError).body).toHaveProperty('size')
-    const small = await pagesApi.createPage({ meta: { title: '小页' }, body: 'x' })
+    expect((refused as ApiError).body).toMatchObject({ limit: 1024, size: 2000, name: '大页' })
     const grow = await pagesApi
       .savePage(small.id, { baseRev: small.rev, meta: small.meta, body: 'y'.repeat(2000) })
       .catch((e: unknown) => e as ApiError)
     expect((grow as ApiError).code).toBe('file_too_large')
+    expect((grow as ApiError).body).toMatchObject({ limit: 1024, size: 2000 })
     const upload = await pagesApi
       .uploadAsset(small.id, new Blob([new Uint8Array(2000)]), 'big.bin')
       .catch((e: unknown) => e as ApiError)
     expect([(upload as ApiError).status, (upload as ApiError).code]).toEqual([413, 'file_too_large'])
     expect((upload as ApiError).body).toMatchObject({ limit: 1024, size: 2000, name: 'big.bin' })
-    expect((await pagesApi.uploadAsset(small.id, new Blob([new Uint8Array(100)]), 'ok.bin')).path).toContain('ok')
   })
 })

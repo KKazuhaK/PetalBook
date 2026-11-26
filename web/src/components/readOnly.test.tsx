@@ -11,16 +11,9 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import PageEditor from '@/pages/PageEditor'
 import { FolderList } from '@/pages/Lists'
 import { t } from '@/i18n'
-import {
-  adminRequests,
-  byLabel,
-  click,
-  installDomShims,
-  mount,
-  settle,
-  shareSpace,
-  type Mounted,
-} from '@/testing/harness'
+import { byLabel, click, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
+import { sharedSpace } from '@/api/fixtures/data/model'
+import { addPage } from '@/testing/adminScene'
 
 // Without the `write` permission nothing that changes the space is offered: the
 // controls are not there (not merely disabled), and the editor will not type.
@@ -36,7 +29,7 @@ beforeAll(() => {
 })
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -63,17 +56,18 @@ const shell = (
 )
 
 type Role = 'owner' | 'editor' | 'viewer'
+// The id the fixture gives the first space that somebody else owns.
+const SHARED = '01FSHARE1'
 
 // The space of someone else, with a tagged page in it, and the signed-in administrator in `role`.
 async function openList(role: Role) {
   m = await mount(shell, {
     signIn: true,
-    server: { mode: 'accounts' },
-    entries: (server) => {
-      const { space, owner } = shareSpace(server, role)
-      owner.request('POST', `/api/spaces/${space}/pages`, { meta: { title: '共享页', tags: ['蓝'] }, body: '正文\n' })
-      return [`/s/${space}/f`]
+    fixtures: {
+      mode: 'accounts',
+      data: (d) => void addPage(sharedSpace(d, role), '共享页', '正文\n', { tags: ['蓝'] }),
     },
+    entries: [`/s/${SHARED}/f`],
   })
   await settle(
     () => document.body.textContent?.includes('共享页') === true && document.querySelector('[role="list"] a') !== null,
@@ -147,17 +141,11 @@ describe('the file list and the sidebar', () => {
 
 describe('the page editor', () => {
   async function openPage(role: Role) {
-    let path = ''
+    let pageId = ''
     m = await mount(null, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const { space, owner } = shareSpace(server, role)
-        const page = owner.request('POST', `/api/spaces/${space}/pages`, { meta: { title: '共享页' }, body: '正文' })
-          .body as { id: string }
-        path = `/s/${space}/p/${page.id}`
-        return [path]
-      },
+      fixtures: { mode: 'accounts', data: (d) => void (pageId = addPage(sharedSpace(d, role), '共享页', '正文')) },
+      entries: () => [`/s/${SHARED}/p/${pageId}`],
       routes: [
         {
           path: '/s/:space/p/:id',
@@ -226,30 +214,28 @@ describe('the page editor', () => {
 
 describe('gaining write while a page is open', () => {
   it('keeps the draft this person has, and offers it as on any open', async () => {
-    let space = ''
     let pageId = ''
-    let owner!: ReturnType<typeof shareSpace>['owner']
     let adminId = ''
     m = await mount(null, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const shared = shareSpace(server, 'viewer')
-        space = shared.space
-        owner = shared.owner
-        const page = owner.request('POST', `/api/spaces/${space}/pages`, { meta: { title: '共享页' }, body: '正文' })
-          .body as { id: string; rev: string }
-        pageId = page.id
-        adminId = (adminRequests(server)('GET', '/api/session').body as { user: { id: string } }).user.id
+      fixtures: {
+        mode: 'accounts',
+        data: (d) => {
+          pageId = addPage(sharedSpace(d, 'viewer'), '共享页', '正文')
+          adminId = d.auth.users[0].id
+        },
+      },
+      entries: (fx) => {
+        const page = fx.on(SHARED)('GET', `/pages/${pageId}`).body as { rev: string }
         // What this browser kept from when the person could write.
-        saveDraft(draftRef(adminId, space, pageId), {
+        saveDraft(draftRef(adminId, SHARED, pageId), {
           baseRev: page.rev,
           fields: { title: '共享页', subtitle: '', source: [], tags: [] },
           bodyText: '我的草稿',
           savedAt: Date.now(),
           token: 'tok-1',
         })
-        return [`/s/${space}/p/${pageId}`]
+        return [`/s/${SHARED}/p/${pageId}`]
       },
       routes: [
         {
@@ -271,10 +257,13 @@ describe('gaining write while a page is open', () => {
       () => editable() === 'false' && document.body.textContent?.includes('正文') === true,
       'the page as a viewer',
     )
-    const admin = adminRequests(m.server)
-    expect(loadDraft(draftRef(adminId, space, pageId))?.bodyText).toBe('我的草稿')
+    expect(loadDraft(draftRef(adminId, SHARED, pageId))?.bodyText).toBe('我的草稿')
 
-    owner.request('PATCH', `/api/spaces/${space}/members/${adminId}`, { role: 'editor' })
+    // The owner makes this person an editor of the space: the server says so in their list of spaces.
+    const space = m.fx.data.spaces.find((s) => s.info.id === SHARED)!
+    space.info.role = 'editor'
+    space.info.directRole = 'editor'
+    space.info.permissions = ['read', 'write']
     await act(async () => {
       await m!.qc.invalidateQueries({ queryKey: keys.spaces })
     })
@@ -283,9 +272,9 @@ describe('gaining write while a page is open', () => {
     await settle(() => document.body.textContent?.includes('我的草稿') === true, 'the draft is shown')
     await settle(
       () =>
-        (
-          admin('GET', `/api/spaces/${space}/pages/${pageId}`).body as { draft?: { body: string } }
-        ).draft?.body.includes('我的草稿') === true,
+        (m!.fx.on(SHARED)('GET', `/pages/${pageId}`).body as { draft?: { body: string } }).draft?.body.includes(
+          '我的草稿',
+        ) === true,
       'the draft reaches the server',
     )
     expect(m.requests.some((r) => r.method === 'DELETE' && r.url.includes('/draft'))).toBe(false)

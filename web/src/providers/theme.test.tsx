@@ -2,7 +2,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { t } from '@/i18n'
-import { click, installDomShims, mount, settle, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
 
 beforeAll(installDomShims)
 beforeEach(() => {
@@ -44,12 +44,12 @@ describe('the palette', () => {
 })
 
 describe('the small theme toggle', () => {
-  let m: Mounted | undefined
+  let m: FxMounted | undefined
   afterEach(async () => {
     await m?.unmount()
   })
   it('opens with light, dark and system, and choosing one is remembered', async () => {
-    m = await mount(<ThemeToggle />)
+    m = await mount(<ThemeToggle />, { fixtures: true })
     await click(document.querySelector(`[aria-label="${t.theme.toggle}"]`))
     await settle(() => document.querySelectorAll('[role="menuitemradio"]').length === 3, 'menu')
     expect([...document.querySelectorAll('[role="menuitemradio"]')].map((e) => e.textContent?.trim())).toEqual([

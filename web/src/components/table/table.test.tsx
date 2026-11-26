@@ -2,7 +2,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import { sharedSpace } from '@/api/fixtures/data/model'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { FolderList } from '@/pages/Lists'
 import { FileOpsProvider } from '@/components/files/FileOps'
 import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
@@ -18,18 +19,17 @@ import {
   mount,
   press,
   settle,
-  shareSpace,
   type,
-  type Mounted,
+  type FxMounted,
 } from '@/testing/harness'
 import { columnsOf, nextSort, tableSortOf } from './TableView'
 
-// The table view of a folder that has a type, against the mock server.
+// The table view of a folder that has a type, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -53,17 +53,12 @@ const shell = (
   </SidebarProvider>
 )
 
-const json = 'application/json'
 type Send = (method: string, path: string, body?: unknown) => { status: number; body: any }
-const sender =
-  (server: MockServer): Send =>
-  (method, path, body) =>
-    server.handle(
-      method,
-      `/api/spaces/default${path}`,
-      body === undefined ? undefined : JSON.stringify(body),
-      json,
-    ) as { status: number; body: any }
+// Requests on the default space, made behind the page's back.
+const sender = (fx: FixtureServer): Send => fx.on()
+// The page as the server holds it now.
+const peek = (id: string) =>
+  m!.fx.on()('GET', `/pages/${id}`).body as { meta: Record<string, unknown>; rev: string; body: string }
 
 const TASK = {
   title: '任务',
@@ -78,7 +73,7 @@ const TASK = {
 }
 
 // A typed folder `Work` with four pages, and an untyped one, as the single-user server has them.
-function seed(server: MockServer) {
+function seed(server: FixtureServer) {
   const send = sender(server)
   send('PUT', '/types/task', TASK)
   send('POST', '/folders', { path: 'Work' })
@@ -96,9 +91,13 @@ function seed(server: MockServer) {
   }
 }
 
-async function openWork(options: { server?: Parameters<typeof mount>[1] } = {}) {
+async function openWork(options: { server?: { delay?: (method: string, url: string) => number } } = {}) {
   let ids: ReturnType<typeof seed> | undefined
-  m = await mount(shell, { entries: (server) => ((ids = seed(server)), ['/s/default/f/Work']), ...options.server })
+  m = await mount(shell, {
+    fixtures: true,
+    entries: (server) => ((ids = seed(server)), ['/s/default/f/Work']),
+    ...options.server,
+  })
   await settle(() => byLabel(t.view.list) !== null, 'the listing')
   return ids!
 }
@@ -123,12 +122,12 @@ const patches = () => m!.requests.filter((r) => r.method === 'PATCH')
 
 describe('the table option', () => {
   it('is offered for a folder that has a type, and not for one that has none', async () => {
-    m = await mount(shell, { entries: (server) => (seed(server), ['/s/default/f/Work']) })
+    m = await mount(shell, { fixtures: true, entries: (server) => (seed(server), ['/s/default/f/Work']) })
     await settle(() => byLabel(t.view.list) !== null, 'the listing')
     await settle(() => byLabel(t.view.table) !== null, 'the table option')
     await m.unmount()
     m = undefined
-    m = await mount(shell, { entries: (server) => (seed(server), ['/s/default/f/随笔']) })
+    m = await mount(shell, { fixtures: true, entries: (server) => (seed(server), ['/s/default/f/随笔']) })
     await settle(
       () => byLabel(t.view.list) !== null && document.querySelector('[data-file-key^="p:"]') !== null,
       'the listing',
@@ -139,6 +138,7 @@ describe('the table option', () => {
 
   it('is offered below a bound folder, which inherits the type', async () => {
     m = await mount(shell, {
+      fixtures: true,
       entries: (server) => {
         seed(server)
         sender(server)('POST', '/folders', { path: 'Work/Sub' })
@@ -160,7 +160,7 @@ describe('the table option', () => {
     // The next visit starts in the table, and the plain list is not read at all.
     await m!.unmount()
     m = undefined
-    m = await mount(shell, { entries: (server) => (seed(server), ['/s/default/f/Work']) })
+    m = await mount(shell, { fixtures: true, entries: (server) => (seed(server), ['/s/default/f/Work']) })
     await settle(() => document.querySelectorAll('[data-row]').length === 4, 'the table at once')
     expect(listRequests().every((r) => r.url.includes('props=1'))).toBe(true)
     // Another folder keeps its own choice.
@@ -169,7 +169,7 @@ describe('the table option', () => {
 
   it('is not used for a folder that lost its type: the list shows', async () => {
     localStorage.setItem(viewKey('default', 'folder', '随笔'), 'table')
-    m = await mount(shell, { entries: (server) => (seed(server), ['/s/default/f/随笔']) })
+    m = await mount(shell, { fixtures: true, entries: (server) => (seed(server), ['/s/default/f/随笔']) })
     await settle(() => document.querySelector('[data-file-key^="p:"]') !== null, 'the list')
     expect(document.querySelector('[data-slot="table-view"]')).toBeNull()
   })
@@ -209,6 +209,7 @@ describe('the table', () => {
 
   it('marks a value that does not fit its field, and keeps it', async () => {
     m = await mount(shell, {
+      fixtures: true,
       entries: (server) => {
         seed(server)
         sender(server)('POST', '/pages', { folder: 'Work', meta: { title: 'E', status: 'dropped', points: 'lots' } })
@@ -324,9 +325,9 @@ describe('editing a cell', () => {
     const sent = JSON.parse(patches()[0].body!)
     expect(patches()[0].url).toContain(`/pages/${ids.B.id}/props`)
     expect(sent).toEqual({ baseRev: ids.B.rev, set: { status: 'done' } })
-    await settle(() => m!.server.peek(ids.B.id)!.meta.status === 'done', 'the file')
+    await settle(() => peek(ids.B.id).meta.status === 'done', 'the file')
     expect((cell('B', 'f:status').querySelector('select') as HTMLSelectElement).value).toBe('done')
-    const afterFirst = m!.server.peek(ids.B.id)!.rev
+    const afterFirst = peek(ids.B.id).rev
     expect(afterFirst).not.toBe(ids.B.rev)
     // The next change uses the rev the answer brought: no 409.
     await settle(() => !cell('B', 'f:points').querySelector('input')!.hasAttribute('readonly'), 'the row free again')
@@ -336,13 +337,13 @@ describe('editing a cell', () => {
     await press(points(), 'Enter')
     await settle(() => patches().length === 2, 'the second request')
     expect(JSON.parse(patches()[1].body!)).toEqual({ baseRev: afterFirst, set: { points: 20 } })
-    await settle(() => m!.server.peek(ids.B.id)!.meta.points === 20, 'the number')
+    await settle(() => peek(ids.B.id).meta.points === 20, 'the number')
     expect(patches().every((p) => p.method === 'PATCH')).toBe(true)
     // The table itself was not read again.
     await new Promise((r) => setTimeout(r, 50))
     expect(tableReads()).toBe(before)
     // The page's other keys, its title and its text, were left alone.
-    expect(m!.server.peek(ids.B.id)).toMatchObject({
+    expect(peek(ids.B.id)).toMatchObject({
       body: 'B 正文\n',
       meta: { title: 'B', status: 'done', due: '2026-01-01', labels: ['b', 'a'] },
     })
@@ -363,7 +364,7 @@ describe('editing a cell', () => {
     await blur()
     await settle(() => patches().length === 1, 'the request when the cell is left')
     expect(JSON.parse(patches()[0].body!)).toEqual({ baseRev: ids.C.rev, set: { points: 12.55 } })
-    await settle(() => m!.server.peek(ids.C.id)!.meta.points === 12.55, 'the number')
+    await settle(() => peek(ids.C.id).meta.points === 12.55, 'the number')
     await settle(() => !points().hasAttribute('readonly'), 'the row free again')
     // Enter commits too.
     await focus()
@@ -371,10 +372,7 @@ describe('editing a cell', () => {
     await press(points(), 'Enter')
     await settle(() => patches().length === 2, 'the request for Enter')
     expect(JSON.parse(patches()[1].body!).set).toEqual({ points: 3 })
-    await settle(
-      () => m!.server.peek(ids.C.id)!.meta.points === 3 && !points().hasAttribute('readonly'),
-      'the second number',
-    )
+    await settle(() => peek(ids.C.id).meta.points === 3 && !points().hasAttribute('readonly'), 'the second number')
     // Escape drops what was typed and keeps the value.
     await focus()
     await type(points(), '99')
@@ -404,6 +402,7 @@ describe('editing a cell', () => {
     // Made behind the table's back: an object where a number goes, cut text, a list that lost an element.
     const long = '字'.repeat(301)
     m = await mount(shell, {
+      fixtures: true,
       entries: (server) => {
         seed(server)
         const made = sender(server)('POST', '/pages', {
@@ -439,9 +438,9 @@ describe('editing a cell', () => {
     const ids = await openWork()
     await showTable()
     await type(cell('C', 'f:due').querySelector('input')!, '2026-05-05')
-    await settle(() => m!.server.peek(ids.C.id)!.meta.due === '2026-05-05', 'the date')
+    await settle(() => peek(ids.C.id).meta.due === '2026-05-05', 'the date')
     await click(cell('C', 'f:done').querySelector('input'))
-    await settle(() => m!.server.peek(ids.C.id)!.meta.done === true, 'the checkbox')
+    await settle(() => peek(ids.C.id).meta.done === true, 'the checkbox')
     await click(cell('C', 'f:labels').querySelector('button'))
     await settle(() => document.querySelector('[data-slot="popover-content"]') !== null, 'the choices')
     await click(
@@ -449,9 +448,9 @@ describe('editing a cell', () => {
         (i) => i.closest('label')!.textContent === 'c',
       ),
     )
-    await settle(() => JSON.stringify(m!.server.peek(ids.C.id)!.meta.labels) === '["c"]', 'the list')
+    await settle(() => JSON.stringify(peek(ids.C.id).meta.labels) === '["c"]', 'the list')
     await type(cell('C', 'f:status').querySelector('select')!, '')
-    await settle(() => !('status' in m!.server.peek(ids.C.id)!.meta), 'the key removed')
+    await settle(() => !('status' in peek(ids.C.id).meta), 'the key removed')
     expect(JSON.parse(patches().at(-1)!.body!)).toMatchObject({ unset: ['status'] })
   })
 
@@ -459,7 +458,7 @@ describe('editing a cell', () => {
     const ids = await openWork()
     await showTable()
     // Someone else changed B after the table was read.
-    const other = sender(m!.server)('PATCH', `/pages/${ids.B.id}/props`, {
+    const other = sender(m!.fx)('PATCH', `/pages/${ids.B.id}/props`, {
       baseRev: ids.B.rev,
       set: { status: 'doing' },
     })
@@ -467,31 +466,32 @@ describe('editing a cell', () => {
     await type(cell('B', 'f:status').querySelector('select')!, 'done')
     await settle(() => document.body.textContent!.includes(tp.table.conflict('B')), 'the message')
     // Nothing of the edit was applied, and the row shows what the server has.
-    expect(m!.server.peek(ids.B.id)!.meta.status).toBe('doing')
+    expect(peek(ids.B.id).meta.status).toBe('doing')
     await settle(
       () => (cell('B', 'f:status').querySelector('select') as HTMLSelectElement).value === 'doing',
       'the row refreshed',
     )
     // The row has the new rev: the same edit made again goes through.
     await type(cell('B', 'f:status').querySelector('select')!, 'done')
-    await settle(() => m!.server.peek(ids.B.id)!.meta.status === 'done', 'the second try')
+    await settle(() => peek(ids.B.id).meta.status === 'done', 'the second try')
   })
 
   it('of two rows edited in a row frees both when the answers come, and tells of the one that failed', async () => {
     let ids: ReturnType<typeof seed> | undefined
     m = await mount(shell, {
+      fixtures: true,
       entries: (server) => ((ids = seed(server)), ['/s/default/f/Work']),
       delay: (method) => (method === 'PATCH' ? 300 : 0),
     })
     await settle(() => byLabel(t.view.list) !== null, 'the listing')
     await showTable()
     // B was changed elsewhere, so its edit is refused; C is edited before B has been answered.
-    sender(m!.server)('PATCH', `/pages/${ids!.B.id}/props`, { baseRev: ids!.B.rev, set: { status: 'doing' } })
+    sender(m!.fx)('PATCH', `/pages/${ids!.B.id}/props`, { baseRev: ids!.B.rev, set: { status: 'doing' } })
     await type(cell('B', 'f:status').querySelector('select')!, 'done')
     await type(cell('C', 'f:status').querySelector('select')!, 'todo')
     await settle(() => patches().length === 2, 'both requests')
     await settle(() => document.body.textContent!.includes(tp.table.conflict('B')), 'the message for B')
-    await settle(() => m!.server.peek(ids!.C.id)!.meta.status === 'todo', 'C changed')
+    await settle(() => peek(ids!.C.id).meta.status === 'todo', 'C changed')
     await settle(
       () =>
         [...document.querySelectorAll('[data-row] [aria-busy="true"], [data-row][aria-busy="true"]')].length === 0 &&
@@ -503,18 +503,21 @@ describe('editing a cell', () => {
   it('cannot be done by someone who may only read: the values are text, and nothing is sent', async () => {
     m = await mount(shell, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const { space, owner } = shareSpace(server, 'viewer')
-        owner.request('PUT', `/api/spaces/${space}/types/task`, TASK)
-        owner.request('POST', `/api/spaces/${space}/folders`, { path: 'Work' })
-        owner.request('PUT', `/api/spaces/${space}/folders/type`, { folder: 'Work', type: 'task' })
-        owner.request('POST', `/api/spaces/${space}/pages`, {
+      fixtures: {
+        mode: 'accounts',
+        data: (d) => void sharedSpace(d, 'viewer'),
+      },
+      entries: (fx) => {
+        const owner = fx.on('01FSHARE1')
+        owner('PUT', '/types/task', TASK)
+        owner('POST', '/folders', { path: 'Work' })
+        owner('PUT', '/folders/type', { folder: 'Work', type: 'task' })
+        owner('POST', '/pages', {
           folder: 'Work',
           meta: { title: 'A', status: 'done', points: 5, done: true, labels: ['a'] },
           body: '',
         })
-        return [`/s/${space}/f/Work`]
+        return ['/s/01FSHARE1/f/Work']
       },
     })
     await settle(() => byLabel(t.view.table) !== null, 'the option')
@@ -533,6 +536,7 @@ describe('a long folder', () => {
 
   it('is read a hundred rows at a time as the table is scrolled, and only the rows in view are drawn', async () => {
     m = await mount(shell, {
+      fixtures: true,
       entries: (server) => {
         const send = sender(server)
         send('PUT', '/types/task', TASK)
