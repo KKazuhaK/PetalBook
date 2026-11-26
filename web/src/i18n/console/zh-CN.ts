@@ -86,7 +86,7 @@ export const consoleZhCN = {
     view: '查看',
     more: '更多操作',
     actions: '操作',
-    hiddenNarrow: (n: number) => `屏幕太窄，已先收起 ${n} 列；你选择显示的列会保留并可横向滑动；可在表格设置里调整。`,
+    hiddenNarrow: (n: number) => `屏幕太窄，已收起 ${n} 列。你选择显示的列会保留，可左右滑动查看；可在表格设置里调整。`,
   },
   users: {
     search: '搜索用户',
