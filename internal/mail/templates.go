@@ -11,6 +11,7 @@ import (
 // The kinds of message the server sends.
 const (
 	KindVerify       = "verify"
+	KindEmailClaim   = "email_claim" // verify, for an address another account holds unverified
 	KindRegister     = "register"
 	KindRegisterDup  = "register_exists"
 	KindReset        = "reset"
@@ -28,6 +29,7 @@ const (
 // Vars are what a template may use.
 type Vars struct {
 	Site     string // the host of the public address
+	Name     string // the account's display name, beside its username
 	Username string
 	Email    string
 	Link     string
@@ -99,11 +101,28 @@ func templates(kind, lang string, v Vars) body {
 	return en(kind, v)
 }
 
+// account names the account a verification link is for: "Name (username)".
+func account(v Vars) string {
+	switch {
+	case v.Name != "" && v.Name != v.Username && v.Username != "":
+		return fmt.Sprintf("%s (%s)", v.Name, v.Username)
+	case v.Username != "":
+		return v.Username
+	}
+	return v.Name
+}
+
 func en(kind string, v Vars) body {
 	ignore := "If you did not ask for this, you can ignore this message; nothing was changed."
 	switch kind {
 	case KindVerify:
-		return body{subject: "Confirm your email address", paras: []string{fmt.Sprintf("Follow this link to confirm that %s is your address on %s. It works once and for %d hours.", v.Email, v.Site, v.Hours)}, link: v.Link, foot: ignore}
+		para := fmt.Sprintf("Follow this link to confirm that %s is your address on %s. It works once and for %d hours.", v.Email, v.Site, v.Hours)
+		if a := account(v); a != "" {
+			para = fmt.Sprintf("Follow this link to confirm that %s is your address on %s, for the account %s. It works once and for %d hours.", v.Email, v.Site, a, v.Hours)
+		}
+		return body{subject: "Confirm your email address", paras: []string{para}, link: v.Link, foot: ignore}
+	case KindEmailClaim:
+		return body{subject: "Confirm adding this address to an account", paras: []string{fmt.Sprintf("Someone asked to add %s to the account %s on %s. Follow this link to confirm that it is yours: it is then added to that account, and if another account has it without having confirmed it, it is moved away from that account. It works once and for %d hours.", v.Email, account(v), v.Site, v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegister:
 		return body{subject: "Confirm your registration", paras: []string{fmt.Sprintf("Follow this link to finish making your account %q on %s. It works once and for %d hours.", v.Username, v.Site, v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegisterDup:
@@ -131,7 +150,13 @@ func zh(kind string, v Vars) body {
 	ignore := "如果不是你本人要的，忽略这封信即可，什么都没有改动。"
 	switch kind {
 	case KindVerify:
-		return body{subject: "确认你的邮箱地址", paras: []string{fmt.Sprintf("点开下面的链接，确认 %s 是你在 %s 上的邮箱。链接只能用一次，%d 小时内有效。", v.Email, v.Site, v.Hours)}, link: v.Link, foot: ignore}
+		para := fmt.Sprintf("点开下面的链接，确认 %s 是你在 %s 上的邮箱。链接只能用一次，%d 小时内有效。", v.Email, v.Site, v.Hours)
+		if a := account(v); a != "" {
+			para = fmt.Sprintf("点开下面的链接，确认 %s 是你在 %s 上的邮箱，对应账号 %s。链接只能用一次，%d 小时内有效。", v.Email, v.Site, a, v.Hours)
+		}
+		return body{subject: "确认你的邮箱地址", paras: []string{para}, link: v.Link, foot: ignore}
+	case KindEmailClaim:
+		return body{subject: "确认把这个邮箱加到账号", paras: []string{fmt.Sprintf("有人要把 %s 加到 %s 上的账号 %s。点开下面的链接确认它是你的：它会加到该账号；如果另一个账号持有它但没有确认过，它会从那个账号移走。链接只能用一次，%d 小时内有效。", v.Email, v.Site, account(v), v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegister:
 		return body{subject: "确认你的注册", paras: []string{fmt.Sprintf("点开下面的链接，完成在 %s 上创建账号「%s」。链接只能用一次，%d 小时内有效。", v.Site, v.Username, v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegisterDup:

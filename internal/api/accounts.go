@@ -361,6 +361,11 @@ func (s *server) getAccount(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	claims, err := s.auth.PendingClaims(c.r.Context(), c.user())
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		User        userResp      `json:"user"`
 		HasPassword bool          `json:"hasPassword"`
@@ -368,7 +373,7 @@ func (s *server) getAccount(c *call) {
 		Passkeys    []passkeyResp `json:"passkeys"`
 		Groups      []groupRef    `json:"groups"`
 		Emails      []emailResp   `json:"emails"`
-	}{s.toUser(v.User), v.HasPassword, ids, toPasskeys(v.Passkeys), toGroupRefs(groups), toEmails(emails)})
+	}{s.toUser(v.User), v.HasPassword, ids, toPasskeys(v.Passkeys), toGroupRefs(groups), withClaims(toEmails(emails), claims)})
 }
 
 func (s *server) patchAccount(c *call) {

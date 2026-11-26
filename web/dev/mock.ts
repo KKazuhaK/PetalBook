@@ -108,7 +108,8 @@ function seedNotifications(server: ReturnType<typeof createMockServer>) {
 }
 
 // MOCK_EMAILS=1 (accounts mode) starts with mail on, more than one address per account allowed, and the administrator
-// holding three addresses: a verified primary, a verified second one and one that waits for its link.
+// holding four addresses: a verified primary, a verified second one, one that waits for its link, and a claim of an
+// address another account holds unverified.
 function seedEmails(server: ReturnType<typeof createMockServer>) {
   const login = server.handle(
     'POST',
@@ -132,6 +133,23 @@ function seedEmails(server: ReturnType<typeof createMockServer>) {
   call('POST', '/api/account/emails', { email: 'kazuha.mo@university-of-a-long-name.example.edu' })
   confirm('kazuha.mo@university-of-a-long-name.example.edu')
   call('POST', '/api/account/emails', { email: 'personal@example.org' })
+  // A claim: another account holds this address unverified, so it waits for the link.
+  const inv = call('POST', '/api/invites', { role: 'member' }).body as { token: string }
+  const joined = server.handle(
+    'POST',
+    '/api/invites/accept',
+    JSON.stringify({ token: inv.token, username: 'tang', password: 'a-long-password' }),
+    'application/json',
+    null,
+  )
+  server.handle(
+    'PATCH',
+    '/api/account',
+    JSON.stringify({ email: 'shared@example.org' }),
+    'application/json',
+    joined.headers?.['Set-Cookie']?.split(';')[0] ?? null,
+  )
+  call('POST', '/api/account/emails', { email: 'shared@example.org' })
 }
 
 export function mockApi(): Plugin {

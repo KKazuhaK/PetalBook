@@ -76,6 +76,8 @@ export const mailEn: MailMessages = {
     primary: 'Primary',
     verified: 'Verified',
     unverified: 'Not verified',
+    pending: 'Waiting for confirmation',
+    pendingHelp: 'Follow the link sent to this address to add it. Remove it to withdraw the request.',
     marked: 'Marked verified by an administrator',
     markedHelp: 'An administrator marked it verified. Confirm it yourself before it can be the primary address.',
     verify: 'Verify',

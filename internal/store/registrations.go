@@ -202,6 +202,35 @@ func CountEmailTokens(ctx context.Context, q Q, userID, kind string, now time.Ti
 	return n, err
 }
 
+// EmailClaim is a verification link of an address the account has no row for:
+// the claim of an address another account holds unverified.
+type EmailClaim struct {
+	Email   string
+	Created time.Time
+}
+
+// PendingEmailClaims lists a person's unused, unexpired verification links of
+// addresses they have no row for, oldest first.
+func PendingEmailClaims(ctx context.Context, q Q, userID string, now time.Time) ([]EmailClaim, error) {
+	rows, err := q.Query(ctx, `SELECT t.email, t.created FROM email_tokens t WHERE t.user_id = ? AND t.kind = ? AND t.used = 0 AND t.expires > ?
+		AND NOT EXISTS (SELECT 1 FROM user_emails e WHERE e.user_id = t.user_id AND e.email = t.email) ORDER BY t.created, t.email`, userID, TokenVerify, ms(now))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EmailClaim
+	for rows.Next() {
+		var c EmailClaim
+		var created int64
+		if err := rows.Scan(&c.Email, &created); err != nil {
+			return nil, err
+		}
+		c.Created = fromMS(created)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // DeleteOldEmailTokens is the background clean-up of tokens that expired before.
 func DeleteOldEmailTokens(ctx context.Context, q Q, before time.Time) (int64, error) {
 	res, err := q.Exec(ctx, `DELETE FROM email_tokens WHERE expires < ?`, ms(before))

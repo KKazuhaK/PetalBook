@@ -73,11 +73,23 @@ func (s *Service) Emails(ctx context.Context, u store.User) ([]store.EmailRow, e
 	return out, nil
 }
 
+// PendingClaims lists the claims the account waits on: addresses it asked to
+// add that another account holds unverified, which have no row until the link
+// sent to them is followed. None while the switch is off.
+func (s *Service) PendingClaims(ctx context.Context, u store.User) ([]store.EmailClaim, error) {
+	if !s.MultipleEmails(ctx, u.TenantID) {
+		return nil, nil
+	}
+	return store.PendingEmailClaims(ctx, s.st.Q(), u.ID, s.now())
+}
+
 // HasVerifiedEmailIn says whether the account holds, verified, an address in
 // one of the domains (or below one): the condition of an organisation's
 // domain requirement. Any address counts, the primary or another while the
 // switch is on; an address only a tenant administrator marked does not
-// (store.EmailRow.Holds).
+// (store.EmailRow.Holds). Nothing calls it yet: the organisation's domain
+// requirement (milestone 3.6, the organisation part) is where it is meant to
+// be called.
 func (s *Service) HasVerifiedEmailIn(ctx context.Context, u store.User, domains []string) (bool, error) {
 	if len(domains) == 0 {
 		return false, nil
@@ -173,7 +185,11 @@ func (s *Service) AddEmail(ctx context.Context, u store.User, email, lang, ip st
 	}
 	s.Audit(AuditEvent{Kind: "email_added", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"email": e}})
 	lang = mail.PickLang(lang, "")
-	if err := s.sendMail(mail.KindVerify, lang, e, mail.Vars{Email: e, Link: s.link("/verify-email", tok), Hours: 24}); err != nil {
+	kind := mail.KindVerify
+	if claim {
+		kind = mail.KindEmailClaim
+	}
+	if err := s.sendMail(kind, lang, e, mail.Vars{Name: u.Name, Username: u.Username, Email: e, Link: s.link("/verify-email", tok), Hours: 24}); err != nil {
 		return err
 	}
 	s.noteAddresses(ctx, mail.KindEmailAdded, lang, e, u.Email)
@@ -215,7 +231,7 @@ func (s *Service) ResendEmailVerify(ctx context.Context, u store.User, email, la
 	}); err != nil {
 		return err
 	}
-	return s.sendMail(mail.KindVerify, mail.PickLang(lang, ""), row.Email, mail.Vars{Email: row.Email, Link: s.link("/verify-email", tok), Hours: 24})
+	return s.sendMail(mail.KindVerify, mail.PickLang(lang, ""), row.Email, mail.Vars{Name: u.Name, Username: u.Username, Email: row.Email, Link: s.link("/verify-email", tok), Hours: 24})
 }
 
 // MakePrimaryEmail makes one of the person's verified addresses the primary
@@ -239,6 +255,8 @@ func (s *Service) MakePrimaryEmail(ctx context.Context, u store.User, email, lan
 		return nil, coded(409, "email_unverified", "Only a verified address can be the primary one; confirm it first.")
 	case errors.Is(err, store.ErrNotFound):
 		return nil, errNoSuchEmail()
+	case errors.Is(err, store.ErrPrimaryRace):
+		return nil, errf(Conflict, "The primary address was being changed at the same moment; try again.")
 	case err != nil:
 		return nil, err
 	}
@@ -253,7 +271,8 @@ func (s *Service) MakePrimaryEmail(ctx context.Context, u store.User, email, lan
 
 // RemoveEmail removes one of the person's addresses that is not the primary
 // one (409 primary_email for that: make another primary first), with the
-// links sent to it. The primary is told, and the address itself when it was
+// links sent to it. An address that is only a pending claim (no row yet) is
+// withdrawn: its link stops working. The primary is told, and the address itself when it was
 // verified.
 func (s *Service) RemoveEmail(ctx context.Context, u store.User, email, lang, ip string) error {
 	rows, err := store.UserEmails(ctx, s.st.Q(), u.ID)
@@ -262,7 +281,7 @@ func (s *Service) RemoveEmail(ctx context.Context, u store.User, email, lang, ip
 	}
 	row := ownEmail(rows, email)
 	if row == nil {
-		return errNoSuchEmail()
+		return s.withdrawClaim(ctx, u, email, ip)
 	}
 	err = s.st.Tx(ctx, func(q store.Q) error {
 		if err := store.RemoveEmail(ctx, q, u.ID, row.Email); err != nil {
@@ -285,6 +304,31 @@ func (s *Service) RemoveEmail(ctx context.Context, u store.User, email, lang, ip
 	}
 	s.noteAddresses(ctx, mail.KindEmailRemoved, mail.PickLang(lang, ""), row.Email, to...)
 	return nil
+}
+
+// withdrawClaim drops the person's pending claim of an address (the link that
+// would add it, see AddEmail): errNoSuchEmail when there is none. Nothing is
+// told: no address changed.
+func (s *Service) withdrawClaim(ctx context.Context, u store.User, email, ip string) error {
+	key, ok := store.EmailKey(email)
+	if !ok {
+		return errNoSuchEmail()
+	}
+	claims, err := store.PendingEmailClaims(ctx, s.st.Q(), u.ID, s.now())
+	if err != nil {
+		return err
+	}
+	for _, c := range claims {
+		if k, _ := store.EmailKey(c.Email); k != key {
+			continue
+		}
+		if err := store.DeleteEmailTokensFor(ctx, s.st.Q(), u.ID, c.Email); err != nil {
+			return err
+		}
+		s.Audit(AuditEvent{Kind: "email_claim_withdrawn", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"email": c.Email}})
+		return nil
+	}
+	return errNoSuchEmail()
 }
 
 // noteAddresses sends a note with no link about an address to each of to that

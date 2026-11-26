@@ -29,6 +29,12 @@ import { SettingsSection } from './SettingsParts'
 // What an address is: primary, and verified, not verified or only marked by an administrator. Shared by the person's
 // own list and an administrator's read-only view of it.
 export function EmailBadges({ e }: { e: AccountEmail }) {
+  if (e.pending)
+    return (
+      <Badge variant="outline" title={tm.emails.pendingHelp}>
+        {tm.emails.pending}
+      </Badge>
+    )
   return (
     <>
       {e.primary && <Badge>{tm.emails.primary}</Badge>}
@@ -117,8 +123,9 @@ export function EmailsSection({ account }: { account: AccountInfo }) {
     <SettingsSection title={tm.emails.title} id="emails-heading" description={tm.emails.help}>
       <ul className="divide-y rounded-lg border" aria-label={tm.emails.title} data-slot="email-list">
         {emails.map((e) => {
-          const canVerify = mailOn && (!e.verified || e.markedByAdmin === true)
-          const canPrimary = !e.primary && e.verified && e.markedByAdmin !== true
+          const pending = e.pending === true
+          const canVerify = mailOn && !pending && (!e.verified || e.markedByAdmin === true)
+          const canPrimary = !pending && !e.primary && e.verified && e.markedByAdmin !== true
           const canRemove = !e.primary
           const any = canVerify || canPrimary || canRemove
           return (
@@ -209,6 +216,7 @@ export function EmailsSection({ account }: { account: AccountInfo }) {
           )
         })}
       </ul>
+      {emails.some((e) => e.pending) && <p className="text-xs text-muted-foreground">{tm.emails.pendingHelp}</p>}
       {emails.some((e) => e.markedByAdmin) && <p className="text-xs text-muted-foreground">{tm.emails.markedHelp}</p>}
       {mailOn && (
         <div>

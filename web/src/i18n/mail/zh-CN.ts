@@ -74,6 +74,8 @@ export const mailZhCN = {
     primary: '主邮箱',
     verified: '已验证',
     unverified: '未验证',
+    pending: '等待确认',
+    pendingHelp: '点开发到这个邮箱的链接才会加入账号。删除即撤回这次请求。',
     marked: '管理员标为已验证',
     markedHelp: '管理员把它标为已验证。你自己确认一次，它才能设为主邮箱。',
     verify: '验证',

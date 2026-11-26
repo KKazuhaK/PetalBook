@@ -158,8 +158,8 @@ func TestAnotherAccountsAddressAndTheRaceToProveIt(t *testing.T) {
 				tangTok = m.Token(t)
 			}
 		}
-		if _, ok := emailsOf(t, c)["wanted@example.test"]; ok {
-			t.Fatal("a claim of another account's address shows before it is proved")
+		if got := emailsOf(t, c)["wanted@example.test"]; got == nil || got["pending"] != true || got["verified"] != false {
+			t.Fatalf("a claim of another account's address shows as pending until it is proved: %v", got)
 		}
 		a.newClient("").do("POST", "/api/email/confirm", map[string]any{"token": tangTok}).want(t, 204, "")
 		if got := emailsOf(t, c); got["wanted@example.test"]["verified"] != true {

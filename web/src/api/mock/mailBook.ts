@@ -374,6 +374,11 @@ export function createMailBook(o: MailBookOptions) {
       if (take(`to:${k}`, 3)) post({ to: addr, kind })
     }
   }
+  // The addresses of unused, unexpired verification links of an account (the caller keeps the ones it has no row for).
+  const verifyLinksOf = (userId: string): { email: string; expires: number }[] =>
+    [...tokens.values()]
+      .filter((t) => t.userId === userId && t.kind === 'verify' && !t.used && t.expires > o.now())
+      .map((t) => ({ email: t.email, expires: t.expires }))
   const dropTokensTo = (userId: string, email: string) => {
     for (const [h, t] of tokens) if (t.userId === userId && t.email === email) tokens.delete(h)
   }
@@ -468,6 +473,7 @@ export function createMailBook(o: MailBookOptions) {
     verifyOther,
     noteAddress,
     dropTokensTo,
+    verifyLinksOf,
     forgot,
     resetCheck,
     reset,

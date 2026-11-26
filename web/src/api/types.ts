@@ -1120,6 +1120,9 @@ export interface AccountEmail {
   primary: boolean
   verified: boolean
   markedByAdmin?: boolean
+  // A claim of an address another account holds unverified: it has no row until its link is followed, and can be
+  // removed (withdrawn).
+  pending?: boolean
   created: string
 }
 

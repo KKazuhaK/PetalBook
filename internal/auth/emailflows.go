@@ -501,7 +501,7 @@ func (s *Service) RequestEmailVerify(ctx context.Context, u store.User, lang, ip
 	if err != nil {
 		return err
 	}
-	return s.sendMail(mail.KindVerify, mail.PickLang(lang, ""), u.Email, mail.Vars{Email: u.Email, Link: s.link("/verify-email", tok), Hours: 24})
+	return s.sendMail(mail.KindVerify, mail.PickLang(lang, ""), u.Email, mail.Vars{Name: u.Name, Username: u.Username, Email: u.Email, Link: s.link("/verify-email", tok), Hours: 24})
 }
 
 // ConfirmEmail marks the address a link was sent to as verified, by the person

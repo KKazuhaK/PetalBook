@@ -23,8 +23,9 @@ setting `accounts.multipleEmails` (off by default) an account may have several:
 each is unique on the server and held by the same rule (an address another
 account holds verified cannot be added; one held only unverified goes to
 whoever proves it first). Any address the account holds verified signs in and
-resets, and meets an organisation's domain requirement; the primary one is the
-UPN and gets the notices. A new address counts only once its link is followed,
+resets, and (once the organisation part of 3.6 lands) will meet an
+organisation's domain requirement, which calls `HasVerifiedEmailIn`; the
+primary one is the UPN and gets the notices. A new address counts only once its link is followed,
 only a verified address can become primary, and the primary cannot be removed.
 Turned off, the extra addresses are kept but unused. See docs/api.md, "More
 than one email address".

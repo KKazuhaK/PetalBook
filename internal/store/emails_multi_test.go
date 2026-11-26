@@ -193,3 +193,95 @@ func TestVerifyLinksArePerAddress(t *testing.T) {
 		}
 	})
 }
+
+// RemoveEmail never deletes a primary address, whatever happened since it
+// looked, and says which refusal it is.
+func TestRemoveEmailKeepsThePrimary(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		addPerson(t, q, "A", store.DefaultTenantID, "a@example.test", true)
+		if _, err := store.AddEmail(ctx, q, "A", "second@example.test", true, "", false, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RemoveEmail(ctx, q, "A", "a@example.test"); !errors.Is(err, store.ErrPrimaryEmail) {
+			t.Fatalf("the primary: %v", err)
+		}
+		if err := store.RemoveEmail(ctx, q, "A", "nobody@example.test"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("an unknown address: %v", err)
+		}
+		// The other address becomes primary: the same call now refuses it, and
+		// the old primary goes.
+		if err := store.MakePrimaryEmail(ctx, q, "A", "second@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RemoveEmail(ctx, q, "A", "second@example.test"); !errors.Is(err, store.ErrPrimaryEmail) {
+			t.Fatalf("the new primary: %v", err)
+		}
+		if err := store.RemoveEmail(ctx, q, "A", "a@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		if l, err := store.UserEmails(ctx, q, "A"); err != nil || len(l) != 1 || !l[0].Primary {
+			t.Fatalf("%+v %v", l, err)
+		}
+		assertCopies(t, st)
+	})
+}
+
+// Two makes-primary at once: the second one's promotion meets the unique
+// index on the primary and is ErrPrimaryRace, not a bare database error; the
+// account keeps one primary.
+func TestMakePrimaryRaceIsAConflict(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		addPerson(t, q, "A", store.DefaultTenantID, "a@example.test", true)
+		for _, e := range []string{"x@example.test", "y@example.test"} {
+			if _, err := store.AddEmail(ctx, q, "A", e, true, "", false, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		store.SetPrimaryRaceHook(func(q store.Q) {
+			store.SetPrimaryRaceHook(nil)
+			// The other change's promotion, as the unique index meets it. (Its
+			// own connection could not do this on PostgreSQL: the index waits
+			// for the open transaction that demoted the old primary.)
+			if _, err := q.Exec(ctx, `UPDATE user_emails SET is_primary = 1 WHERE user_id = 'A' AND email = 'y@example.test'`); err != nil {
+				t.Error(err)
+			}
+		})
+		t.Cleanup(func() { store.SetPrimaryRaceHook(nil) })
+		if err := store.MakePrimaryEmail(ctx, q, "A", "x@example.test"); !errors.Is(err, store.ErrPrimaryRace) {
+			t.Fatalf("%v", err)
+		}
+		if n := count(t, st, `SELECT COUNT(*) FROM user_emails WHERE user_id = 'A' AND is_primary = 1`); n != 1 {
+			t.Fatalf("%d primaries", n)
+		}
+	})
+}
+
+// A claim of an address another account holds unverified waits as a link: the
+// account lists it (PendingEmailClaims) until the address is its row, and
+// withdrawing it drops the link.
+func TestPendingEmailClaims(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		now := time.Now()
+		addPerson(t, q, "A", store.DefaultTenantID, "a@example.test", true)
+		if _, err := store.AddEmail(ctx, q, "A", "mine@example.test", false, "", false, now); err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range []string{"mine@example.test", "claim@example.test"} {
+			if err := store.ReplaceEmailToken(ctx, q, store.EmailToken{Hash: "h-" + e, Kind: store.TokenVerify, UserID: "A", Email: e, Created: now, Expires: now.Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := store.ReplaceEmailToken(ctx, q, store.EmailToken{Hash: "old", Kind: store.TokenVerify, UserID: "A", Email: "old@example.test", Created: now, Expires: now.Add(-time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.PendingEmailClaims(ctx, q, "A", now)
+		if err != nil || len(got) != 1 || got[0].Email != "claim@example.test" {
+			t.Fatalf("%+v %v", got, err)
+		}
+	})
+}

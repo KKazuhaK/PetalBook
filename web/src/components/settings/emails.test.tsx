@@ -104,4 +104,38 @@ describe('the email addresses of an account', () => {
       true,
     )
   })
+
+  it('lists a claim of an address another account holds as waiting for confirmation, and withdraws it', async () => {
+    const claim = (s: MockServer) => {
+      multiple(s)
+      const admin = adminRequests(s)
+      // Another account holds the address, not verified.
+      const inv = admin('POST', '/api/invites', { role: 'member' }).body as { token: string }
+      const joined = s.handle(
+        'POST',
+        '/api/invites/accept',
+        JSON.stringify({ token: inv.token, username: 'tang', password: 'a-long-password' }),
+        'application/json',
+      )
+      s.handle(
+        'PATCH',
+        '/api/account',
+        JSON.stringify({ email: 'held@example.test' }),
+        'application/json',
+        joined.headers!['Set-Cookie'].split(';')[0],
+      )
+      admin('POST', '/api/account/emails', { email: 'held@example.test' })
+    }
+    await open(claim, () => row('held@example.test') !== null)
+    expect(row('held@example.test')!.textContent).toContain(tm.emails.pending)
+    expect(byLabel(t.fmt.labelled(tm.emails.verify, 'held@example.test'))).toBeNull()
+    expect(byLabel(t.fmt.labelled(tm.emails.makePrimary, 'held@example.test'))).toBeNull()
+    await click(byLabel(t.fmt.labelled(tm.emails.remove, 'held@example.test')))
+    await settle(() => byText('[role="alertdialog"] button', tm.emails.remove) !== null, 'the question')
+    await click(byText('[role="alertdialog"] button', tm.emails.remove))
+    await settle(() => row('held@example.test') === null, 'the withdrawal')
+    expect(m!.requests.some((r) => r.method === 'DELETE' && r.url === '/api/account/emails/held%40example.test')).toBe(
+      true,
+    )
+  })
 })

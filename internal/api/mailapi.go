@@ -256,15 +256,26 @@ type emailResp struct {
 	Primary       bool   `json:"primary"`
 	Verified      bool   `json:"verified"`
 	MarkedByAdmin bool   `json:"markedByAdmin,omitempty"`
-	Created       string `json:"created"`
+	// Pending: a claim of an address another account holds unverified; it has
+	// no row until its link is followed, and DELETE withdraws it.
+	Pending bool   `json:"pending,omitempty"`
+	Created string `json:"created"`
 }
 
 func toEmails(rows []store.EmailRow) []emailResp {
 	out := make([]emailResp, len(rows))
 	for i, r := range rows {
-		out[i] = emailResp{r.Email, r.Primary, r.Verified, r.Verified && r.VerifiedBy == store.VerifiedByTenantAdmin, rfc3339(r.Created)}
+		out[i] = emailResp{r.Email, r.Primary, r.Verified, r.Verified && r.VerifiedBy == store.VerifiedByTenantAdmin, false, rfc3339(r.Created)}
 	}
 	return out
+}
+
+// withClaims adds the pending claims after the addresses.
+func withClaims(l []emailResp, claims []store.EmailClaim) []emailResp {
+	for _, c := range claims {
+		l = append(l, emailResp{Email: c.Email, Pending: true, Created: rfc3339(c.Created)})
+	}
+	return l
 }
 
 func (s *server) accountEmailAdd(c *call) {

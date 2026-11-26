@@ -7041,7 +7041,10 @@ address"), and the rule of who holds an address applies to each.
   the account at once; it counts (signs in, resets, meets a domain
   requirement) only once its link is followed (`POST /api/email/confirm`). An
   address another account holds unverified (or only a tenant administrator
-  marked) is not shown until it is proved: the link then moves it to this
+  marked) has no row until it is proved: it shows in `emails` as
+  `"pending": true` (not verified, never primary), and its link, a message of
+  its own that names the account and says that confirming moves the address
+  away from any other account that has it unconfirmed, moves it to this
   account (that account is told, as `email_released`). Whoever proves an
   address first has it; a later link is `409 email_taken`. `409 email_taken`
   for an address another account holds verified, or a deleted account keeps;
@@ -7060,7 +7063,7 @@ address"), and the rule of who holds an address applies to each.
   a tenant administrator marked): `409 email_unverified` otherwise. The old
   primary stays as another address. The new and the old primary are told.
 - **Remove.** `DELETE /api/account/emails/{email}`: `204`, with the links sent
-  to it. Never the primary: `409 primary_email` (make another primary first).
+  to it; for a pending claim it withdraws the claim (its link stops working). Never the primary: `409 primary_email` (make another primary first).
   The primary is told, and the removed address when it was verified.
 - Every add, confirmation, primary change and removal is audited:
   `email_added`, `email_verified` (with `primary`), `email_primary_changed`
@@ -7071,7 +7074,8 @@ address"), and the rule of who holds an address applies to each.
   the primary or another (`POST /api/login`'s `username` may be an address;
   `POST /api/password/forgot`'s `login`). A reset link sent to an address
   stops working once the account no longer signs in by it.
-- **An organisation's domain requirement** is met by any address the account
+- **An organisation's domain requirement** (with the organisation part of
+  3.6) is met by any address the account
   holds verified in one of its domains (or below one), not only the primary.
 - **Off** (the default, or turned off later): the account has its primary
   address only, as before. Addresses added while it was on are kept, but not

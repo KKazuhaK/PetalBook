@@ -35,6 +35,10 @@ var ErrEmailTaken = errors.New("the address belongs to another account")
 // must be made primary first (or the primary set to "").
 var ErrPrimaryEmail = errors.New("the primary address cannot be removed")
 
+// ErrPrimaryRace: two changes of the primary address of one account met (the
+// unique index on the primary stopped the second); the person tries again.
+var ErrPrimaryRace = errors.New("the primary address was changed at the same moment")
+
 // ErrEmailUnverified: only an address the account holds (EmailRow.Holds) may
 // become its primary one.
 var ErrEmailUnverified = errors.New("the address is not verified")
@@ -518,6 +522,10 @@ func SetEmailRowVerified(ctx context.Context, q Q, userID, email string, verifie
 	})
 }
 
+// testHookBeforePrimarySet is called with MakePrimaryEmail's transaction after
+// the old primary was demoted and before the address is promoted.
+var testHookBeforePrimarySet func(Q)
+
 // MakePrimaryEmail makes an address the account already has its primary one,
 // keeping the old primary as another address, and copies it to users: one
 // transaction. ErrNotFound when the account does not have the address;
@@ -543,7 +551,12 @@ func MakePrimaryEmail(ctx context.Context, q Q, userID, email string) error {
 		if _, err := q.Exec(ctx, `UPDATE user_emails SET is_primary = 0 WHERE user_id = ? AND is_primary = 1`, userID); err != nil {
 			return err
 		}
-		if _, err := q.Exec(ctx, `UPDATE user_emails SET is_primary = 1 WHERE user_id = ? AND email = ?`, userID, email); err != nil {
+		if testHookBeforePrimarySet != nil {
+			testHookBeforePrimarySet(q)
+		}
+		if _, err := q.Exec(ctx, `UPDATE user_emails SET is_primary = 1 WHERE user_id = ? AND email = ?`, userID, email); IsUnique(err) {
+			return ErrPrimaryRace // the other change got its primary in first
+		} else if err != nil {
 			return err
 		}
 		res, err := q.Exec(ctx, `UPDATE users SET email = ?, email_key = ?, email_verified = 1, email_verified_by = ? WHERE id = ?`, email, key, by, userID)
@@ -555,18 +568,23 @@ func MakePrimaryEmail(ctx context.Context, q Q, userID, email string) error {
 // (ErrPrimaryEmail for that; ErrNotFound when it has no such address).
 func RemoveEmail(ctx context.Context, q Q, userID, email string) error {
 	return atomically(ctx, q, func(q Q) error {
+		// The guard is in the delete itself: a primary made since anything was
+		// read is never removed.
+		res, err := q.Exec(ctx, `DELETE FROM user_emails WHERE user_id = ? AND email = ? AND is_primary = 0`, userID, email)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			return nil
+		}
 		var primary int64
-		err := q.QueryRow(ctx, `SELECT is_primary FROM user_emails WHERE user_id = ? AND email = ?`, userID, email).Scan(&primary)
+		err = q.QueryRow(ctx, `SELECT is_primary FROM user_emails WHERE user_id = ? AND email = ?`, userID, email).Scan(&primary)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
 		}
-		if primary != 0 {
-			return ErrPrimaryEmail
-		}
-		_, err = q.Exec(ctx, `DELETE FROM user_emails WHERE user_id = ? AND email = ?`, userID, email)
-		return err
+		return ErrPrimaryEmail
 	})
 }
 

@@ -1137,6 +1137,21 @@ export function createMockServer(options: MockOptions = {}) {
     const h = holderOf(login)
     return h && !h.primary && h.verified ? h.u : undefined
   }
+  // A claim of an address another account holds unverified has no row until its link is followed: it waits as a link.
+  const claimsOf = (u: UserRec): AccountEmail[] => {
+    if (!multipleOn()) return []
+    const mine = new Set([u.email, ...(extraEmails.get(u.id) ?? []).map((e) => e.email)].map(emailKey))
+    return mailBook
+      .verifyLinksOf(u.id)
+      .filter((l) => !mine.has(emailKey(l.email)))
+      .map((l) => ({
+        email: l.email,
+        primary: false,
+        verified: false,
+        pending: true,
+        created: rfc3339(l.expires - 24 * 3600_000),
+      }))
+  }
   const emailsOf = (u: UserRec): AccountEmail[] => [
     ...(u.email ? [{ email: u.email, primary: true, verified: u.emailVerified, created: u.created }] : []),
     ...(multipleOn()
@@ -1147,6 +1162,7 @@ export function createMockServer(options: MockOptions = {}) {
           created: e.created,
         }))
       : []),
+    ...claimsOf(u),
   ]
   // The routes of the addresses besides the primary (docs/api.md, "More than one email address").
   const accountEmails = (me: UserRec, path: string, method: string, body: Record<string, unknown>): MockResponse => {
@@ -1199,7 +1215,13 @@ export function createMockServer(options: MockOptions = {}) {
     const one = /^\/account\/emails\/([^/]+)$/.exec(path)
     if (one && method === 'DELETE') {
       const x = find(decodeURIComponent(one[1]))
-      if (!x) throw noSuch()
+      if (!x) {
+        // A pending claim has no row: removing it withdraws the link.
+        const c = claimsOf(me).find((e) => emailKey(e.email) === emailKey(decodeURIComponent(one[1])))
+        if (!c) throw noSuch()
+        mailBook.dropTokensTo(me.id, c.email)
+        return { status: 204 }
+      }
       if (x === 'primary') throw new HttpError(409, 'primary_email', '主邮箱不能删除')
       list.splice(list.indexOf(x), 1)
       mailBook.dropTokensTo(me.id, x.email)
@@ -4891,7 +4913,7 @@ export function createMockServer(options: MockOptions = {}) {
       if (user && method === 'GET') {
         const u = users.get(decodeURIComponent(user[1]))
         if (!u) throw new HttpError(404, 'not_found', '没有这个用户')
-        return j({ user: { ...listedUser(u), emails: emailsOf(u) } })
+        return j({ user: { ...listedUser(u), emails: emailsOf(u).filter((e) => e.pending !== true) } })
       }
       const userMore = /^\/users\/([^/]+)\/(memberships|sessions|identities)(?:\/([^/]+))?$/.exec(path)
       if (userMore) {
