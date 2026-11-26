@@ -327,6 +327,8 @@ var isolationRoutes = map[string]isoEntry{
 	"GET /api/admin/grants":                             {kind: isoList},
 	"DELETE /api/admin/grants/{id}":                     {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.grantB} }},
 	"GET /api/admin/audit":                              {kind: isoList},
+	"GET /api/admin/audit/kinds":                        {kind: isoList},
+	"GET /api/admin/audit/download":                     {kind: isoList},
 	"GET /api/admin/usage":                              {kind: isoList},
 	"GET /api/admin/tenants/{tenant}":                   {kind: isoParam},
 	"PATCH /api/admin/tenants/{tenant}":                 {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"name": "taken over"} }},

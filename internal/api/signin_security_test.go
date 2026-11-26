@@ -313,19 +313,20 @@ func TestAuditLogIsPagedFilteredAndTrimmed(t *testing.T) {
 		}
 		// 90 days, and a limit of rows.
 		ctx := context.Background()
-		if n, err := store.TrimAudit(ctx, a.st.Q(), a.clock.Now().Add(24*time.Hour), 100_000); err != nil || n == 0 {
+		later := a.clock.Now().Add(91 * 24 * time.Hour)
+		if n, err := store.TrimAudit(ctx, a.st.Q(), later, store.AuditRetention{Days: 90, Rows: 100_000, Mode: "or", OptionalDays: 30}); err != nil || n == 0 {
 			t.Fatalf("%d %v", n, err)
 		}
 		a.auth.Audit(auth.AuditEvent{Kind: "login_failed", Username: "after"})
 		a.auth.FlushAudit(ctx)
 		for i := range 20 {
-			a.auth.Audit(auth.AuditEvent{Kind: "login", Username: fmt.Sprint("u", i)})
+			a.auth.Audit(auth.AuditEvent{Kind: "login_failed", Username: fmt.Sprint("u", i)})
 		}
 		a.auth.FlushAudit(ctx)
-		if n, err := store.TrimAudit(ctx, a.st.Q(), time.Time{}, 5); err != nil || n < 15 {
+		if n, err := store.TrimAudit(ctx, a.st.Q(), later, store.AuditRetention{Days: 3650, Rows: 5, Mode: "and", OptionalDays: 30}); err != nil || n < 15 {
 			t.Fatalf("%d %v", n, err)
 		}
-		rows, err := store.ListAudit(ctx, a.st.Q(), store.AllTenants(), false, "", "", "", 100)
+		rows, err := store.ListAudit(ctx, a.st.Q(), store.AllTenants(), store.AuditFilter{}, 100)
 		if err != nil || len(rows) != 5 {
 			t.Fatalf("%d %v", len(rows), err)
 		}

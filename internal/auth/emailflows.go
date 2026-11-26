@@ -459,7 +459,7 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*store
 		return nil, "", err
 	}
 	s.Audit(AuditEvent{Kind: "registered", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"email": reg.Email}})
-	s.Audit(AuditEvent{Kind: "login", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
+	s.Audit(AuditEvent{Kind: "login", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
 	return u, tok, nil
 }
 

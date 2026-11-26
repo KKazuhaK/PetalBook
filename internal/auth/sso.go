@@ -798,7 +798,7 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 	}
 	out.Session = tok
 	s.log.Info("signed in", "user", user.ID, "method", kind, "provider", slug)
-	s.Audit(AuditEvent{Kind: "login", User: user.ID, Username: user.Username, IP: ip, Detail: map[string]any{"method": kind, "provider": slug, "created": created}})
+	s.Audit(AuditEvent{Kind: "login", Tenant: user.TenantID, User: user.ID, Username: user.Username, IP: ip, Detail: map[string]any{"method": kind, "provider": slug, "created": created}})
 	return out
 }
 

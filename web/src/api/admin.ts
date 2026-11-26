@@ -12,7 +12,7 @@ import {
   type QueryClient,
   type UseQueryResult,
 } from '@tanstack/react-query'
-import { ApiError, enc, request } from './client'
+import { API_BASE, ApiError, enc, request } from './client'
 import { keys } from './hooks'
 import {
   dailyOf,
@@ -57,6 +57,8 @@ import type {
   AdminDaily,
   AdminDailyBody,
   AdminSpaceList,
+  AuditFilters,
+  AuditKinds,
   AuditList,
   AuthProvider,
   Passkey,
@@ -338,14 +340,19 @@ export const adminApi = {
     request<void>(`/admin/auth/providers/${enc(slug)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
   refreshAuthProvider: (slug: string) =>
     request<AuthProvider>(`/admin/auth/providers/${enc(slug)}/refresh`, { method: 'POST' }),
-  audit: (params: { kind?: string; user?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
-    const q = new URLSearchParams()
-    if (params.kind) q.set('kind', params.kind)
-    if (params.user) q.set('user', params.user)
+  audit: (params: Partial<AuditFilters> & { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = auditQuery(params)
     if (params.cursor) q.set('cursor', params.cursor)
     if (params.limit) q.set('limit', String(params.limit))
     const qs = q.toString()
     return request<AuditList>(`/admin/audit${qs ? `?${qs}` : ''}`, { signal })
+  },
+  // The registry of kinds with their categories, and which optional categories are on in the caller's scope.
+  auditKinds: (signal?: AbortSignal) => request<AuditKinds>('/admin/audit/kinds', { signal }),
+  // The address of the CSV of a filter (the browser downloads it; the server streams it).
+  auditDownloadUrl: (filters: Partial<AuditFilters>) => {
+    const qs = auditQuery(filters).toString()
+    return `${API_BASE}/admin/audit/download${qs ? `?${qs}` : ''}`
   },
 
   // --- machine access: API tokens ---
@@ -781,7 +788,7 @@ function settingsChanged(qc: QueryClient) {
     qc.invalidateQueries({ queryKey: keys.spaces }),
     qc.invalidateQueries({ queryKey: keys.adminStatus }),
     qc.invalidateQueries({ queryKey: ['settings'] }),
-    qc.invalidateQueries({ queryKey: keys.adminAudit('', '') }),
+    qc.invalidateQueries({ queryKey: ['admin', 'audit'] }),
     qc.invalidateQueries({
       predicate: (q) => q.queryKey[0] === 'space' && String(q.queryKey[2]).startsWith('daily'),
     }),
@@ -1101,19 +1108,33 @@ export function useAuthProviders() {
 }
 
 export const AUDIT_PAGE_SIZE = 50
-// The audit log, newest first, a cursor page at a time; `kind` and `user` filter.
-export function useAuditLog(kind: string, user: string) {
+// The audit log, newest first, a cursor page at a time, narrowed by the filters.
+export function useAuditLog(filters: AuditFilters) {
   return useInfiniteQuery({
-    queryKey: keys.adminAudit(kind, user),
+    queryKey: keys.adminAudit(auditQuery(filters).toString()),
     initialPageParam: '',
     queryFn: ({ pageParam, signal }) =>
-      adminApi.audit(
-        { kind: kind || undefined, user: user || undefined, cursor: pageParam || undefined, limit: AUDIT_PAGE_SIZE },
-        signal,
-      ),
+      adminApi.audit({ ...filters, cursor: pageParam || undefined, limit: AUDIT_PAGE_SIZE }, signal),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 5_000,
   })
+}
+
+// The registry of the audit log's kinds and categories: what the filters offer.
+export function useAuditKinds() {
+  return useQuery({
+    queryKey: keys.adminAuditKinds,
+    queryFn: ({ signal }) => adminApi.auditKinds(signal),
+    staleTime: 30_000,
+  })
+}
+
+// The query of a set of filters, in a fixed order, without what is empty: the same string for the same view.
+export function auditQuery(f: Partial<AuditFilters>): URLSearchParams {
+  const q = new URLSearchParams()
+  if (f.category?.length) q.set('category', f.category.join(','))
+  for (const k of ['kind', 'user', 'actor', 'capacity', 'from', 'to', 'tenant'] as const) if (f[k]) q.set(k, f[k])
+  return q
 }
 
 // --- machine access ------------------------------------------------------------------

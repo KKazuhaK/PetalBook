@@ -769,11 +769,51 @@ and is recorded in the audit log.
 
 ### Audit log
 
-Sign-in events, security changes, API tokens made or revoked and OAuth grants
-revoked go to the audit log in the state database (see `GET /api/admin/audit`).
-Rows are written in batches in the background, from a queue of at most 10,000;
-when the queue is full, rows are dropped and counted, and a `dropped` row says
-how many. At most 100,000 rows or 90 days are kept.
+What the server's administrators and its people do that matters goes to the
+audit log in the state database (see `GET /api/admin/audit`). Rows are written
+in batches in the background, from a queue of at most 10,000; when the queue is
+full, rows are dropped and counted, and a `dropped` row says how many.
+
+Every kind of row is registered once, in `internal/auditlog`, with its
+category and who sees it; a test fails when the code writes a kind that is not
+registered there. A row is filed under its kind's category when it is written
+and keeps it. The categories:
+
+| Category | Kinds | Switch |
+|---|---|---|
+| `security` | sign-in failures (`login_failed`, `rate_limited`, `lockout`, `passkey_clone`), passkeys, identities, addresses, passwords, `sessions_ended`, sign-in providers, mail, `secret_changed` | core: always written |
+| `admin` | settings and rules, plans, tenants, people, invites, groups, tokens and grants, bulk jobs | core |
+| `data` | deleting, restoring and purging spaces, `space_taken_over`, `space_transferred`, space and page views, exports, `audit_downloaded` | core |
+| `system` | `dropped` | core |
+| `signins` | `login`, a session was started | `audit.signins`, on by default |
+| `reads` | a member opening a page or file | `audit.reads`, off |
+| `downloads` | attachments and file downloads | `audit.downloads`, off |
+| `api` | token and MCP calls | `audit.api`, off |
+
+A core category has no switch: nothing turns it off. An optional one is a
+boolean setting with a site and a tenant layer (see "The layered keys"); while
+it is off for a row's tenant the row is not written at all. `reads`,
+`downloads` and `api` have their switches now and are written once their
+events exist.
+
+A tenant's administrators see the rows about their tenant, a site
+administrator's changes to it included. Only the server's own doings are
+site-only: `provider_created`, `provider_changed`, `provider_deleted`,
+`connection_provider_changed`, `mail_changed`, `mail_test`, `rate_limited`,
+`lockout` and `dropped`.
+
+Retention is the server's, one table for every tenant, so site settings only:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `audit.keepDays` | 90 (at least 90) | a row is kept while it is younger than this |
+| `audit.keepRows` | 100,000 | ... or while it is among this many newest rows |
+| `audit.keepMode` | `or` | `or`: kept if either holds (deleted when old and outside the newest rows); `and`: kept only if both hold |
+| `audit.optionalKeepDays` | 30 (1 to 90) | a row of an optional category is also deleted after this many days |
+
+A row of a core category younger than 90 days is never deleted, whatever these
+say. The daily sweep deletes in batches by primary key (and by category for the
+optional ones); it never scans the table.
 
 | `kind` | When | `detail` |
 |---|---|---|
@@ -795,9 +835,10 @@ how many. At most 100,000 rows or 90 days are kept.
 | `grant_revoked` | an OAuth grant was revoked through the server | `grant`, `client` (its name), `by` (`user`, `admin`) |
 | `dropped` | rows were lost because the queue was full | `count` |
 
-Each row has `at`, `kind`, `actor` (the user who acted, if any), `user` (the
-account it is about, if any), `username` (as typed, for refused sign-ins), `ip`
-and `detail`. Groups add rows of their own (see "Audit" under "Groups").
+Each row has `at`, `kind`, `category`, `capacity` (`site_admin` or
+`tenant_admin` when written while acting in that capacity, else `null`),
+`actor` (the user who acted, if any), `user` (the account it is about, if any),
+`username` (as typed, for refused sign-ins), `ip` and `detail`. Groups add rows of their own (see "Audit" under "Groups").
 
 ### Sign-in error codes
 
@@ -8976,6 +9017,8 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | `features.tokens`, `features.mcp`, `features.offline`, `features.registration` | boolean | S, T |
 | `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`; `mail.ownSender` | boolean (features) | S + rule |
 | `features.passkeys`, `features.tenancy` | boolean | S! |
+| `audit.signins`, `.reads`, `.downloads`, `.api` | boolean | S, T |
+| `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` at least 90), choice `or`, `and` | S! |
 | `quota.people`, `.spaces`, `.bytes`, `.pages` | limit or none | S + rule (no tenant layer) |
 | `quota.spacesPerPerson`, `.bytesPerPerson`, `.pagesPerPerson` | limit | S, T, P |
 | `rate.apiPerMinute`, `.mcpPerMinute`, `.mailPerDay`, `.outboundPerMinute` | limit or none | S + rule |
@@ -10093,7 +10136,7 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
 | `storage_target_changed` | a tenant's storage target made, changed or removed | `tenant`, `kind`, `owner` or `host` and `namespace`, secrets as `"changed"` |
 | `storage_repository_created` | a repository made at a tenant's target for a space | `space`, `repository` |
 | `space_storage_moved` | a space moved between modes or targets | `space`, `from`, `to`, `job` |
-| `audit_downloaded` | someone downloaded audit rows | `from`, `to`, `kind`, `rows` |
+| `audit_downloaded` | someone downloaded audit rows as CSV (category `data`) | the filter used (`category`, `kind`, `user`, `actor`, `capacity`, `from`, `to`), `rows`, `truncated` |
 | `space_taken_over`, `space_transferred` | an administrator took a space over, or transferred it | `space`, `to`, `previous`, `ownerGroups`, `reason` |
 | `email_released` | an account lost an address it held unverified to one that proved it (the row is about the account that lost it; the actor is the one that took it) | `email`, `to` |
 
@@ -10101,15 +10144,23 @@ Every row about a tenant carries `by.role` (`site` or `tenant`). Tenant
 administrators see their tenant's rows of these kinds, the site
 administrators' changes to their tenant included.
 
-#### `GET /api/admin/audit/download?from=&to=&kind=`
+#### `GET /api/admin/audit/download`
 
-The audit rows of the caller's scope between two times (at most the 90 days the
-log keeps) as JSON Lines (`Content-Disposition: attachment`), streamed in pages
-of 1,000 rows by id, so the server holds one page at a time. Site
-administrators: every row (`?tenant=` to narrow). A tenant's administrators:
-their tenant's rows, while the tenant has `data.auditDownload`
-(`403 feature_off` otherwise). One download at a time per caller
-(`429 rate_limited`). Every download is audited.
+The audit rows of the caller's scope that the filters of `GET /api/admin/audit`
+name (the same query, without `cursor` and `limit`), as CSV
+(`text/csv; charset=utf-8`, `Content-Disposition: attachment`), newest first,
+streamed a page of 1,000 rows at a time, so the server holds one page and never
+the whole log. The columns are `id`, `time`, `category`, `kind`, `capacity`,
+`tenant`, `actor`, `user`, `username`, `ip`, `detail` (JSON). A cell that starts
+with `=`, `+`, `-`, `@`, a tab or a return gets a `'` in front, so a
+spreadsheet does not take it for a formula. At most 100,000 rows are sent; when
+there were more, the response's trailer `X-Audit-Truncated: true` says so.
+Site administrators: every row (`?tenant=` to narrow). A tenant's
+administrators: their tenant's rows, never the kinds only the server's
+administrators see, while the tenant has `features.auditDownload` (`403
+feature_off` otherwise). One download at a time per caller (`429
+rate_limited`). A bad filter is `400 invalid` before anything is sent. Every
+download is audited as `audit_downloaded`.
 
 ### Errors of this section
 
@@ -11118,17 +11169,48 @@ in it.
 The spaces the group is a member of: `{"items": [{"id", "name", "role"}], "next": "…"}`,
 by name. What an administrator looks at before deleting a group.
 
-### `GET /api/admin/audit?kind={kind}&user={id}&cursor={cursor}&limit={n}`
+### `GET /api/admin/audit?category=&kind=&user=&actor=&capacity=&from=&to=&tenant=&cursor=&limit=`
 
 The audit log (see "Audit log" under "Signing in"), newest first:
 
 ```json
-{"items": [{"id": "01JD3P…", "at": "2026-11-23T08:30:00Z", "kind": "lockout", "actor": null,
-            "user": null, "username": "kazuha", "ip": "203.0.113.7", "detail": {"scope": "ip_account", "minutes": 15}}],
- "next": "01JD3O…"}
+{"items": [{"id": "01JD3P...", "at": "2026-11-23T08:30:00Z", "kind": "lockout", "category": "security", "capacity": null,
+            "actor": null, "user": null, "username": "kazuha", "ip": "203.0.113.7", "detail": {"scope": "ip_account", "minutes": 15}}],
+ "next": "01JD3O..."}
 ```
 
-`kind` and `user` filter; `limit` is 1 to 200 (default 50). One query per page.
+The filters combine, and each is answered by an index that ends in the row's
+id:
+
+- `category`: one or more (repeat it, or separate with commas) of `security`,
+  `admin`, `data`, `system`, `signins`, `reads`, `downloads`, `api`; another
+  word is `400 invalid`.
+- `kind`: one kind.
+- `user`: the id of the person a row is about; `actor`: the one who acted.
+- `capacity`: `site_admin` or `tenant_admin`.
+- `from`, `to`: an RFC 3339 time, or a day (`2026-11-23`; a day in `to`
+  includes that day). Turned into a range of ids, since an id starts with its
+  time.
+- `tenant`: a site administrator narrows to one tenant; a tenant's
+  administrators get their own only (another is `404`).
+
+`limit` is 1 to 200 (default 50). One query per page (one per category when
+several are asked, merged by id).
+
+### `GET /api/admin/audit/kinds`
+
+The registry of kinds, for the filters of the web:
+
+```json
+{"categories": [{"id": "security", "core": true, "setting": null, "on": true,
+                 "kinds": [{"name": "login_failed", "site": false}]},
+                {"id": "reads", "core": false, "setting": "audit.reads", "on": false, "kinds": []}]}
+```
+
+`on` says whether an optional category is written in the caller's scope (the
+tenant's value, or the site's for a site administrator without `?tenant=`).
+`site` marks a kind only the server's administrators see; a tenant's
+administrators are not given those.
 
 ### `petalbook security reset --data DIR`
 

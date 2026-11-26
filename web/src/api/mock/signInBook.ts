@@ -17,6 +17,7 @@ import type {
   SecurityBody,
   SecuritySettings,
 } from '../types.ts'
+import { AUDIT_CATEGORIES, categoryOfKind, isSiteKind } from './auditKinds.ts'
 import { HttpError, isRecord } from './store.ts'
 
 export interface PasskeyRec {
@@ -77,6 +78,8 @@ export interface SignInBookOptions {
   onMappingRemoved?: (slug: string, value: string, keep: string) => void
   // 3.3: whether any tenant's registration is open (ssoOnly cannot be switched on then).
   registrationOpen?: () => boolean
+  // Whether an optional audit category is switched on (its setting, and the default).
+  categoryOn?: (setting: string, def: boolean) => boolean
   security?: MockSecurity
   providers?: (ProviderInput & {
     slug: string
@@ -120,10 +123,16 @@ export function createSignInBook(o: SignInBookOptions) {
       detail?: Record<string, unknown>
     } = {},
   ) => {
+    const category = categoryOfKind(kind)
+    // An optional category that is switched off writes nothing, as on the server.
+    const info = AUDIT_CATEGORIES.find((c) => c.id === category)
+    if (info && !info.core && o.categoryOn && !o.categoryOn(info.setting ?? '', info.def)) return
     audit.push({
       id: o.newAuditId(),
       at: iso(),
       kind,
+      category,
+      capacity: null,
       actor: row.actor ?? null,
       user: row.user ?? null,
       username: row.username ?? null,
@@ -131,19 +140,95 @@ export function createSignInBook(o: SignInBookOptions) {
       detail: row.detail ?? {},
     })
   }
+  // The rows a request's filters name, newest first. hideSite leaves out the kinds only a site administrator sees (a
+  // tenant administrator's view); a tenant's own rows are the whole mock, which has one tenant.
+  const auditRows = (q: URLSearchParams, hideSite: boolean): AuditItem[] => {
+    const categories = q
+      .getAll('category')
+      .flatMap((v) => v.split(','))
+      .map((v) => v.trim())
+      .filter(Boolean)
+    for (const c of categories) if (!AUDIT_CATEGORIES.some((x) => x.id === c)) bad(`未知的类别 ${c}`)
+    const capacity = (q.get('capacity') ?? '').trim()
+    if (capacity && capacity !== 'site_admin' && capacity !== 'tenant_admin')
+      bad('capacity 要是 site_admin 或 tenant_admin')
+    // A day (YYYY-MM-DD) or an RFC 3339 time; a day in `to` includes the day.
+    const when = (name: string): { t: number; day: boolean } | null => {
+      const v = (q.get(name) ?? '').trim()
+      if (!v) return null
+      const day = /^\d{4}-\d{2}-\d{2}$/.test(v)
+      const t = Date.parse(day ? `${v}T00:00:00Z` : v)
+      if (Number.isNaN(t) || (!day && !/Z|[+-]\d{2}:\d{2}$/.test(v))) return bad(`${name} 要是时间或日期`)
+      return { t, day }
+    }
+    const from = when('from')
+    const to = when('to')
+    const upto = to ? to.t + (to.day ? 86_400_000 : 0) : Infinity
+    const kind = (q.get('kind') ?? '').trim()
+    const user = (q.get('user') ?? '').trim()
+    const actor = (q.get('actor') ?? '').trim()
+    return audit
+      .filter((a) => {
+        const at = Date.parse(a.at)
+        return (
+          (categories.length === 0 || categories.includes(a.category)) &&
+          (!kind || a.kind === kind) &&
+          (!user || a.user === user) &&
+          (!actor || a.actor === actor) &&
+          (!capacity || a.capacity === capacity) &&
+          (!from || at >= from.t) &&
+          at < upto &&
+          !(hideSite && isSiteKind(a.kind))
+        )
+      })
+      .reverse()
+  }
   const auditList = (
-    kind: string | null,
-    user: string | null,
+    q: URLSearchParams,
+    hideSite: boolean,
     cursor: string | null,
     limit: number,
   ): { items: AuditItem[]; next: string } => {
-    const all = audit
-      .filter((a) => (!kind || a.kind === kind) && (!user || a.user === user || a.actor === user))
-      .reverse()
+    const all = auditRows(q, hideSite)
     const start = cursor ? all.findIndex((a) => a.id === cursor) : 0
     if (cursor && start < 0) throw new HttpError(400, 'invalid', 'cursor 不对')
     const items = all.slice(start, start + limit)
     return { items, next: all[start + limit]?.id ?? '' }
+  }
+  // GET /admin/audit/kinds: the registry, with whether each optional category is on.
+  const auditKinds = (hideSite: boolean) => ({
+    categories: AUDIT_CATEGORIES.map((c) => ({
+      id: c.id,
+      core: c.core,
+      setting: c.setting,
+      on: c.core || (o.categoryOn ? o.categoryOn(c.setting ?? '', c.def) : c.def),
+      kinds: c.kinds.filter((k) => !(hideSite && k.site)),
+    })),
+  })
+  // The CSV of GET /admin/audit/download: at most 100,000 rows, a cell that starts like a formula quoted as text.
+  const auditCsv = (q: URLSearchParams, hideSite: boolean): string => {
+    const cell = (v: string) => {
+      const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v
+      return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
+    }
+    const lines = [
+      ['id', 'time', 'category', 'kind', 'capacity', 'tenant', 'actor', 'user', 'username', 'ip', 'detail'],
+    ]
+    for (const a of auditRows(q, hideSite).slice(0, 100_000))
+      lines.push([
+        a.id,
+        a.at,
+        a.category,
+        a.kind,
+        a.capacity ?? '',
+        '',
+        a.actor ?? '',
+        a.user ?? '',
+        a.username ?? '',
+        a.ip,
+        JSON.stringify(a.detail),
+      ])
+    return lines.map((l) => l.map(cell).join(',')).join('\n') + '\n'
   }
 
   // --- security settings ---
@@ -740,6 +825,8 @@ export function createSignInBook(o: SignInBookOptions) {
     audit,
     record,
     auditList,
+    auditKinds,
+    auditCsv,
     view,
     putCredentials,
     settingGet,

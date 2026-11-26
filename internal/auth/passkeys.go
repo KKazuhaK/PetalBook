@@ -393,7 +393,7 @@ func (s *Service) PasskeyFinish(ctx context.Context, ceremony, ip string, r *htt
 	if err != nil {
 		return nil, "", err
 	}
-	s.Audit(AuditEvent{Kind: "login", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "passkey"}})
+	s.Audit(AuditEvent{Kind: "login", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "passkey"}})
 	return u, tok, nil
 }
 

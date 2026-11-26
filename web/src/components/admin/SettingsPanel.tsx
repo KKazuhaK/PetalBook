@@ -496,6 +496,7 @@ const GROUP_ORDER = [
   'daily',
   'mail',
   'recycle',
+  'audit',
   'exports',
   'users',
   'accounts',
