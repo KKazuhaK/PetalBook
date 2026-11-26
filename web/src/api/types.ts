@@ -833,6 +833,8 @@ export type ErrorCode =
   | 'registration_closed'
   | 'password_reset_off'
   | 'email_domain_not_allowed'
+  | 'email_limit'
+  | 'primary_email'
   | 'terms_required'
   | 'email_verified'
   | 'email_unverified'
@@ -931,6 +933,8 @@ export interface User {
   lastActive?: string
   // The storage policy does not ask the spaces this user owns for a remote (absent when false).
   remoteExempt?: boolean
+  // One person's page only (GET /api/users/{id}): their addresses, as GET /api/account shows them.
+  emails?: AccountEmail[]
 }
 
 // Why a session ended without the person signing out (docs/api.md, "Why a session ended").
@@ -1105,6 +1109,21 @@ export interface AccountInfo {
   passkeys: Passkey[]
   // The groups the person is in, by name.
   groups: GroupRef[]
+  // The account's addresses, the primary first: the primary alone while accounts.multipleEmails is off.
+  emails?: AccountEmail[]
+}
+
+// One address of an account (docs/api.md, "More than one email address"). markedByAdmin: verified by a tenant
+// administrator's mark alone, which the person may still confirm.
+export interface AccountEmail {
+  email: string
+  primary: boolean
+  verified: boolean
+  markedByAdmin?: boolean
+  // A claim of an address another account holds unverified: it has no row until its link is followed, and can be
+  // removed (withdrawn).
+  pending?: boolean
+  created: string
 }
 
 // --- signing in (docs/api.md, "Signing in") -------------------------------------------
@@ -2097,6 +2116,7 @@ export type FeatureKey =
   | 'features.ownConnections'
   | 'features.ownDaily'
   | 'mail.ownSender'
+  | 'accounts.multipleEmails'
 // What GET /api/settings answers: the features as the caller's tenant has them, and the settings a space or a person can
 // change.
 export interface MySettings {

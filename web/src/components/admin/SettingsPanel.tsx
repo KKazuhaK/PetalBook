@@ -498,6 +498,7 @@ const GROUP_ORDER = [
   'recycle',
   'exports',
   'users',
+  'accounts',
   'offline',
 ]
 const groupOf = (key: string) => key.split('.')[0]

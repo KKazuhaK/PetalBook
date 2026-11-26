@@ -69,6 +69,38 @@ export const mailEn: MailMessages = {
     failed: 'Could not send the message',
     help: 'A verified address can be used to reset your password, and lets single sign-on recognise your account.',
   },
+  // More than one address per account (accounts.multipleEmails).
+  emails: {
+    title: 'Email addresses',
+    help: 'The primary address identifies your account and gets its notices. Any verified address signs in and resets your password. A new address counts once you follow the link sent to it.',
+    primary: 'Primary',
+    verified: 'Verified',
+    unverified: 'Not verified',
+    pending: 'Waiting for confirmation',
+    pendingHelp: 'Follow the link sent to this address to add it. Remove it to withdraw the request.',
+    marked: 'Marked verified by an administrator',
+    markedHelp: 'An administrator marked it verified. Confirm it yourself before it can be the primary address.',
+    verify: 'Verify',
+    makePrimary: 'Make primary',
+    remove: 'Remove',
+    add: 'Add an address',
+    addTitle: 'Add an email address',
+    addHelp: 'We send a verification message to this address. It signs in only after you follow the link in it.',
+    address: 'Email address',
+    send: 'Send the message',
+    sending: 'Sending…',
+    cancel: 'Cancel',
+    sent: (email: string) =>
+      `A verification message is on its way to ${email}. Once you follow its link, the address shows as verified.`,
+    madePrimary: (email: string) => `${email} is now the primary address.`,
+    removeTitle: 'Remove this address?',
+    removeBody: (email: string) =>
+      `${email} will be removed from your account: it no longer signs in or resets the password, and the links sent to it stop working.`,
+    removing: 'Removing…',
+    removed: (email: string) => `${email} was removed.`,
+    actionsFor: (email: string) => `Actions for ${email}`,
+    done: 'Done',
+  },
   forgot: {
     title: 'Reset your password',
     intro:

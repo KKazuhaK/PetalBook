@@ -11,11 +11,17 @@ import (
 // The kinds of message the server sends.
 const (
 	KindVerify       = "verify"
+	KindEmailClaim   = "email_claim" // verify, for an address another account holds unverified
 	KindRegister     = "register"
 	KindRegisterDup  = "register_exists"
 	KindReset        = "reset"
 	KindResetSSO     = "reset_sso"
 	KindEmailChanged = "email_changed"
+	// Notes with no link about the addresses of an account with several
+	// (accounts.multipleEmails): one was added, removed, or made primary.
+	KindEmailAdded   = "email_added"
+	KindEmailRemoved = "email_removed"
+	KindEmailPrimary = "email_primary"
 	KindInvite       = "invite"
 	KindTest         = "test"
 )
@@ -23,6 +29,7 @@ const (
 // Vars are what a template may use.
 type Vars struct {
 	Site     string // the host of the public address
+	Name     string // the account's display name, beside its username
 	Username string
 	Email    string
 	Link     string
@@ -94,11 +101,28 @@ func templates(kind, lang string, v Vars) body {
 	return en(kind, v)
 }
 
+// account names the account a verification link is for: "Name (username)".
+func account(v Vars) string {
+	switch {
+	case v.Name != "" && v.Name != v.Username && v.Username != "":
+		return fmt.Sprintf("%s (%s)", v.Name, v.Username)
+	case v.Username != "":
+		return v.Username
+	}
+	return v.Name
+}
+
 func en(kind string, v Vars) body {
 	ignore := "If you did not ask for this, you can ignore this message; nothing was changed."
 	switch kind {
 	case KindVerify:
-		return body{subject: "Confirm your email address", paras: []string{fmt.Sprintf("Follow this link to confirm that %s is your address on %s. It works once and for %d hours.", v.Email, v.Site, v.Hours)}, link: v.Link, foot: ignore}
+		para := fmt.Sprintf("Follow this link to confirm that %s is your address on %s. It works once and for %d hours.", v.Email, v.Site, v.Hours)
+		if a := account(v); a != "" {
+			para = fmt.Sprintf("Follow this link to confirm that %s is your address on %s, for the account %s. It works once and for %d hours.", v.Email, v.Site, a, v.Hours)
+		}
+		return body{subject: "Confirm your email address", paras: []string{para}, link: v.Link, foot: ignore}
+	case KindEmailClaim:
+		return body{subject: "Confirm adding this address to an account", paras: []string{fmt.Sprintf("Someone asked to add %s to the account %s on %s. Follow this link to confirm that it is yours: it is then added to that account, and if another account has it without having confirmed it, it is moved away from that account. It works once and for %d hours.", v.Email, account(v), v.Site, v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegister:
 		return body{subject: "Confirm your registration", paras: []string{fmt.Sprintf("Follow this link to finish making your account %q on %s. It works once and for %d hours.", v.Username, v.Site, v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegisterDup:
@@ -111,6 +135,12 @@ func en(kind string, v Vars) body {
 		return body{subject: "You are invited to " + v.Site, paras: []string{fmt.Sprintf("You were invited to make an account on %s. Follow this link to choose your username and password. It works once and for %d days.", v.Site, v.Hours/24)}, link: v.Link, foot: "If you were not expecting this, you can ignore this message; no account is made until you follow the link."}
 	case KindEmailChanged:
 		return body{subject: "The email address of your account was changed", paras: []string{fmt.Sprintf("The email address of your account on %s was changed. If this was not you, tell an administrator.", v.Site)}}
+	case KindEmailAdded:
+		return body{subject: "An email address was added to your account", paras: []string{fmt.Sprintf("%s was added to your account on %s. It counts once the link sent to it is followed. If this was not you, remove it and change your password.", v.Email, v.Site)}}
+	case KindEmailRemoved:
+		return body{subject: "An email address was removed from your account", paras: []string{fmt.Sprintf("%s was removed from your account on %s. If this was not you, tell an administrator.", v.Email, v.Site)}}
+	case KindEmailPrimary:
+		return body{subject: "The primary email address of your account was changed", paras: []string{fmt.Sprintf("%s is now the primary email address of your account on %s: you sign in with it, and notices go to it. If this was not you, tell an administrator.", v.Email, v.Site)}}
 	default:
 		return body{subject: "A test message", paras: []string{fmt.Sprintf("This is a test message from %s. Mail is working.", v.Site)}}
 	}
@@ -120,7 +150,13 @@ func zh(kind string, v Vars) body {
 	ignore := "如果不是你本人要的，忽略这封信即可，什么都没有改动。"
 	switch kind {
 	case KindVerify:
-		return body{subject: "确认你的邮箱地址", paras: []string{fmt.Sprintf("点开下面的链接，确认 %s 是你在 %s 上的邮箱。链接只能用一次，%d 小时内有效。", v.Email, v.Site, v.Hours)}, link: v.Link, foot: ignore}
+		para := fmt.Sprintf("点开下面的链接，确认 %s 是你在 %s 上的邮箱。链接只能用一次，%d 小时内有效。", v.Email, v.Site, v.Hours)
+		if a := account(v); a != "" {
+			para = fmt.Sprintf("点开下面的链接，确认 %s 是你在 %s 上的邮箱，对应账号 %s。链接只能用一次，%d 小时内有效。", v.Email, v.Site, a, v.Hours)
+		}
+		return body{subject: "确认你的邮箱地址", paras: []string{para}, link: v.Link, foot: ignore}
+	case KindEmailClaim:
+		return body{subject: "确认把这个邮箱加到账号", paras: []string{fmt.Sprintf("有人要把 %s 加到 %s 上的账号 %s。点开下面的链接确认它是你的：它会加到该账号；如果另一个账号持有它但没有确认过，它会从那个账号移走。链接只能用一次，%d 小时内有效。", v.Email, v.Site, account(v), v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegister:
 		return body{subject: "确认你的注册", paras: []string{fmt.Sprintf("点开下面的链接，完成在 %s 上创建账号「%s」。链接只能用一次，%d 小时内有效。", v.Site, v.Username, v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegisterDup:
@@ -133,6 +169,12 @@ func zh(kind string, v Vars) body {
 		return body{subject: "邀请你加入 " + v.Site, paras: []string{fmt.Sprintf("你被邀请在 %s 上创建账号。点开下面的链接，设置用户名和密码。链接只能用一次，%d 天内有效。", v.Site, v.Hours/24)}, link: v.Link, foot: "如果你没有预期这封邀请，忽略即可；点开链接之前不会创建任何账号。"}
 	case KindEmailChanged:
 		return body{subject: "你账号的邮箱地址被改了", paras: []string{fmt.Sprintf("你在 %s 上的账号的邮箱地址被改了。如果不是你本人，请告诉管理员。", v.Site)}}
+	case KindEmailAdded:
+		return body{subject: "你的账号添加了一个邮箱", paras: []string{fmt.Sprintf("%s 被添加到你在 %s 上的账号。点开发到它的链接后它才生效。如果不是你本人，请删掉它并修改密码。", v.Email, v.Site)}}
+	case KindEmailRemoved:
+		return body{subject: "你的账号删掉了一个邮箱", paras: []string{fmt.Sprintf("%s 已从你在 %s 上的账号删除。如果不是你本人，请告诉管理员。", v.Email, v.Site)}}
+	case KindEmailPrimary:
+		return body{subject: "你账号的主邮箱改了", paras: []string{fmt.Sprintf("%s 现在是你在 %s 上的账号的主邮箱：登录用它，通知也发到它。如果不是你本人，请告诉管理员。", v.Email, v.Site)}}
 	default:
 		return body{subject: "测试邮件", paras: []string{fmt.Sprintf("这是来自 %s 的测试邮件，发信正常。", v.Site)}}
 	}

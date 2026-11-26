@@ -15,6 +15,8 @@ import { tg } from '@/i18n/groups'
 import { tp } from '@/i18n/people'
 import { tm } from '@/i18n/mail'
 import { mailLang } from '@/pages/auth/MailPages'
+import { useFeature } from '@/lib/features'
+import { EmailsSection } from './EmailsSection'
 
 // Profile: name and email (accounts mode only). The password and the linked
 // sign-ins are on the Security panel.
@@ -37,9 +39,12 @@ export function ProfilePanel() {
 }
 
 function Sections({ account }: { account: AccountInfo }) {
+  // More than one address: the list of them replaces the line about the one address.
+  const multiple = useFeature('accounts.multipleEmails') === true
   return (
     <>
-      <Profile account={account} />
+      <Profile account={account} multiple={multiple} />
+      {multiple && <EmailsSection account={account} />}
       <MyGroups account={account} />
     </>
   )
@@ -69,7 +74,7 @@ function MyGroups({ account }: { account: AccountInfo }) {
 
 // The values, read-only: the avatar, name, username, email and language. One button edits name, username and
 // language in a dialog; the email has its own button (the new address is verified); the password is in Security.
-function Profile({ account }: { account: AccountInfo }) {
+function Profile({ account, multiple }: { account: AccountInfo; multiple: boolean }) {
   const [editing, setEditing] = useState(false)
   const [changingEmail, setChangingEmail] = useState(false)
   const user = account.user
@@ -104,7 +109,7 @@ function Profile({ account }: { account: AccountInfo }) {
         <dt className="text-muted-foreground">{tp.profile.password}</dt>
         <dd className="text-xs text-muted-foreground">{tp.profile.passwordNote}</dd>
       </dl>
-      {user.email && <EmailVerification user={user} />}
+      {user.email && !multiple && <EmailVerification user={user} />}
       <EditProfileDialog user={user} open={editing} onOpenChange={setEditing} />
       <ChangeEmailDialog user={user} open={changingEmail} onOpenChange={setChangingEmail} />
     </SettingsSection>

@@ -132,12 +132,21 @@ const (
 )
 
 // ReplaceEmailToken stores a token and removes the person's earlier tokens of
-// the kind (asking again makes the earlier links unusable). Run it in a transaction.
+// the kind (asking again makes the earlier links unusable); a verification
+// link replaces only the earlier links of its own address, so that confirming
+// one address of an account leaves the link of another working. Run it in a
+// transaction.
 func ReplaceEmailToken(ctx context.Context, q Q, t EmailToken) error {
-	if _, err := q.Exec(ctx, `DELETE FROM email_tokens WHERE user_id = ? AND kind = ?`, t.UserID, t.Kind); err != nil {
+	var err error
+	if t.Kind == TokenVerify {
+		_, err = q.Exec(ctx, `DELETE FROM email_tokens WHERE user_id = ? AND kind = ? AND email = ?`, t.UserID, t.Kind, t.Email)
+	} else {
+		_, err = q.Exec(ctx, `DELETE FROM email_tokens WHERE user_id = ? AND kind = ?`, t.UserID, t.Kind)
+	}
+	if err != nil {
 		return err
 	}
-	_, err := q.Exec(ctx, `INSERT INTO email_tokens(hash, kind, user_id, email, created, expires, used) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+	_, err = q.Exec(ctx, `INSERT INTO email_tokens(hash, kind, user_id, email, created, expires, used) VALUES (?, ?, ?, ?, ?, ?, 0)`,
 		t.Hash, t.Kind, t.UserID, t.Email, ms(t.Created), ms(t.Expires))
 	return err
 }
@@ -176,6 +185,50 @@ func DeleteEmailTokens(ctx context.Context, q Q, userID, kind string) error {
 	}
 	_, err := q.Exec(ctx, `DELETE FROM email_tokens WHERE user_id = ? AND kind = ?`, userID, kind)
 	return err
+}
+
+// DeleteEmailTokensFor removes a person's tokens, of every kind, sent to one
+// address (the address was removed from the account).
+func DeleteEmailTokensFor(ctx context.Context, q Q, userID, email string) error {
+	_, err := q.Exec(ctx, `DELETE FROM email_tokens WHERE user_id = ? AND email = ?`, userID, email)
+	return err
+}
+
+// CountEmailTokens is how many unused, unexpired tokens of a kind a person has
+// (the claims of addresses another account holds unverified wait as tokens).
+func CountEmailTokens(ctx context.Context, q Q, userID, kind string, now time.Time) (int, error) {
+	var n int
+	err := q.QueryRow(ctx, `SELECT COUNT(*) FROM email_tokens WHERE user_id = ? AND kind = ? AND used = 0 AND expires > ?`, userID, kind, ms(now)).Scan(&n)
+	return n, err
+}
+
+// EmailClaim is a verification link of an address the account has no row for:
+// the claim of an address another account holds unverified.
+type EmailClaim struct {
+	Email   string
+	Created time.Time
+}
+
+// PendingEmailClaims lists a person's unused, unexpired verification links of
+// addresses they have no row for, oldest first.
+func PendingEmailClaims(ctx context.Context, q Q, userID string, now time.Time) ([]EmailClaim, error) {
+	rows, err := q.Query(ctx, `SELECT t.email, t.created FROM email_tokens t WHERE t.user_id = ? AND t.kind = ? AND t.used = 0 AND t.expires > ?
+		AND NOT EXISTS (SELECT 1 FROM user_emails e WHERE e.user_id = t.user_id AND e.email = t.email) ORDER BY t.created, t.email`, userID, TokenVerify, ms(now))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EmailClaim
+	for rows.Next() {
+		var c EmailClaim
+		var created int64
+		if err := rows.Scan(&c.Email, &created); err != nil {
+			return nil, err
+		}
+		c.Created = fromMS(created)
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // DeleteOldEmailTokens is the background clean-up of tokens that expired before.

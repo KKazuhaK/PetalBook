@@ -265,6 +265,7 @@ export const tenantsEn: TenantsMessages = {
       recycle: 'Recycle bin',
       exports: 'Exports',
       users: 'Users',
+      accounts: 'Accounts',
       offline: 'Offline',
       other: 'Other',
     } as Record<string, string>,
@@ -298,6 +299,7 @@ export const tenantsEn: TenantsMessages = {
       'files.maxBytes': 'Largest size of one file (bytes)',
       'recycle.days': 'Days the recycle bin keeps things',
       'users.emailNonAscii': 'Allow email addresses with characters outside ASCII',
+      'accounts.multipleEmails': 'More than one email address per account',
       'storage.assets': 'Where attachments go',
       'storage.assets.ownStorageExempt': 'Organizations on their own storage are not bound by this',
       'features.ownSso': "The tenant's own single sign-on providers",
@@ -377,6 +379,8 @@ export const tenantsEn: TenantsMessages = {
         "The largest a single write may be: every page, attachment and file of an import counts, images too. The site's value is --max-upload and cannot be changed here; an organisation may set any value up to it. Over it, saving is refused and what you wrote stays where it is.",
       'recycle.days':
         'How many days deleted spaces and people stay in the recycle bin before they are purged. Site administrators only.',
+      'accounts.multipleEmails':
+        'Off by default. On: a person may add more email addresses to their account (each counts once its link is followed), make a verified one primary, and remove the others; any verified address signs in. Every address stays unique on the server. Turned off again, the extra addresses are kept but neither shown nor used to sign in. The site may allow, restrict or lock it; an organisation decides inside.',
       'users.emailNonAscii':
         'Off by default: an address with characters outside ASCII (a Unicode name before the @, an internationalised domain) is refused. On: it is accepted and compared in one form (the domain as punycode, the name normalised and case folded), so it stays unique. Mail to such an address needs a mail relay that supports SMTPUTF8. Site administrators only.',
       'storage.assets':

@@ -25,6 +25,7 @@ import type {
   SpaceInfo,
   SpaceRole,
   User,
+  AccountEmail,
   AdminGrant,
   AdminToken,
   ApiToken,
@@ -1011,7 +1012,12 @@ export function createMockServer(options: MockOptions = {}) {
       book.record('login_failed', { username, detail: { method: 'password', reason: 'rate_limited' } })
       throw new HttpError(429, 'rate_limited', '尝试次数太多，请稍后再试', { __retryAfter: wait })
     }
-    const u = [...users.values()].find((x) => x.username === username)
+    // An address finds the account that holds it verified: its primary, or another one while the switch is on.
+    const u = username.includes('@')
+      ? ([...users.values()].find(
+          (x) => x.emailVerified && x.email !== '' && emailKey(x.email) === emailKey(username),
+        ) ?? otherAddressOwner(username))
+      : [...users.values()].find((x) => x.username === username)
     const ok =
       !!u &&
       !u.disabled &&
@@ -1102,7 +1108,153 @@ export function createMockServer(options: MockOptions = {}) {
       perHour: tenantBook.effective('registration.perHour') as number,
     }),
     record: (kind, o) => book.record(kind, o),
+    byOtherAddress: (login) => otherAddressOwner(login),
   })
+
+  // More than one address per account (accounts.multipleEmails): the addresses of each account besides its primary
+  // one. Off, they are kept but neither shown nor used to sign in.
+  const extraEmails = new Map<string, { email: string; verified: boolean; created: string }[]>()
+  const multipleOn = () => tenantBook.effective('accounts.multipleEmails') === true
+  const emailKey = (e: string) => e.trim().normalize('NFC').toLowerCase()
+  const extrasOf = (id: string) => {
+    let l = extraEmails.get(id)
+    if (!l) extraEmails.set(id, (l = []))
+    return l
+  }
+  // Who holds an address on the server, primary or not, verified or not.
+  const holderOf = (email: string) => {
+    const k = emailKey(email)
+    for (const u of users.values()) {
+      if (u.email !== '' && emailKey(u.email) === k) return { u, verified: u.emailVerified, primary: true }
+      const x = extraEmails.get(u.id)?.find((e) => emailKey(e.email) === k)
+      if (x) return { u, verified: x.verified, primary: false }
+    }
+    return undefined
+  }
+  // The account a verified address that is not a primary signs in or resets, while the switch is on.
+  const otherAddressOwner = (login: string): UserRec | undefined => {
+    if (!multipleOn()) return undefined
+    const h = holderOf(login)
+    return h && !h.primary && h.verified ? h.u : undefined
+  }
+  // A claim of an address another account holds unverified has no row until its link is followed: it waits as a link.
+  const claimsOf = (u: UserRec): AccountEmail[] => {
+    if (!multipleOn()) return []
+    const mine = new Set([u.email, ...(extraEmails.get(u.id) ?? []).map((e) => e.email)].map(emailKey))
+    return mailBook
+      .verifyLinksOf(u.id)
+      .filter((l) => !mine.has(emailKey(l.email)))
+      .map((l) => ({
+        email: l.email,
+        primary: false,
+        verified: false,
+        pending: true,
+        created: rfc3339(l.expires - 24 * 3600_000),
+      }))
+  }
+  const emailsOf = (u: UserRec): AccountEmail[] => [
+    ...(u.email ? [{ email: u.email, primary: true, verified: u.emailVerified, created: u.created }] : []),
+    ...(multipleOn()
+      ? (extraEmails.get(u.id) ?? []).map((e) => ({
+          email: e.email,
+          primary: false,
+          verified: e.verified,
+          created: e.created,
+        }))
+      : []),
+    ...claimsOf(u),
+  ]
+  // The routes of the addresses besides the primary (docs/api.md, "More than one email address").
+  const accountEmails = (me: UserRec, path: string, method: string, body: Record<string, unknown>): MockResponse => {
+    featureGate('accounts.multipleEmails')
+    const list = extrasOf(me.id)
+    const find = (raw: unknown) => {
+      const k = typeof raw === 'string' ? emailKey(raw) : ''
+      if (k === '') return undefined
+      if (me.email !== '' && emailKey(me.email) === k) return 'primary' as const
+      return list.find((e) => emailKey(e.email) === k)
+    }
+    const noSuch = () => new HttpError(404, 'not_found', '账号没有这个邮箱')
+    if (path === '/account/emails' && method === 'POST') {
+      if (!mailBook.ready()) throw new HttpError(409, 'mail_not_configured', '没有启用发信')
+      const email = typeof body.email === 'string' ? body.email.trim() : ''
+      if (email.length > 254 || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email))
+        throw new HttpError(400, 'invalid', '这不像一个邮箱地址')
+      if (find(email)) throw new HttpError(409, 'exists', '这个邮箱已经在你的账号里了')
+      if ((me.email ? 1 : 0) + list.length >= 10) throw new HttpError(409, 'email_limit', '一个账号最多 10 个邮箱')
+      const h = holderOf(email)
+      if (h?.verified) throw new HttpError(409, 'email_taken', '另一个账号已经在用这个邮箱')
+      const r = mailBook.verifyOther(me, email)
+      if (!h) list.push({ email, verified: false, created: rfc3339(now()) })
+      book.record('email_added', { actor: me.id, user: me.id, detail: { email } })
+      if (me.emailVerified) mailBook.noteAddress('email_added', [me.email])
+      return r
+    }
+    if (path === '/account/emails/verify' && method === 'POST') {
+      const x = find(body.email)
+      if (!x) throw noSuch()
+      if (x === 'primary') return mailBook.requestVerify(me)
+      if (x.verified) throw new HttpError(409, 'email_verified', '邮箱已经验证过了')
+      return mailBook.verifyOther(me, x.email)
+    }
+    if (path === '/account/emails/primary' && method === 'POST') {
+      const x = find(body.email)
+      if (!x) throw noSuch()
+      if (x !== 'primary') {
+        if (!x.verified) throw new HttpError(409, 'email_unverified', '只有验证过的邮箱能设为主邮箱')
+        const old = { email: me.email, verified: me.emailVerified }
+        list.splice(list.indexOf(x), 1)
+        if (old.email !== '') list.push({ email: old.email, verified: old.verified, created: rfc3339(now()) })
+        me.email = x.email
+        me.emailVerified = true
+        book.record('email_primary_changed', { actor: me.id, user: me.id, detail: { email: x.email, old: old.email } })
+        mailBook.noteAddress('email_primary', [x.email, ...(old.verified ? [old.email] : [])])
+      }
+      return { status: 200, body: { user: publicUser(me) } }
+    }
+    const one = /^\/account\/emails\/([^/]+)$/.exec(path)
+    if (one && method === 'DELETE') {
+      const x = find(decodeURIComponent(one[1]))
+      if (!x) {
+        // A pending claim has no row: removing it withdraws the link.
+        const c = claimsOf(me).find((e) => emailKey(e.email) === emailKey(decodeURIComponent(one[1])))
+        if (!c) throw noSuch()
+        mailBook.dropTokensTo(me.id, c.email)
+        return { status: 204 }
+      }
+      if (x === 'primary') throw new HttpError(409, 'primary_email', '主邮箱不能删除')
+      list.splice(list.indexOf(x), 1)
+      mailBook.dropTokensTo(me.id, x.email)
+      book.record('email_removed', { actor: me.id, user: me.id, detail: { email: x.email } })
+      mailBook.noteAddress('email_removed', [...(me.emailVerified ? [me.email] : []), ...(x.verified ? [x.email] : [])])
+      return { status: 204 }
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
+  }
+  // A link to an address that is not the account's primary one: its row is verified, or a claim of an address another
+  // account holds unverified moves it here; one proved first by someone else is taken.
+  const confirmOtherEmail = (id: string, email: string) => {
+    if (!multipleOn()) throw new HttpError(404, 'not_found', '链接无效或已过期')
+    const list = extrasOf(id)
+    const x = list.find((e) => emailKey(e.email) === emailKey(email))
+    if (x) {
+      x.verified = true
+      return
+    }
+    const h = holderOf(email)
+    if (h && h.u.id !== id) {
+      if (h.verified) throw new HttpError(409, 'email_taken', '另一个账号已经在用这个邮箱')
+      if (h.primary) {
+        h.u.email = ''
+        h.u.emailVerified = false
+      } else
+        extrasOf(h.u.id).splice(
+          extrasOf(h.u.id).findIndex((e) => emailKey(e.email) === emailKey(email)),
+          1,
+        )
+    }
+    list.push({ email, verified: true, created: rfc3339(now()) })
+  }
 
   const checkInviteToken = (token: unknown): InviteRec => {
     const h = typeof token === 'string' ? hashOf(token) : ''
@@ -1421,6 +1573,7 @@ export function createMockServer(options: MockOptions = {}) {
     }),
     passkeys: u.passkeys.map(passkeyView),
     groups: groupBook.inGroups(u.id),
+    emails: emailsOf(u),
   })
 
   const checkNewUsername = (v: unknown, except: string): string => {
@@ -1451,9 +1604,11 @@ export function createMockServer(options: MockOptions = {}) {
       if (/[^\x00-\x7f]/.test(email) && tenantBook.effective('users.emailNonAscii') !== true)
         throw new HttpError(400, 'email_not_ascii', '这个服务器不接受含非 ASCII 字符的邮箱')
       const key = (e: string) => e.normalize('NFC').toLowerCase()
+      const holder = email === '' ? undefined : holderOf(email)
       if (
         email !== '' &&
-        [...users.values()].some((x) => x.id !== u.id && x.email !== '' && key(x.email) === key(email))
+        ([...users.values()].some((x) => x.id !== u.id && x.email !== '' && key(x.email) === key(email)) ||
+          (holder !== undefined && holder.u.id !== u.id))
       )
         throw new HttpError(409, 'email_taken', '另一个账号已经在用这个邮箱')
       // Changing the address takes the "verified" away.
@@ -4617,12 +4772,20 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       return mailBook.requestVerify(requireUser(ctx))
     }
+    if (path === '/account/emails' || path.startsWith('/account/emails/')) {
+      accountsOnly()
+      return accountEmails(requireUser(ctx), path, method, body)
+    }
     if (path === '/email/confirm' && method === 'POST') {
       accountsOnly()
-      return mailBook.confirmEmail(body, (id) => {
-        const u = users.get(id)
-        if (u) u.emailVerified = true
-      })
+      return mailBook.confirmEmail(
+        body,
+        (id) => {
+          const u = users.get(id)
+          if (u) u.emailVerified = true
+        },
+        confirmOtherEmail,
+      )
     }
     if (path === '/password/forgot' && method === 'POST') {
       accountsOnly()
@@ -4750,7 +4913,7 @@ export function createMockServer(options: MockOptions = {}) {
       if (user && method === 'GET') {
         const u = users.get(decodeURIComponent(user[1]))
         if (!u) throw new HttpError(404, 'not_found', '没有这个用户')
-        return j({ user: listedUser(u) })
+        return j({ user: { ...listedUser(u), emails: emailsOf(u).filter((e) => e.pending !== true) } })
       }
       const userMore = /^\/users\/([^/]+)\/(memberships|sessions|identities)(?:\/([^/]+))?$/.exec(path)
       if (userMore) {

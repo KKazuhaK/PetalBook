@@ -55,6 +55,7 @@ var scopeAllowlist = map[string]string{
 	"UpdateProfile":           "the caller's own account, or a user already found in scope",
 	"SetPrimaryEmail":         "a user already found in scope; the address is unique on the whole server, so its holder is looked for everywhere",
 	"SetEmailRowVerified":     "a user already found in scope",
+	"MakePrimaryEmail":        "a user already found in scope (the signed-in person, their own address)",
 	"UserEmails":              "a user already found in scope",
 	"EmailOwner":              "an address belongs to one account on the whole server (3.6): the lookup is site-wide by design",
 	"EmailsHeld":              "EmailOwner for many addresses at once (a batch of invites): site-wide by design, and it answers only whether each is held",
