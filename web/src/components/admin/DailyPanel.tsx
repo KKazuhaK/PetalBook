@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Plus, Trash2, X } from 'lucide-react'
+import { Eraser, Eye, Pencil, Play, Plus, Save, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { adminApi } from '@/api/admin'
@@ -596,6 +596,7 @@ function DefaultSection({ data }: { data: AdminDaily }) {
                   })
                 }
               >
+                <Eraser aria-hidden="true" />
                 {d.sourceClear}
               </Button>
             </div>
@@ -605,7 +606,7 @@ function DefaultSection({ data }: { data: AdminDaily }) {
       <FormMessage>{error}</FormMessage>
       <div>
         <Button onClick={submit} disabled={save.isPending}>
-          {save.isPending && <Spinner />}
+          {save.isPending ? <Spinner /> : <Save aria-hidden="true" />}
           {d.save}
         </Button>
       </div>
@@ -698,13 +699,15 @@ function LinesSection({ data }: { data: AdminDaily }) {
           />
         </label>
         <Button variant="outline" onClick={() => void load('preview')} disabled={busy || text.trim() === ''}>
+          <Eye aria-hidden="true" />
           {d.linesPreview}
         </Button>
         <Button variant="outline" onClick={() => void load('saved')} disabled={busy || count === 0}>
+          <Pencil aria-hidden="true" />
           {d.linesEditSaved}
         </Button>
         <Button onClick={send} disabled={save.isPending || (rows ? rows.length === 0 : text.trim() === '')}>
-          {save.isPending && <Spinner />}
+          {save.isPending ? <Spinner /> : <Save aria-hidden="true" />}
           {d.linesSave}
         </Button>
         <Button
@@ -1113,6 +1116,7 @@ function ApiEditor({
               <>
                 <span className="text-sm text-muted-foreground">{d.headerSet}</span>
                 <Button type="button" variant="outline" size="xs" onClick={() => setHeader(i, { changing: true })}>
+                  <Pencil aria-hidden="true" />
                   {d.headerChange}
                 </Button>
               </>
@@ -1241,7 +1245,7 @@ function ApiEditor({
               )
             }
           >
-            {tryIt.isPending && <Spinner />}
+            {tryIt.isPending ? <Spinner /> : <Play aria-hidden="true" />}
             {tryIt.isPending ? d.trying : d.tryButton}
           </Button>
         </div>

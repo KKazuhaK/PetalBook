@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { Ellipsis, Plus, Search } from 'lucide-react'
+import { Ban, CircleCheck, Ellipsis, Eye, Search, UserPlus, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useUsersPage } from '@/api/admin'
@@ -30,6 +30,7 @@ import { useTablePrefs } from '@/lib/tablePrefs'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import { tg } from '@/i18n/manage'
+import { AdminPageActions } from '../AdminPageHeader'
 import { Avatar } from './Avatar'
 import { useUserChange } from './useUserChange'
 
@@ -249,14 +250,12 @@ export function UsersList() {
             <option value="inactive">{tc.users.inactive(INACTIVE_DAYS)}</option>
           </NativeSelect>
         </div>
-        <Button
-          className="h-10 sm:ml-auto max-sm:w-full"
-          render={<Link to={adminPath('users', 'invites')} />}
-          nativeButton={false}
-        >
-          <Plus aria-hidden="true" />
-          {tc.users.invite}
-        </Button>
+        <AdminPageActions>
+          <Button className="h-10" render={<Link to={adminPath('users', 'invites')} />} nativeButton={false}>
+            <UserPlus aria-hidden="true" />
+            {tc.users.invite}
+          </Button>
+        </AdminPageActions>
       </div>
       <FormMessage focusRef={messageRef}>{error ? error.message : ''}</FormMessage>
       <DataTable
@@ -297,6 +296,7 @@ export function UsersList() {
               render={<Link to={adminUserPath(u.id)} aria-label={t.fmt.labelled(tc.table.view, u.name)} />}
               nativeButton={false}
             >
+              <Eye aria-hidden="true" />
               {tc.table.view}
             </Button>
             <DropdownMenu>
@@ -308,15 +308,18 @@ export function UsersList() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-44">
                 <DropdownMenuItem className="min-h-10" onClick={() => navigate(adminUserPath(u.id))}>
+                  <Eye />
                   {tc.table.view}
                 </DropdownMenuItem>
                 <DropdownMenuItem className="min-h-10" disabled={busy === u.id} onClick={() => void toggle(u)}>
+                  {u.disabled ? <CircleCheck /> : <Ban />}
                   {u.disabled ? tc.users.enable : tc.users.disable}
                 </DropdownMenuItem>
                 {u.id !== me?.id && (
                   <>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem className="min-h-10 text-destructive" onClick={() => setDeleting(u)}>
+                      <Trash2 />
                       {tc.users.delete}
                     </DropdownMenuItem>
                   </>

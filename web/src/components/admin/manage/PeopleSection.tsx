@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
-import { Ellipsis, Search } from 'lucide-react'
+import { Ellipsis, Eye, Search, Trash2 } from 'lucide-react'
 import { usePeoplePage } from '@/api/manage'
 import type { ConfirmAction, PeopleParams, PeopleSort, StoragePerson } from '@/api/types'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -233,6 +233,7 @@ export function PeopleSection() {
               render={<Link to={adminUserPath(p.user.id, 'usage')} aria-label={tg.people.openFor(p.user.name)} />}
               nativeButton={false}
             >
+              <Eye aria-hidden="true" />
               {tc.table.view}
             </Button>
             <DropdownMenu>
@@ -244,6 +245,7 @@ export function PeopleSection() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-44">
                 <DropdownMenuItem className="min-h-10 text-destructive" onClick={() => setDeleting(p)}>
+                  <Trash2 />
                   {tg.people.deletePerson}
                 </DropdownMenuItem>
               </DropdownMenuContent>

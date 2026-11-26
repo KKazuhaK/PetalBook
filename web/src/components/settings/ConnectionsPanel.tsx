@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
-import { ExternalLink } from 'lucide-react'
+import { Check, ExternalLink, Link2, RefreshCw, Unlink } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
 import type { ConnectionLeftover, Provider } from '@/api/types'
@@ -267,6 +267,7 @@ function Connect({
         </Button>
         {labels.authorizeOnly && (
           <Button type="button" variant="ghost" size="sm" onClick={() => void go(false)} disabled={busy}>
+            <Check aria-hidden="true" />
             {labels.authorizeOnly}
           </Button>
         )}
@@ -352,6 +353,7 @@ function Connected({ provider, labels, installs }: { provider: string; labels: L
           />
         )}
         <Button type="button" variant="outline" onClick={() => setConfirm(true)}>
+          <Unlink aria-hidden="true" />
           {tg.account.disconnect}
         </Button>
       </div>
@@ -404,7 +406,7 @@ function NeedsInstall({ provider, login }: { provider: string; login: string }) 
       <p className="text-muted-foreground">{tg.account.needsInstallBody}</p>
       <div>
         <Button type="button" size="sm" onClick={() => void go()} disabled={busy}>
-          {busy && <Spinner />}
+          {busy ? <Spinner /> : <Link2 aria-hidden="true" />}
           {tg.account.installOnMine}
         </Button>
       </div>
@@ -476,7 +478,7 @@ function Leftover({ provider, item: l }: { provider: string; item: ConnectionLef
       </div>
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" disabled={busy} onClick={() => void retry()}>
-          {create.isPending && <Spinner />}
+          {create.isPending ? <Spinner /> : <RefreshCw aria-hidden="true" />}
           {tg.account.leftoverRetry}
         </Button>
         <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void forget()}>

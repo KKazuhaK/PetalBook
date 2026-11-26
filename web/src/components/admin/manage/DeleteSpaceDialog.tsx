@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Download } from 'lucide-react'
 import { Link } from 'react-router'
 import { useDeleteSpace } from '@/api/admin'
 import { useSpaceDeletion } from '@/api/manage'
@@ -127,6 +128,7 @@ export function DeleteSpaceDialog({
                       disabled={!p.exportable}
                       onClick={() => setExporting(true)}
                     >
+                      <Download aria-hidden="true" />
                       {tg.del.space.exportNow}
                     </Button>
                   </div>

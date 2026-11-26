@@ -1,4 +1,5 @@
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
+import { Save } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { useSession } from '@/api/hooks'
 import { usePutSetting, useSiteSettings, useTenancy, useTenants, useTenantSettings } from '@/api/admin'
@@ -63,7 +64,7 @@ function ValueEditor({
     case 'choice':
       return (
         <NativeSelect
-          className="h-10 w-full max-w-sm lg:h-8"
+          className="h-10 w-full lg:h-8"
           aria-label={label}
           disabled={disabled}
           value={typeof value === 'string' ? value : ''}
@@ -91,7 +92,7 @@ function ValueEditor({
         <Input
           type="number"
           inputMode="numeric"
-          className="h-10 w-28 lg:h-8"
+          className="h-10 w-full lg:h-8"
           aria-label={label}
           disabled={disabled}
           value={typeof value === 'number' ? String(value) : ''}
@@ -102,7 +103,7 @@ function ValueEditor({
       return (
         <Textarea
           rows={3}
-          className="w-full max-w-sm"
+          className="w-full"
           aria-label={label}
           placeholder={ts.listHint}
           disabled={disabled}
@@ -120,7 +121,7 @@ function ValueEditor({
     case 'text':
       return (
         <Input
-          className="h-10 w-full max-w-sm lg:h-8"
+          className="h-10 w-full lg:h-8"
           aria-label={label}
           disabled={disabled}
           value={typeof value === 'string' ? value : ''}
@@ -163,9 +164,9 @@ function RuleEditor({
     else onChange({ mode: mode as SettingLower['mode'] })
   }
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="grid gap-2">
       <NativeSelect
-        className="h-10 w-28 lg:h-8"
+        className="h-10 w-full lg:h-8"
         aria-label={label}
         disabled={disabled}
         value={lower.mode}
@@ -176,24 +177,20 @@ function RuleEditor({
         <option value="lock">{ts.modes.lock}</option>
       </NativeSelect>
       {lower.mode === 'restrict' && kind === 'limit' && (
-        <>
-          <Label className="text-xs text-muted-foreground">{ts.maxLabel}</Label>
+        <div className="flex items-center gap-2">
+          <Label className="shrink-0 text-xs text-muted-foreground">{ts.maxLabel}</Label>
           <Input
             type="number"
-            className="h-10 w-24 lg:h-8"
+            className="h-10 w-full lg:h-8"
             aria-label={`${label}: ${ts.maxLabel}`}
             disabled={disabled}
             value={lower.max ?? ''}
             onChange={(e) => onChange({ mode: 'restrict', max: Number(e.target.value) })}
           />
-        </>
+        </div>
       )}
       {lower.mode === 'restrict' && kind === 'choice' && (
-        <div
-          className="flex flex-wrap items-center gap-x-4 gap-y-1"
-          role="group"
-          aria-label={`${label}: ${ts.optionsLabel}`}
-        >
+        <div className="grid gap-1" role="group" aria-label={`${label}: ${ts.optionsLabel}`}>
           {(choices ?? []).map((c) => (
             <label key={c} className="flex min-h-10 items-center gap-2 text-xs text-muted-foreground lg:min-h-0">
               <input
@@ -215,6 +212,22 @@ function RuleEditor({
       {lower.mode === 'restrict' && kind === 'boolean' && (
         <span className="text-xs text-muted-foreground">{ts.onlyOff}</span>
       )}
+    </div>
+  )
+}
+
+// One setting is a row of a fixed grid: the name and its words on the left; on the right the value, the rule for the
+// layers below and the save button, each in a column of its own width, so they line up from row to row. Under a wide
+// screen the right side goes below the left, and every control fills the width.
+const ROW = 'grid gap-4 px-4 py-4 transition-colors hover:bg-muted/30 xl:grid-cols-[minmax(0,1fr)_32rem] xl:gap-8'
+const CONTROLS = 'grid min-w-0 content-start items-start gap-4 sm:grid-cols-[13rem_10rem_6.5rem]'
+
+function Cell({ label, children }: { label: string; children?: ReactNode }) {
+  return (
+    <div className="grid min-w-0 content-start gap-1.5">
+      <span className="hidden min-h-4 text-xs text-muted-foreground sm:block">{label}</span>
+      {label && <span className="text-xs text-muted-foreground sm:hidden">{label}</span>}
+      {children}
     </div>
   )
 }
@@ -243,19 +256,20 @@ function SiteRow({ s }: { s: SiteSetting }) {
     )
   }
   return (
-    <li className="grid gap-2 px-3 py-3" data-slot="setting-row" data-key={s.key}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span id={id} className="text-sm font-medium">
-          {name}
-        </span>
-        {s.site.fromFlag && <Badge variant="secondary">{ts.fromFlag}</Badge>}
+    <li className={ROW} data-slot="setting-row" data-key={s.key}>
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span id={id} className="text-sm font-medium">
+            {name}
+          </span>
+          {s.site.fromFlag && <Badge variant="secondary">{ts.fromFlag}</Badge>}
+        </div>
+        {ts.helps[s.key] && <p className="text-xs text-muted-foreground">{ts.helps[s.key]}</p>}
+        <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
       </div>
-      {ts.helps[s.key] && <p className="text-xs text-muted-foreground">{ts.helps[s.key]}</p>}
-      <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
-      <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
-        {!doc && (
-          <div className="grid gap-1">
-            <span className="text-xs text-muted-foreground">{ts.value}</span>
+      <div className={CONTROLS}>
+        <Cell label={doc ? '' : ts.value}>
+          {!doc && (
             <ValueEditor
               kind={s.kind}
               value={value}
@@ -265,10 +279,9 @@ function SiteRow({ s }: { s: SiteSetting }) {
               words={ts.choices[s.key]}
               onChange={setValue}
             />
-          </div>
-        )}
-        <div className="grid gap-1">
-          <span className="text-xs text-muted-foreground">{ts.rule}</span>
+          )}
+        </Cell>
+        <Cell label={ts.rule}>
           <RuleEditor
             kind={s.kind}
             lower={lower}
@@ -278,16 +291,19 @@ function SiteRow({ s }: { s: SiteSetting }) {
             words={ts.choices[s.key]}
             onChange={setLower}
           />
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          className="h-10 self-end lg:h-8"
-          disabled={put.isPending || (!dirtyValue && !dirtyLower)}
-          onClick={save}
-        >
-          {put.isPending ? ts.saving : ts.save}
-        </Button>
+        </Cell>
+        <Cell label="">
+          <Button
+            type="button"
+            size="sm"
+            className="h-10 w-full lg:h-8"
+            disabled={put.isPending || (!dirtyValue && !dirtyLower)}
+            onClick={save}
+          >
+            <Save aria-hidden="true" />
+            {put.isPending ? ts.saving : ts.save}
+          </Button>
+        </Cell>
       </div>
     </li>
   )
@@ -330,25 +346,41 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
   }
   const kept = mine && mine.value != null && !mine.inEffect
   return (
-    <li className="grid gap-2 px-3 py-3" data-slot="setting-row" data-key={s.key}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium">{name}</span>
-        <RuleText lower={s.site.lower} kind={s.kind} />
-        {forcedForTenant && <Badge variant="secondary">{ts.siteLockedByYou}</Badge>}
-        {kept && (
-          <Badge variant="outline" data-slot="not-in-effect" title={ts.keptHint}>
-            {ts.notInEffect}
-          </Badge>
+    <li className={ROW} data-slot="setting-row" data-key={s.key}>
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">{name}</span>
+          <RuleText lower={s.site.lower} kind={s.kind} />
+          {forcedForTenant && <Badge variant="secondary">{ts.siteLockedByYou}</Badge>}
+          {kept && (
+            <Badge variant="outline" data-slot="not-in-effect" title={ts.keptHint}>
+              {ts.notInEffect}
+            </Badge>
+          )}
+        </div>
+        {ts.helps[s.key] && <p className="text-xs text-muted-foreground">{ts.helps[s.key]}</p>}
+        {kept && <p className="text-xs text-muted-foreground">{ts.keptHint}</p>}
+        {canForce && (
+          <div className="pt-1">
+            <label className="flex min-h-10 items-center gap-2 text-sm lg:min-h-0">
+              <Switch
+                className={HIT}
+                checked={siteLock}
+                disabled={put.isPending || (follow && !siteLock)}
+                aria-label={`${name}: ${ts.siteLock}`}
+                onCheckedChange={setSiteLock}
+              />
+              {ts.siteLock}
+            </label>
+            <p className="text-xs text-muted-foreground">{ts.siteLockHelp}</p>
+          </div>
         )}
+        <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
       </div>
-      {ts.helps[s.key] && <p className="text-xs text-muted-foreground">{ts.helps[s.key]}</p>}
-      {kept && <p className="text-xs text-muted-foreground">{ts.keptHint}</p>}
-      <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
-      <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
-        {!doc && (
-          <div className="grid gap-1">
-            <span className="text-xs text-muted-foreground">{ts.value}</span>
-            <div className="flex flex-wrap items-center gap-3">
+      <div className={CONTROLS}>
+        <Cell label={doc ? '' : ts.value}>
+          {!doc && (
+            <div className="grid gap-2">
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Switch
                   className={HIT}
@@ -371,25 +403,9 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
                 />
               )}
             </div>
-          </div>
-        )}
-        {canForce && (
-          <div className="grid gap-1">
-            <span className="text-xs text-muted-foreground">{ts.siteLockHelp}</span>
-            <label className="flex min-h-10 items-center gap-2 text-sm lg:min-h-0">
-              <Switch
-                className={HIT}
-                checked={siteLock}
-                disabled={put.isPending || (follow && !siteLock)}
-                aria-label={`${name}: ${ts.siteLock}`}
-                onCheckedChange={setSiteLock}
-              />
-              {ts.siteLock}
-            </label>
-          </div>
-        )}
-        <div className="grid gap-1">
-          <span className="text-xs text-muted-foreground">{ts.rule}</span>
+          )}
+        </Cell>
+        <Cell label={ts.rule}>
           <RuleEditor
             kind={s.kind}
             lower={lower}
@@ -399,16 +415,19 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
             words={ts.choices[s.key]}
             onChange={setLower}
           />
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          className="h-10 self-end lg:h-8"
-          disabled={put.isPending || frozen || (!dirtyValue && !dirtyLower && !dirtySiteLock)}
-          onClick={save}
-        >
-          {put.isPending ? ts.saving : ts.save}
-        </Button>
+        </Cell>
+        <Cell label="">
+          <Button
+            type="button"
+            size="sm"
+            className="h-10 w-full lg:h-8"
+            disabled={put.isPending || frozen || (!dirtyValue && !dirtyLower && !dirtySiteLock)}
+            onClick={save}
+          >
+            <Save aria-hidden="true" />
+            {put.isPending ? ts.saving : ts.save}
+          </Button>
+        </Cell>
       </div>
     </li>
   )
@@ -420,7 +439,7 @@ function SiteLayer() {
   if (q.isError) return <ErrorState message={ts.loadFailed} onRetry={() => void q.refetch()} />
   return (
     <SettingsSection title={ts.siteLayer} id="settings-site-heading" description={ts.siteHelp}>
-      <ul className="divide-y rounded-lg border">
+      <ul className="divide-y overflow-hidden rounded-lg border">
         {q.data.settings.map((s) => (
           <SiteRow key={`${s.key}:${JSON.stringify(s.site)}`} s={s} />
         ))}
@@ -435,7 +454,7 @@ function TenantLayer({ tenant, name, isSite }: { tenant: string; name: string; i
   if (q.isError) return <ErrorState message={ts.loadFailed} onRetry={() => void q.refetch()} />
   return (
     <SettingsSection title={ts.tenantLayer(name)} id="settings-tenant-heading" description={ts.tenantHelp}>
-      <ul className="divide-y rounded-lg border">
+      <ul className="divide-y overflow-hidden rounded-lg border">
         {q.data.settings.map((s) => (
           <TenantRow
             key={`${tenant}:${s.key}:${JSON.stringify([s.site, s.tenant])}`}
@@ -464,7 +483,7 @@ export function SettingsPanel() {
   const tenantName = list.find((x) => x.id === tenantId)?.name ?? (tenantId === own?.id ? own?.name : '') ?? ''
   return (
     <div className="grid gap-8">
-      <p className="text-sm text-muted-foreground">{ts.help}</p>
+      <p className="rounded-lg border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">{ts.help}</p>
       {isSite && <SiteLayer />}
       {isSite && list.length > 1 && (
         <div className="flex items-center gap-2">

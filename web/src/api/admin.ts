@@ -616,12 +616,12 @@ export function usePutSetting() {
   })
 }
 
-export function useAdminStatus(enabled = true) {
+export function useAdminStatus(enabled = true, staleTime = 5_000) {
   return useQuery({
     queryKey: keys.adminStatus,
     queryFn: ({ signal }) => adminApi.adminStatus(signal),
     enabled,
-    staleTime: 5_000,
+    staleTime,
   })
 }
 

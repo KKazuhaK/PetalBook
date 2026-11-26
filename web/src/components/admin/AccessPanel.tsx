@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Ban } from 'lucide-react'
 import { toast } from 'sonner'
 import { adminApi, useAdminGrants, useAdminTokens, useMachineAccess, useSetMachineAccess } from '@/api/admin'
 import { keys } from '@/api/hooks'
@@ -124,6 +125,7 @@ function AllTokens() {
                       aria-label={tk.revokeLabel(token.name)}
                       onClick={() => setRevoking(token)}
                     >
+                      <Ban aria-hidden="true" />
                       {tk.revoke}
                     </Button>
                   ) : undefined
@@ -255,6 +257,7 @@ function AllGrants() {
                     aria-label={oa.yours.revokeLabel(g.client.name)}
                     onClick={() => setRevoking(g)}
                   >
+                    <Ban aria-hidden="true" />
                     {oa.yours.revoke}
                   </Button>
                 }

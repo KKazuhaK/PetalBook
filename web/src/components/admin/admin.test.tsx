@@ -77,7 +77,7 @@ describe('who can reach the administration', () => {
   it('an administrator of an accounts server has it: users and invites first, and /admin goes there', async () => {
     m = await mount(routes, { entries: ['/admin'], signIn: true, server: { mode: 'accounts' } })
     await settle(() => locationText() === '/admin/users' && text().includes(tc.users.invite), 'users and invites')
-    expect(heading()).toBe(tc.title)
+    expect(heading()).toBe(tc.sections.users)
     expect(navLinks()).toEqual([
       tc.sections.users,
       tc.sections.groups,

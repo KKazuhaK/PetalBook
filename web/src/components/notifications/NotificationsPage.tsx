@@ -2,7 +2,7 @@ import { useMemo, useRef } from 'react'
 import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { topBarButton, topBarTextButton } from '@/components/layout/topBarStyles'
 import { Link, useSearchParams } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, CheckCheck } from 'lucide-react'
 import { useMarkAllNotificationsRead, useNotificationList } from '@/api/hooks'
 import { ErrorState, PageFallback } from '@/components/common'
 import { TopBar } from '@/components/layout/TopBar'
@@ -53,6 +53,7 @@ export default function NotificationsPage() {
             disabled={unread === 0 || markAll.isPending}
             onClick={() => markAll.mutate(kind || undefined)}
           >
+            <CheckCheck aria-hidden="true" />
             {tn.markAll}
           </Button>
         }

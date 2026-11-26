@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Logo } from '@/components/brand/Logo'
 import { NavLink, useNavigate } from 'react-router'
 import { ChevronsUpDown } from 'lucide-react'
 import { rememberSpace, syncOf, useActiveSpace, useRenameSpace } from '@/api/hooks'
@@ -39,7 +40,7 @@ export function SpaceSwitcher() {
           className="flex shrink-0 items-center px-1 pt-0.5"
           aria-label={t.nav.home}
         >
-          <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
+          <Logo />
         </NavLink>
         <DropdownMenu>
           <DropdownMenuTrigger

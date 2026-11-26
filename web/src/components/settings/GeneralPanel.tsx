@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { ExternalLink, Save } from 'lucide-react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
@@ -76,7 +77,7 @@ function NameSection({ space, readOnly, why }: { space: SpaceInfo; readOnly: boo
         {!readOnly && (
           <div>
             <Button type="submit" disabled={update.isPending || value.trim() === space.name}>
-              {update.isPending && <Spinner />}
+              {update.isPending ? <Spinner /> : <Save aria-hidden="true" />}
               {t.spaces.save}
             </Button>
           </div>
@@ -97,6 +98,7 @@ function CheckSection({ space }: { space: string }) {
           className="max-md:h-10 pointer-coarse:h-10"
           render={<Link to={spaceUrls(space).check()} />}
         >
+          <ExternalLink aria-hidden="true" />
           {t.general.checkLink}
         </Button>
         {count !== undefined && (

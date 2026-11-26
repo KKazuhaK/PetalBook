@@ -1,6 +1,21 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
-import { MoreHorizontal, RefreshCw, Search } from 'lucide-react'
+import {
+  Ban,
+  CircleCheck,
+  Download,
+  Eye,
+  HardDrive,
+  MoreHorizontal,
+  Pin,
+  PinOff,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  ShieldOff,
+  Trash2,
+  UserRoundCog,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import {
@@ -447,32 +462,51 @@ function RowActions({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-48">
           <DropdownMenuItem disabled={s.personal} onClick={() => onAction('transfer')}>
+            <UserRoundCog />
             {sp.transfer}
           </DropdownMenuItem>
           {s.disabled ? (
-            <DropdownMenuItem onClick={onEnable}>{sp.enable}</DropdownMenuItem>
+            <DropdownMenuItem onClick={onEnable}>
+              <CircleCheck />
+              {sp.enable}
+            </DropdownMenuItem>
           ) : (
-            <DropdownMenuItem onClick={() => onAction('disable')}>{sp.disable}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onAction('disable')}>
+              <Ban />
+              {sp.disable}
+            </DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={() => onAction('view')}>{tg.spaces.view}</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onAction('export')}>{tg.spaces.export}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onAction('view')}>
+            <Eye />
+            {tg.spaces.view}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onAction('export')}>
+            <Download />
+            {tg.spaces.export}
+          </DropdownMenuItem>
           {site && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onPin}>{s.storage.pinned ? ts.spaces.unpin : ts.spaces.pin}</DropdownMenuItem>
+              <DropdownMenuItem onClick={onPin}>
+                {s.storage.pinned ? <PinOff /> : <Pin />}
+                {s.storage.pinned ? ts.spaces.unpin : ts.spaces.pin}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={onExempt}>
+                {s.storage.exempt ? <ShieldOff /> : <ShieldCheck />}
                 {s.storage.exempt ? ts.spaces.exemptOff : ts.spaces.exemptOn}
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={s.storage.cache === 'local' || s.storage.cache === 'evicted' || s.storage.pinned}
                 onClick={() => onAction('evict')}
               >
+                <HardDrive />
                 {ts.spaces.evict}
               </DropdownMenuItem>
             </>
           )}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onClick={() => onAction('delete')}>
+            <Trash2 />
             {tg.spaces.delete}
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -594,6 +628,7 @@ function SizeCell({ space: s }: { space: AdminSpace }) {
           onClick={() => void measure()}
           aria-label={t.fmt.labelled(sp.measure, s.name)}
         >
+          <RefreshCw aria-hidden="true" />
           {resize.isPending ? sp.measuring : sp.measure}
         </Button>
       )}

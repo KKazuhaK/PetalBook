@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Search } from 'lucide-react'
+import { Download, RotateCcw, Search, Trash2 } from 'lucide-react'
 import { Link } from 'react-router'
 import { ApiError } from '@/api/client'
 import {
@@ -144,7 +144,7 @@ function Bin({ initialKind = '' }: { initialKind?: '' | 'user' | 'space' }) {
               return (
                 <li
                   key={i.id}
-                  className="flex flex-wrap items-start gap-x-4 gap-y-2 px-3 py-3"
+                  className="flex flex-wrap items-start gap-x-4 gap-y-2 px-3 py-3 transition-colors hover:bg-muted/40"
                   data-item={i.id}
                   data-kind={i.kind}
                 >
@@ -194,6 +194,7 @@ function Bin({ initialKind = '' }: { initialKind?: '' | 'user' | 'space' }) {
                       disabled={!i.restorable || beingPurged}
                       onClick={() => setRestoring(i)}
                     >
+                      <RotateCcw aria-hidden="true" />
                       {tg.recycle.restore}
                     </Button>
                     {i.kind === 'space' && (
@@ -205,6 +206,7 @@ function Bin({ initialKind = '' }: { initialKind?: '' | 'user' | 'space' }) {
                         disabled={beingPurged}
                         onClick={() => setExporting(i)}
                       >
+                        <Download aria-hidden="true" />
                         {tg.recycle.export}
                       </Button>
                     )}
@@ -218,6 +220,7 @@ function Bin({ initialKind = '' }: { initialKind?: '' | 'user' | 'space' }) {
                         disabled={beingPurged}
                         onClick={() => setPurge(i)}
                       >
+                        <Trash2 aria-hidden="true" />
                         {tg.recycle.purge}
                       </Button>
                     )}
@@ -498,7 +501,7 @@ function ExportsSection() {
           {items.map((e) => (
             <li
               key={e.id}
-              className="flex flex-wrap items-start gap-x-4 gap-y-2 px-3 py-3"
+              className="flex flex-wrap items-start gap-x-4 gap-y-2 px-3 py-3 transition-colors hover:bg-muted/40"
               data-export={e.id}
               data-state={e.state}
             >
@@ -547,6 +550,7 @@ function ExportsSection() {
                     size="sm"
                     render={<a href={exportDownloadUrl(e.id)} download aria-label={tg.exports.downloadFor(e.id)} />}
                   >
+                    <Download aria-hidden="true" />
                     {tg.exports.download}
                   </Button>
                 )}
@@ -559,6 +563,7 @@ function ExportsSection() {
                   disabled={del.isPending}
                   onClick={() => del.mutate(e.id)}
                 >
+                  <Trash2 aria-hidden="true" />
                   {tg.exports.delete}
                 </Button>
               </div>

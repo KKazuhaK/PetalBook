@@ -1408,7 +1408,17 @@ export interface ServerStatus {
   // Absent where the platform cannot say.
   diskFreeBytes?: number
   goVersion: string
+  build: BuildInfo
   storage: StorageStatus
+}
+
+// Which build the server is (site administrators only). `commit` and `time` are empty when the binary was built outside a
+// Git checkout. `timeKind` is `build` when the build injected its own time, else `commit`: the time of the commit.
+export interface BuildInfo {
+  commit: string
+  time: string
+  timeKind: 'build' | 'commit' | ''
+  modified: boolean
 }
 
 // --- home: the daily text and favourites (docs/api.md, "Home") ---------------------

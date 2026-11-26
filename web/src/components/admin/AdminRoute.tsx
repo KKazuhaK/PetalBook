@@ -7,6 +7,7 @@ import { adminPath } from '@/lib/urls'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import { AdminLayout } from './AdminLayout'
+import { AdminPageHeader } from './AdminPageHeader'
 import { navFor } from './adminNav'
 import { PersonPage } from './users/PersonPage'
 
@@ -42,7 +43,10 @@ export default function AdminRoute() {
       {person ? (
         <PersonPage id={second} tab={third} />
       ) : (
-        <div className="min-w-0 space-y-5">
+        <AdminPageHeader
+          title={section.label}
+          description={(tc.pageHelp as Record<string, string>)[`${section.key}/${tab?.key}`]}
+        >
           {tabs.length > 1 && (
             <nav ref={fadeRef} aria-label={tc.tabsLabel} className={`${scrollFadeClass} -mx-4 px-4 md:mx-0 md:px-0`}>
               <ul className="flex min-w-max gap-1 border-b">
@@ -63,7 +67,7 @@ export default function AdminRoute() {
           <div className="min-w-0 animate-in duration-150 fade-in-0" key={`${section.key}/${tab?.key}`}>
             {tab?.render()}
           </div>
-        </div>
+        </AdminPageHeader>
       )}
     </AdminLayout>
   )

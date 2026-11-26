@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { MailCheck, Save } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '@/api/client'
 import { keys, useAccount, useAuthProviders, useSession } from '@/api/hooks'
@@ -119,6 +120,7 @@ function Profile({ account }: { account: AccountInfo }) {
         <FormMessage>{error}</FormMessage>
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={busy || !name.trim()}>
+            <Save aria-hidden="true" />
             {busy ? t.settings.saving : t.settings.save}
           </Button>
           {/* Announced when it appears. */}
@@ -173,6 +175,7 @@ function EmailVerification({ user }: { user: AccountInfo['user'] }) {
         </Badge>
         {!user.emailVerified && mailOn && (
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void ask()}>
+            <MailCheck aria-hidden="true" />
             {busy ? tm.account.sending : tm.account.verify}
           </Button>
         )}

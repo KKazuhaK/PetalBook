@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react'
+import { Ban, Copy, Plus } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
@@ -71,6 +72,7 @@ export default function TokensPanel() {
           !fresh && (
             <div>
               <Button type="button" variant="outline" onClick={() => setMaking(true)}>
+                <Plus aria-hidden="true" />
                 {tk.create}
               </Button>
             </div>
@@ -100,6 +102,7 @@ export default function TokensPanel() {
                       aria-label={tk.revokeLabel(token.name)}
                       onClick={() => setRevoking(token)}
                     >
+                      <Ban aria-hidden="true" />
                       {tk.revoke}
                     </Button>
                   ) : undefined
@@ -263,6 +266,7 @@ function MakeForm({ onCancel, onMade }: { onCancel: () => void; onMade: (c: Crea
       <FormMessage focusRef={messageRef}>{error}</FormMessage>
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={busy} className="max-sm:w-full">
+          <Plus aria-hidden="true" />
           {busy ? tk.creating : tk.submit}
         </Button>
         <Button type="button" variant="ghost" onClick={onCancel} className="max-sm:w-full">
@@ -311,6 +315,7 @@ function FreshToken({ created, onDone }: { created: CreatedToken; onDone: () => 
           onFocus={(e) => e.currentTarget.select()}
         />
         <Button type="button" onClick={() => void copy()}>
+          <Copy aria-hidden="true" />
           {copied ? tk.copied : tk.copy}
         </Button>
         <Button type="button" variant="ghost" onClick={onDone}>
