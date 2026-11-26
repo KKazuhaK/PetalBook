@@ -1,4 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react'
 import { scrollFadeTouchClass, useScrollFade } from '@/components/ui/scroll-fade'
 import {
   ArrowDown,
@@ -15,11 +24,21 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { tc } from '@/i18n/console'
+import {
+  clampShares,
+  dropColumn,
+  dropGap,
+  pixelWidths,
+  resetPair,
+  resizePair,
+  roomOf,
+  stepColumn,
+} from '@/lib/columnLayout'
 import { orderIds, PAGE_SIZES, shares, useTablePrefs, type Density } from '@/lib/tablePrefs'
 
 // A table of rows the server pages by cursor, for lists that grow to hundreds and thousands. What it does, so a list
 // does not have to:
-//  - the columns an administrator shows, hides and orders, their widths (kept as shares of the table, never pixels,
+//  - the columns an administrator shows, hides and orders (by dragging a header, or Alt and an arrow on it), their widths (kept as shares of the table, never pixels,
 //    each at least its own least width), the density and the page size, all kept in this browser only;
 //  - columns of lower importance leave first when the table is narrow (`priority`), and what still does not fit
 //    scrolls inside the table's own box, never the page;
@@ -96,6 +115,25 @@ const ROW_HEIGHT: Record<Density, string> = { compact: 'h-10', comfortable: 'h-1
 const SELECT_W = 40
 const ACTIONS_W = 148
 const SETTINGS_W = 48
+// A mouse starts a column drag after this many pixels; a finger after a press this long (milliseconds) without moving
+// further than the slop, so a tap still sorts and a swipe still scrolls.
+const DRAG_PX = 5
+const PRESS_MS = 350
+const PRESS_SLOP = 8
+// The soft shade at the sticky column's left edge while rows scroll under it (never a line).
+const STICKY_SHADE =
+  'before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-4 before:bg-linear-to-l before:from-foreground/[0.06] before:to-transparent before:opacity-(--sticky-shade,0) before:transition-opacity before:duration-150'
+
+interface HeaderDrag {
+  id: string
+  // The pointer, and where on the header it took hold; the header's top and width, for the ghost.
+  x: number
+  grabX: number
+  top: number
+  width: number
+  label: string
+  gap: number
+}
 
 export function DataTable<T>(props: DataTableProps<T>) {
   const {
@@ -128,6 +166,25 @@ export function DataTable<T>(props: DataTableProps<T>) {
     const ro = new ResizeObserver(() => setBoxW(el.clientWidth))
     ro.observe(el)
     return () => ro.disconnect()
+  }, [])
+
+  // Whether rows scroll under the sticky column (more to the right than shows): only then is it shaded.
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const update = () => {
+      const max = el.scrollWidth - el.clientWidth
+      el.style.setProperty('--sticky-shade', max > 1 && Math.abs(el.scrollLeft) < max - 1 ? '1' : '0')
+    }
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+    ro?.observe(el)
+    if (el.firstElementChild) ro?.observe(el.firstElementChild)
+    return () => {
+      el.removeEventListener('scroll', update)
+      ro?.disconnect()
+    }
   }, [])
 
   const byId = useMemo(() => new Map(columns.map((c) => [c.id, c])), [columns])
@@ -165,61 +222,215 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
   // The widths, as shares: the saved ones while resizing are a draft, saved when the pointer is let go.
   const [draft, setDraft] = useState<Record<string, number> | null>(null)
-  const have = shares(
-    shown.map((c) => ({ id: c.id, weight: c.weight ?? 1 })),
-    draft ?? prefs.widths,
-  )
   const tableMin = shown.reduce((n, c) => n + minOf(c), fixed)
   const table = useRef<HTMLTableElement>(null)
+  // The columns' widths are whole pixels of the room they share. (A `calc()` with a percentage is not a width a
+  // `<col>` understands: the browser took it for auto, every column came out the same and no drag changed anything.)
+  // A box never measured (a test, a hidden tab) keeps plain percentages.
+  const room = roomOf(boxW > 0 ? Math.max(boxW, tableMin) : 0, fixed)
+  const shownMins = Object.fromEntries(shown.map((c) => [c.id, minOf(c)]))
+  const have = clampShares(
+    shares(
+      shown.map((c) => ({ id: c.id, weight: c.weight ?? 1 })),
+      draft ?? prefs.widths,
+    ),
+    shownMins,
+    room,
+  )
+  const px =
+    boxW > 0
+      ? pixelWidths(
+          shown.map((c) => c.id),
+          have,
+          room,
+        )
+      : null
+  // The room as it is now, and the least widths against it: a table never measured (a test, a hidden tab) has no
+  // room to speak of, so a width there moves by shares of a nominal 100 and has no least.
+  const geometry = (left: Column<T>, right: Column<T>) => {
+    const r = roomOf(table.current?.clientWidth || boxW, fixed)
+    return r > 0 ? { r, lo: minOf(left), hi: minOf(right) } : { r: 100, lo: 0, hi: 0 }
+  }
 
   // What ends a drag in progress (it takes the listeners off the window), so a table that goes away mid-drag leaves none.
   const dragEnd = useRef<(() => void) | null>(null)
   useEffect(() => () => dragEnd.current?.(), [])
-  const startResize = (i: number, clientX: number) => {
+  // Two presses on an edge close together are a double click, counted here because a press whose default was
+  // prevented does not always go on to make the browser's own `dblclick`.
+  const lastPress = useRef({ at: 0, x: 0, i: -1 })
+  const startResize = (i: number, e: ReactPointerEvent) => {
     dragEnd.current?.()
-    // A table that was never measured (a test, a hidden tab) has no least share to keep.
-    const measured = table.current?.clientWidth || boxW
-    const w = measured || 1
+    const prev = lastPress.current
+    lastPress.current = { at: e.timeStamp, x: e.clientX, i }
+    if (prev.i === i && e.timeStamp - prev.at < 400 && Math.abs(e.clientX - prev.x) < 6) {
+      lastPress.current = { at: 0, x: 0, i: -1 }
+      resetEdge(i)
+      return
+    }
+    const clientX = e.clientX
+    const pid = e.pointerId
     const left = shown[i]
     const right = shown[i + 1]
     if (!right) return
     const start = { ...have }
-    const bound = (c: Column<T>) => (measured ? minOf(c) / w : 0)
-    const move = (x: number) => {
-      const delta = (x - clientX) / w
-      const d = Math.max(bound(left) - start[left.id], Math.min(start[right.id] - bound(right), delta))
-      setDraft({ ...start, [left.id]: start[left.id] + d, [right.id]: start[right.id] - d })
+    const at = (x: number) => {
+      const g = geometry(left, right)
+      return resizePair(start, left.id, right.id, x - clientX, g.r, g.lo, g.hi)
     }
-    const onMove = (e: PointerEvent) => move(e.clientX)
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId === pid || !pid) setDraft(at(ev.clientX))
+    }
     const stop = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', done)
-      window.removeEventListener('pointercancel', done)
+      window.removeEventListener('pointercancel', cancel)
       dragEnd.current = null
     }
-    const done = (e: PointerEvent) => {
+    const cancel = () => {
       stop()
-      const delta = (e.clientX - clientX) / w
-      const d = Math.max(bound(left) - start[left.id], Math.min(start[right.id] - bound(right), delta))
-      update({ widths: { ...start, [left.id]: start[left.id] + d, [right.id]: start[right.id] - d } })
+      setDraft(null)
+    }
+    const done = (ev: PointerEvent) => {
+      stop()
+      const next = at(ev.clientX)
+      // A press with no movement (the first half of a double click) changes nothing.
+      if (next[left.id] !== start[left.id]) update({ widths: next })
       setDraft(null)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', done)
-    window.addEventListener('pointercancel', done)
+    window.addEventListener('pointercancel', cancel)
     dragEnd.current = stop
   }
-  const nudge = (i: number, e: KeyboardEvent) => {
-    const step = e.key === 'ArrowLeft' ? -0.01 : e.key === 'ArrowRight' ? 0.01 : 0
+  // A double click on an edge puts the two columns beside it back to their usual proportion.
+  const resetEdge = (i: number) => {
     const left = shown[i]
     const right = shown[i + 1]
-    if (!step || !right) return
-    e.preventDefault()
-    const measured = table.current?.clientWidth || boxW
-    const least = (c: Column<T>) => (measured ? minOf(c) / measured : 0)
-    const d = Math.max(least(left) - have[left.id], Math.min(have[right.id] - least(right), step))
-    update({ widths: { ...have, [left.id]: have[left.id] + d, [right.id]: have[right.id] - d } })
+    if (!right) return
+    update({ widths: resetPair(have, left.id, right.id, left.weight ?? 1, right.weight ?? 1) })
   }
+  const nudge = (i: number, e: KeyboardEvent) => {
+    const step = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
+    const left = shown[i]
+    const right = shown[i + 1]
+    if (!step || !right || e.altKey) return
+    e.preventDefault()
+    const g = geometry(left, right)
+    update({ widths: resizePair(have, left.id, right.id, step * 0.01 * g.r, g.r, g.lo, g.hi) })
+  }
+
+  // Moving a column: by dragging its header, or Alt and an arrow on it. The order is all the columns', hidden ones too.
+  const [drag, setDrag] = useState<HeaderDrag | null>(null)
+  const [moved, setMoved] = useState('')
+  const refocus = useRef<string | null>(null)
+  const order = ordered.map((c) => c.id)
+  const shownIds = shown.map((c) => c.id)
+  // The gap a dragged column would drop into, unless that leaves it where it is.
+  const from = drag ? shownIds.indexOf(drag.id) : -1
+  const dropAt = drag && drag.gap !== from && drag.gap !== from + 1 ? drag.gap : -1
+  const headCells = () => Array.from(table.current?.querySelectorAll<HTMLElement>('thead th[data-column]') ?? [])
+  const startMove = (c: Column<T>, e: ReactPointerEvent<HTMLElement>) => {
+    if (shown.length < 2 || (e.pointerType === 'mouse' && e.button !== 0)) return
+    dragEnd.current?.()
+    const th = e.currentTarget
+    const { clientX: sx, clientY: sy, pointerId: pid } = e
+    const touch = e.pointerType !== 'mouse'
+    const rect = th.getBoundingClientRect()
+    let active = false
+    let timer = 0
+    const gapAt = (x: number) =>
+      dropGap(
+        headCells().map((h) => h.getBoundingClientRect().left + h.offsetWidth / 2),
+        x,
+      )
+    const begin = (x: number) => {
+      active = true
+      window.getSelection()?.removeAllRanges()
+      setDrag({ id: c.id, x, grabX: sx - rect.left, top: rect.top, width: rect.width, label: c.header, gap: gapAt(x) })
+    }
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pid) return
+      if (!active) {
+        const far = Math.hypot(ev.clientX - sx, ev.clientY - sy)
+        // A finger that moves before the press is long enough is scrolling the page; leave it be.
+        if (touch) {
+          if (far > PRESS_SLOP) cancel()
+        } else if (far >= DRAG_PX) begin(ev.clientX)
+        return
+      }
+      setDrag((d) => d && { ...d, x: ev.clientX, gap: gapAt(ev.clientX) })
+    }
+    // While a finger holds a column, the page must not scroll under it.
+    const noScroll = (ev: Event) => {
+      if (active && ev.cancelable) ev.preventDefault()
+    }
+    const noMenu = (ev: Event) => ev.preventDefault()
+    const onKey = (ev: globalThis.KeyboardEvent) => {
+      if (ev.key === 'Escape') cancel()
+    }
+    const stop = () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', done)
+      window.removeEventListener('pointercancel', cancel)
+      window.removeEventListener('touchmove', noScroll)
+      window.removeEventListener('keydown', onKey)
+      th.removeEventListener('contextmenu', noMenu)
+      dragEnd.current = null
+    }
+    const cancel = () => {
+      stop()
+      active = false
+      setDrag(null)
+    }
+    const done = (ev: PointerEvent) => {
+      const was = active
+      const gap = gapAt(ev.clientX)
+      cancel()
+      if (!was) return
+      // The click that ends a drag is not a click on the sort button.
+      const eat = (k: Event) => {
+        k.stopPropagation()
+        k.preventDefault()
+      }
+      window.addEventListener('click', eat, { capture: true, once: true })
+      window.setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 0)
+      const next = dropColumn(order, shownIds, c.id, gap)
+      if (next.join() !== order.join()) {
+        update({ order: next })
+        const at = next.filter((id) => shownIds.includes(id))
+        setMoved(tc.table.moved(c.header, at.indexOf(c.id) + 1, at.length))
+      }
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', done)
+    window.addEventListener('pointercancel', cancel)
+    window.addEventListener('keydown', onKey)
+    if (touch) {
+      window.addEventListener('touchmove', noScroll, { passive: false })
+      th.addEventListener('contextmenu', noMenu)
+      timer = window.setTimeout(() => begin(sx), PRESS_MS)
+    }
+    dragEnd.current = stop
+  }
+  const moveByKey = (c: Column<T>, e: KeyboardEvent) => {
+    if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return
+    e.preventDefault()
+    const next = stepColumn(order, shownIds, c.id, e.key === 'ArrowLeft' ? -1 : 1)
+    if (next.join() === order.join()) return
+    refocus.current = c.id
+    update({ order: next })
+    const at = next.filter((id) => shownIds.includes(id))
+    setMoved(tc.table.moved(c.header, at.indexOf(c.id) + 1, at.length))
+  }
+  // Focus stays on the header that moved.
+  useLayoutEffect(() => {
+    const id = refocus.current
+    if (!id) return
+    refocus.current = null
+    const th = headCells().find((h) => h.dataset.column === id)
+    ;(th?.querySelector<HTMLElement>('button') ?? th)?.focus()
+  })
 
   const selected = selection?.selected
   const allOnPage = rows.length > 0 && rows.every((r) => selected?.has(rowId(r)))
@@ -266,7 +477,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
           <colgroup>
             {selection && <col style={{ width: SELECT_W }} />}
             {shown.map((c) => (
-              <col key={c.id} style={{ width: `calc((100% - ${fixed}px) * ${have[c.id]})` }} />
+              <col key={c.id} style={{ width: px ? px[c.id] : `${have[c.id] * 100}%` }} />
             ))}
             <col style={{ width: actions ? ACTIONS_W + SETTINGS_W : SETTINGS_W }} />
           </colgroup>
@@ -292,8 +503,24 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   scope="col"
                   aria-sort={sortOf(c)}
                   data-column={c.id}
-                  className={`relative px-3 py-2 font-medium ${c.align === 'right' ? 'text-right' : ''}`}
+                  tabIndex={c.sortKey ? undefined : 0}
+                  aria-keyshortcuts={shown.length > 1 ? 'Alt+ArrowLeft Alt+ArrowRight' : undefined}
+                  onPointerDown={(e) => startMove(c, e)}
+                  onKeyDown={(e) => moveByKey(c, e)}
+                  className={`group/th relative px-3 py-2 font-medium select-none focus-visible:bg-muted/60 focus-visible:outline-none ${drag?.id === c.id ? 'opacity-40' : ''} ${c.align === 'right' ? 'text-right' : ''}`}
                 >
+                  {dropAt === i && (
+                    <span
+                      data-slot="drop-indicator"
+                      className="pointer-events-none absolute inset-y-1 left-0 z-20 w-0.5 rounded-full bg-primary"
+                    />
+                  )}
+                  {dropAt === shown.length && i === shown.length - 1 && (
+                    <span
+                      data-slot="drop-indicator"
+                      className="pointer-events-none absolute inset-y-1 right-0 z-20 w-0.5 rounded-full bg-primary"
+                    />
+                  )}
                   {c.sortKey ? (
                     <button
                       type="button"
@@ -320,18 +547,23 @@ export function DataTable<T>(props: DataTableProps<T>) {
                       aria-label={tc.table.resize(c.header)}
                       tabIndex={0}
                       onPointerDown={(e) => {
+                        // Not a drag of the header, and not a text selection.
                         e.preventDefault()
-                        startResize(i, e.clientX)
+                        e.stopPropagation()
+                        startResize(i, e)
                       }}
+                      onDoubleClick={() => resetEdge(i)}
                       onKeyDown={(e) => nudge(i, e)}
-                      className="absolute top-0 -right-2 z-10 flex h-full w-4 cursor-col-resize pointer-coarse:-right-3 pointer-coarse:w-6 touch-none justify-center outline-none after:h-full after:w-px after:bg-border after:transition-colors hover:after:bg-primary focus-visible:after:w-0.5 focus-visible:after:bg-primary"
-                    />
+                      className="group/grip absolute top-0 -right-2 z-10 flex h-full w-4 cursor-col-resize touch-none items-center justify-center outline-none pointer-coarse:-right-3 pointer-coarse:w-6"
+                    >
+                      <span className="h-5 w-0.5 rounded-full bg-muted-foreground/40 opacity-0 transition-opacity duration-150 group-focus-within/th:opacity-100 group-hover/th:opacity-100 group-hover/grip:bg-primary group-focus-visible/grip:bg-primary" />
+                    </span>
                   )}
                 </th>
               ))}
               <th
                 scope="col"
-                className="sticky right-0 z-10 bg-background bg-[linear-gradient(color-mix(in_oklab,var(--color-muted)_40%,transparent),color-mix(in_oklab,var(--color-muted)_40%,transparent))] px-1 py-1 text-right shadow-[-1px_0_0_var(--color-border)]"
+                className={`sticky right-0 z-10 bg-background bg-[linear-gradient(color-mix(in_oklab,var(--color-muted)_40%,transparent),color-mix(in_oklab,var(--color-muted)_40%,transparent))] px-1 py-1 text-right ${STICKY_SHADE}`}
               >
                 <span className="sr-only">{tc.table.actions}</span>
                 <TableSettings
@@ -345,6 +577,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   onDensity={(density) => update({ density })}
                   onPageSize={(n) => update({ pageSize: n })}
                   onReset={reset}
+                  onResetColumns={() => update({ order: [], hidden: [], widths: {}, custom: false })}
                 />
               </th>
             </tr>
@@ -423,7 +656,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
                         </td>
                       ),
                     )}
-                    <td className="sticky right-0 bg-background bg-[linear-gradient(var(--row-tint,transparent),var(--row-tint,transparent))] px-1 text-right shadow-[-1px_0_0_var(--color-border)]">
+                    <td
+                      className={`sticky right-0 bg-background bg-[linear-gradient(var(--row-tint,transparent),var(--row-tint,transparent))] px-1 text-right ${STICKY_SHADE}`}
+                    >
                       <div className="flex items-center justify-end gap-1">{actions?.(row)}</div>
                     </td>
                   </tr>
@@ -432,6 +667,19 @@ export function DataTable<T>(props: DataTableProps<T>) {
           </tbody>
         </table>
       </div>
+      <div role="status" className="sr-only">
+        {moved}
+      </div>
+      {drag && (
+        <div
+          data-slot="column-ghost"
+          aria-hidden="true"
+          className="pointer-events-none fixed z-50 truncate rounded-md border bg-background/95 px-3 py-2 text-xs font-medium text-foreground shadow-lg"
+          style={{ left: drag.x - drag.grabX, top: drag.top, width: drag.width }}
+        >
+          {drag.label}
+        </div>
+      )}
       {squeezed > 0 && (
         <p className="text-xs text-muted-foreground" data-slot="columns-hidden">
           {tc.table.hiddenNarrow(squeezed)}
@@ -488,6 +736,7 @@ function TableSettings<T>({
   onDensity,
   onPageSize,
   onReset,
+  onResetColumns,
 }: {
   all: Column<T>[]
   hidden: string[]
@@ -499,6 +748,7 @@ function TableSettings<T>({
   onDensity: (d: Density) => void
   onPageSize: (n: number) => void
   onReset: () => void
+  onResetColumns: () => void
 }) {
   const move = (i: number, by: -1 | 1) => {
     const next = [...order]
@@ -562,6 +812,9 @@ function TableSettings<T>({
               </li>
             ))}
           </ul>
+          <Button type="button" variant="outline" className="mt-1 h-10" onClick={onResetColumns}>
+            {tc.table.resetColumns}
+          </Button>
         </div>
         <fieldset className="grid gap-1">
           <legend className="mb-1 text-sm font-medium">{tc.table.density}</legend>

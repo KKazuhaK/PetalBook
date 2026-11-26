@@ -64,7 +64,7 @@ export const consoleEn: ConsoleMessages = {
   table: {
     settings: 'Table settings',
     columns: 'Visible columns',
-    columnsHelp: 'Tick the columns to show; use the arrows to change their order.',
+    columnsHelp: 'Tick the columns to show. Drag a header, or use the arrows, to change their order.',
     moveUp: (c) => `Move "${c}" earlier`,
     moveDown: (c) => `Move "${c}" later`,
     density: 'Row height',
@@ -72,6 +72,8 @@ export const consoleEn: ConsoleMessages = {
     comfortable: 'Comfortable',
     pageSize: 'Rows per page',
     reset: 'Reset to default',
+    resetColumns: 'Reset columns',
+    moved: (c, n, total) => `"${c}" moved to position ${n} of ${total}`,
     previous: 'Previous',
     next: 'Next',
     page: (n) => `Page ${n}`,

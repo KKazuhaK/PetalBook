@@ -73,7 +73,8 @@ export function useTablePrefs(id: string) {
     (patch: Partial<TablePrefs>) =>
       setPrefs((prev) => {
         const touches = 'hidden' in patch || 'order' in patch || 'widths' in patch
-        const next = { ...prev, ...patch, ...(touches ? { custom: true } : {}) }
+        // `custom` may be given outright: putting the columns back to how they were is not a choice of the person's.
+        const next = { ...prev, ...patch, ...(touches && !('custom' in patch) ? { custom: true } : {}) }
         writePrefs(id, next)
         return next
       }),
@@ -92,14 +93,17 @@ export function orderIds(all: readonly string[], saved: readonly string[]): stri
   return [...known, ...all.filter((id) => !known.includes(id))]
 }
 
-// The widths of the shown columns as parts of the whole (they add up to 1): the saved share where there is one, else an
-// even share of what is left, each at least its own least share.
+// The widths of the shown columns as parts of the whole (they add up to 1): the saved share where there is one, and
+// for a column with none (it was hidden, or is new) the share its weight would give it, so a saved share and a weight
+// are never added as if they were the same unit.
 export function shares(
   shown: readonly { id: string; weight: number }[],
   saved: Record<string, number>,
 ): Record<string, number> {
-  const total = shown.reduce((n, c) => n + (saved[c.id] ?? c.weight), 0)
+  const weights = shown.reduce((n, c) => n + c.weight, 0) || 1
+  const raw = shown.map((c) => saved[c.id] ?? c.weight / weights)
+  const total = raw.reduce((n, v) => n + v, 0) || 1
   const out: Record<string, number> = {}
-  for (const c of shown) out[c.id] = (saved[c.id] ?? c.weight) / (total || 1)
+  shown.forEach((c, i) => (out[c.id] = raw[i] / total))
   return out
 }
