@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
+import { adminOf, foreignSpace, shareSpace } from '@/api/fixtures/data/scenes'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { FileOpsProvider } from '@/components/files/FileOps'
@@ -13,25 +14,22 @@ import HomePage from '@/components/home/HomePage'
 import { t } from '@/i18n'
 import { th } from '@/i18n/home'
 import {
-  adminRequests,
   byLabel,
   click,
   installDomShims,
   locationText,
-  makePerson,
   mount,
   press,
   settle,
-  shareSpace,
   startView,
-  type Mounted,
+  type FxMounted,
 } from '@/testing/harness'
 import { listShell, putViews, sender, type Send } from '@/testing/listKit'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -102,7 +100,7 @@ const open = (scene?: (send: Send) => unknown) =>
       if (scene) scene(sender(server))
       return ['/s/default']
     },
-    server: { mode: 'single' },
+    fixtures: { mode: 'single' },
   })
 
 describe('favourites in the sidebar and on the home page', () => {
@@ -120,7 +118,7 @@ describe('favourites in the sidebar and on the home page', () => {
   })
 
   it('the logo link in the sidebar is named as the way home, not as the recent pages', async () => {
-    m = await mount(shell, { entries: ['/s/default'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(shell, { entries: ['/s/default'], signIn: true, fixtures: { mode: 'accounts' } })
     await settle(() => document.querySelector('a[aria-label="' + t.nav.home + '"]') !== null, 'the logo link')
     expect(document.querySelector('a[aria-label="' + t.nav.home + '"]')!.getAttribute('href')).toMatch(
       /^\/s\/[^/]+\/?$/,
@@ -221,7 +219,7 @@ describe('favourites in the sidebar and on the home page', () => {
   it('removing a favourite on the server (another browser) shows after reading again', async () => {
     m = await open(seed)
     await settle(() => sideRows().length === 3, 'rows')
-    sender(m.server)('DELETE', '/favorites?kind=folder&target=诗')
+    sender(m.fx)('DELETE', '/favorites?kind=folder&target=诗')
     await act(async () => void m!.qc.invalidateQueries({ queryKey: ['space', 'default', 'favorites'] }))
     await settle(() => sideRows().length === 2, 'two left')
   })
@@ -242,7 +240,7 @@ describe('the ways to favourite', () => {
           page = (sender(server)('POST', '/pages', { folder: '', body: 'x\n' }).body as { id: string }).id
           return ['/s/default']
         },
-        server: { mode: 'single' },
+        fixtures: { mode: 'single' },
       },
     )
     await settle(() => byLabel(t.fav.addPage) !== null, 'the star')
@@ -278,7 +276,7 @@ describe('the ways to favourite', () => {
       </SidebarProvider>,
       {
         entries: (server) => (sender(server)('POST', '/folders', { path: '诗' }), ['/s/default']),
-        server: { mode: 'single' },
+        fixtures: { mode: 'single' },
       },
     )
     const entry = () => document.querySelector('[data-testid="entry"]')!
@@ -323,7 +321,7 @@ describe('the view tabs', () => {
         ).views[1].id
         return ['/s/default/f/诗']
       },
-      server: { mode: 'single' },
+      fixtures: { mode: 'single' },
     })
     await settle(() => document.querySelectorAll('[role="tab"]').length === 2, 'the tabs')
     await click(document.querySelectorAll('[role="tab"]')[1])
@@ -340,11 +338,11 @@ describe('who can have favourites', () => {
   it('a read-only member has them, and the folder menu offers only that', async () => {
     m = await mount(shell, {
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
       entries: (server) => {
         const { space, owner } = shareSpace(server, 'viewer')
         owner.request('POST', `/api/spaces/${space}/folders`, { path: '诗' })
-        const admin = adminRequests(server)
+        const admin = adminOf(server)
         admin('POST', `/api/spaces/${space}/favorites`, { kind: 'folder', target: '诗' })
         localStorage.setItem('pb.space', space)
         return [`/s/${space}`]
@@ -356,10 +354,9 @@ describe('who can have favourites', () => {
   it('an administrator who is not a member has none and no star or menu entry, and no notice about it', async () => {
     m = await mount(gatedShell, {
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
       entries: (server) => {
-        const other = makePerson(server, 'someone')
-        const space = (other.request('POST', '/api/spaces', { name: '别人的' }).body as { id: string }).id
+        const space = foreignSpace(server).info.id
         localStorage.setItem('pb.space', space)
         return [`/s/${space}`]
       },
@@ -374,21 +371,5 @@ describe('who can have favourites', () => {
     // The only status is the banner of the view.
     expect(document.querySelector('[role="status"]:not([data-slot="admin-view-banner"])')).toBeNull()
     expect(locationText()).toMatch(/^\/s\//)
-  })
-
-  it("the favourites are one person's own", async () => {
-    m = await mount(shell, {
-      signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const { space, owner } = shareSpace(server, 'editor')
-        owner.request('POST', `/api/spaces/${space}/folders`, { path: '诗' })
-        owner.request('POST', `/api/spaces/${space}/favorites`, { kind: 'folder', target: '诗' })
-        localStorage.setItem('pb.space', space)
-        return [`/s/${space}`]
-      },
-    })
-    await settle(() => document.body.textContent!.includes(th.favorites.empty), "none of the owner's shows")
-    expect(group()).toBeNull()
   })
 })

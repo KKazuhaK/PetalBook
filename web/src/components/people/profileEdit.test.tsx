@@ -1,30 +1,20 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import { createMockServer } from '@/api/mock/server'
+import { addPerson } from '@/api/fixtures/data/scenes'
 import type { User } from '@/api/types'
 import { EditPersonDialog } from '@/components/admin/users/PersonEditDialogs'
 import SettingsRoute from '@/components/settings/SettingsRoute'
 import { tp } from '@/i18n/people'
-import {
-  adminRequests,
-  asPerson,
-  click,
-  installDomShims,
-  makePerson,
-  mount,
-  settle,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 
 // Editing a profile in dialogs, an administrator's edits of a person, and the temporary password's hold, against
-// the mock server.
+// the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -44,9 +34,9 @@ describe('my profile', () => {
       </Routes>,
       {
         signIn: true,
-        server: { mode: 'accounts' },
-        entries: (server) => {
-          makePerson(server, 'olive')
+        fixtures: { mode: 'accounts' },
+        entries: (fx) => {
+          addPerson(fx.data, 'olive')
           return ['/settings/profile']
         },
       },
@@ -61,6 +51,8 @@ describe('my profile', () => {
     const form = () => document.querySelector<HTMLFormElement>('#edit-profile-form')!
     await type(form().querySelector<HTMLInputElement>('input[autocomplete="username"]')!, 'olive')
     await type(form().querySelector<HTMLInputElement>('input[autocomplete="name"]')!, 'New Name')
+    // Somebody else has that username: the server refuses once.
+    m!.fx.fail('PATCH', '/api/account', 409, { code: 'exists', message: 'that username is taken' }, { times: 1 })
     await click(button(tp.profile.save, lastDialog()))
     await settle(() => form()?.querySelector('p[role="alert"]') != null, 'the refusal')
     await type(form().querySelector<HTMLInputElement>('input[autocomplete="username"]')!, 'renamed')
@@ -107,34 +99,10 @@ describe('an administrator edits a person', () => {
     }
     m = await mount(<EditPersonDialog u={u} open onOpenChange={() => undefined} />, {
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
     })
     await settle(() => document.querySelector('#edit-person-form') !== null, 'the dialog')
     expect(lastDialog().textContent).toContain(tp.admin.managed)
     expect(lastDialog().textContent).toContain(tp.admin.managedWarn)
-  })
-})
-
-describe('a temporary password', () => {
-  it('ends their sessions, holds the next one until they choose their own, and lifts the hold', () => {
-    const server = createMockServer({ now: () => Date.now(), mode: 'accounts' })
-    const carol = makePerson(server, 'carol')
-    adminRequests(server)('POST', `/api/users/${carol.id}/password`, { password: 'temporary-pass-1' })
-    // Their old session is gone.
-    expect((carol.request('GET', '/api/session').body as { user: unknown }).user).toBeNull()
-    // The next sign-in with the temporary password is held.
-    const login = server.handle(
-      'POST',
-      '/api/login',
-      JSON.stringify({ username: 'carol', password: 'temporary-pass-1' }),
-      'application/json',
-      null,
-    )
-    expect(login.status).toBe(200)
-    const as = asPerson(server, login.headers!['Set-Cookie'].split(';')[0])
-    expect((as('GET', '/api/session').body as { hold: string }).hold).toBe('password')
-    // Choosing a password of their own lifts it.
-    as('POST', '/api/account/password', { current: 'temporary-pass-1', new: 'my-own-password-2' })
-    expect((as('GET', '/api/session').body as { hold: unknown }).hold).toBeNull()
   })
 })

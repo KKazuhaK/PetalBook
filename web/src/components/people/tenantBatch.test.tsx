@@ -2,16 +2,17 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
-import { AdminGate } from '@/components/admin/AdminGate'
-import { adminRequests, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
+import { InvitesPanel } from '@/components/admin/users/InvitesPanel'
+import type { BatchAnswer } from '@/api/people'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { tp } from '@/i18n/people'
 
-// Adding people to the organization by file, from the invites page, against the mock server.
+// Adding people to the organization by file, from the invites page, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -20,7 +21,7 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/*" element={<AdminGate />} />
+      <Route path="/admin/*" element={<InvitesPanel />} />
     </Routes>
   </SidebarProvider>
 )
@@ -30,19 +31,22 @@ const dialog = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]
 
 async function openDialog() {
   m = await mount(routes, {
-    entries: (server) => {
-      makePerson(server as never, 'tang')
-      adminRequests(server)('POST', '/api/admin/groups', { name: 'Staff', source: 'local' })
-      return ['/admin/users/invites']
-    },
+    entries: ['/admin/users/invites'],
     signIn: true,
-    server: { mode: 'accounts' },
+    fixtures: { mode: 'accounts' },
   })
+  // No invitation is open.
+  m.fx.reply('GET', '/api/invites', { invites: [] })
+  await m.qc.invalidateQueries({ queryKey: ['invites'] })
   await settle(() => button(tp.add) !== null, 'the add button')
   await click(button(tp.add))
   await settle(() => document.querySelector('[role="dialog"]') !== null, 'the dialog')
   await click([...dialog().querySelectorAll('[role="tab"]')].find((b) => b.textContent === tp.tabCsv))
 }
+
+// The rows, as the server answers them: what the check says, and what the real run did.
+const rowsOf = (...r: [string, BatchAnswer['results'][number]['status']][]) =>
+  r.map(([user, status], i) => ({ row: i + 1, user, status }))
 
 describe('adding people to the organization by file', () => {
   it('checks the rows, then puts people into groups and makes invitations; with no mail the links are shown once', async () => {
@@ -57,6 +61,33 @@ describe('adding people to the organization by file', () => {
       'y@example.test,member,,Nowhere',
     ].join('\n')
     await type(dialog().querySelector<HTMLTextAreaElement>('textarea')!, csv)
+    // The first request is the check (nothing is written), the second the run: answered in that order.
+    const results = rowsOf(
+      ['new@example.test', 'invited'],
+      ['tang', 'added'],
+      ['ghost', 'invalid'],
+      ['new@example.test', 'duplicate'],
+      ['x@other.example', 'other_tenant'],
+      ['y@example.test', 'invalid'],
+    )
+    const mail = { configured: false, sender: '' as const }
+    const done = results.map((r) =>
+      r.user === 'new@example.test' && r.status === 'invited'
+        ? { ...r, mail: 'none' as const, token: 'invite-token-1' }
+        : r,
+    )
+    m!.fx.reply(
+      'POST',
+      '/api/admin/members/batch',
+      { dryRun: false, results: done, summary: { invited: 1, added: 1 }, mail },
+      { times: 1 },
+    )
+    m!.fx.reply(
+      'POST',
+      '/api/admin/members/batch',
+      { dryRun: true, results, summary: { invited: 1, added: 1, invalid: 2, duplicate: 1, other_tenant: 1 }, mail },
+      { times: 1 },
+    )
     await click(button(tp.csv.check, dialog()))
     await settle(() => dialog().textContent!.includes(tp.status.invited), 'the check')
     for (const word of [tp.status.added, tp.status.invalid, tp.status.duplicate, tp.status.other_tenant])

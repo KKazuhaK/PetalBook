@@ -243,7 +243,7 @@ const schemaOf = (f: { title?: string; kind: FieldKind; options?: string[] }) =>
       return { ...title, type: 'string' }
   }
 }
-const typeView = (name: string, title: string, fields: TypeField[]): PageType => ({
+export const typeView = (name: string, title: string, fields: TypeField[]): PageType => ({
   name,
   title,
   fields,
@@ -258,8 +258,30 @@ const templateView = (name: string, meta: PageMeta, body: string): PageTemplate 
   body,
 })
 
+// A favourite as it is now: the name and the path of what it points at, and whether that is still there.
+function favoriteView(s: SpaceData, f: Favorite): Favorite {
+  if (f.kind === 'page') {
+    const p = s.pages.find((x) => x.id === f.target)
+    return p ? { ...f, name: labelOf(p), path: pathOf(p), missing: false } : { ...f, name: '', missing: true }
+  }
+  if (f.kind === 'folder')
+    return { ...f, name: f.target.split('/').pop() ?? f.target, path: f.target, missing: !s.folders.includes(f.target) }
+  const m = /^(folder|tag):(.*)#([^#]+)$/s.exec(f.target)
+  const view = m ? s.views[`${m[1]}=${m[2]}`]?.views.find((v) => v.id === m[3]) : undefined
+  if (!m) return { ...f, name: '', missing: true }
+  return {
+    ...f,
+    name: view?.name ?? '',
+    of: m[2],
+    ofKind: m[1] as 'folder' | 'tag',
+    missing: !view || (m[1] === 'folder' && !s.folders.includes(m[2])),
+  }
+}
+const favoriteList = (s: SpaceData) => ({ items: s.favorites.map((f) => favoriteView(s, f)), limit: 50 })
+
 export const fileRoutes: Route[] = [
-  ['GET', '/api/spaces', (c) => ({ spaces: c.data.spaces.map((s) => s.info) })],
+  // The spaces the person is in (an administrator reaches the others through the administration).
+  ['GET', '/api/spaces', (c) => ({ spaces: c.data.spaces.map((s) => s.info).filter((i) => i.role !== '') })],
   [
     'POST',
     '/api/spaces',
@@ -549,10 +571,15 @@ export const fileRoutes: Route[] = [
   [
     'GET',
     '/api/spaces/:space/types',
-    (c) => ({
-      types: [...spaceOf(c).types].sort((a, b) => (a.name < b.name ? -1 : 1)),
-      bindings: spaceOf(c).bindings,
-    }),
+    (c) => {
+      const s = spaceOf(c)
+      const notices = s.info.permissions.includes('manage') && s.settingsNotices.length > 0
+      return {
+        types: [...s.types].sort((a, b) => (a.name < b.name ? -1 : 1)),
+        bindings: s.bindings,
+        ...(notices ? { settingsNotices: s.settingsNotices } : {}),
+      }
+    },
   ],
   [
     'PUT',
@@ -590,7 +617,9 @@ export const fileRoutes: Route[] = [
     'GET',
     '/api/spaces/:space/templates',
     (c) => ({
-      templates: [...spaceOf(c).templates].sort((a, b) => (a.name < b.name ? -1 : 1)),
+      templates: [...spaceOf(c).templates]
+        .sort((a, b) => (a.name < b.name ? -1 : 1))
+        .map(({ body: _body, ...rest }) => (void _body, rest)),
       defaults: spaceOf(c).defaults,
     }),
   ],
@@ -625,27 +654,24 @@ export const fileRoutes: Route[] = [
     (c) => {
       const s = spaceOf(c)
       s.templates = s.templates.filter((t) => t.name !== c.params.name)
+      // The defaults that named it go with it.
+      for (const [folder, name] of Object.entries(s.defaults.folders))
+        if (name === c.params.name) delete s.defaults.folders[folder]
+      if (s.defaults.quickNote === c.params.name) s.defaults.quickNote = ''
     },
   ],
 
-  // favourites
-  ['GET', '/api/spaces/:space/favorites', (c) => ({ items: spaceOf(c).favorites, limit: 50 })],
+  // favourites: kept as what they point at, and named when listed (a page renamed or gone shows as it is now)
+  ['GET', '/api/spaces/:space/favorites', (c) => favoriteList(spaceOf(c))],
   [
     'POST',
     '/api/spaces/:space/favorites',
     (c) => {
       const s = spaceOf(c)
-      const p = c.body.kind === 'page' ? s.pages.find((x) => x.id === c.body.target) : undefined
-      const fav: Favorite = {
-        kind: c.body.kind,
-        target: c.body.target,
-        name: p ? labelOf(p) : c.body.target,
-        ...(p ? { path: pathOf(p) } : {}),
-        missing: false,
-        created: rfc3339(c.now()),
-      }
-      add(s.favorites, fav)
-      return { items: s.favorites, limit: 50 }
+      const { kind, target } = c.body as { kind: Favorite['kind']; target: string }
+      if (!s.favorites.some((f) => f.kind === kind && f.target === target))
+        add(s.favorites, { kind, target, name: '', missing: false, created: rfc3339(c.now()) })
+      return favoriteList(s)
     },
   ],
   [
@@ -654,7 +680,7 @@ export const fileRoutes: Route[] = [
     (c) => {
       const s = spaceOf(c)
       s.favorites = s.favorites.filter((f) => !(f.kind === c.query.get('kind') && f.target === c.query.get('target')))
-      return { items: s.favorites, limit: 50 }
+      return favoriteList(s)
     },
   ],
   [
@@ -665,7 +691,7 @@ export const fileRoutes: Route[] = [
       const rank = (f: Favorite) =>
         c.body.items.findIndex((i: { kind: string; target: string }) => i.kind === f.kind && i.target === f.target)
       s.favorites.sort((a, b) => rank(a) - rank(b))
-      return { items: s.favorites, limit: 50 }
+      return favoriteList(s)
     },
   ],
 ]

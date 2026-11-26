@@ -4,23 +4,16 @@ import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { TopBar } from '@/components/layout/TopBar'
 import { tn } from '@/i18n/notify'
-import {
-  click,
-  installDomShims,
-  locationText,
-  makePerson,
-  mount,
-  settle,
-  shareSpace,
-  type Mounted,
-} from '@/testing/harness'
-import type { MockServer } from '@/api/mock/server'
+import { click, installDomShims, locationText, mount, settle, type FxMounted } from '@/testing/harness'
+import { addNotification, addProblems } from '@/api/fixtures/data/area'
+import { invitedBy, shareSpace } from '@/api/fixtures/data/scenes'
+import type { FixtureServer } from '@/api/fixtures/server'
 import NotificationsPage from './NotificationsPage'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -55,11 +48,11 @@ const text = () => document.body.textContent ?? ''
 const filter = (f: string) => document.querySelector<HTMLElement>(`[data-filter="${f}"]`)
 const dotShown = () => dot()?.className.includes('opacity-100') ?? false
 
-// The signed-in administrator is added to a space by a person who owns it: that is one notification of the kind invite.
-const invited = (server: MockServer, who = 'sharer') => shareSpace(server, 'editor', '团队', who)
+const invited = (fx: FixtureServer, who = 'sharer', role: 'owner' | 'editor' | 'viewer' = 'editor', at?: string) =>
+  invitedBy(fx, who, role, '团队', at)
 
-async function open(entries: (server: MockServer) => string[]) {
-  m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries })
+async function open(entries: (server: FixtureServer) => string[]) {
+  m = await mount(routes, { signIn: true, fixtures: { mode: 'accounts' }, entries })
   await settle(() => bell() !== null, 'the bell')
 }
 
@@ -85,7 +78,7 @@ describe('the bell', () => {
     await open(() => ['/'])
     await settle(() => bell()!.getAttribute('aria-label') === tn.bell.label, 'the plain label')
     expect(dotShown()).toBe(false)
-    const { space } = invited(m!.server)
+    const { space } = invited(m!.fx)
     expect(space).toBeTruthy()
     await m!.qc.invalidateQueries({ queryKey: ['notifications'] })
     await settle(() => bell()!.getAttribute('aria-label') === tn.bell.unread(1), 'one unread')
@@ -163,7 +156,7 @@ describe('the bell', () => {
   })
 
   it('is not there for someone who is not signed in', async () => {
-    m = await mount(routes, { server: { mode: 'accounts' }, entries: ['/'] })
+    m = await mount(routes, { fixtures: { mode: 'accounts' }, entries: ['/'] })
     await settle(() => document.querySelector('[data-testid="home"]') !== null, 'the page')
     expect(bell()).toBeNull()
   })
@@ -176,13 +169,18 @@ describe('the bell', () => {
 })
 
 describe('the full page', () => {
-  // Another person's note for each kind there is a producer for, and a problem of the space.
-  const scene = (server: MockServer) => {
-    invited(server)
-    const owner = makePerson(server, 'second')
-    const sp = (owner.request('POST', '/api/spaces', { name: '第二个' }).body as { id: string }).id
-    owner.request('POST', `/api/spaces/${sp}/members`, { username: 'admin', role: 'owner' })
-    return sp
+  // Two invitations, the second one later: the first is to 团队, the second to 第二个.
+  const scene = (fx: FixtureServer) => {
+    invited(fx, 'sharer', 'editor', '2026-11-25T10:00:00Z')
+    const second = shareSpace(fx, 'owner', '第二个', 'second')
+    addNotification(
+      fx.data,
+      'invite',
+      second.space,
+      { space: '第二个', role: 'owner', by: '名 second' },
+      '2026-11-25T11:00:00Z',
+    )
+    return second.space
   }
 
   it('lists everything newest first, and the filters narrow it by kind', async () => {
@@ -203,9 +201,10 @@ describe('the full page', () => {
   it('shows the problems of a space the person writes in, and leads to the page that lists them', async () => {
     let space = ''
     await open((server) => {
-      space = invited(server).space
+      const shared = invited(server)
+      space = shared.space
       // A file that is not a page: the check page lists it.
-      server.addOrphan(space, { path: 'stray.md', kind: 'no_id', meta: { title: '无 id' }, body: 'x\n' })
+      addProblems(server.data, shared.data.info, { no_id: 1 })
       return ['/notifications?show=problems']
     })
     await settle(() => rows().length === 1, 'the problem')
@@ -217,11 +216,8 @@ describe('the full page', () => {
 
   it('pages the history: a button brings the earlier ones', async () => {
     await open((server) => {
-      for (let i = 0; i < 23; i++) {
-        const owner = makePerson(server, `owner${i}`)
-        const sp = (owner.request('POST', '/api/spaces', { name: `空间${i}` }).body as { id: string }).id
-        owner.request('POST', `/api/spaces/${sp}/members`, { username: 'admin', role: 'viewer' })
-      }
+      for (let i = 0; i < 23; i++)
+        invited(server, `owner${i}`, 'viewer', `2026-11-25T10:${String(i).padStart(2, '0')}:00Z`)
       return ['/notifications']
     })
     await settle(() => rows().length === 20, 'the first page')

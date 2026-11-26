@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
-import { byLabel, click, installDomShims, mount, settle, shareSpace, type Mounted } from '@/testing/harness'
+import { shareSpace } from '@/api/fixtures/data/scenes'
+import type { FixtureServer } from '@/api/fixtures/server'
+import { byLabel, click, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
 import { listShell, putViews, sender, TASK, type Send } from '@/testing/listKit'
 import { t } from '@/i18n'
 import { tb } from '@/i18n/boards'
@@ -54,7 +56,7 @@ const look = (from: number, to: number) =>
     for (const o of FakeObserver.live) for (const el of o.els) o.cb([{ target: el, isIntersecting: isNear(el) }])
   })
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 beforeEach(() => {
   localStorage.clear()
   view = { from: 0, to: 2 }
@@ -79,8 +81,9 @@ const bodyRequests = () =>
 const textButton = (label: string) =>
   [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
 
-async function openReading(scene: (send: Send, server: Mounted['server']) => void, path = '/s/default/f/文案') {
+async function openReading(scene: (send: Send, server: FixtureServer) => void, path = '/s/default/f/文案') {
   m = await mount(listShell, {
+    fixtures: true,
     entries: (server) => {
       const send = sender(server)
       send('POST', '/folders', { path: '文案' })
@@ -341,7 +344,7 @@ describe('reading by the view', () => {
   it('follows the sort and the filters of the view, and someone who may only read can read', async () => {
     m = await mount(listShell, {
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
       entries: (server) => {
         const { space, owner } = shareSpace(server, 'viewer')
         const send = (method: string, path: string, body?: unknown) =>

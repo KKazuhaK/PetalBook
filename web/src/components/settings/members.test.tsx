@@ -3,26 +3,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { t } from '@/i18n'
 import { tp } from '@/i18n/people'
-import { MOCK_ADMIN } from '@/api/mock/server'
-import {
-  adminRequests,
-  click,
-  installDomShims,
-  makePerson,
-  mount,
-  settle,
-  shareSpace,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { MOCK_ADMIN } from '@/api/fixtures/data/people'
+import { addPerson, shareSpace } from '@/api/fixtures/data/scenes'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
-// The members section of a space's settings, against the mock server.
+// The members section of a space's settings, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -81,10 +72,10 @@ const confirmDemotion = async () => {
 async function openAsOwner() {
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts' },
-    entries: (server) => {
-      const space = (adminRequests(server)('POST', '/api/spaces', { name: 'Team' }).body as { id: string }).id
-      makePerson(server, 'tang')
+    fixtures: { mode: 'accounts' },
+    entries: (fx) => {
+      const space = (fx.call('POST', '/api/spaces', { name: 'Team' }).body as { id: string }).id
+      addPerson(fx.data, 'tang')
       localStorage.setItem('pb.space', space)
       return ['/settings/members']
     },
@@ -96,9 +87,9 @@ async function openAsOwner() {
 async function openAs(role: 'editor' | 'viewer') {
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts' },
-    entries: (server) => {
-      localStorage.setItem('pb.space', shareSpace(server, role).space)
+    fixtures: { mode: 'accounts' },
+    entries: (fx) => {
+      localStorage.setItem('pb.space', shareSpace(fx, role).space)
       return ['/settings/members']
     },
   })
@@ -197,6 +188,7 @@ describe('the members section: an owner', () => {
 
   it('will not leave the space without an owner: the refusal is explained', async () => {
     await openAsOwner()
+    m!.fx.fail('PATCH', '/api/spaces/:space/members/:user', 409, { code: 'last_owner' }, { times: 1 })
     await type(select(t.fmt.labelled(MOCK_ADMIN.name, t.members.role))!, 'editor')
     await confirmDemotion()
     await settle(() => panelText().includes(t.members.errors.lastOwner), 'last owner')
@@ -238,7 +230,7 @@ describe('the members section: an owner', () => {
   })
 
   it('a personal space is not shared: one line says so, and there is no form to add anyone', async () => {
-    m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: ['/settings/members'] })
+    m = await mount(routes, { signIn: true, fixtures: { mode: 'accounts' }, entries: ['/settings/members'] })
     await settle(() => panelText().includes(t.members.personalNote), 'the note')
     expect(button(tp.add)).toBeUndefined()
     // And there is no leaving it either.
@@ -281,10 +273,11 @@ describe('a space that an administrator switched off', () => {
     let space = ''
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        space = shareSpace(server, 'viewer', '停用的').space
-        adminRequests(server)('POST', `/api/admin/spaces/${space}/disable`)
+      fixtures: { mode: 'accounts' },
+      entries: (fx) => {
+        const shared = shareSpace(fx, 'viewer', '停用的')
+        shared.data.info.disabled = true
+        space = shared.space
         localStorage.setItem('pb.space', space)
         return ['/settings/members']
       },
@@ -307,7 +300,7 @@ describe('a space that an administrator switched off', () => {
 
 describe('single-user mode', () => {
   it('has no members section, and the address goes to the preferences', async () => {
-    m = await mount(routes, { server: { mode: 'single' }, entries: ['/settings/members'] })
+    m = await mount(routes, { fixtures: { mode: 'single' }, entries: ['/settings/members'] })
     await settle(() => dialog() !== null && [...dialog()!.querySelectorAll('nav a')].length > 0, 'dialog')
     expect([...dialog()!.querySelectorAll('nav a')].map((a) => a.textContent)).not.toContain(
       t.settingsUi.sections.members,

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { tp } from '@/i18n/props'
-import { click, installDomShims, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
+import { shareSpace } from '@/api/fixtures/data/scenes'
 import SettingsRoute from './SettingsRoute'
 
-// The types section of a space's settings, against the mock server.
+// The types section of a space's settings, against the fixture server.
 
 // Counts the times the section's code is loaded (the factory runs on the first import).
 const chunk = vi.hoisted(() => ({ loaded: 0 }))
@@ -18,7 +19,7 @@ vi.mock('./TypesPanel', async (importOriginal) => {
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -40,9 +41,7 @@ const rowsOf = () => [...dialog().querySelectorAll<HTMLElement>('li[data-field]'
 const fieldKeys = () => rowsOf().map((r) => r.querySelector<HTMLInputElement>('input')!.value)
 const puts = () => m!.requests.filter((r) => r.method === 'PUT' && /\/types\//.test(r.url))
 const lastPut = () => JSON.parse(puts().at(-1)!.body!) as { title: string; fields: Record<string, unknown>[] }
-const json = 'application/json'
-const send = (server: MockServer, method: string, path: string, body: unknown) =>
-  server.handle(method, `/api/spaces/default${path}`, JSON.stringify(body), json)
+const send = (server: FixtureServer, method: string, path: string, body: unknown) => server.on()(method, path, body)
 
 const TASK = {
   title: '任务',
@@ -53,15 +52,15 @@ const TASK = {
   ],
 }
 
-async function openSingle(seed: (server: MockServer) => void = (s) => void send(s, 'PUT', '/types/task', TASK)) {
-  m = await mount(routes, { entries: (server) => (seed(server), ['/settings/types']), server: { mode: 'single' } })
+async function openSingle(seed: (server: FixtureServer) => void = (s) => void send(s, 'PUT', '/types/task', TASK)) {
+  m = await mount(routes, { entries: (server) => (seed(server), ['/settings/types']), fixtures: { mode: 'single' } })
   await settle(() => dialog() !== null && panelText().includes(tp.types.title), 'the section')
 }
 
 async function openAs(role: 'editor' | 'viewer') {
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts' },
+    fixtures: { mode: 'accounts' },
     entries: (server) => {
       const { space, owner } = shareSpace(server, role)
       owner.request('PUT', `/api/spaces/${space}/types/task`, TASK)
@@ -76,7 +75,7 @@ async function openAs(role: 'editor' | 'viewer') {
 
 describe('the types section: someone who manages the space', () => {
   it('is its own chunk: another section does not load it, this one does', async () => {
-    m = await mount(routes, { entries: ['/settings/general'], server: { mode: 'single' } })
+    m = await mount(routes, { entries: ['/settings/general'], fixtures: { mode: 'single' } })
     await settle(() => dialog() !== null && panelText().length > 0, 'the dialog')
     expect(chunk.loaded).toBe(0)
     await m.unmount()
@@ -175,9 +174,8 @@ describe('the types section: someone who manages the space', () => {
     await click(button(tp.types.addField))
     await type(rowsOf()[2].querySelectorAll('input')[0], 'owner')
     expect(fieldKeys()).toEqual(['due', 'status', 'owner'])
-    const rev = (
-      m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as { types: { rev: string }[] }
-    ).types[0].rev
+    const rev = (m!.fx.handle('GET', '/api/spaces/default/types', undefined, null).body as { types: { rev: string }[] })
+      .types[0].rev
     await click(button(tp.types.save))
     await settle(() => puts().length === 1, 'the request')
     expect(lastPut()).toEqual({
@@ -192,7 +190,7 @@ describe('the types section: someone who manages the space', () => {
     // What the server now has is what the list shows.
     await settle(() => typeRow('task')!.textContent!.includes('任务单'), 'the new title')
     const listed = (
-      m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as {
+      m!.fx.handle('GET', '/api/spaces/default/types', undefined, null).body as {
         types: { fields: { key: string }[] }[]
       }
     ).types[0]
@@ -235,27 +233,21 @@ describe('the types section: someone who manages the space', () => {
     await click(typeRow('task')!.querySelector('button'))
     await type(dialog().querySelector<HTMLInputElement>('#type-title')!, '我的标题')
     // Someone else changes the type after the form was opened.
-    const rev = (
-      m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as { types: { rev: string }[] }
-    ).types[0].rev
-    expect(
-      send(m!.server, 'PUT', '/types/task', {
-        baseRev: rev,
-        title: '别人的标题',
-        fields: TASK.fields.map((f) => ({ key: f.key })),
-      }).status,
-    ).toBe(200)
+    const rev = (m!.fx.call('GET', '/api/spaces/default/types').body as { types: { rev: string }[] }).types[0].rev
+    const changed = send(m!.fx, 'PUT', '/types/task', {
+      baseRev: rev,
+      title: '别人的标题',
+      fields: TASK.fields.map((f) => ({ key: f.key })),
+    })
+    expect(changed.status).toBe(200)
+    // The server refuses a save made from the old rev, and sends the type as it is now.
+    m!.fx.fail('PUT', '/api/spaces/default/types/task', 409, { code: 'conflict', current: changed.body }, { times: 1 })
     await click(button(tp.types.save))
     await settle(() => document.body.textContent!.includes(tp.types.changedMeanwhile), 'the message')
     expect(puts().filter((r) => r.url.includes('/types/task')).length).toBeGreaterThan(0)
     // The form is made again from the type as it is now, not from what was typed.
     await settle(() => typeRow('task')!.textContent!.includes('别人的标题'), 'the type read again')
-    expect(m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body).toMatchObject({
-      types: [{ title: '别人的标题' }],
-    })
-    // The server refuses a change from the old rev too.
-    const old = rev
-    expect(send(m!.server, 'PUT', '/types/task', { baseRev: old, title: 'x', fields: [] }).status).toBe(409)
+    expect(m!.fx.call('GET', '/api/spaces/default/types').body).toMatchObject({ types: [{ title: '别人的标题' }] })
   })
 
   it('takes a binding away from the list of bindings', async () => {
@@ -275,7 +267,13 @@ describe('the types section: someone who manages the space', () => {
   it('shows the error of a type whose file cannot be read, instead of an editor, and lets it be deleted', async () => {
     await openSingle((s) => {
       send(s, 'PUT', '/types/task', TASK)
-      s.damageType('default', 'broken', 'broken.json is not JSON; it has to be fixed by hand')
+      s.data.spaces[0].types.push({
+        name: 'broken',
+        title: '',
+        rev: 'unreadable',
+        fields: [],
+        error: 'broken.json is not JSON; it has to be fixed by hand',
+      })
     })
     expect(typeRow('broken')!.textContent).toContain(tp.types.broken)
     await click(typeRow('broken')!.querySelector('button'))
@@ -291,8 +289,11 @@ describe('the types section: someone who manages the space', () => {
   it('says what the server said when it refuses a type', async () => {
     await openSingle()
     await click(typeRow('task')!.querySelector('button'))
-    // A damaged file appears after the page was read: the server refuses the write.
-    m!.server.damageType('default', 'task', 'gone wrong')
+    // A damaged file appears after the page was read: the server refuses the write, in its own words.
+    m!.fx.fail('PUT', '/api/spaces/default/types/task', 400, {
+      code: 'invalid',
+      message: '这个类型的文件坏了，要手动修好才能改',
+    })
     await type(dialog().querySelector<HTMLInputElement>('#type-title')!, '改')
     await click(button(tp.types.save))
     await settle(() => dialog().querySelector('form [role="alert"]') !== null, 'the message')

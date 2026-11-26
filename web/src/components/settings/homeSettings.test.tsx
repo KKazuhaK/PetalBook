@@ -2,28 +2,21 @@
 import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
+import { addApi, addHitokoto, addJinrishici } from '@/api/fixtures/data/area'
+import { shareSpace } from '@/api/fixtures/data/scenes'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { keys } from '@/api/hooks'
 import type { DailyPrefs } from '@/api/types'
 import { t } from '@/i18n'
 import { th } from '@/i18n/home'
-import {
-  adminRequests,
-  click,
-  installDomShims,
-  locationText,
-  mount,
-  settle,
-  shareSpace,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { sender } from '@/testing/listKit'
 import SettingsRoute from './SettingsRoute'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -60,7 +53,7 @@ describe('the Home section, single-user mode', () => {
         scene?.(sender(server))
         return ['/settings/home']
       },
-      server: { mode: 'single' },
+      fixtures: { mode: 'single' },
     })
     await loaded()
   }
@@ -99,7 +92,7 @@ describe('the Home section, single-user mode', () => {
     })
     // The server has it: the page starts again from it.
     await settle(() => (mode(th.settings.modes.own) as HTMLInputElement).checked, 'shown as saved')
-    expect(sender(m!.server)('GET', '/daily/settings').body.daily.folder).toBe('文案')
+    expect(sender(m!.fx)('GET', '/daily/settings').body.daily.folder).toBe('文案')
   })
 
   it('each language has its own page: a folder for Chinese, a tag for English, nothing for the rest', async () => {
@@ -165,32 +158,21 @@ describe('the Home section, single-user mode', () => {
 })
 
 describe('the Home section, accounts mode', () => {
-  const asOwner = async (scene?: (admin: ReturnType<typeof adminRequests>, space: string) => void) => {
+  const asOwner = async (scene?: (fx: FixtureServer, space: string) => void) => {
     let space = ''
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const admin = adminRequests(server)
-        space = (admin('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
+      fixtures: { mode: 'accounts' },
+      entries: (fx) => {
+        space = fx.data.spaces[0].info.id
         localStorage.setItem('pb.space', space)
-        scene?.(admin, space)
+        scene?.(fx, space)
         return ['/settings/home']
       },
     })
     await loaded()
     return space
   }
-  const API = (id: string, lang: string) => ({
-    id,
-    name: `接口${id}`,
-    lang,
-    url: 'https://example.org/q',
-    text: 't',
-    refresh: 'daily',
-    rps: 1,
-    enabled: true,
-  })
 
   const addMenu = () =>
     dialog()!.querySelector<HTMLSelectElement>(
@@ -202,10 +184,10 @@ describe('the Home section, accounts mode', () => {
   const item = (id: string) => dialog()!.querySelector<HTMLElement>(`[data-api-item="${id}"]`)!
 
   it("the interfaces made for a language are on its tab; choosing them is saved as the space's choice", async () => {
-    await asOwner((admin) => {
-      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
-      admin('PUT', '/api/admin/daily/apis/enone', API('enone', 'en'))
-      admin('PUT', '/api/admin/daily/apis/anyone', API('anyone', ''))
+    await asOwner(({ data }) => {
+      addApi(data, 'zhone', 'zh-Hans')
+      addApi(data, 'enone', 'en')
+      addApi(data, 'anyone', '')
     })
     await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.api))
@@ -224,7 +206,7 @@ describe('the Home section, accounts mode', () => {
   })
 
   it('sources of several kinds in a language: interfaces, the lines, pages of this space, in order', async () => {
-    await asOwner((admin) => admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans')))
+    await asOwner(({ data }) => addApi(data, 'zhone', 'zh-Hans'))
     await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.api))
     await type(addMenu(), 'zhone')
@@ -244,9 +226,9 @@ describe('the Home section, accounts mode', () => {
   })
 
   it('the categories of a built-in interface and the order of several are saved with the choice', async () => {
-    await asOwner((admin) => {
-      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true })
-      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
+    await asOwner(({ data }) => {
+      addHitokoto(data)
+      addApi(data, 'zhone', 'zh-Hans')
     })
     await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.api))
@@ -269,7 +251,7 @@ describe('the Home section, accounts mode', () => {
   })
 
   it('a category that is a path is one choice, and the default is not sent', async () => {
-    await asOwner((admin) => admin('PUT', '/api/admin/daily/providers/jinrishici', { enabled: true }))
+    await asOwner(({ data }) => addJinrishici(data))
     await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.api))
     await type(addMenu(), 'jinrishici')
@@ -286,10 +268,10 @@ describe('the Home section, accounts mode', () => {
   })
 
   it('an interface that was switched off stays, greyed with the reason, and a save keeps it', async () => {
-    await asOwner((admin, space) => {
-      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true })
-      admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: true, apis: ['hitokoto'] })
-      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: false })
+    await asOwner(({ data }, space) => {
+      // Chosen while it was on, and switched off by the administrators afterwards: no longer on offer.
+      data.area.daily.prefs[space] = { inherit: true, apis: ['hitokoto'] }
+      data.area.daily.site.unavailable.hitokoto = 'disabled'
     })
     // It is on the first tab, in the list, marked.
     expect(mode(th.settings.modes.api).checked).toBe(true)
@@ -304,19 +286,19 @@ describe('the Home section, accounts mode', () => {
   })
 
   it('an interface that no longer exists is told, and nothing is shown in its place', async () => {
-    await asOwner((admin, space) => {
-      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
-      admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: true, apis: ['zhone'] })
-      admin('DELETE', '/api/admin/daily/apis/zhone')
+    await asOwner(({ data }, space) => {
+      // The space chose it, and it was deleted afterwards.
+      data.area.daily.prefs[space] = { inherit: true, apis: ['zhone'] }
+      data.area.daily.site.unavailable.zhone = 'gone'
     })
     expect(dialog()!.querySelector('[data-slot="source-gone"]')!.textContent).toContain('zhone')
     expect(dialog()!.querySelector('[data-api-item="zhone"]')).toBeNull()
   })
 
   it('an interface left chosen on a language that no longer uses one is let go', async () => {
-    await asOwner((admin, space) => {
-      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
-      admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: true, apis: ['zhone'] })
+    await asOwner(({ data }, space) => {
+      addApi(data, 'zhone', 'zh-Hans')
+      data.area.daily.prefs[space] = { inherit: true, apis: ['zhone'] }
     })
     await click(tab('zh-Hans'))
     expect(mode(th.settings.modes.api).checked).toBe(true)
@@ -327,9 +309,9 @@ describe('the Home section, accounts mode', () => {
   })
 
   it('a source and the switch saved together: if the second request fails, the choices, the tab and an error stay', async () => {
-    await asOwner((admin, space) => {
-      admin('PUT', '/api/admin/settings/daily.default', { value: { kind: 'list' } })
-      admin('POST', `/api/spaces/${space}/folders`, { path: '文案' })
+    await asOwner((fx, space) => {
+      fx.data.area.daily.site.default = { kind: 'list' }
+      fx.on(space)('POST', '/folders', { path: '文案' })
     })
     await click(tab('en'))
     await click(mode(th.settings.modes.own))
@@ -359,7 +341,7 @@ describe('the Home section, accounts mode', () => {
   })
 
   it("the server's default is the last resort, a switch the owner may turn off", async () => {
-    await asOwner((admin) => admin('PUT', '/api/admin/settings/daily.default', { value: { kind: 'list' } }))
+    await asOwner(({ data }) => void (data.area.daily.site.default = { kind: 'list' }))
     expect(dialog()!.textContent).toContain(th.settings.inheritHelp)
     const toggle = dialog()!.querySelector<HTMLElement>('[role="switch"]')!
     expect(toggle.getAttribute('aria-checked')).toBe('true')
@@ -370,9 +352,7 @@ describe('the Home section, accounts mode', () => {
   })
 
   it('what the administrators decided for everyone is shown, not changeable, and says by whom', async () => {
-    const space = await asOwner((admin) => {
-      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
-    })
+    const space = await asOwner(({ data }) => addApi(data, 'zhone', 'zh-Hans'))
     const prefs = m!.qc.getQueryData<DailyPrefs | null>(keys.dailyPrefs(space))!
     await act(
       async () => void m!.qc.setQueryData(keys.dailyPrefs(space), { ...prefs, allowed: { own: false, api: false } }),
@@ -394,9 +374,9 @@ describe('the Home section, accounts mode', () => {
     it('an editor does not have the section, and the address falls to the first one', async () => {
       m = await mount(routes, {
         signIn: true,
-        server: { mode: 'accounts' },
-        entries: (server) => {
-          localStorage.setItem('pb.space', shareSpace(server, 'editor').space)
+        fixtures: { mode: 'accounts' },
+        entries: (fx) => {
+          localStorage.setItem('pb.space', shareSpace(fx, 'editor').space)
           return ['/settings/home']
         },
       })
@@ -408,9 +388,9 @@ describe('the Home section, accounts mode', () => {
     it('an owner does', async () => {
       m = await mount(routes, {
         signIn: true,
-        server: { mode: 'accounts' },
-        entries: (server) => {
-          localStorage.setItem('pb.space', shareSpace(server, 'owner').space)
+        fixtures: { mode: 'accounts' },
+        entries: (fx) => {
+          localStorage.setItem('pb.space', shareSpace(fx, 'owner').space)
           return ['/settings/home']
         },
       })

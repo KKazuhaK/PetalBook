@@ -1,14 +1,13 @@
 // Who is signed in, and the pages around signing in: sessions, login, logout, setup, invites, providers, captcha,
-// passkeys, registration, password reset, OAuth consent; and the few reads every page makes at start (meta, settings,
-// unread count). A login signs in the person named, whatever password came; a refusal is for `fx.fail`.
+// passkeys, registration, password reset, OAuth consent; and the few reads every page makes at start (meta, settings). A login signs in the person named, whatever password came; a refusal is for `fx.fail`.
 
 import type { SessionInfo, SessionUser, SignInAnswer } from '../../types.ts'
 import type { AuthData } from '../data/model.ts'
 import { DEMO_ADMIN, DEMO_MEMBER, type UserRec } from '../data/people.ts'
 import { add, newId, Refusal, reply, type Ctx, type Route } from '../kit.ts'
 
-const view = ({ password: _p, passkeys: _k, ...user }: UserRec): SessionUser => (void _p, void _k, user)
-const current = (a: AuthData) => a.users.find((u) => u.id === a.signedIn)
+export const view = ({ password: _p, passkeys: _k, ...user }: UserRec): SessionUser => (void _p, void _k, user)
+export const current = (a: AuthData) => a.users.find((u) => u.id === a.signedIn)
 
 // What every sign-in answers: the person with their permissions, and the hold on the session.
 function signIn(a: AuthData, u: UserRec): SignInAnswer {
@@ -135,29 +134,6 @@ export const authRoutes: Route[] = [
       return { ...signIn(a, u), return: c.query.get('return') ?? '/' }
     },
   ],
-  [
-    'POST',
-    '/api/account/passkeys/begin',
-    () => ({
-      ceremony: 'ceremony-register',
-      options: {
-        challenge: 'Y2hhbGxlbmdl',
-        rp: { name: 'PetalBook', id: 'localhost' },
-        user: { id: 'dXNlcg', name: 'user', displayName: 'user' },
-        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
-      },
-    }),
-  ],
-  [
-    'POST',
-    '/api/account/passkeys/finish',
-    (c) => {
-      const a = c.data.auth
-      a.hold = null
-      return { passkeys: [{ id: newId(c.data), name: 'passkey', created: '2026-11-26T00:00:00Z', synced: false }] }
-    },
-  ],
-
   // registration, password reset, email links
   [
     'GET',
@@ -214,33 +190,6 @@ export const authRoutes: Route[] = [
     }),
   ],
 
-  // the person's own account, as the page about it reads it
-  [
-    'GET',
-    '/api/account',
-    (c) => {
-      const u = current(c.data.auth)
-      if (!u) throw new Refusal(401, 'unauthenticated', 'sign in first')
-      const { permissions: _permissions, ...user } = view(u)
-      void _permissions
-      return {
-        user,
-        hasPassword: true,
-        identities: [],
-        passkeys: Array.from({ length: u.passkeys ?? 0 }, (_, i) => ({
-          id: `pk${i}`,
-          name: 'passkey',
-          created: user.created,
-          synced: false,
-        })),
-        groups: [],
-        emails: user.email
-          ? [{ email: user.email, primary: true, verified: user.emailVerified, created: user.created }]
-          : [],
-      }
-    },
-  ],
-
   // what every page reads at start
   [
     'GET',
@@ -253,5 +202,4 @@ export const authRoutes: Route[] = [
     }),
   ],
   ['GET', '/api/settings', (c) => ({ features: c.data.features, settings: [] })],
-  ['GET', '/api/notifications/unread', () => ({ count: 0 })],
 ]

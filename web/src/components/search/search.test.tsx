@@ -16,7 +16,7 @@ import {
   press,
   settle,
   type,
-  type Mounted,
+  type FxMounted,
 } from '@/testing/harness'
 import { SearchDialogProvider } from './SearchDialog'
 import { TIME_GROUPS } from './searchModel'
@@ -27,7 +27,7 @@ import { TIME_GROUPS } from './searchModel'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   vi.restoreAllMocks()
   await m?.unmount()
@@ -56,7 +56,7 @@ const lastList = () => new URL(listRequests().at(-1)!.url, 'http://x').searchPar
 const popover = () => document.querySelector<HTMLElement>('[data-slot="popover-content"]')
 
 async function openSearch(entries = ['/s/default/recent']) {
-  m = await mount(app, { entries, server: { mode: 'single' } })
+  m = await mount(app, { entries, fixtures: { mode: 'single' } })
   await act(async () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }))
   })
@@ -106,7 +106,7 @@ describe('the search dialog', () => {
   })
 
   it('does not open over another dialog', async () => {
-    m = await mount(app, { entries: ['/s/default/recent'], server: { mode: 'single' } })
+    m = await mount(app, { entries: ['/s/default/recent'], fixtures: { mode: 'single' } })
     const other = document.createElement('div')
     other.setAttribute('role', 'dialog')
     document.body.appendChild(other)
@@ -209,7 +209,7 @@ describe('the search dialog', () => {
   it('cancels a request that is still on its way when the text changes', async () => {
     m = await mount(app, {
       entries: ['/s/default/recent'],
-      server: { mode: 'single' },
+      fixtures: { mode: 'single' },
       // Search requests take a while, so the first is still pending when the text changes.
       delay: (method, url) => (method === 'GET' && url.includes('q=') ? 400 : 0),
     })
@@ -372,7 +372,7 @@ describe('where the dialog is opened from', () => {
           </QuickCaptureProvider>
         </SidebarProvider>
       </SearchDialogProvider>,
-      { entries: ['/s/default/recent'], server: { mode: 'single' } },
+      { entries: ['/s/default/recent'], fixtures: { mode: 'single' } },
     )
     await settle(() => byLabel(t.nav.search) !== null, 'sidebar')
     expect(dialog()).toBeNull()

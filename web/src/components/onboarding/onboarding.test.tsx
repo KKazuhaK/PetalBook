@@ -4,17 +4,18 @@ import { Route, Routes } from 'react-router'
 import { AppShell } from '@/components/layout/AppShell'
 import { SpaceGate } from '@/components/layout/SpaceGate'
 import { onboardingKey, readOnboarding, tourSteps, writeOnboarding } from '@/lib/onboarding'
-import { MOCK_ADMIN } from '@/api/mock/server'
+import { githubProvider } from '@/api/fixtures/data/connections'
+import type { FixtureData } from '@/api/fixtures/data/model'
 import { to } from '@/i18n/onboard'
-import { adminRequests, click, installDomShims, locationText, mount, settle, type Mounted } from '@/testing/harness'
-import type { MockServer } from '@/api/mock/server'
+import { click, installDomShims, locationText, mount, settle, type FxMounted } from '@/testing/harness'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { createSyncedPrefs } from '@/lib/syncedPrefs'
 import { browserPrefs, setPrefsStore } from '@/lib/prefsStore'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -39,16 +40,15 @@ const buttonNamed = (name: string, root: ParentNode = document) =>
   [...root.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === name)
 const title = () => tour()!.querySelector('[data-slot="dialog-title"], h2')?.textContent ?? ''
 
-const firstSpace = (server: MockServer) =>
-  (adminRequests(server)('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
+const firstSpace = (fx: FixtureServer) => fx.data.spaces[0].info.id
 
-async function openApp(scene?: (server: MockServer) => void, accounts = true) {
+async function openApp(scene?: (fx: FixtureServer) => void, accounts = true) {
   m = await mount(routes, {
     signIn: accounts,
-    server: { mode: accounts ? 'accounts' : 'single' },
-    entries: (server) => {
-      scene?.(server)
-      return [`/s/${firstSpace(server)}`]
+    fixtures: { mode: accounts ? 'accounts' : 'single' },
+    entries: (fx) => {
+      scene?.(fx)
+      return [`/s/${firstSpace(fx)}`]
     },
   })
 }
@@ -100,7 +100,7 @@ describe('the tour on a first sign-in', () => {
     // The next visit, on a server that knows this person by the id they have: nothing starts.
     await m!.unmount()
     m = undefined
-    await openApp((server) => writeOnboarding(server.userId(MOCK_ADMIN.username)!, 'skipped'))
+    await openApp((server) => writeOnboarding(server.data.auth.users[0].id, 'skipped'))
     await settle(() => document.querySelector('[data-testid="home"]') !== null, 'the page')
     await new Promise((r) => setTimeout(r, 100))
     expect(tour()).toBeNull()
@@ -130,7 +130,7 @@ describe('the tour on a first sign-in', () => {
     setPrefsStore(synced)
     try {
       let uid = ''
-      await openApp((server) => void (uid = server.userId(MOCK_ADMIN.username)!))
+      await openApp((server) => void (uid = server.data.auth.users[0].id))
       const hydrating = synced.hydrate(uid)
       await settle(() => document.querySelector('[data-testid="home"]') !== null, 'the page')
       // The spaces are known and this browser has nothing: the file is still coming, so nothing starts.
@@ -179,7 +179,7 @@ describe('the tour on a first sign-in', () => {
   })
 
   it('is not started over the administration, where a person goes on purpose', async () => {
-    m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: ['/admin/users'] })
+    m = await mount(routes, { signIn: true, fixtures: { mode: 'accounts' }, entries: ['/admin/users'] })
     await settle(() => document.querySelector('[data-testid="admin"]') !== null, 'the page')
     await new Promise((r) => setTimeout(r, 100))
     expect(tour()).toBeNull()
@@ -187,13 +187,18 @@ describe('the tour on a first sign-in', () => {
 })
 
 describe('connecting one’s own repository', () => {
-  const ask = (graceDays: number) => (server: MockServer) => {
-    for (const [key, value] of Object.entries({
-      'storage.remotes.require': 'any',
-      'storage.remotes.scope': 'all',
-      'storage.remotes.graceDays': graceDays,
-    }))
-      adminRequests(server)('PUT', `/api/admin/settings/${key}`, { value })
+  // The storage policy asks the space to follow a remote repository, with `graceDays` left (none: overdue).
+  const ask = (graceDays: number) => (fx: FixtureServer | FixtureData) => {
+    const d = 'data' in fx ? fx.data : fx
+    d.spaces[0].info.storage = {
+      cache: 'local',
+      assets: 'space',
+      remote: {
+        required: 'any',
+        deadline: new Date(Date.now() + graceDays * 86_400_000).toISOString(),
+        overdue: graceDays === 0,
+      },
+    }
   }
   const steps = () => [...document.querySelectorAll<HTMLElement>('[data-slot="repo-steps"] li')]
 
@@ -237,17 +242,21 @@ describe('connecting one’s own repository', () => {
   it('ticks the step of the account once it is connected, and leaves the one after as the step to take', async () => {
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts', github: { configured: true } },
-      entries: (server) => {
-        ask(0)(server)
-        return [`/s/${firstSpace(server)}`]
+      fixtures: {
+        mode: 'accounts',
+        data: (d) => {
+          githubProvider(d, 'app')
+          ask(0)(d)
+        },
       },
+      entries: (fx) => [`/s/${firstSpace(fx)}`],
     })
     await settle(() => tour() !== null, 'the tour')
     await click(buttonNamed(to.tour.skip))
     await settle(() => document.querySelector('[data-slot="storage-notice-step"]') !== null, 'the notice')
     expect(document.querySelector('[data-slot="storage-notice-step"]')!.textContent).toContain('GitHub')
-    adminRequests(m.server)('POST', '/api/_mock/github', { connect: 'tang-gh' })
+    // The person connects their GitHub account.
+    githubProvider(m.fx.data, 'connected')
     await m.qc.invalidateQueries({ queryKey: ['connections'] })
     await settle(
       () => document.querySelector('[data-slot="storage-notice-step"]')!.textContent!.includes(to.repo.repo.title),

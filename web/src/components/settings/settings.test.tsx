@@ -21,7 +21,7 @@ import {
   press,
   settle,
   type,
-  type Mounted,
+  type FxMounted,
 } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
@@ -35,7 +35,7 @@ beforeEach(() => {
   document.documentElement.classList.remove('dark')
 })
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -58,7 +58,10 @@ describe('the settings dialog, accounts mode, administrator', () => {
     m = await mount(routes, {
       entries: [path],
       signIn: true,
-      server: { mode: 'accounts', oidc: { name: 'Company SSO' } },
+      fixtures: {
+        mode: 'accounts',
+        providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft' }],
+      },
     })
     await settle(() => dialog() !== null && navLinks().length > 0, 'dialog')
   }
@@ -196,7 +199,7 @@ describe('the settings dialog, accounts mode, administrator', () => {
       entries: ['/s/default/recent', { pathname: '/settings/profile', state: { from: '/s/default/recent' } }],
       index: 1,
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
     })
     await settle(() => navLinks().length > 0, 'dialog')
     await click(
@@ -220,7 +223,7 @@ describe('the settings dialog, accounts mode, administrator', () => {
 
 describe('the settings dialog, single-user mode', () => {
   const open = async (path: string) => {
-    m = await mount(routes, { entries: [path], server: { mode: 'single' } })
+    m = await mount(routes, { entries: [path], fixtures: { mode: 'single' } })
     await settle(() => dialog() !== null && navLinks().length > 0, 'dialog')
   }
 
@@ -259,7 +262,7 @@ describe('the settings dialog, single-user mode', () => {
 
 describe('the preferences', () => {
   const open = async () => {
-    m = await mount(routes, { entries: ['/settings/preferences'], server: { mode: 'single' } })
+    m = await mount(routes, { entries: ['/settings/preferences'], fixtures: { mode: 'single' } })
     await settle(() => dialog()?.querySelector('[data-palette-option]') !== null, 'preferences')
   }
   const palette = (id: string) => dialog()!.querySelector<HTMLElement>(`[data-palette-option="${id}"]`)!
@@ -325,7 +328,7 @@ describe('where settings are opened from', () => {
         <UserMenu />
         {routes}
       </>,
-      { entries: ['/s/default/recent'], signIn: true, server: { mode: 'accounts' } },
+      { entries: ['/s/default/recent'], signIn: true, fixtures: { mode: 'accounts' } },
     )
     const trigger = () => document.querySelector<HTMLElement>('[aria-haspopup="menu"]')
     await settle(() => trigger() !== null, 'user menu')
@@ -349,7 +352,7 @@ describe('where settings are opened from', () => {
         </QuickCaptureProvider>
         {routes}
       </SidebarProvider>,
-      { entries: ['/s/default/recent'], server: { mode: 'single' } },
+      { entries: ['/s/default/recent'], fixtures: { mode: 'single' } },
     )
     await settle(() => byLabel(t.nav.settings) !== null, 'footer')
     expect(byLabel(t.language.label)).toBeNull()

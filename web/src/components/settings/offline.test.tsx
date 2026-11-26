@@ -5,7 +5,7 @@ import { t } from '@/i18n'
 import { ol } from '@/i18n/offline'
 import { DEFAULT_CAP_BYTES, DEFAULT_CONFIG, configure, existingStore, hasCopy } from '@/lib/offline'
 import { freshDevice } from '@/lib/offline/testkit'
-import { adminRequests, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { sender } from '@/testing/listKit'
 import SettingsRoute from './SettingsRoute'
 import { formatBytes } from '@/lib/bytes'
@@ -13,7 +13,7 @@ import { formatBytes } from '@/lib/bytes'
 beforeAll(installDomShims)
 beforeEach(freshDevice)
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -38,13 +38,16 @@ const select = (label: string) => dialog().querySelector<HTMLSelectElement>(`sel
 const button = (text: string) =>
   [...dialog().querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement
 
+// How many pages the space holds now.
+const pageCount = () => m!.fx.data.spaces[0].pages.length
+
 async function open(scene?: (s: ReturnType<typeof sender>) => void) {
   m = await mount(routes, {
     entries: (server) => {
       scene?.(sender(server))
       return ['/settings/offline']
     },
-    server: { mode: 'single' },
+    fixtures: { mode: 'single' },
   })
   await settle(() => document.querySelector('input[name="offline-mode"]') !== null, 'the offline settings')
 }
@@ -70,7 +73,7 @@ describe('the Offline section', () => {
 
   it('chooses the catalogue only: the copy is made, synced at once, and its numbers are shown', async () => {
     await open()
-    const pages = m!.server.ids().length
+    const pages = pageCount()
     expect(pages).toBeGreaterThan(3)
     await click(radio(ol.modes.catalog))
     await settle(() => status().includes(ol.catalogCount(pages)), 'the catalogue count')
@@ -157,7 +160,7 @@ describe('the Offline section', () => {
   it('clears the copy of the space, and choosing nothing does too', async () => {
     await open()
     await click(radio(ol.modes.catalog))
-    await settle(() => status().includes(ol.catalogCount(m!.server.ids().length)), 'the copy')
+    await settle(() => status().includes(ol.catalogCount(pageCount())), 'the copy')
     await click(button(ol.clear))
     await settle(() => !hasCopy('local', 'default'), 'the copy cleared')
     await settle(() => radio(ol.modes.off).checked, 'nothing chosen again')
@@ -174,11 +177,11 @@ describe('the Offline section', () => {
   it('syncs now on request, and says so while it does', async () => {
     await open()
     await click(radio(ol.modes.catalog))
-    await settle(() => status().includes(ol.catalogCount(m!.server.ids().length)), 'the copy')
-    sender(m!.server)('POST', '/pages', { meta: { title: '后来的页' }, body: 'x\n' })
+    await settle(() => status().includes(ol.catalogCount(pageCount())), 'the copy')
+    sender(m!.fx)('POST', '/pages', { meta: { title: '后来的页' }, body: 'x\n' })
     await settle(() => !button(ol.syncNow).disabled, 'the button')
     await click(button(ol.syncNow))
-    await settle(() => status().includes(ol.catalogCount(m!.server.ids().length)), 'the new page')
+    await settle(() => status().includes(ol.catalogCount(pageCount())), 'the new page')
   })
 
   it('shows what went wrong, that the space was switched off and that the room ran out, from the state of the copy', async () => {
@@ -201,9 +204,10 @@ describe('the Offline section', () => {
   it('is only a note, with no controls, when the administrators turn offline copies off', async () => {
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
       entries: (server) => {
-        adminRequests(server)('PUT', '/api/admin/settings/features.offline', { value: false, lower: { mode: 'lock' } })
+        // An administrator switched the feature off.
+        server.data.features['features.offline'] = false
         return ['/settings/offline']
       },
     })
@@ -218,7 +222,7 @@ describe('the Offline section', () => {
     // @ts-expect-error a browser without IndexedDB
     delete globalThis.indexedDB
     try {
-      m = await mount(routes, { entries: ['/settings/offline'], server: { mode: 'single' } })
+      m = await mount(routes, { entries: ['/settings/offline'], fixtures: { mode: 'single' } })
       await settle(() => dialog()?.textContent?.includes(ol.unsupported) === true, 'the notice')
     } finally {
       globalThis.indexedDB = real
