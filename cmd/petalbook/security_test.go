@@ -23,14 +23,20 @@ func TestSecurityResetBringsPasswordSignInBack(t *testing.T) {
 	if code, _ := b.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw1}); code != 200 {
 		t.Fatal("cannot sign in")
 	}
-	put := map[string]any{
-		"login":   map[string]any{"mode": "local_only"},
-		"lockout": map[string]any{"enabled": true, "minutes": 60, "scope": "account"},
-		"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": true, "when": "always"}}},
-		"limits":  map[string]any{"maxFailures": 7},
-	}
-	if code, r := b.do("PUT", "/api/admin/security", put); code != 200 || r["lockout"].(map[string]any)["enabled"] != true {
-		t.Fatalf("%d %v", code, r)
+	for _, w := range []struct {
+		key string
+		v   any
+	}{
+		{"signin.mode", "local_only"},
+		{"signin.lockout.enabled", true},
+		{"signin.lockout.minutes", 60},
+		{"signin.lockout.scope", "account"},
+		{"captcha.contexts", map[string]any{"login": map[string]any{"on": true, "when": "always"}}},
+		{"signin.maxFailures", 7},
+	} {
+		if code, r := b.do("PUT", "/api/admin/settings/"+w.key, map[string]any{"value": w.v}); code != 200 {
+			t.Fatalf("%s: %d %v", w.key, code, r)
+		}
 	}
 	if err := srv.stop(); err != nil {
 		t.Fatal(err)
@@ -50,18 +56,27 @@ func TestSecurityResetBringsPasswordSignInBack(t *testing.T) {
 	}
 	b2 := &browser{t: t, base: srv.base}
 	b2.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw1})
-	code, sec := b2.do("GET", "/api/admin/security", nil)
-	if code != 200 || sec["lockout"].(map[string]any)["enabled"] != false || sec["login"].(map[string]any)["mode"] != "dual" || sec["limits"].(map[string]any)["maxFailures"] != float64(7) ||
-		sec["captcha"].(map[string]any)["contexts"].(map[string]any)["login"].(map[string]any)["on"] != false {
+	code, list := b2.do("GET", "/api/admin/settings", nil)
+	if code != 200 {
+		t.Fatalf("%d %v", code, list)
+	}
+	sec := map[string]any{}
+	for _, it := range list["settings"].([]any) {
+		m := it.(map[string]any)
+		sec[m["key"].(string)] = m["site"].(map[string]any)["value"]
+	}
+	// Reset: dual, no lockout, no captcha; what it does not name (a limit, the lockout's length) stays.
+	if sec["signin.lockout.enabled"] != false || sec["signin.mode"] != "dual" || sec["signin.maxFailures"] != float64(7) || sec["signin.lockout.minutes"] != float64(60) ||
+		sec["captcha.contexts"].(map[string]any)["login"].(map[string]any)["on"] != false {
 		t.Fatalf("%d %v", code, sec)
 	}
-	_, audit := b2.do("GET", "/api/admin/audit?kind=security_changed", nil)
+	_, audit := b2.do("GET", "/api/admin/audit?kind=setting_changed", nil)
 	found := false
 	for _, it := range audit["items"].([]any) {
 		m := it.(map[string]any)
 		found = found || m["actor"] == nil && m["detail"].(map[string]any)["by"] == "cli"
 	}
 	if !found {
-		t.Fatalf("%v", audit)
+		t.Fatalf("the reset is not in the audit log: %v", audit)
 	}
 }

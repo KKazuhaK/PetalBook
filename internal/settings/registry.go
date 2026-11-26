@@ -219,7 +219,7 @@ func Definitions() []*Def {
 		{Key: SessionsMaxDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(90), Min: 1, Max: 3650, Lower: Lower{Mode: Allow}, ServerWide: sessionsWhy},
 		{Key: CaptchaProvider, Kind: Choice, Layers: []Layer{Site}, Default: "image", Choices: []string{"image", "turnstile", "recaptcha", "hcaptcha"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		// Validated and made whole by internal/auth (see its BindSettings).
-		{Key: CaptchaContexts, Kind: Doc, Layers: []Layer{Site}, Default: nil, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: CaptchaContexts, Kind: Doc, Layers: []Layer{Site}, Default: captchaContextsDefault(), Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 
 		// The storage policy.
 		{Key: StorageRemotesRequire, Kind: Text, Layers: []Layer{Site}, Default: "", Lower: Lower{Mode: Allow}, ServerWide: storageWhy},
@@ -272,6 +272,15 @@ func Definitions() []*Def {
 }
 
 func i64(n int64) *int64 { return &n }
+
+// captchaContextsDefault is every context off, asking after 3 failures.
+func captchaContextsDefault() map[string]any {
+	out := map[string]any{}
+	for _, c := range []string{"login", "invite", "setup", "forgot", "register"} {
+		out[c] = map[string]any{"on": false, "when": "after_failures", "failures": float64(3)}
+	}
+	return out
+}
 
 // Why the groups of server-wide settings are server-wide.
 const (

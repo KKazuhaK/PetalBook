@@ -116,13 +116,7 @@ func TestCaptchaOnSetupAndInvites(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		// Setup first: no administrator yet, so no way to set it; use the service to switch it on.
-		var patch auth.SecurityPatch
-		if err := json.Unmarshal([]byte(`{"captcha":{"contexts":{"setup":{"on":true,"when":"always"},"invite":{"on":true,"when":"always"}}}}`), &patch); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := a.auth.UpdateSecurity(t.Context(), "", "", patch); err != nil {
-			t.Fatal(err)
-		}
+		a.setSetting(t, "captcha.contexts", map[string]any{"setup": map[string]any{"on": true, "when": "always"}, "invite": map[string]any{"on": true, "when": "always"}})
 		c := a.newClient("203.0.113.35")
 		tok := a.auth.SetupToken()
 		c.do("POST", "/api/setup", map[string]any{"token": tok, "username": "kazuha", "password": pw}).want(t, 400, "captcha_failed")
@@ -227,9 +221,14 @@ func TestThirdPartyCaptcha(t *testing.T) {
 		sv.mu.Lock()
 		sv.status = 200
 		sv.mu.Unlock()
-		// Another provider needs its own secret in the same request; a stored one does not carry over.
-		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"provider": "hcaptcha", "siteKey": "k"}}).want(t, 400, "captcha_secret_required")
-		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"provider": "hcaptcha", "siteKey": "k2", "secret": "other-secret"}})
+		// Another provider needs keys of its own, and a stored one does not carry over: while a
+		// context is on there is no moment without, so the provider cannot change.
+		admin.do("PUT", "/api/admin/settings/captcha.provider", map[string]any{"value": "hcaptcha"}).want(t, 400, "captcha_site_key_required")
+		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": false}}}})
+		admin.do("PUT", "/api/admin/settings/captcha.provider", map[string]any{"value": "hcaptcha"}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"siteKey": "k"}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/captcha.contexts", map[string]any{"value": on}).want(t, 400, "captcha_secret_required")
+		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"siteKey": "k2", "secret": "other-secret", "contexts": on}})
 		// Replacing and clearing the secret.
 		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"secret": ""}}).want(t, 400, "captcha_secret_required") // it is in use
 		g := admin.putSecurity(t, map[string]any{"captcha": map[string]any{"secret": "", "contexts": map[string]any{"login": map[string]any{"on": false}}}})
@@ -242,12 +241,12 @@ func TestThirdPartyCaptcha(t *testing.T) {
 			t.Fatalf("CaptchaProvider with the image %q", got)
 		}
 		// The audit log has the change and never the secret.
-		for _, row := range admin.audit(t, "security_changed") {
+		for _, row := range admin.audit(t, "setting_changed") {
 			if strings.Contains(strings.ToLower(jsonOf(row)), "s3cret") || strings.Contains(jsonOf(row), "other-secret") {
 				t.Fatalf("a secret in the audit log: %v", row)
 			}
 		}
-		if rows := admin.audit(t, "security_changed"); len(rows) < 3 || !strings.Contains(jsonOf(rows), `"captcha.secret":"changed"`) {
+		if rows := admin.audit(t, "setting_changed"); len(rows) < 3 || !strings.Contains(jsonOf(rows), `"key":"captcha.secret"`) || !strings.Contains(jsonOf(rows), `"to":"changed"`) {
 			t.Fatalf("%v", rows)
 		}
 	})

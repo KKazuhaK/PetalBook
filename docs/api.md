@@ -9735,8 +9735,6 @@ held by the built-in site administrator only: no custom role may hold it.
 | `site.security.manage` | site | — | Read and change the sign-in security of the site |
 | `site.signin.manage` | site | — | Add, change and remove sign-in providers |
 | `site.mail.manage` | site | — | Read and change the mail settings, and send a test message |
-| `site.access.manage` | site | — | Read and change who may register and sign in |
-| `site.tenancy.manage` | site | — | Turn tenants on and off |
 | `site.tenants.manage` | site | — | List, create and delete tenants; change a tenant's slug, state and quota, and give a person more than their tenant allows |
 | `site.connections.manage` | site | — | Set up the providers people connect to |
 | `site.daily.manage` | site | — | Set up the daily text: its interfaces, providers and lines |

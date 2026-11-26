@@ -79,6 +79,15 @@ var routeAccessAdded = map[string][4]string{
 	"GET /api/admin/plans/{slug}":          {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 	"PATCH /api/admin/plans/{slug}":        {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 	"DELETE /api/admin/plans/{slug}":       {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+
+	// 3.6 part 5: the secrets of the site (its administrators) and of a tenant
+	// (its own administrators, and the site's).
+	"GET /api/admin/secrets":                            {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"PUT /api/admin/secrets/{name}":                     {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"DELETE /api/admin/secrets/{name}":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/tenants/{tenant}/secrets":           {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"PUT /api/admin/tenants/{tenant}/secrets/{name}":    {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"DELETE /api/admin/tenants/{tenant}/secrets/{name}": {"ok", "ok", "403 forbidden", "403 token_scope"},
 }
 
 type routeAccessFx struct {

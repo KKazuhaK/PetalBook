@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/api"
-	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/store"
 )
 
@@ -259,23 +258,15 @@ func TestRegistrationNeedsMailAndSSOOnlyExcludesIt(t *testing.T) {
 		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
 		enableMail(t, root, srv)
 		// ssoOnly stored on (with a provider so it can be set): opening is refused.
-		a.auth.UpdateSecurity(context.Background(), "", "", mustPatch(t, `{"login":{"ssoOnly":true}}`))
+		a.setSetting(t, "signin.ssoOnly", true)
 		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 409, "sso_only_with_registration")
-		a.auth.UpdateSecurity(context.Background(), "", "", mustPatch(t, `{"login":{"ssoOnly":false}}`))
+		a.setSetting(t, "signin.ssoOnly", false)
 		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
 		// The other direction: with registration open, ssoOnly cannot be switched on.
 		root.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"ssoOnly": true}}).want(t, 400, "sso_only_with_registration")
 		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": false}).want(t, 200, "")
 		root.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"ssoOnly": true}}).want(t, 200, "")
 	})
-}
-
-func mustPatch(t *testing.T, raw string) auth.SecurityPatch {
-	var p auth.SecurityPatch
-	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		t.Fatal(err)
-	}
-	return p
 }
 
 func TestUnlockingRegistrationWhileATenantHasTrueStoredIsChecked(t *testing.T) {
@@ -287,7 +278,7 @@ func TestUnlockingRegistrationWhileATenantHasTrueStoredIsChecked(t *testing.T) {
 		// Open for tenant B at the site's pleasure, then lose the mail.
 		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
 		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
-		a.auth.UpdateSecurity(context.Background(), "", "", mustPatch(t, `{"login":{"ssoOnly":false}}`))
+		a.setSetting(t, "signin.ssoOnly", false)
 		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
 		f.root.do("PUT", "/api/admin/mail", map[string]any{"enabled": false}).want(t, 200, "")
 		// Unlocking now would let the stored true take effect with no mail.

@@ -12,6 +12,7 @@ import (
 	"petalbook.app/server/internal/github"
 	"petalbook.app/server/internal/githubapp"
 	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/secrets"
 	"petalbook.app/server/internal/store"
 	"petalbook.app/server/internal/store/storetest"
 )
@@ -80,17 +81,18 @@ func TestMakingTheAppFromAManifest(t *testing.T) {
 				t.Fatalf("the stored settings hold %q", plain)
 			}
 		}
-		var rec struct {
-			KeyEnc, SecretEnc, WebhookSecretEnc string
+		// The record has none of them: they are the secrets of the site.
+		if strings.Contains(raw, "Enc") {
+			t.Fatalf("the record holds sealed secrets: %s", raw)
 		}
-		if err := json.Unmarshal([]byte(raw), &rec); err != nil || rec.KeyEnc == "" || rec.SecretEnc == "" || rec.WebhookSecretEnc == "" {
-			t.Fatalf("%s %v", raw, err)
+		vault := secrets.Of(st, h.box)
+		for name, want := range map[string]string{secrets.GitHubWebhookSecret: "fake-webhook-secret-0123456789", secrets.GitHubClientSecret: h.f.ClientSecret} {
+			if got, ok, err := vault.Open(ctx, st.Q(), "", name); err != nil || !ok || got != want {
+				t.Fatalf("%s: %q %v %v", name, got, ok, err)
+			}
 		}
-		if b, err := h.box.Open("site", "github-webhook-secret", rec.WebhookSecretEnc); err != nil || string(b) != "fake-webhook-secret-0123456789" {
-			t.Fatalf("%q %v", b, err)
-		}
-		if b, err := h.box.Open("site", "github-client-secret", rec.SecretEnc); err != nil || string(b) != h.f.ClientSecret {
-			t.Fatalf("%q %v", b, err)
+		if _, ok, err := vault.Open(ctx, st.Q(), "", secrets.GitHubAppKey); err != nil || !ok {
+			t.Fatalf("the App's key is not a secret of the site: %v %v", ok, err)
 		}
 		// The state works once.
 		if to, _ := h.svc.CompleteManifest(ctx, s.Binding, "A1", q); to != "/admin/storage/connections?connection_app_error=expired" {

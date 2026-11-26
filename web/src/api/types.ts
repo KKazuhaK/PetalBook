@@ -946,8 +946,6 @@ export type PermissionKey =
   | 'site.security.manage'
   | 'site.signin.manage'
   | 'site.mail.manage'
-  | 'site.access.manage'
-  | 'site.tenancy.manage'
   | 'site.tenants.manage'
   | 'site.connections.manage'
   | 'site.daily.manage'

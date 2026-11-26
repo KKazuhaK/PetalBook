@@ -39,7 +39,6 @@ GET /api/account/grants	ok	ok	ok	403 token_scope
 GET /api/account/passkeys	ok	ok	ok	403 token_scope
 GET /api/account/tokens	ok	ok	ok	403 token_scope
 GET /api/account/usage	ok	ok	ok	403 token_scope
-GET /api/admin/access	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/audit	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/auth/providers	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/auth/providers/{slug}	ok	403 forbidden	403 forbidden	403 token_scope
@@ -68,7 +67,6 @@ GET /api/admin/status	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/storage	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/storage/people	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/storage/people/{user}	ok	ok	403 forbidden	403 token_scope
-GET /api/admin/tenancy	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/tenants	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/tenants/{tenant}	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/tenants/{tenant}/settings	ok	ok	403 forbidden	403 token_scope
@@ -213,10 +211,8 @@ POST /api/spaces/{space}/remote/key	ok	ok	403 no_permission	403 token_scope
 POST /api/spaces/{space}/remote/sync	ok	ok	403 no_permission	403 token_scope
 POST /api/spaces/{space}/types/{name}/rename-field	ok	ok	403 no_permission	403 token_scope
 POST /api/users/{id}/password-reset	ok	ok	403 forbidden	403 token_scope
-PUT /api/admin/access	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/connections/{provider}	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/connections/{provider}/installations/{id}	ok	403 forbidden	403 forbidden	403 token_scope
-PUT /api/admin/daily	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/daily/apis/{id}	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/daily/lines	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/daily/providers/{id}	ok	403 forbidden	403 forbidden	403 token_scope
@@ -224,8 +220,6 @@ PUT /api/admin/mail	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/security	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/settings/{key}	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/spaces/{space}/storage	ok	403 forbidden	403 forbidden	403 token_scope
-PUT /api/admin/storage	ok	403 forbidden	403 forbidden	403 token_scope
-PUT /api/admin/tenancy	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/tenants/{tenant}/settings/{key}	ok	ok	403 forbidden	403 token_scope
 PUT /api/spaces/{space}/daily/prefs	ok	ok	403 no_permission	403 token_scope
 PUT /api/spaces/{space}/daily/settings	ok	ok	403 no_permission	403 token_scope

@@ -29,6 +29,7 @@ import (
 	"petalbook.app/server/internal/gitstore"
 	"petalbook.app/server/internal/oauth"
 	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
 	"petalbook.app/server/internal/store/storetest"
@@ -202,11 +203,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	go svc.RunMail(mailCtx)
 	// Nearly every test signs in from one address, many times: the allowance of
 	// a minute is lifted here, and the tests of the limits set it back.
-	var lift auth.SecurityPatch
-	if err := json.Unmarshal([]byte(`{"limits":{"perMinute":100000}}`), &lift); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.UpdateSecurity(ctx, "", "", lift); err != nil {
+	if _, err := settings.Of(st).SetSite(ctx, settings.SigninPerMinute, settings.Change{HasValue: true, Value: int64(100000)}); err != nil {
 		t.Fatal(err)
 	}
 	dcfg := drafts.Config{Now: clk.Now}
@@ -270,7 +267,9 @@ type result struct {
 	resp *http.Response
 }
 
-func (c *client) do(method, path string, body any, extra ...string) result {
+// doRaw sends a request as it is: do (legacy_helpers_test.go) answers the requests
+// to the endpoints that settings replaced.
+func (c *client) doRaw(method, path string, body any, extra ...string) result {
 	c.a.t.Helper()
 	var rdr io.Reader
 	switch b := body.(type) {

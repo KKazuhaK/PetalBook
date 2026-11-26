@@ -23,13 +23,6 @@ export const PERMISSIONS: PermissionInfo[] = [
     description: 'Read and change the mail settings, and send a test message',
   },
   {
-    name: 'site.access.manage',
-    scope: 'site',
-    feature: '',
-    description: 'Read and change who may register and sign in',
-  },
-  { name: 'site.tenancy.manage', scope: 'site', feature: '', description: 'Turn tenants on and off' },
-  {
     name: 'site.tenants.manage',
     scope: 'site',
     feature: '',

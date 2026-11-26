@@ -221,7 +221,10 @@ func (s *Service) Site(ctx context.Context) (map[string]*Effective, uint64, erro
 }
 
 // SetClock sets the clock (tests).
-func (s *Service) SetClock(now func() time.Time) { s.now = now }
+func (s *Service) SetClock(now func() time.Time) {
+	s.now = now
+	s.lastCheck.Store(0) // the revision is looked at again, by the new clock
+}
 
 // Invalidate drops every cached effective value; the code that changes a bound
 // site value (or anything the settings read) calls it after the change.

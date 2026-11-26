@@ -745,7 +745,7 @@ func TestNoAuthorizationServerWithoutIt(t *testing.T) {
 		admin.do("GET", "/api/account/grants", nil).want(t, 404, "not_found")
 		admin.do("GET", "/api/admin/grants", nil).want(t, 404, "not_found")
 		admin.do("GET", "/api/oauth/consent?req=x", nil).want(t, 404, "not_found")
-		if got := admin.do("GET", "/api/admin/access", nil).want(t, 200, "").body; got["oauth"] != false || got["mcp"] != true {
+		if got := admin.do("GET", "/api/admin/access", nil).want(t, 200, "").body; got["mcp"] != true {
 			t.Fatal(got)
 		}
 	})
