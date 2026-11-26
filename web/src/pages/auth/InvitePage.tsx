@@ -121,14 +121,14 @@ function InviteForm() {
     setBusy(true)
     const sent = captcha.value()
     try {
-      const { user } = await api.acceptInvite({
+      const answer = await api.acceptInvite({
         token,
         username: username.trim(),
         name: name.trim() || undefined,
         password: pass,
         ...(sent ? { captcha: sent } : {}),
       })
-      await applySignIn(qc, user)
+      applySignIn(qc, answer)
       navigate('/', { replace: true })
     } catch (err) {
       setBusy(false)

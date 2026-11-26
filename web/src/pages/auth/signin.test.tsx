@@ -7,6 +7,8 @@ import { markSignedIn } from '@/api/client'
 import { mockFetch } from '@/api/mock/fetch'
 import { createMockServer, MOCK_ADMIN, type MockOptions, type MockServer } from '@/api/mock/server'
 import { keys } from '@/api/hooks'
+import type { SessionInfo } from '@/api/types'
+import { acrossSite, can } from '@/lib/access'
 import { t } from '@/i18n'
 import { ts } from '@/i18n/signin'
 import {
@@ -241,6 +243,21 @@ describe('signing in with a password', () => {
     await settle(() => passwordForm() !== null, 'the form')
     await submit()
     await settle(() => locationText() === '/s/abc', 'the return path')
+  })
+
+  it('makes no second session request: the answer carries the permissions the app asks', async () => {
+    await open('/login')
+    await settle(() => passwordForm() !== null, 'the form')
+    const before = m!.requests.length
+    await submit()
+    await settle(() => locationText() === '/', 'the page after signing in')
+    const after = m!.requests.slice(before).map((r) => r.url)
+    expect(after).toContain('/api/login')
+    expect(after).not.toContain('/api/session')
+    const session = m!.qc.getQueryData<SessionInfo>(keys.session)
+    expect(session?.hold).toBeNull()
+    expect(can(session?.user, 'site.tenants.manage')).toBe(true)
+    expect(acrossSite(session?.user)).toBe(true)
   })
 
   it('local_login_refused is said in words', async () => {

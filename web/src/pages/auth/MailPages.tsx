@@ -358,8 +358,8 @@ export function RegisterConfirmPage() {
     if (gate !== null || !token || started.current) return
     started.current = true
     api.registerConfirm(token).then(
-      async ({ user, tenant: org }) => {
-        await applySignIn(qc, user)
+      ({ tenant: org, ...answer }) => {
+        applySignIn(qc, answer)
         // A person who made an organisation is told so, and what its address is.
         if (org) setState({ kind: 'org', org })
         else navigate('/', { replace: true })

@@ -325,13 +325,13 @@ func (s *Service) PasskeyBegin(ctx context.Context, username, ip string) (string
 }
 
 // PasskeyFinish ends a sign-in: r is the request whose body is the credential.
-func (s *Service) PasskeyFinish(ctx context.Context, ceremony, ip string, r *http.Request) (*store.User, string, error) {
+func (s *Service) PasskeyFinish(ctx context.Context, ceremony, ip string, r *http.Request) (*LoginResult, error) {
 	st := s.sec(ctx)
 	if !s.passkeysOn(st) {
-		return nil, "", errNoPasskeys()
+		return nil, errNoPasskeys()
 	}
 	if err := s.allow(ctx, ip); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	fail := func(reason string, u *store.User) error {
 		ev := AuditEvent{Kind: "login_failed", IP: ip, Detail: map[string]any{"method": "passkey", "reason": reason}}
@@ -351,50 +351,50 @@ func (s *Service) PasskeyFinish(ctx context.Context, ceremony, ip string, r *htt
 	}
 	if err != nil {
 		if errors.Is(err, errClone) {
-			return nil, "", fail("passkey_failed", nil)
+			return nil, fail("passkey_failed", nil)
 		}
 		// A ceremony that was never begun (or is spent) is not written down:
 		// anyone can send one, and the log is not for them to fill.
 		if errors.Is(err, passkey.ErrSessionNotFound) {
-			return nil, "", errPasskeyFailed()
+			return nil, errPasskeyFailed()
 		}
 		var db error
 		if !errors.Is(err, passkey.ErrSessionNotFound) && !errors.Is(err, passkey.ErrCredentialNotFound) && !isWebAuthnError(err) {
 			db = err
 		}
 		if db != nil {
-			return nil, "", db
+			return nil, db
 		}
-		return nil, "", fail("passkey_failed", nil)
+		return nil, fail("passkey_failed", nil)
 	}
 	u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), string(res.UserHandle)) // a sign-in: the person decides the tenant
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, "", fail("passkey_failed", nil)
+			return nil, fail("passkey_failed", nil)
 		}
-		return nil, "", err
+		return nil, err
 	}
 	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
-		return nil, "", fail("disabled", u)
+		return nil, fail("disabled", u)
 	}
 	if s.ssoOnlyInEffect(st) && !u.IsAdmin() {
 		s.Audit(AuditEvent{Kind: "login_failed", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "passkey", "reason": "local_login_refused"}})
-		return nil, "", errLocalRefused()
+		return nil, errLocalRefused()
 	}
 	// A temporary password an administrator chose is replaced at the next
 	// sign-in whatever its way: a passkey's session is held for it too.
-	held, method := false, "passkey"
+	held, method, holdBy := false, "passkey", ""
 	if must, err := store.PasswordMustChange(ctx, s.st.Q(), u.ID); err != nil {
-		return nil, "", err
+		return nil, err
 	} else if must {
-		held, method = true, holdMethodPassword
+		held, method, holdBy = true, holdMethodPassword, HoldPassword
 	}
 	tok, err := s.issueSession(ctx, u.ID, held, method)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	s.Audit(AuditEvent{Kind: "login", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "passkey"}})
-	return u, tok, nil
+	return &LoginResult{User: u, Token: tok, Held: held, HeldBy: holdBy}, nil
 }
 
 func isWebAuthnError(err error) bool {

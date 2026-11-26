@@ -203,6 +203,15 @@ Never an error; no session needed. `Cache-Control: no-store`.
 
 ## Signing in
 
+Every JSON sign-in (`POST /api/setup`, `POST /api/login`,
+`POST /api/invites/accept`, `POST /api/register/confirm`,
+`POST /api/auth/passkey/finish`) answers `{"user": {…}, "hold": null}` with the
+same `user` (`permissions` included) and `hold` as `GET /api/session` gives the
+new session, so a client needs no second request. The keys are the person's in
+their own tenant. `hold` is `"passkey"`, `"password"` or `null`. Redirect flows
+(OIDC, SAML, GitHub) answer no JSON: the page that loads reads
+`GET /api/session`.
+
 Accounts mode only. Single-user mode has no sign-in: every endpoint in this
 section, in "Account" and the security settings of "Administration" answers
 `404` there.

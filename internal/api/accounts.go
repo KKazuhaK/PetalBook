@@ -156,11 +156,6 @@ func (s *server) getSession(c *call) {
 			Name string `json:"name"`
 		} `json:"oidc"`
 	}
-	// The session's user says which permission keys they hold in their tenant.
-	type sessionUser struct {
-		userResp
-		Permissions []string `json:"permissions"`
-	}
 	out := struct {
 		Mode  string       `json:"mode"`
 		User  *sessionUser `json:"user"`
@@ -180,13 +175,7 @@ func (s *server) getSession(c *call) {
 	}{Mode: "single"}
 	if c.p != nil {
 		out.User = &sessionUser{s.toUser(c.user()), permissionsOf(c)}
-		if c.p.Held {
-			h := "passkey"
-			if c.p.HeldBy == auth.HoldPassword {
-				h = "password"
-			}
-			out.Hold = &h
-		}
+		out.Hold = holdName(c.p.Held, c.p.HeldBy)
 		if g := c.p.Grant; g != nil {
 			out.Token = &struct {
 				ID     string   `json:"id"`
@@ -238,15 +227,17 @@ func (s *server) setup(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, tok, err := s.auth.Setup(c.r.Context(), req.Token, req.Username, req.Name, req.Password, s.auth.ClientAddr(c.r), req.Captcha)
+	res, err := s.auth.Setup(c.r.Context(), req.Token, req.Username, req.Name, req.Password, s.auth.ClientAddr(c.r), req.Captcha)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	s.startSession(c, tok)
-	writeJSON(c.w, http.StatusCreated, struct {
-		User userResp `json:"user"`
-	}{s.toUser(*u)})
+	s.startSession(c, res.Token)
+	user, hold, ok := s.signedIn(c, *res.User, res.Held, res.HeldBy)
+	if !ok {
+		return
+	}
+	writeJSON(c.w, http.StatusCreated, signInAnswer{User: user, Hold: hold})
 }
 
 func (s *server) login(c *call) {
@@ -260,9 +251,11 @@ func (s *server) login(c *call) {
 		return
 	}
 	s.startSession(c, res.Token)
-	writeJSON(c.w, http.StatusOK, struct {
-		User userResp `json:"user"`
-	}{s.toUser(*res.User)})
+	user, hold, ok := s.signedIn(c, *res.User, res.Held, res.HeldBy)
+	if !ok {
+		return
+	}
+	writeJSON(c.w, http.StatusOK, signInAnswer{User: user, Hold: hold})
 }
 
 func (s *server) logout(c *call) {
@@ -297,15 +290,17 @@ func (s *server) acceptInvite(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, tok, err := s.auth.AcceptInvite(c.r.Context(), req.Token, req.Username, req.Name, req.Password, s.auth.ClientAddr(c.r), req.Captcha)
+	res, err := s.auth.AcceptInvite(c.r.Context(), req.Token, req.Username, req.Name, req.Password, s.auth.ClientAddr(c.r), req.Captcha)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	s.startSession(c, tok)
-	writeJSON(c.w, http.StatusCreated, struct {
-		User userResp `json:"user"`
-	}{s.toUser(*u)})
+	s.startSession(c, res.Token)
+	user, hold, ok := s.signedIn(c, *res.User, res.Held, res.HeldBy)
+	if !ok {
+		return
+	}
+	writeJSON(c.w, http.StatusCreated, signInAnswer{User: user, Hold: hold})
 }
 
 // --- the pre-2.8 OpenID Connect endpoints ------------------------------------

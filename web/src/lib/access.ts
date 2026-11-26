@@ -1,32 +1,21 @@
-// What the signed-in person may do outside spaces. The server says it in `user.permissions` of GET /api/session (the
-// permission keys they hold in their own tenant, internal/authz); the app asks here and never compares role names or
+// What the signed-in person may do outside spaces. The server says it in `user.permissions` of GET /api/session and of every sign-in answer
+// (the permission keys they hold in their own tenant, internal/authz); the app asks here and never compares role names or
 // the site-administrator flag, so a custom role on the server needs no change in the app. A lint-style test
 // (access.test.ts) keeps such checks out of every other file. What a person may do in a space is lib/permissions.ts.
 
 import type { PermissionKey, SessionUser, User } from '@/api/types'
 
-type Caller = Pick<SessionUser, 'role' | 'siteAdmin' | 'permissions'> | null | undefined
+type Caller = Pick<SessionUser, 'permissions'> | null | undefined
 
-// The keys of a person the app put into the session itself (just signed in) until the session is read again: what
-// their built-in role holds, as the server's roles say (a site administrator every site and tenant key, a tenant's
-// administrator every tenant key, a member tenant.spaces.create).
-function builtIn(user: NonNullable<Caller>, key: PermissionKey): boolean {
-  if (user.role === 'admin') return key.startsWith('tenant.') || (user.siteAdmin !== false && key.startsWith('site.'))
-  return user.role === 'member' && key === 'tenant.spaces.create'
-}
-
-// Whether the person holds the key.
+// Whether the person holds the key. Someone whose permissions are not known (none came with the session) holds none.
 export function can(user: Caller, key: PermissionKey): boolean {
-  if (!user) return false
-  if (!user.permissions) return builtIn(user, key)
-  return user.permissions.includes(key)
+  return user?.permissions?.includes(key) ?? false
 }
 
 // Whether the person administers anything: holds a key beyond the one every member holds. The administration is
 // theirs to open.
 export function administers(user: Caller): boolean {
-  if (!user) return false
-  if (!user.permissions) return user.role === 'admin'
+  if (!user?.permissions) return false
   return user.permissions.some((k) => k !== 'tenant.spaces.create' && !k.startsWith('space.'))
 }
 

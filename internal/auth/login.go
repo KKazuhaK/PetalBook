@@ -274,16 +274,16 @@ func (s *Service) passkeyRequiredOf(st *secState, u store.User) bool {
 }
 
 // Setup creates the first administrator from the first-run token.
-func (s *Service) Setup(ctx context.Context, token, username, name, password, ip string, cap *CaptchaAnswer) (*store.User, string, error) {
+func (s *Service) Setup(ctx context.Context, token, username, name, password, ip string, cap *CaptchaAnswer) (*LoginResult, error) {
 	if err := s.allow(ctx, ip); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	st := s.sec(ctx)
 	if err := s.checkCaptcha(ctx, st, CtxSetup, "", ip, cap); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if err := s.gateIP(st, ip); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	good := false
 	defer func() {
@@ -293,25 +293,27 @@ func (s *Service) Setup(ctx context.Context, token, username, name, password, ip
 	}()
 	open, err := s.SetupOpen(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if !open {
-		return nil, "", errf(Exists, "Setup is already done.")
+		return nil, errf(Exists, "Setup is already done.")
 	}
 	if !s.setupTokenOK(token) {
-		return nil, "", errf(Forbidden, "The setup token is wrong.")
+		return nil, errf(Forbidden, "The setup token is wrong.")
 	}
 	good = true
 	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Role: "admin", Password: password, Setup: true})
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	// A new account has no passkey: held when one is required of it.
-	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u), "setup")
-	if err == nil {
-		s.Audit(AuditEvent{Kind: "login", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
+	held := s.passkeyRequiredOf(st, *u)
+	tok, err := s.issueSession(ctx, u.ID, held, "setup")
+	if err != nil {
+		return nil, err
 	}
-	return u, tok, err
+	s.Audit(AuditEvent{Kind: "login", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
+	return &LoginResult{User: u, Token: tok, Held: held}, nil
 }
 
 // setupTokenOK compares in constant time; it is false once an account exists.
@@ -361,10 +363,10 @@ func (s *Service) findInvite(ctx context.Context, token string) (*store.Invite, 
 // AcceptInvite makes the account an invite is for, and signs it in. While
 // ssoOnly is in effect a member cannot be made with a password: the account
 // could never sign in.
-func (s *Service) AcceptInvite(ctx context.Context, token, username, name, password, ip string, cap *CaptchaAnswer) (*store.User, string, error) {
+func (s *Service) AcceptInvite(ctx context.Context, token, username, name, password, ip string, cap *CaptchaAnswer) (*LoginResult, error) {
 	inv, st, err := s.inviteGate(ctx, token, ip, cap)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	// What the invite fills in is what the form starts with: a field left empty
 	// takes it.
@@ -375,16 +377,18 @@ func (s *Service) AcceptInvite(ctx context.Context, token, username, name, passw
 		name = inv.Name
 	}
 	if s.ssoOnlyInEffect(st) && !store.IsAdminRole(inv.Role) {
-		return nil, "", errLocalRefused()
+		return nil, errLocalRefused()
 	}
 	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Email: inv.Email, Role: inv.Role, Password: password, InviteID: inv.ID, TenantID: inv.TenantID, SiteAdmin: inv.SiteAdmin, Groups: inv.Groups})
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	// A new account has no passkey: held when one is required of it.
-	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u), "invite")
-	if err == nil {
-		s.Audit(AuditEvent{Kind: "login", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
+	held := s.passkeyRequiredOf(st, *u)
+	tok, err := s.issueSession(ctx, u.ID, held, "invite")
+	if err != nil {
+		return nil, err
 	}
-	return u, tok, err
+	s.Audit(AuditEvent{Kind: "login", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
+	return &LoginResult{User: u, Token: tok, Held: held}, nil
 }

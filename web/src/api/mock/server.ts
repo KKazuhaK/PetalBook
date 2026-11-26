@@ -1106,6 +1106,19 @@ export function createMockServer(options: MockOptions = {}) {
     return res
   }
 
+  // What every sign-in answers, as GET /session does: the user with the keys their role holds, and the session's hold.
+  const signedIn = (res: MockResponse): MockResponse => {
+    const b = res.body as { user?: { id?: string } } | undefined
+    const u = res.status < 300 && b?.user?.id ? users.get(b.user.id) : undefined
+    if (!u) return res
+    const token = new RegExp(`${SESSION_COOKIE}=([^;]+)`).exec(res.headers?.['Set-Cookie'] ?? '')?.[1]
+    const hold = token && heldPassword.has(token) ? 'password' : token && held.has(token) ? 'passkey' : null
+    return {
+      ...res,
+      body: { ...b, user: { ...b?.user, permissions: permissionsOfRole(u.role, isSiteAdmin(u)) }, hold },
+    }
+  }
+
   const mailBook = createMailBook({
     now,
     publicUrl,
@@ -4844,13 +4857,13 @@ export function createMockServer(options: MockOptions = {}) {
     // --- signing in (accounts mode) ---
     if (path === '/setup' && method === 'POST') {
       accountsOnly()
-      return createFirstAdmin(body)
+      return signedIn(createFirstAdmin(body))
     }
     if (path === '/login' && method === 'POST') {
       accountsOnly()
       const res = login(body)
       const who = [...users.values()].find((x) => x.username === String(body.username).toLowerCase())
-      return who ? holdForTemporary(res, who) : res
+      return signedIn(who ? holdForTemporary(res, who) : res)
     }
     if (path === '/logout' && method === 'POST') {
       accountsOnly()
@@ -4890,7 +4903,7 @@ export function createMockServer(options: MockOptions = {}) {
       const res = passkeyFinish(url.searchParams, body)
       const id = (res.body as { user?: { id?: string } } | undefined)?.user?.id
       const who = id ? users.get(id) : undefined
-      return who ? holdForTemporary(res, who) : res
+      return signedIn(who ? holdForTemporary(res, who) : res)
     }
     // The endpoints from before 2.8 serve the provider marked `legacyCallback`.
     const legacy = [...book.providers.values()].find((p) => p.view.oidc?.legacyCallback)
@@ -4933,7 +4946,7 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (path === '/invites/accept' && method === 'POST') {
       accountsOnly()
-      return acceptInvite(body)
+      return signedIn(acceptInvite(body))
     }
 
     // --- mail, registration, email verification and password reset (3.3) ---
@@ -4961,7 +4974,7 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (path === '/register/confirm' && method === 'POST') {
       accountsOnly()
-      return mailBook.registerConfirm(body)
+      return signedIn(mailBook.registerConfirm(body))
     }
     if (path === '/account/email/verify' && method === 'POST') {
       accountsOnly()
