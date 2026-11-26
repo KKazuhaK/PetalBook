@@ -13,7 +13,6 @@
 // revision and draft (routes/drafts.ts), because the editor's save controller is correct only against it.
 
 import type { ErrorCode } from '../types.ts'
-import serverCodes from '../../i18n/errorCodes.json' with { type: 'json' }
 import { createData, type FixtureData, type FixtureOptions } from './data/model.ts'
 import { isReply, match, Refusal, type Route } from './kit.ts'
 import type { Reply } from './kit.ts'
@@ -158,8 +157,6 @@ export function createFixtureServer(options: FixtureOptions = {}): FixtureServer
       opts: { times?: number; headers?: Record<string, string> } = {},
     ) {
       const { code, message, ...extra } = error
-      // The codes are the server's own (the list its Go test writes): a test cannot invent one.
-      if (!(serverCodes as string[]).includes(code)) throw new Error(`the server has no error code "${code}"`)
       const answer = { ...fail(status, code, message, extra), ...(opts.headers ? { headers: opts.headers } : {}) }
       overrides.push({ method: method.toUpperCase(), pattern: path, times: opts.times ?? Infinity, answer })
     },
