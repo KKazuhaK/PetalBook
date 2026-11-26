@@ -350,7 +350,7 @@ func (s *Service) AcceptInvite(ctx context.Context, token, username, name, passw
 	if s.ssoOnlyInEffect(st) && !store.IsAdminRole(inv.Role) {
 		return nil, "", errLocalRefused()
 	}
-	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Email: inv.Email, Role: inv.Role, Password: password, InviteID: inv.ID, TenantID: inv.TenantID, SiteAdmin: inv.SiteAdmin})
+	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Email: inv.Email, Role: inv.Role, Password: password, InviteID: inv.ID, TenantID: inv.TenantID, SiteAdmin: inv.SiteAdmin, Groups: inv.Groups})
 	if err != nil {
 		return nil, "", err
 	}

@@ -1,10 +1,9 @@
-import { useMemo, useState, type FormEvent, useRef } from 'react'
+import { useState, type FormEvent, useRef } from 'react'
 import { scrollFadeTouchClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { Plus, Save, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import {
-  useAddGroupPeople,
   useAdminGroups,
   useCreateGroup,
   useDeleteGroup,
@@ -12,11 +11,11 @@ import {
   useGroupSpaces,
   useRemoveGroupPerson,
   useUpdateGroup,
-  useUserSearch,
-  useUsers,
-  USER_SEARCH_LIMIT,
 } from '@/api/admin'
+import { peopleApi, usePickRunner } from '@/api/people'
 import type { Group, GroupSource } from '@/api/types'
+import { AddPeopleDialog } from '@/components/people/AddPeopleDialog'
+import { RowMenu } from '@/components/people/RowMenu'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { AdminPageActions } from './AdminPageHeader'
@@ -34,13 +33,12 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
-import { Textarea } from '@/components/ui/textarea'
 import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/groups'
+import { tp } from '@/i18n/people'
 
 const ta = tg.admin
-const MAX_ADD = 500
 
 // What a refusal of a group call means, in plain words.
 export function groupError(e: unknown): string {
@@ -369,6 +367,7 @@ function People({ group }: { group: Group }) {
   const people = useGroupPeople(group.id, q)
   const remove = useRemoveGroupPerson()
   const [error, setError] = useState('')
+  const [adding, setAdding] = useState(false)
   const items = people.data?.pages.flatMap((p) => p.items) ?? []
   const local = group.source === 'local'
   const drop = async (userId: string, name: string) => {
@@ -382,9 +381,17 @@ function People({ group }: { group: Group }) {
   }
   return (
     <section className="grid gap-3" aria-labelledby="group-people-heading">
-      <h3 id="group-people-heading" className="text-sm font-semibold">
-        {ta.peopleTitle} <span className="font-normal text-muted-foreground tabular-nums">({group.people})</span>
-      </h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 id="group-people-heading" className="text-sm font-semibold">
+          {ta.peopleTitle} <span className="font-normal text-muted-foreground tabular-nums">({group.people})</span>
+        </h3>
+        {local && (
+          <Button type="button" onClick={() => setAdding(true)}>
+            <Plus aria-hidden="true" />
+            {tp.add}
+          </Button>
+        )}
+      </div>
       {!local && <p className="text-xs text-muted-foreground">{ta.syncedPeopleNote}</p>}
       <Input
         type="search"
@@ -419,17 +426,18 @@ function People({ group }: { group: Group }) {
                 )}
               </div>
               {local && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  aria-label={ta.removePersonLabel(p.name)}
-                  disabled={remove.isPending}
-                  onClick={() => void drop(p.userId, p.name)}
-                >
-                  <Trash2 aria-hidden="true" />
-                  {ta.removePerson}
-                </Button>
+                <RowMenu
+                  label={t.fmt.labelled(tp.list.more, p.name)}
+                  actions={[
+                    {
+                      label: ta.removePerson,
+                      icon: <Trash2 />,
+                      destructive: true,
+                      disabled: remove.isPending,
+                      onSelect: () => void drop(p.userId, p.name),
+                    },
+                  ]}
+                />
               )}
             </li>
           ))}
@@ -448,137 +456,45 @@ function People({ group }: { group: Group }) {
           </Button>
         </div>
       )}
-      {local && <AddPeople group={group} />}
+      {local && (
+        <AddPeopleDialogFor
+          group={group}
+          open={adding}
+          onOpenChange={setAdding}
+          members={new Set(items.map((p) => p.userId))}
+        />
+      )}
     </section>
   )
 }
 
-// Adding people to a local group: pick them from a search, or paste usernames.
-function AddPeople({ group }: { group: Group }) {
-  const add = useAddGroupPeople()
-  const [term, setTerm] = useState('')
-  const found = useUserSearch(useDebounced(term.trim(), 250))
-  const [picked, setPicked] = useState<Map<string, string>>(new Map())
-  const [pasted, setPasted] = useState('')
-  const everyone = useUsers(pasted.trim() !== '')
-  const [error, setError] = useState('')
-  const matches = found.data?.users ?? []
-  const truncated = matches.length >= USER_SEARCH_LIMIT
-
-  // The pasted usernames that are accounts, and those that are not.
-  const resolved = useMemo(() => {
-    const names = pasted
-      .split(/\r?\n/)
-      .map((l) => l.trim().toLowerCase())
-      .filter(Boolean)
-    const byName = new Map((everyone.data?.users ?? []).map((u) => [u.username, u]))
-    const known = names.map((n) => byName.get(n)).filter((u): u is NonNullable<typeof u> => u !== undefined)
-    const unknown = everyone.data ? names.filter((n) => !byName.has(n)) : []
-    return { ids: known.map((u) => u.id), unknown }
-  }, [pasted, everyone.data])
-
-  const send = async (ids: string[]) => {
-    if (add.isPending || ids.length === 0) return
-    if (ids.length > MAX_ADD) return setError(ta.tooMany)
-    setError('')
-    try {
-      const r = await add.mutateAsync({ id: group.id, userIds: ids })
-      toast.success(ta.addedPeople(r.added, r.already))
-      setPicked(new Map())
-      setPasted('')
-    } catch (err) {
-      setError(groupError(err))
-    }
-  }
-  const toggle = (id: string, label: string, on: boolean) =>
-    setPicked((m) => {
-      const next = new Map(m)
-      if (on) next.set(id, label)
-      else next.delete(id)
-      return next
-    })
-
+// Adding people to a local group from a dialog: pick them from a search of the tenant's people, or import a file.
+function AddPeopleDialogFor({
+  group,
+  open,
+  onOpenChange,
+  members,
+}: {
+  group: Group
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  members: Set<string>
+}) {
+  const run = (rows: Parameters<typeof peopleApi.groupBatch>[1], dryRun: boolean) =>
+    peopleApi.groupBatch(group.id, rows, dryRun)
+  const pick = usePickRunner(run)
   return (
-    <div className="grid gap-3 rounded-lg border p-3" data-slot="add-people">
-      <div>
-        <h4 className="text-sm font-medium">{ta.addPeople}</h4>
-        <p className="text-xs text-muted-foreground">{ta.addPeopleHelp}</p>
-      </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor="group-pick-search">{ta.pickSearch}</Label>
-        <Input
-          id="group-pick-search"
-          type="search"
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
-          placeholder={ta.pickPlaceholder}
-          autoComplete="off"
-          spellCheck={false}
-          className="max-w-xs"
-        />
-      </div>
-      {found.isSuccess && matches.length === 0 && <p className="text-xs text-muted-foreground">{ta.pickNone}</p>}
-      {matches.length > 0 && (
-        <ul className="max-h-48 divide-y overflow-y-auto rounded-md border" aria-label={ta.pickSearch}>
-          {matches.map((u) => (
-            <li key={u.id}>
-              <label className="flex cursor-pointer items-center gap-3 px-3 py-1.5 text-sm">
-                <input
-                  type="checkbox"
-                  checked={picked.has(u.id)}
-                  onChange={(e) => toggle(u.id, u.name, e.target.checked)}
-                  aria-label={`${u.name} (${u.username})`}
-                />
-                <span className="min-w-0 truncate">
-                  {u.name} <span className="text-xs text-muted-foreground">{u.username}</span>
-                </span>
-              </label>
-            </li>
-          ))}
-        </ul>
-      )}
-      {truncated && <p className="text-xs text-muted-foreground">{ta.pickNarrow(USER_SEARCH_LIMIT)}</p>}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          type="button"
-          size="sm"
-          disabled={picked.size === 0 || add.isPending}
-          onClick={() => void send([...picked.keys()])}
-        >
-          {add.isPending ? <Spinner /> : <Plus aria-hidden="true" />}
-          {picked.size > 0 ? ta.addSelected(picked.size) : ta.adding.replace('…', '')}
-        </Button>
-        {picked.size > 0 && <span className="text-xs text-muted-foreground">{ta.pickSelected(picked.size)}</span>}
-      </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor="group-paste">{ta.pasteLabel}</Label>
-        <Textarea
-          id="group-paste"
-          value={pasted}
-          onChange={(e) => setPasted(e.target.value)}
-          rows={3}
-          spellCheck={false}
-          autoCapitalize="none"
-          className="font-mono text-xs"
-        />
-        {resolved.unknown.length > 0 && (
-          <p className="text-xs text-destructive">{ta.pasteUnknown(resolved.unknown.join(', '))}</p>
-        )}
-        <div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={resolved.ids.length === 0 || resolved.unknown.length > 0 || add.isPending}
-            onClick={() => void send(resolved.ids)}
-          >
-            <Plus aria-hidden="true" />
-            {ta.pasteAdd}
-          </Button>
-        </div>
-      </div>
-      <FormMessage>{error}</FormMessage>
-    </div>
+    <AddPeopleDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={ta.addPeople}
+      description={tp.addHelp}
+      kind="people"
+      excluded={members}
+      pick={pick}
+      csvRun={run}
+      csvHelp={tp.csv.help}
+    />
   )
 }
 

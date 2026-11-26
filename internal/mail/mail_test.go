@@ -235,7 +235,7 @@ func TestRenderAndPickLang(t *testing.T) {
 		t.Fatal("PickLang")
 	}
 	for _, lang := range mail.Langs {
-		for _, k := range []string{mail.KindVerify, mail.KindRegister, mail.KindRegisterDup, mail.KindReset, mail.KindResetSSO, mail.KindEmailChanged, mail.KindTest} {
+		for _, k := range []string{mail.KindVerify, mail.KindRegister, mail.KindRegisterDup, mail.KindReset, mail.KindResetSSO, mail.KindEmailChanged, mail.KindInvite, mail.KindTest} {
 			m := mail.Render(k, lang, mail.Vars{Site: "notes.example.test", Username: "tang", Email: "t@example.test", Link: "https://notes.example.test/x#tok", Provider: "Okta", Hours: 24})
 			if m.Subject == "" || m.Text == "" || !strings.Contains(m.HTML, "<p>") {
 				t.Fatal(k, lang)

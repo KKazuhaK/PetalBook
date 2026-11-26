@@ -2,6 +2,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { t } from '@/i18n'
+import { tp } from '@/i18n/people'
 import { MOCK_ADMIN } from '@/api/mock/server'
 import {
   adminRequests,
@@ -43,6 +44,30 @@ const rows = () => [...dialog()!.querySelectorAll('ul.divide-y > li')].map((li) 
 const sentToServer = () =>
   m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login').map((r) => `${r.method} ${r.url}`)
 
+// The add dialog: it is in a portal, not in the settings dialog.
+const adder = () => document.querySelector<HTMLElement>('[data-slot="dialog-content"]')
+const adderButton = (label: string) =>
+  [...(adder()?.querySelectorAll('button') ?? [])].find((b) => b.textContent === label)
+
+// Adds one person by the picker: opens the dialog, finds them, ticks them, sets the role, adds.
+async function addViaPicker(query: string, role?: string) {
+  await click(button(tp.add))
+  await settle(() => adder() !== null, 'the add dialog')
+  await type(adder()!.querySelector<HTMLInputElement>('#add-people-search')!, query)
+  await settle(() => adder()!.querySelector('input[type="checkbox"]') !== null, 'a result')
+  await click(adder()!.querySelector('input[type="checkbox"]'))
+  if (role) await type(adder()!.querySelector<HTMLSelectElement>('#add-people-role')!, role)
+  await click(adderButton(tp.addSelected(1)))
+  await settle(() => adder() === null, 'the dialog closed')
+}
+
+// An action of a row's menu.
+async function rowAction(name: string, label: string) {
+  await click(button(t.fmt.labelled(tp.list.more, name)))
+  await settle(() => document.querySelector('[role="menuitem"]') !== null, 'the menu')
+  await click([...document.querySelectorAll('[role="menuitem"]')].find((e) => e.textContent?.trim() === label))
+}
+
 const confirmDemotion = async () => {
   await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
   await click(
@@ -64,7 +89,7 @@ async function openAsOwner() {
       return ['/settings/members']
     },
   })
-  await settle(() => panelText().includes(t.members.addTitle), 'the members')
+  await settle(() => rows().length > 0 && button(tp.add) !== undefined, 'the members')
 }
 
 // Someone else's space, with the signed-in administrator in it as `role`.
@@ -89,40 +114,61 @@ describe('the members section: an owner', () => {
     expect(select(t.fmt.labelled(MOCK_ADMIN.name, t.members.role))!.value).toBe('owner')
   })
 
-  it('adds a member by username with a role, and the list shows them', async () => {
+  it('adds a member from the picker with a role, and the list shows them', async () => {
     await openAsOwner()
-    await type(dialog()!.querySelector<HTMLInputElement>('input[autocomplete="off"]')!, ' Tang ')
-    await type(dialog()!.querySelector<HTMLSelectElement>('#add-member-role')!, 'viewer')
-    await click(button(t.members.add))
+    await addViaPicker('tang', 'viewer')
     await settle(() => rows().length === 2, 'the new member')
-    const sent = m!.requests.find((r) => r.method === 'POST' && r.url.endsWith('/members'))!
-    expect(JSON.parse(sent.body!)).toEqual({ username: 'Tang', role: 'viewer' })
+    const sent = m!.requests.find((r) => r.method === 'POST' && r.url.endsWith('/members/batch'))!
+    expect(JSON.parse(sent.body!)).toEqual({ rows: [{ user: 'tang', role: 'viewer' }], dryRun: false })
     expect(rows()[1]).toContain('名 tang')
     expect(select(t.fmt.labelled('名 tang', t.members.role))!.value).toBe('viewer')
-    // The box is empty again for the next one.
-    expect(dialog()!.querySelector<HTMLInputElement>('input[autocomplete="off"]')!.value).toBe('')
   })
 
-  it('says in plain words when there is no such user, and when they are in the space already', async () => {
+  it('finds only people of the tenant, and marks the ones who are in the space already', async () => {
     await openAsOwner()
-    const field = () => dialog()!.querySelector<HTMLInputElement>('input[autocomplete="off"]')!
-    await click(button(t.members.add))
-    await settle(() => panelText().includes(t.members.usernameRequired), 'empty username')
-    await type(field(), 'nobody')
-    await click(button(t.members.add))
-    await settle(() => panelText().includes(t.members.errors.userNotFound), 'no such user')
-    await type(field(), 'tang')
-    await click(button(t.members.add))
-    await settle(() => rows().length === 2, 'added')
-    await type(field(), 'tang')
-    await click(button(t.members.add))
-    await settle(() => panelText().includes(t.members.errors.exists), 'already a member')
+    await click(button(tp.add))
+    await settle(() => adder() !== null, 'the add dialog')
+    expect(adder()!.textContent).toContain(tp.tenantOnly)
+    await type(adder()!.querySelector<HTMLInputElement>('#add-people-search')!, 'a')
+    expect(adder()!.textContent).toContain(tp.minChars)
+    await type(adder()!.querySelector<HTMLInputElement>('#add-people-search')!, MOCK_ADMIN.username)
+    await settle(() => adder()!.textContent!.includes(tp.alreadyIn), 'the member marked')
+    expect(adder()!.querySelector<HTMLInputElement>('input[type="checkbox"]')!.disabled).toBe(true)
+    // Nothing is picked, so there is nothing to add.
+    expect(adderButton(tp.addPeople)!.disabled).toBe(true)
+  })
+
+  it('imports a file: checks it row by row first, then adds what can be added', async () => {
+    await openAsOwner()
+    await click(button(tp.add))
+    await settle(() => adder() !== null, 'the add dialog')
+    await click([...adder()!.querySelectorAll('[role="tab"]')].find((b) => b.textContent === tp.tabCsv))
+    const csv = 'user,role\ntang,viewer\nnobody,editor\nother-person,viewer\n,viewer'
+    await type(adder()!.querySelector<HTMLTextAreaElement>('textarea')!, csv)
+    await click(adderButton(tp.csv.check))
+    await settle(() => adder()!.textContent!.includes(tp.status.not_found), 'the check')
+    const text = adder()!.textContent!
+    expect(text).toContain(tp.status.ok)
+    expect(text).toContain(tp.status.other_tenant)
+    expect(text).toContain(tp.status.invalid)
+    // A check writes nothing.
+    expect(rows()).toHaveLength(1)
+    expect(m!.requests.filter((r) => r.url.endsWith('/members/batch')).map((r) => JSON.parse(r.body!).dryRun)).toEqual([
+      true,
+    ])
+    await click(adderButton(tp.csv.apply(1)))
+    await settle(() => adder()!.textContent!.includes(tp.statusDone.ok), 'applied')
+    await click(adderButton(tp.done))
+    await settle(() => rows().length === 2, 'the new member')
+    expect(m!.requests.filter((r) => r.url.endsWith('/members/batch')).map((r) => JSON.parse(r.body!).dryRun)).toEqual([
+      true,
+      false,
+    ])
   })
 
   it('changes a role; removes a member after asking', async () => {
     await openAsOwner()
-    await type(dialog()!.querySelector<HTMLInputElement>('input[autocomplete="off"]')!, 'tang')
-    await click(button(t.members.add))
+    await addViaPicker('tang')
     await settle(() => rows().length === 2, 'added')
     const roleOfTang = t.fmt.labelled('名 tang', t.members.role)
     // Added as an editor, the default.
@@ -134,7 +180,7 @@ describe('the members section: an owner', () => {
     expect(JSON.parse(patch.body!)).toEqual({ role: 'viewer' })
     await settle(() => select(roleOfTang)?.value === 'viewer', 'the new role shown')
 
-    await click(button(t.fmt.labelled(t.members.remove, '名 tang')))
+    await rowAction('名 tang', t.members.remove)
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
     expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(t.members.removeHelp('名 tang'))
     await click(
@@ -157,9 +203,7 @@ describe('the members section: an owner', () => {
 
   it('asks before an owner gives up their own ownership, and does nothing if they change their mind', async () => {
     await openAsOwner()
-    await type(dialog()!.querySelector<HTMLInputElement>('input[autocomplete="off"]')!, 'tang')
-    await type(dialog()!.querySelector<HTMLSelectElement>('#add-member-role')!, 'owner')
-    await click(button(t.members.add))
+    await addViaPicker('tang', 'owner')
     await settle(() => rows().length === 2, 'a second owner')
     const mine = t.fmt.labelled(MOCK_ADMIN.name, t.members.role)
     await type(select(mine)!, 'editor')
@@ -183,8 +227,7 @@ describe('the members section: an owner', () => {
 
   it("does not ask when someone else's role is changed", async () => {
     await openAsOwner()
-    await type(dialog()!.querySelector<HTMLInputElement>('input[autocomplete="off"]')!, 'tang')
-    await click(button(t.members.add))
+    await addViaPicker('tang')
     await settle(() => rows().length === 2, 'added')
     await type(select(t.fmt.labelled('名 tang', t.members.role))!, 'viewer')
     await settle(() => sentToServer().some((r) => r.startsWith('PATCH')), 'the role request')
@@ -194,8 +237,7 @@ describe('the members section: an owner', () => {
   it('a personal space is not shared: one line says so, and there is no form to add anyone', async () => {
     m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: ['/settings/members'] })
     await settle(() => panelText().includes(t.members.personalNote), 'the note')
-    expect(dialog()!.querySelector('#add-member-role')).toBeNull()
-    expect(button(t.members.add)).toBeUndefined()
+    expect(button(tp.add)).toBeUndefined()
     // And there is no leaving it either.
     expect(button(t.members.leave)).toBeUndefined()
   })
@@ -205,14 +247,13 @@ describe('the members section: without the members permission', () => {
   it('a viewer sees who is in the space, cannot change anyone, and may leave', async () => {
     await openAs('viewer')
     expect(dialog()!.querySelector('select')).toBeNull()
-    expect(dialog()!.querySelector('#add-member-role')).toBeNull()
+    expect(button(tp.add)).toBeUndefined()
     expect(panelText()).toContain(t.members.noManage)
     expect(panelText()).toContain(t.roles.viewer)
     expect(panelText()).toContain(t.roles.owner)
-    // Nobody to remove: the only button is the one for leaving, on the viewer's own row.
-    const buttons = [...dialog()!.querySelectorAll('ul.divide-y button')].map((b) => b.textContent)
-    expect(buttons).toEqual([t.members.leave])
-    await click(button(t.members.leave))
+    // Nobody to remove: the only menu is the one on the viewer's own row, and it only leaves.
+    expect(dialog()!.querySelectorAll('ul.divide-y button')).toHaveLength(1)
+    await rowAction(MOCK_ADMIN.name, t.members.leave)
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
     await click(
       [...document.querySelectorAll('[role="alertdialog"] button')].find(

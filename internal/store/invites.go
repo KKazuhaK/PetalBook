@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -24,14 +25,16 @@ type Invite struct {
 	// first administrator of a new tenant); an Email also becomes the account's
 	// (not verified). All may be empty.
 	Username, Name, Email string
+	// Groups are the ids of the local groups the account joins when it is made.
+	Groups []string
 }
 
 func InsertInvite(ctx context.Context, q Q, i Invite) error {
 	if i.TenantID == "" {
 		i.TenantID = DefaultTenantID
 	}
-	_, err := q.Exec(ctx, `INSERT INTO invites(id, token_hash, role, created_by, created, expires, tenant_id, site_admin, username, name, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		i.ID, i.TokenHash, i.Role, i.CreatedBy, ms(i.Created), ms(i.Expires), i.TenantID, b2i(i.SiteAdmin), i.Username, i.Name, i.Email)
+	_, err := q.Exec(ctx, `INSERT INTO invites(id, token_hash, role, created_by, created, expires, tenant_id, site_admin, username, name, email, groups) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		i.ID, i.TokenHash, i.Role, i.CreatedBy, ms(i.Created), ms(i.Expires), i.TenantID, b2i(i.SiteAdmin), i.Username, i.Name, i.Email, strings.Join(i.Groups, ","))
 	return err
 }
 
@@ -40,11 +43,15 @@ func InsertInvite(ctx context.Context, q Q, i Invite) error {
 func FindUsableInvite(ctx context.Context, q Q, tokenHash string, now time.Time) (*Invite, error) {
 	var i Invite
 	var created, expires, siteAdmin int64
-	err := q.QueryRow(ctx, `SELECT id, token_hash, role, created_by, created, expires, tenant_id, site_admin, username, name, email FROM invites
+	var groups string
+	err := q.QueryRow(ctx, `SELECT id, token_hash, role, created_by, created, expires, tenant_id, site_admin, username, name, email, groups FROM invites
 		WHERE token_hash = ? AND used = 0 AND expires > ?`, tokenHash, ms(now)).
-		Scan(&i.ID, &i.TokenHash, &i.Role, &i.CreatedBy, &created, &expires, &i.TenantID, &siteAdmin, &i.Username, &i.Name, &i.Email)
+		Scan(&i.ID, &i.TokenHash, &i.Role, &i.CreatedBy, &created, &expires, &i.TenantID, &siteAdmin, &i.Username, &i.Name, &i.Email, &groups)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
+	}
+	if groups != "" {
+		i.Groups = strings.Split(groups, ",")
 	}
 	i.Created, i.Expires, i.SiteAdmin = fromMS(created), fromMS(expires), siteAdmin != 0
 	return &i, err
