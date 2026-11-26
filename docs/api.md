@@ -1034,8 +1034,8 @@ other value is `400 invalid`. The address stays unique on the whole server
 was verified and mail is on), and the answer has `"verification"`: `"sent"` or
 `"not_sent"` (mail is off or capped). Every change writes `user_changed` with
 the new values as keys and `old`, the values they replaced, and the person gets
-a notification (`kind: "system"`, `event: "account_changed"`, `fields`, `by`:
-never the values). A change a person makes to their own profile is audited the
+a notification (`kind: "account_changed"`, `fields`, `by`: never the values;
+written with the `user_changed` row, in the same transaction). A change a person makes to their own profile is audited the
 same way and notifies nobody.
 
 ### `POST /api/users/{id}/password`
@@ -1045,7 +1045,8 @@ change the person as above. `204`. The administrator never sees a password
 afterwards; it is in no audit row (`password_set_by_admin` has `temporary`). It
 ends every session the person has, any reset link, their personal API tokens
 (revoked) and their OAuth grants (ended), and the person gets a
-notification (`event: "password_set"`). The next sign-in with it succeeds, but
+notification (`kind: "password_set"`, `by`; written with the
+`password_set_by_admin` row, in the same transaction). The next sign-in with it succeeds, but
 that session is held: `GET /api/session` has `hold: "password"`, every route but
 `POST /api/account/password` (the new password, with the temporary one as
 `current`; the same one again is `400 invalid`), the session, meta, account and
@@ -5242,9 +5243,19 @@ kinds (a registry in the server's code, `store.NotifyKinds`):
 | `sync` | the remote of a space the person owns needs attention (`error`, `rewritten`), and works again after it did; "offline" comes back by itself and is not told, and a state is compared with the last one that was not "offline" (error, offline, error is told once; error, offline, ok is told "ok") | `{"space", "event": "failed" \| "ok", "state", "kind"}` (`kind` is the error's kind: `auth`, `hostkey`, `clone`, a connection code) |
 | `mention` | reserved: there are no mentions yet | |
 | `todo` | reserved: the sidebar's reminders (5.x) | |
-| `system` | reserved: notices from the administrators | |
+| `space_taken_over` | an administrator took over a space the person owned (`POST /api/admin/spaces/{space}/takeover`); `ref` is the space; written with the `space_taken_over` audit row | `{"space", "by", "reason"}` |
+| `space_transferred` | an administrator transferred a space the person owned (`…/transfer`); as above, with the `space_transferred` row | `{"space", "by", "reason"}` |
+| `account_changed` | someone else changed the person's name, username or address (`PATCH /api/users/{id}`); nothing is said of what they did themselves; written with the `user_changed` row | `{"fields": ["name", "username", "email", "emailVerified"], "by"}`, never the values |
+| `password_set` | an administrator gave the person a temporary password; written with the `password_set_by_admin` row | `{"by"}` |
+| `email_released` | an address the person held unverified moved to the account that proved it; written with the `email_released` row | `{"email"}` |
 
-A kind this client does not know is shown as a plain notice. Invitations to an
+There is no catch-all kind: each event of an account or a space is a kind of its
+own, so the filter (`?kind=`) can tell them apart. Each is written by one helper
+(`notify.WithAudit`) that inserts the audit row and the notification in one
+transaction from one definition, so the two cannot drift apart or exist alone;
+`web/src/i18n/notifyKinds.json` is the registry's list, kept current by a Go
+test, and a web test fails for a kind without its text in both languages. A
+kind this client does not know is shown as a plain notice. Invitations to an
 organisation are not a kind yet: an invite makes an account, so it has no
 recipient who is signed in; the kind is added with the first invitation of an
 existing person.
@@ -9590,8 +9601,8 @@ From 3.6 the email address is the main way in; the username stays.
   proves it: confirming a registration, or a trusted sign-in (below), for an
   address another live account holds without `emailVerified` moves the
   address: the other account's address is cleared (and its pending links
-  dropped), it gets a `system` notification
-  `{"event": "email_released", "email": "…"}`, and `email_released` is audited
+  dropped), it gets an `email_released` notification
+  `{"email": "…"}`, and `email_released` is audited
   (`email`, `to`). It moves only when the proved address is the same mailbox
   (equal without the Unicode case folding: NFC, `A` to `Z` lower case); one that
   is equal only once folded is refused like a verified one. A verified holder,
@@ -9901,7 +9912,7 @@ saying so. That is closed:
   promoted) and every other owner an editor, as `…/transfer` does. `204`.
   Audited as `space_taken_over` with `space`, `to`, `previous` (the owners it
   replaced) and `reason`; each previous owner is told by a notification of kind
-  `system` with `{"event": "space_taken_over", "space": "Team", "by": "Ada", "reason": "…"}`
+  `space_taken_over` with `{"space": "Team", "by": "Ada", "reason": "…"}`
   (`ref` is the space). `409 personal_space` for a personal space; a personal
   space is not found for a tenant administrator, as for every administration
   route. After it the administrator is a member, and the remote and owners are
@@ -9931,7 +9942,7 @@ saying so. That is closed:
   space implicitly. The same holds for a site administrator.
 - `POST /api/admin/spaces/{space}/transfer` needs `tenant.spaces.takeover`
   too, takes an optional `reason`, is audited as `space_transferred` (same
-  detail) and tells the owners it replaced (`event: "space_transferred"`). A
+  detail) and tells the owners it replaced (kind `space_transferred`). A
   transfer to oneself is `403 takeover_required`: becoming the owner oneself is
   the takeover, with its reason.
 

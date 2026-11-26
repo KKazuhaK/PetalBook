@@ -61,7 +61,7 @@ func TestConfirmingARegistrationTakesAnUnverifiedAddressOnly(t *testing.T) {
 		if rows := root.audit(t, "email_released"); len(rows) != 1 {
 			t.Fatalf("%v", rows)
 		}
-		if n := rowCount(t, a, `SELECT COUNT(*) FROM notifications WHERE user_id = ? AND payload LIKE '%email_released%'`, mustUserID(t, a, "squat")); n != 1 {
+		if n := rowCount(t, a, `SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind = 'email_released'`, mustUserID(t, a, "squat")); n != 1 {
 			t.Fatalf("%d notices", n)
 		}
 		// Verified now: a second registration for it never gets a link, and

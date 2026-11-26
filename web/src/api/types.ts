@@ -2301,9 +2301,21 @@ export interface PersonMemberships {
 
 // --- the notification centre and the person's preferences (docs/api.md, "Notifications", "Preferences") ---
 
-// The registry of kinds. `problems` is derived (read from the index, not a row); `mention`, `todo` and `system` are
-// reserved: nothing makes them yet.
-export const NOTIFY_KINDS = ['problems', 'invite', 'mention', 'sync', 'todo', 'system'] as const
+// The registry of kinds (store.NotifyKinds; i18n/notify.test.ts keeps this list equal to the server's, and every kind
+// with its texts). `problems` is derived (read from the index, not a row); `mention` and `todo` are reserved: nothing
+// makes them yet.
+export const NOTIFY_KINDS = [
+  'problems',
+  'invite',
+  'mention',
+  'sync',
+  'todo',
+  'space_taken_over',
+  'space_transferred',
+  'account_changed',
+  'password_set',
+  'email_released',
+] as const
 export type NotifyKind = (typeof NOTIFY_KINDS)[number]
 
 export interface NotificationItem {

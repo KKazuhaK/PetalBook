@@ -8,6 +8,7 @@ import (
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
+	"petalbook.app/server/internal/notify"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
 )
@@ -137,13 +138,25 @@ func (s *server) transferSpace(c *call, userID, reason, kind string) {
 		s.fail(c.w, err)
 		return
 	}
-	s.auditRow(c, kind, t.TenantID, map[string]any{"space": id, "to": userID, "previous": t.Previous, "ownerGroups": t.OwnerGroups, "reason": reason})
-	for _, owner := range append(append([]string(nil), t.Previous...), t.GroupOwners...) {
-		// A failure is only logged: the transfer is done.
-		if err := store.NotifyUser(c.r.Context(), s.opt.Store.Q(), owner, store.NotifySystem, id,
-			map[string]string{"event": kind, "space": t.Name, "by": c.user().Name, "reason": reason}, s.now()); err != nil {
-			s.log.Warn("could not write a notification", "error", err)
-		}
+	ev := notify.SpaceTransferred
+	if kind == "space_taken_over" {
+		ev = notify.SpaceTakenOver
+	}
+	ip := ""
+	if s.auth != nil {
+		ip = s.auth.ClientAddr(c.r)
+	}
+	// A failure is only logged: the transfer is done.
+	err = notify.WithAudit(c.r.Context(), s.opt.Store.Q(), ev, notify.Entry{
+		Actor: c.user().ID, IP: ip, Tenant: t.TenantID,
+		Detail:  map[string]any{"space": id, "to": userID, "previous": t.Previous, "ownerGroups": t.OwnerGroups, "reason": reason},
+		To:      append(append([]string(nil), t.Previous...), t.GroupOwners...),
+		Ref:     id,
+		Payload: map[string]string{"space": t.Name, "by": c.user().Name, "reason": reason},
+		Now:     s.now(),
+	})
+	if err != nil {
+		s.log.Warn("could not write the audit row and the notifications", "error", err)
 	}
 	c.w.WriteHeader(http.StatusNoContent)
 }

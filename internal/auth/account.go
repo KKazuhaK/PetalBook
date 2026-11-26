@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/authz"
+	"petalbook.app/server/internal/notify"
 	"petalbook.app/server/internal/store"
 )
 
@@ -530,7 +531,19 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 		}
 		u.Role, u.Disabled = role, disabled
 		out = u
-		return nil
+		if len(changed) == 0 {
+			return nil
+		}
+		// The new values are the keys of the detail; `old` holds the ones they replaced.
+		detail := map[string]any{"old": old}
+		for k, v := range changed {
+			detail[k] = v
+		}
+		e := notify.Entry{Actor: actorID, User: u.ID, Username: u.Username, IP: ip, Detail: detail, Now: s.now()}
+		if fields := accountChangeFields(actor, u.ID, changed); len(fields) > 0 {
+			e.To, e.Payload = []string{u.ID}, map[string]any{"fields": fields, "by": actor.Name}
+		}
+		return notify.WithAudit(ctx, q, notify.AccountChanged, e)
 	})
 	if err != nil {
 		return nil, err
@@ -544,15 +557,6 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 	s.cfg.Spaces.UserChanged(ctx, *out)
 	if exemptChanged {
 		s.cfg.Spaces.PolicyChanged()
-	}
-	if len(changed) > 0 {
-		// The new values are the keys of the detail; `old` holds the ones they replaced.
-		detail := map[string]any{"old": old}
-		for k, v := range changed {
-			detail[k] = v
-		}
-		s.Audit(AuditEvent{Kind: "user_changed", Actor: actorID, User: out.ID, Username: out.Username, IP: ip, Detail: detail})
-		s.noteAccountChange(ctx, actor, *out, changed)
 	}
 	return out, nil
 }
@@ -898,12 +902,12 @@ func (s *Service) waysToSignIn(ctx context.Context, q store.Q, userID, without s
 	return n, nil
 }
 
-// noteAccountChange tells a person that someone else changed how they are
-// known or reached (name, username, address): a notification, with the fields
-// and who did it, never the values. Nothing is said of what they did themselves.
-func (s *Service) noteAccountChange(ctx context.Context, actor, target store.User, changed map[string]any) {
-	if actor.ID == target.ID {
-		return
+// accountChangeFields says which of what changed someone else's account tells
+// the person (name, username, address): the fields, never the values. Nothing is
+// said of what they did themselves.
+func accountChangeFields(actor store.User, targetID string, changed map[string]any) []string {
+	if actor.ID == targetID {
+		return nil
 	}
 	var fields []string
 	for _, k := range []string{"name", "username", "email", "emailVerified"} {
@@ -911,12 +915,7 @@ func (s *Service) noteAccountChange(ctx context.Context, actor, target store.Use
 			fields = append(fields, k)
 		}
 	}
-	if len(fields) == 0 {
-		return
-	}
-	if err := store.NotifyUser(ctx, s.st.Q(), target.ID, store.NotifySystem, "", map[string]any{"event": "account_changed", "fields": fields, "by": actor.Name}, s.now()); err != nil {
-		s.log.Warn("could not write a notification", "error", err)
-	}
+	return fields
 }
 
 // SetTemporaryPassword gives a person a password an administrator chose. It
@@ -954,15 +953,15 @@ func (s *Service) SetTemporaryPassword(ctx context.Context, actor store.User, ip
 		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
 			return err
 		}
-		return store.DeleteUserSessions(ctx, q, u.ID, "", store.EndPassword, s.now())
+		if err := store.DeleteUserSessions(ctx, q, u.ID, "", store.EndPassword, s.now()); err != nil {
+			return err
+		}
+		return notify.WithAudit(ctx, q, notify.PasswordSet, notify.Entry{Actor: actor.ID, User: u.ID, Username: u.Username, IP: ip,
+			Detail: map[string]any{"temporary": true}, To: []string{u.ID}, Payload: map[string]any{"by": actor.Name}, Now: s.now()})
 	})
 	if err != nil {
 		return err
 	}
 	s.evictUser(u.ID, "")
-	s.Audit(AuditEvent{Kind: "password_set_by_admin", Actor: actor.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"temporary": true}})
-	if err := store.NotifyUser(ctx, s.st.Q(), u.ID, store.NotifySystem, "", map[string]any{"event": "password_set", "by": actor.Name}, s.now()); err != nil {
-		s.log.Warn("could not write a notification", "error", err)
-	}
 	return nil
 }

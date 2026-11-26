@@ -416,7 +416,7 @@ func TestASignInNeverAttachesToAnAccountByItsAddress(t *testing.T) {
 		if rows := admin.audit(t, "email_released"); len(rows) != 1 || rows[0]["detail"].(map[string]any)["email"] != "victim@example.test" {
 			t.Fatalf("%v", rows)
 		}
-		if n := rowCount(t, a, `SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind = 'system' AND payload LIKE '%email_released%'`, puppet); n != 1 {
+		if n := rowCount(t, a, `SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind = 'email_released'`, puppet); n != 1 {
 			t.Fatalf("%d notices", n)
 		}
 		loc, c = try("owner")
