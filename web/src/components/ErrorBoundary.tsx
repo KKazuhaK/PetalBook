@@ -1,9 +1,12 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { t } from '@/i18n'
+import { env, isChunkLoadError, recoverFromStaleChunk } from '@/lib/staleChunk'
 
 interface State {
   error: Error | null
+  // A chunk of an older build is gone and the page is being reloaded.
+  reloading?: boolean
 }
 
 // A crash in one page must not blank the sidebar, and above all must not
@@ -15,9 +18,21 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   }
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error(error, info.componentStack)
+    if (isChunkLoadError(error) && recoverFromStaleChunk()) this.setState({ reloading: true })
   }
   render() {
     if (!this.state.error) return this.props.children
+    if (isChunkLoadError(this.state.error)) {
+      if (this.state.reloading) return null
+      return (
+        <div className="flex flex-col items-center gap-3 py-24 text-center">
+          <p className="text-sm text-muted-foreground">{t.errors.updated}</p>
+          <Button variant="outline" size="sm" onClick={() => env.reload()}>
+            {t.errors.reloadPage}
+          </Button>
+        </div>
+      )
+    }
     return (
       <div className="flex flex-col items-center gap-3 py-24 text-center">
         <p className="text-sm text-muted-foreground">{t.fmt.labelled(t.errors.unknown, this.state.error.message)}</p>

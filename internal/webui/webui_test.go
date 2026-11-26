@@ -275,3 +275,23 @@ func TestCSPAllowsTheConfiguredCaptchaOnly(t *testing.T) {
 		}
 	}
 }
+
+// After a deploy an open page asks for a chunk the new build no longer has. It
+// must get a 404 that is never cached (so the page can reload), and the page
+// and its deep links must always be revalidated so a reload gets the new build.
+func TestRedeployContract(t *testing.T) {
+	h := New(app())
+	for _, p := range []string{"/", "/index.html", "/settings/profile", "/s/x/p/abc"} {
+		rec := do(h, "GET", p)
+		if got := rec.Header().Get("Cache-Control"); rec.Code != 200 || got != "no-cache" {
+			t.Errorf("%s: %d Cache-Control %q, want 200 no-cache", p, rec.Code, got)
+		}
+	}
+	rec := do(h, "GET", "/assets/SettingsRoute-BBVbfHj5.js")
+	if rec.Code != 404 || rec.Header().Get("Cache-Control") != "no-store" || strings.Contains(rec.Body.String(), "<title>") {
+		t.Errorf("gone chunk: %d %q %q", rec.Code, rec.Header().Get("Cache-Control"), rec.Body.String())
+	}
+	if got := do(h, "GET", "/assets/index-abc123.js").Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Errorf("hashed asset: %q", got)
+	}
+}

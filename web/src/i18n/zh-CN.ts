@@ -452,6 +452,8 @@ export const zhCN = {
     network: '无法连接到服务器',
     timeout: '服务器没有及时回应',
     unknown: '出错了',
+    updated: '页面已更新，请刷新',
+    reloadPage: '刷新页面',
     signedOut: '登录已失效，请重新登录',
     badResponse: '服务器返回了无法识别的内容',
     requestFailed: (status: number) => `请求失败（${status}）`,

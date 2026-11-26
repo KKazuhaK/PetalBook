@@ -468,6 +468,8 @@ export const en: Messages = {
     network: 'Cannot reach the server',
     timeout: 'The server did not answer in time',
     unknown: 'Something went wrong',
+    updated: 'PetalBook was updated — reload',
+    reloadPage: 'Reload',
     signedOut: 'You have been signed out. Please sign in again.',
     badResponse: 'The server sent something that could not be read',
     requestFailed: (status) => `Request failed (${status})`,
