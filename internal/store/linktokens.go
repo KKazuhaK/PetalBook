@@ -128,10 +128,11 @@ func PutRepoLink(ctx context.Context, q Q, a RepoLink) (string, error) {
 }
 
 // ReplaceLinkTokens stores a renewed pair, but only if the link is still at
-// version from. It reports whether it did; the version goes up by one.
+// version from, and ends the renewal's lease. It reports whether it did; the
+// version goes up by one.
 func ReplaceLinkTokens(ctx context.Context, q Q, id string, from int64, accessEnc, refreshEnc string, accessExpires, refreshExpires, renewAt, now time.Time) (bool, error) {
 	res, err := q.Exec(ctx, `UPDATE linked_accounts SET access_enc = ?, refresh_enc = ?, access_expires = ?, refresh_expires = ?, renew_at = ?,
-		state = 'ok', version = version + 1, updated = ? WHERE id = ? AND version = ?`,
+		renewing_until = 0, state = 'ok', version = version + 1, updated = ? WHERE id = ? AND version = ?`,
 		accessEnc, refreshEnc, syncOrZero(accessExpires), syncOrZero(refreshExpires), syncOrZero(renewAt), ms(now), id, from)
 	if err != nil {
 		return false, err

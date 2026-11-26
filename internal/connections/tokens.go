@@ -27,7 +27,10 @@ import (
 // One renewal of a link at a time: in this process (renewing), and across
 // processes (the standby server) by a lease in the link's row that a renewal
 // claims before it hands the refresh token to the host. Some hosts (Gitea)
-// end a refresh token that is used twice, and the link with it.
+// end a refresh token that is used twice, and the link with it. Servers that
+// share a database must have clocks within about a minute of each other: the
+// lease is two minutes and a renewal's call to the host is bounded at 30
+// seconds.
 
 // Errors of using a person's tokens.
 var (
@@ -65,6 +68,11 @@ const (
 	// died with it does not keep the link from being renewed for longer. A
 	// renewal itself is bounded by 30 seconds (renew).
 	renewLease = 2 * time.Minute
+	// renewTimeout bounds a renewal (its call to the host); writeTimeout the
+	// writes after it (the new pair, the lease given back), which get a time of
+	// their own so that a host that answers late does not cost the pair.
+	renewTimeout = 30 * time.Second
+	writeTimeout = 5 * time.Second
 )
 
 // RenewWindow is how close to its end a refresh token must be for the loop to
@@ -107,6 +115,12 @@ type Tokens struct {
 	// dueHook, when set, runs before each query for due links; an error it
 	// returns is that query's (tests).
 	dueHook func() error
+	// claimLostHook, when set, runs when a claim of a lease failed, before the
+	// link is read again (tests).
+	claimLostHook func()
+	// renewCtx makes a renewal's context from its caller's (tests; default:
+	// not cancelled with the caller, bounded at renewTimeout).
+	renewCtx func(context.Context) (context.Context, context.CancelFunc)
 }
 
 type cachedToken struct {
@@ -337,7 +351,13 @@ func (t *Tokens) renew(ctx context.Context, providerID, userID string, force boo
 	t.mu.Unlock()
 	// Once the host has handed out a new refresh token the old one is dead: the
 	// new pair must reach the database even if this request goes away.
-	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	mk := t.renewCtx
+	if mk == nil {
+		mk = func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.WithoutCancel(ctx), renewTimeout)
+		}
+	}
+	wctx, cancel := mk(ctx)
 	r.access, r.err = t.doRenew(wctx, providerID, userID, force, ifVersion)
 	cancel()
 	t.mu.Lock()
@@ -402,9 +422,17 @@ func (t *Tokens) doRenew(ctx context.Context, providerID, userID string, force b
 			return "", err
 		}
 		if !claimed {
+			if t.claimLostHook != nil {
+				t.claimLostHook()
+			}
 			cur, err := store.GetRepoLink(ctx, db, providerID, userID)
-			if err != nil || cur.Version != row.Version || cur.State != store.LinkOK || !cur.RenewingUntil.After(now) {
-				force = false // it moved on (or the lease ended) meanwhile: read it again
+			if err != nil || cur.Version != row.Version || cur.State != store.LinkOK {
+				force = false // it moved on meanwhile (renewed, reconnected, ended): read it again
+				continue
+			}
+			if !cur.RenewingUntil.After(now) {
+				// The lease was given back without a renewal (its holder failed at
+				// the host): the link is as due as it was; claim it again.
 				continue
 			}
 			if !force && (row.AccessExpires.IsZero() || now.Before(row.AccessExpires)) {
@@ -433,8 +461,16 @@ func (t *Tokens) refreshClaimed(ctx context.Context, rf Refresher, row *store.Re
 	box := t.opt.Secrets
 	providerID, userID := row.ProviderID, row.UserID
 	bind := Key(providerID, userID)
+	// What is written after the host was asked is written even if the renewal's
+	// own time ran out meanwhile: the host may have handed out a new pair (and
+	// ended the old refresh token), and the lease must not outlive the renewal.
+	writeCtx := func() (context.Context, context.CancelFunc) {
+		return context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	}
 	defer func() {
-		if err := store.ReleaseLinkRenewal(ctx, db, row.ID, until); err != nil {
+		wctx, cancel := writeCtx()
+		defer cancel()
+		if err := store.ReleaseLinkRenewal(wctx, db, row.ID, until); err != nil {
 			t.log.Warn("could not give a renewal lease back; it ends by itself", "provider", providerID, "user", userID, "error", err)
 		}
 	}()
@@ -443,9 +479,11 @@ func (t *Tokens) refreshClaimed(ctx context.Context, rf Refresher, row *store.Re
 		return "", false, err
 	}
 	pair, err := rf.RefreshTokens(ctx, string(refresh))
+	wctx, cancel := writeCtx()
+	defer cancel()
 	if err != nil {
 		if errors.Is(err, ErrRevoked) {
-			if t.expire(ctx, row) == expireMovedOn {
+			if t.expire(wctx, row) == expireMovedOn {
 				return "", true, nil // the person connected again meanwhile: that link is good
 			}
 			t.log.Info("an authorisation expired or was revoked", "provider", providerID, "user", userID)
@@ -468,7 +506,7 @@ func (t *Tokens) refreshClaimed(ctx context.Context, rf Refresher, row *store.Re
 	// was made from.
 	var replaced bool
 	for try := 0; try < 3; try++ {
-		if replaced, err = store.ReplaceLinkTokens(ctx, db, row.ID, row.Version, accessEnc, refreshEnc, pair.AccessExpires, pair.RefreshExpires,
+		if replaced, err = store.ReplaceLinkTokens(wctx, db, row.ID, row.Version, accessEnc, refreshEnc, pair.AccessExpires, pair.RefreshExpires,
 			RenewAt(t.opt.Now(), pair.RefreshExpires, t.opt.RenewWindow), t.opt.Now()); err == nil {
 			break
 		}
@@ -478,7 +516,7 @@ func (t *Tokens) refreshClaimed(ctx context.Context, rf Refresher, row *store.Re
 		// The old refresh token is dead and the new one is not stored: this
 		// link cannot go on.
 		t.log.Error("could not store a renewed token", "provider", providerID, "user", userID, "error", err)
-		if t.expire(ctx, row) == expireMovedOn {
+		if t.expire(wctx, row) == expireMovedOn {
 			return "", true, nil
 		}
 		return "", false, ErrAuthorizationExpired

@@ -429,5 +429,15 @@ func TestARenewalLeaseIsHeldByOneAtATimeAndEndsByItself(t *testing.T) {
 		if l, _ := store.GetRepoLink(ctx, st.Q(), "gt", "U1"); !l.RenewingUntil.IsZero() || l.Version != 2 {
 			t.Fatalf("%+v", l)
 		}
+		// Storing the renewed pair ends the lease too.
+		if !claim(2, now, until) {
+			t.Fatal("no lease")
+		}
+		if ok, err := store.ReplaceLinkTokens(ctx, st.Q(), "L1", 2, "a2", "r2", time.Time{}, time.Time{}, time.Time{}, now); err != nil || !ok {
+			t.Fatalf("%v %v", ok, err)
+		}
+		if l, _ := store.GetRepoLink(ctx, st.Q(), "gt", "U1"); !l.RenewingUntil.IsZero() || l.Version != 3 {
+			t.Fatalf("%+v", l)
+		}
 	})
 }

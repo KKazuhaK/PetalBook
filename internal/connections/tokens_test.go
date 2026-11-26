@@ -452,3 +452,89 @@ func TestALeaseLeftByAServerThatDiedEndsAndTheLinkIsRenewed(t *testing.T) {
 		}
 	})
 }
+
+func TestAStandbyRenewsALinkWhoseLeaseHolderFailedAtTheHost(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newEnv(t, st)
+		a, b := e.tokens(nil), e.tokens(nil)
+		e.user("U1")
+		e.connect(a, "U1")
+		// An access token that does not end: only the refresh token is due.
+		if _, err := st.Q().Exec(ctx, `UPDATE linked_accounts SET access_expires = 0 WHERE provider_id = ?`, provider); err != nil {
+			t.Fatal(err)
+		}
+		e.clk.Advance(e.link("U1").RenewAt.Sub(e.clk.Now()))
+		inHost, letGo, aDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		e.host.setHook(func(call int) error {
+			if call == 1 {
+				close(inHost)
+				<-letGo
+				return errors.New("the host is down") // a fails, and gives the lease back without a renewal
+			}
+			return nil
+		})
+		go func() { a.RenewDue(ctx); close(aDone) }()
+		<-inHost
+		// b finds the lease taken; by the time it looks at the link again, a has failed.
+		var once sync.Once
+		connections.SetClaimLostHook(b, func() { once.Do(func() { close(letGo); <-aDone }) })
+		if n := b.RenewDue(ctx); n != 1 {
+			t.Fatalf("%d renewed", n)
+		}
+		if l := e.link("U1"); e.host.Calls() != 2 || l.Version != 2 || !l.RenewAt.After(e.clk.Now()) || !l.RenewingUntil.IsZero() {
+			t.Fatalf("%d calls, %+v", e.host.Calls(), l)
+		}
+	})
+}
+
+func TestARenewalWhoseTimeRanOutGivesTheLeaseBackAndKeepsAPairTheHostGave(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newEnv(t, st)
+		tk, other := e.tokens(nil), e.tokens(nil)
+		// The renewal's time runs out while the host is being asked (the test's
+		// stand-in for 30 seconds passing).
+		var mu sync.Mutex
+		var timeUp context.CancelFunc
+		connections.SetRenewContext(tk, func(parent context.Context) (context.Context, context.CancelFunc) {
+			c, cancel := context.WithCancel(context.WithoutCancel(parent))
+			mu.Lock()
+			timeUp = cancel
+			mu.Unlock()
+			return c, cancel
+		})
+		runOut := func() { mu.Lock(); timeUp(); mu.Unlock() }
+		e.user("U1")
+		e.user("U2")
+		e.connect(tk, "U1")
+		e.connect(tk, "U2")
+		e.clk.Advance(2 * time.Hour) // both access tokens ended
+		// U1: the host does not answer in time. The lease is given back all the same:
+		// another server (or the next caller) is not kept waiting for it.
+		e.host.setHook(func(int) error { runOut(); return context.DeadlineExceeded })
+		if _, err := tk.Token(ctx, provider, "U1"); err == nil {
+			t.Fatal("a token from a renewal that timed out")
+		}
+		if l := e.link("U1"); !l.RenewingUntil.IsZero() || l.Version != 1 {
+			t.Fatalf("%+v", l)
+		}
+		e.host.setHook(nil)
+		if _, err := other.Token(ctx, provider, "U1"); err != nil {
+			t.Fatalf("the lease of a renewal that timed out holds: %v", err)
+		}
+		// U2: the host answers just as the time runs out. It ended the old refresh
+		// token, so the new pair must be stored.
+		e.host.setHook(func(int) error { runOut(); return nil })
+		tok, err := tk.Token(ctx, provider, "U2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		l := e.link("U2")
+		if l.State != store.LinkOK || l.Version != 2 || !l.RenewingUntil.IsZero() {
+			t.Fatalf("%+v", l)
+		}
+		e.host.setHook(nil)
+		if got, err := other.Token(ctx, provider, "U2"); err != nil || got != tok {
+			t.Fatalf("%q %v, want %q", got, err, tok)
+		}
+	})
+}
