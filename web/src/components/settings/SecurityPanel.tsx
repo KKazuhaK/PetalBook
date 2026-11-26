@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { KeyRound, Trash2 } from 'lucide-react'
 import { useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -89,6 +90,7 @@ function PasswordSection({ account }: { account: AccountInfo }) {
       <SettingsRows>
         <SettingsRow title={t.settings.password} help={has ? t.settings.passwordIsSet : t.settings.setHelp}>
           <Button type="button" variant="outline" onClick={() => setOpen(true)}>
+            <KeyRound aria-hidden="true" />
             {has ? t.settings.changePassword : t.settings.setPassword}
           </Button>
         </SettingsRow>
@@ -186,6 +188,7 @@ function PasswordForm({ account, onDone }: { account: AccountInfo; onDone: (mess
       <FormMessage>{error}</FormMessage>
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={busy}>
+          <KeyRound aria-hidden="true" />
           {has ? t.settings.changePassword : t.settings.setPassword}
         </Button>
       </div>
@@ -273,6 +276,7 @@ function Identities({ account }: { account: AccountInfo }) {
                 setRemoving(i)
               }}
             >
+              <Trash2 aria-hidden="true" />
               {t.settings.remove}
             </Button>
           </SettingsRow>

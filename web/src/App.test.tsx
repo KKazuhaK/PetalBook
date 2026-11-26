@@ -152,6 +152,12 @@ describe('the way into the administration', () => {
     expect(await openUserMenu()).toEqual([t.userMenu.settings, t.userMenu.signOut])
   })
 
+  it('an accounts server keeps Settings in the account menu: no second button for it in the sidebar footer', async () => {
+    await boot('/s/x/recent', { mode: 'accounts', as: 'dora', scene: (s) => void makePerson(s, 'dora') })
+    await settle(() => document.querySelector(`[aria-label^="${t.userMenu.label}"]`) !== null, 'the shell')
+    expect(document.querySelector(`button[aria-label="${t.nav.settings}"]`)).toBeNull()
+    expect(await openUserMenu()).toContain(t.userMenu.settings)
+  })
   it('a single-user server has no user menu at all, and no link to the administration anywhere', async () => {
     await boot('/s/default/recent', { mode: 'single' })
     await settle(() => document.querySelector(`[aria-label="${t.nav.settings}"]`) !== null, 'the shell')

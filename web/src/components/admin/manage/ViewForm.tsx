@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Eye } from 'lucide-react'
 import { manageApi } from '@/api/manage'
 import { useQueryClient } from '@tanstack/react-query'
 import { keys } from '@/api/hooks'
@@ -72,7 +73,7 @@ export function ViewForm({
           </Button>
         )}
         <Button className={tapTarget} type="submit" disabled={!ok || busy}>
-          {busy && <Spinner />}
+          {busy ? <Spinner /> : <Eye aria-hidden="true" />}
           {busy ? tg.view.starting : tg.view.start}
         </Button>
       </div>

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Logo } from '@/components/brand/Logo'
 import { LanguageToggle } from '@/components/layout/LanguageMenu'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -12,7 +13,7 @@ export function AuthLayout({ title, intro, children }: { title: string; intro?: 
     <div className="flex min-h-svh flex-col bg-background">
       <header className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
-          <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
+          <Logo />
           <span className="text-sm font-semibold">{t.appName}</span>
         </div>
         <div className="flex items-center">

@@ -33,3 +33,11 @@ export const absoluteTime = (iso: string) => {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(lang, { hourCycle: 'h23' })
 }
+
+// A moment in the viewer's own time with the name of the zone, as "2026年11月25日 14:48 (America/Los_Angeles)".
+export const zonedTime = (iso: string) => {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const when = d.toLocaleString(lang, { dateStyle: 'long', timeStyle: 'short', hourCycle: 'h23' })
+  return `${when} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
+}

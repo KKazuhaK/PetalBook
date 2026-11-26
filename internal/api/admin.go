@@ -154,19 +154,20 @@ func (s *server) adminStatus(c *call) {
 		return
 	}
 	out := struct {
-		Version       string `json:"version"`
-		StartedAt     string `json:"startedAt"`
-		UptimeSeconds int64  `json:"uptimeSeconds"`
-		Database      string `json:"database"`
-		Spaces        int    `json:"spaces"`
-		Users         int    `json:"users"`
-		OpenSpaces    int    `json:"openSpaces"`
+		Version       string    `json:"version"`
+		Build         buildInfo `json:"build"`
+		StartedAt     string    `json:"startedAt"`
+		UptimeSeconds int64     `json:"uptimeSeconds"`
+		Database      string    `json:"database"`
+		Spaces        int       `json:"spaces"`
+		Users         int       `json:"users"`
+		OpenSpaces    int       `json:"openSpaces"`
 		// DiskFreeBytes is the room left on the disk of the data directory;
 		// absent where the platform cannot say.
 		DiskFreeBytes *uint64 `json:"diskFreeBytes,omitempty"`
 		GoVersion     string  `json:"goVersion"`
 		Storage       any     `json:"storage"`
-	}{s.opt.Version, rfc3339(s.started), int64(time.Since(s.started) / time.Second), string(s.opt.Store.Dialect()),
+	}{s.opt.Version, readBuild(s.opt.BuildTime), rfc3339(s.started), int64(time.Since(s.started) / time.Second), string(s.opt.Store.Dialect()),
 		nSpaces, nUsers, s.spaces.OpenCount(), nil, runtime.Version(), nil}
 	var serr error
 	if out.Storage, serr = s.storageStatus(ctx); serr != nil {

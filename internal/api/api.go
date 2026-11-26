@@ -58,7 +58,11 @@ const authBodyLimit = 64 << 10
 // Options configures the handler.
 type Options struct {
 	Version string
-	MaxBody int64 // bytes; DefaultMaxBody when 0
+	// BuildTime is when the binary was built, injected at build time
+	// (-X main.buildTime=...); empty when it was not. The admin status then
+	// shows it instead of the commit's time.
+	BuildTime string
+	MaxBody   int64 // bytes; DefaultMaxBody when 0
 	// MaxUpload is the largest file accepted as an upload, in bytes;
 	// DefaultMaxUpload when 0.
 	MaxUpload int64

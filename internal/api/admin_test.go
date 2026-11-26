@@ -539,6 +539,13 @@ func TestAdminStatus(t *testing.T) {
 		if free, ok := b["diskFreeBytes"]; ok && free.(float64) <= 0 {
 			t.Fatal(r.raw)
 		}
+		build, ok := b["build"].(map[string]any)
+		if !ok {
+			t.Fatal(r.raw)
+		}
+		if _, ok := build["modified"].(bool); !ok {
+			t.Fatal(r.raw)
+		}
 	})
 }
 

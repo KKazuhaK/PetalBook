@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Mail, Trash2, Unlink } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
@@ -134,6 +135,7 @@ export function PersonSecurity({
                   aria-label={tsec.users.deletePasskeyFor(p.name)}
                   onClick={() => setRemoving(p)}
                 >
+                  <Trash2 aria-hidden="true" />
                   {tsec.users.deletePasskey}
                 </Button>
               </li>
@@ -145,6 +147,7 @@ export function PersonSecurity({
       {mailOn && u.email && u.emailVerified && (
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" className="h-10" disabled={sending} onClick={() => void sendReset()}>
+            <Mail aria-hidden="true" />
             {sending ? tm.users.sending : tm.users.sendReset}
           </Button>
           {resetMsg && (
@@ -228,6 +231,7 @@ function ConnectedAccounts({ u }: { u: User }) {
                 aria-label={tc.person.security.disconnectFor(label(i))}
                 onClick={() => setRemoving(i)}
               >
+                <Unlink aria-hidden="true" />
                 {tc.person.security.disconnect}
               </Button>
             </li>

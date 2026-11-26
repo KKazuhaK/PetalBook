@@ -10266,8 +10266,19 @@ again. `409 personal_space` for a personal space, which goes with its person.
 
 ```json
 {"version": "0.9.0", "startedAt": "2026-11-22T01:00:00Z", "uptimeSeconds": 4210, "database": "sqlite",
- "spaces": 212, "users": 40, "openSpaces": 7, "diskFreeBytes": 52428800000, "goVersion": "go1.27.4"}
+ "spaces": 212, "users": 40, "openSpaces": 7, "diskFreeBytes": 52428800000, "goVersion": "go1.27.4",
+ "build": {"commit": "3f9c2ab", "time": "2026-11-25T22:48:00Z", "timeKind": "commit", "modified": false}}
 ```
+
+`version` is the release tag the binary was built with, `dev` otherwise. `build`
+says which build it is, read from what the Go toolchain stamps into the binary
+(`debug.ReadBuildInfo`): `commit` is the first 7 characters of the commit,
+`time` the time of that commit (RFC 3339, UTC), `modified` whether the working
+tree had changes the commit does not have. A build with `-ldflags "-X
+main.buildTime=<RFC 3339>"` reports that time instead, and `timeKind` is then
+`build`; otherwise it is `commit`. `commit` and `time` are `""` (and `timeKind`
+`""`) for a binary built outside a Git checkout. The detail is only here, for
+site administrators; the public `GET /api/meta` keeps its short `version`.
 
 `database` is `sqlite` or `postgres`. `openSpaces` is how many spaces are open
 in memory now (idle ones are closed, see `--space-idle`). `diskFreeBytes` is

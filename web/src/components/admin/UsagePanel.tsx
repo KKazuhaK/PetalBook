@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Pencil } from 'lucide-react'
 import { useAdminUsage, useTenants } from '@/api/admin'
 import { useSession } from '@/api/hooks'
 import type { PersonUsage, Tenant, TenantQuotaKey } from '@/api/types'
@@ -226,6 +227,7 @@ function PersonRow({ person: p, onEdit }: { person: PersonUsage; onEdit: () => v
         {p.measuredAt ? absoluteTime(p.measuredAt) : tu.neverMeasured}
       </span>
       <Button type="button" variant="ghost" size="sm" aria-label={tu.admin.editLimitsFor(p.user.name)} onClick={onEdit}>
+        <Pencil aria-hidden="true" />
         {tu.admin.editLimits}
       </Button>
     </li>

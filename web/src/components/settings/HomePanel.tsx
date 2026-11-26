@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Save } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import {
@@ -247,7 +248,7 @@ function Editor({
       <FormMessage>{error}</FormMessage>
       <div>
         <Button onClick={() => void save()} disabled={busy}>
-          {busy && <Spinner />}
+          {busy ? <Spinner /> : <Save aria-hidden="true" />}
           {busy ? th.settings.saving : th.settings.save}
         </Button>
       </div>

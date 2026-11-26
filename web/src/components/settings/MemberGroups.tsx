@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { useAddGroup, useEffectiveMembers, useGroupSearch, useRemoveGroup, useSetGroupRole } from '@/api/hooks'
@@ -127,6 +128,7 @@ export function GroupMembers({ space, groups, manage }: { space: SpaceInfo; grou
                   aria-label={t.fmt.labelled(tgs.remove, g.name)}
                   onClick={() => setAsking(g)}
                 >
+                  <Trash2 aria-hidden="true" />
                   {tgs.remove}
                 </Button>
               )}
@@ -242,7 +244,7 @@ function AddGroup({ space, taken }: { space: string; taken: string[] }) {
           </div>
         </div>
         <Button type="submit" disabled={add.isPending}>
-          {add.isPending && <Spinner />}
+          {add.isPending ? <Spinner /> : <Plus aria-hidden="true" />}
           {chosen ? `${add.isPending ? tgs.adding : tgs.add}: ${chosen.name}` : add.isPending ? tgs.adding : tgs.add}
         </Button>
       </div>

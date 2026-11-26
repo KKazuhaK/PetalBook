@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Save, Send } from 'lucide-react'
 import { adminApi, useMail, usePutMail } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import type { MailPatch, MailSecurity, MailSettings } from '@/api/types'
@@ -181,6 +182,7 @@ function MailForm({ mail }: { mail: MailSettings }) {
         <FormMessage>{error}</FormMessage>
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={put.isPending}>
+            <Save aria-hidden="true" />
             {put.isPending ? tm.admin.saving : tm.admin.save}
           </Button>
           <span role="status" className="text-sm text-muted-foreground">
@@ -241,6 +243,7 @@ function TestMessage() {
           />
         </div>
         <Button type="submit" disabled={busy || !to.trim()}>
+          <Send aria-hidden="true" />
           {busy ? tm.admin.testSending : tm.admin.testSend}
         </Button>
       </form>

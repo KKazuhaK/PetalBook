@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent, useRef } from 'react'
 import { scrollFadeTouchClass, useScrollFade } from '@/components/ui/scroll-fade'
-import { Search } from 'lucide-react'
+import { Plus, Save, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import {
@@ -19,6 +19,7 @@ import {
 import type { Group, GroupSource } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
+import { AdminPageActions } from './AdminPageHeader'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -108,9 +109,12 @@ export function GroupsPanel() {
             <option value="synced">{tg.sourceNames.synced}</option>
           </NativeSelect>
         </div>
-        <Button type="button" onClick={() => setCreating(true)}>
-          {ta.create}
-        </Button>
+        <AdminPageActions>
+          <Button type="button" onClick={() => setCreating(true)}>
+            <Plus aria-hidden="true" />
+            {ta.create}
+          </Button>
+        </AdminPageActions>
       </div>
 
       {groups.isPending ? (
@@ -147,7 +151,7 @@ export function GroupsPanel() {
               </thead>
               <tbody className="divide-y">
                 {items.map((g) => (
-                  <tr key={g.id} data-group={g.id}>
+                  <tr key={g.id} data-group={g.id} className="transition-colors hover:bg-muted/40">
                     <th scope="row" className="max-w-64 px-3 py-2.5 font-normal">
                       <div className="truncate font-medium">{g.name}</div>
                       {g.description && <div className="truncate text-xs text-muted-foreground">{g.description}</div>}
@@ -351,7 +355,7 @@ function Details({ group }: { group: Group }) {
       <FormMessage>{error}</FormMessage>
       <div>
         <Button type="submit" size="sm" disabled={!dirty || update.isPending}>
-          {update.isPending && <Spinner />}
+          {update.isPending ? <Spinner /> : <Save aria-hidden="true" />}
           {update.isPending ? ta.saving : ta.save}
         </Button>
       </div>
@@ -423,6 +427,7 @@ function People({ group }: { group: Group }) {
                   disabled={remove.isPending}
                   onClick={() => void drop(p.userId, p.name)}
                 >
+                  <Trash2 aria-hidden="true" />
                   {ta.removePerson}
                 </Button>
               )}
@@ -540,7 +545,7 @@ function AddPeople({ group }: { group: Group }) {
           disabled={picked.size === 0 || add.isPending}
           onClick={() => void send([...picked.keys()])}
         >
-          {add.isPending && <Spinner />}
+          {add.isPending ? <Spinner /> : <Plus aria-hidden="true" />}
           {picked.size > 0 ? ta.addSelected(picked.size) : ta.adding.replace('…', '')}
         </Button>
         {picked.size > 0 && <span className="text-xs text-muted-foreground">{ta.pickSelected(picked.size)}</span>}
@@ -567,6 +572,7 @@ function AddPeople({ group }: { group: Group }) {
             disabled={resolved.ids.length === 0 || resolved.unknown.length > 0 || add.isPending}
             onClick={() => void send(resolved.ids)}
           >
+            <Plus aria-hidden="true" />
             {ta.pasteAdd}
           </Button>
         </div>

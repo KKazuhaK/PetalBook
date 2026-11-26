@@ -75,7 +75,7 @@ export const tenantsEn: TenantsMessages = {
   },
   settings: {
     title: 'Settings by layer',
-    help: 'Each setting is resolved by layer: site → tenant → space → personal. A layer either sets its own value or follows the one above, and says what the layers below it may do: allow, restrict or lock. A value that a lock or a restriction forbids is kept, marked as not in effect, and counts again when the rule is lifted.',
+    help: 'Settings apply by layer: site → tenant → space → personal. A layer sets its own value or follows the one above, and may allow, restrict or lock the layers below. Forbidden values are kept and marked as not in effect.',
     loadFailed: 'Could not load the settings',
     saveFailed: 'Could not save this setting',
     siteLayer: 'The site layer',

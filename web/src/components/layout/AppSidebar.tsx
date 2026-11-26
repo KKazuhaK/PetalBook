@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Logo } from '@/components/brand/Logo'
 import { NavLink, useLocation } from 'react-router'
 import {
   ChevronRight,
@@ -447,7 +448,7 @@ export function AppSidebar() {
               <SpaceSwitcher />
             ) : (
               <NavLink to={urls.home()} className="flex items-center gap-2 px-1 pt-0.5">
-                <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
+                <Logo />
                 <span className="truncate text-sm font-semibold">{spaceName ?? t.appName}</span>
               </NavLink>
             )}
@@ -521,15 +522,18 @@ export function AppSidebar() {
       <SidebarFooter className="flex-row items-center justify-between gap-1 border-t p-2">
         {accounts ? <UserMenu /> : null}
         <div className="ml-auto flex items-center">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={t.nav.settings}
-            title={t.nav.settings}
-            onClick={() => openSettings(accounts ? 'profile' : 'preferences')}
-          >
-            <Settings className="size-4" />
-          </Button>
+          {/* With accounts, Settings is in the account menu; a single-user server has no such menu. */}
+          {!accounts && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t.nav.settings}
+              title={t.nav.settings}
+              onClick={() => openSettings(accounts ? 'profile' : 'preferences')}
+            >
+              <Settings className="size-4" />
+            </Button>
+          )}
           <HelpMenu />
           <ThemeToggle />
         </div>

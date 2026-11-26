@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Save } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '@/api/client'
 import { adminApi } from '@/api/admin'
@@ -96,6 +97,7 @@ export function OwnLimits({ userId, own, onSaved }: { userId: string; own: OwnQu
       </div>
       <div>
         <Button type="submit" size="sm" disabled={busy}>
+          <Save aria-hidden="true" />
           {busy ? tu.own.saving : tu.own.save}
         </Button>
       </div>

@@ -16,6 +16,8 @@ import {
   ExternalLink,
   KeyRound,
   RefreshCw,
+  Save,
+  Unlink,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, ApiError, spaceApi } from '@/api/client'
@@ -83,6 +85,7 @@ export function ImportSection({ space }: { space: string }) {
       <p className="text-sm text-muted-foreground">{t.import.settingsHelp}</p>
       <div>
         <Button variant="outline" render={<Link to={spaceUrls(space).import()} />}>
+          <ExternalLink aria-hidden="true" />
           {t.import.settingsLink}
         </Button>
       </div>
@@ -134,7 +137,7 @@ export function InboxSection({ space, readOnly = false, why }: { space: SpaceInf
         {!readOnly && (
           <div>
             <Button type="submit" disabled={update.isPending || value === space.inbox}>
-              {update.isPending && <Spinner />}
+              {update.isPending ? <Spinner /> : <Save aria-hidden="true" />}
               {t.inboxSetting.save}
             </Button>
           </div>
@@ -270,6 +273,7 @@ function Following({ space, remote }: { space: string; remote: Remote }) {
           {editing ? t.remote.cancelEdit : t.remote.editConnection}
         </Button>
         <Button variant="outline" onClick={() => setConfirmDisconnect(true)}>
+          <Unlink aria-hidden="true" />
           {t.remote.disconnect}
         </Button>
       </div>
@@ -357,7 +361,7 @@ function ErrorNotice({ remote }: { remote: Remote }) {
       <div className="flex flex-wrap items-center gap-2">
         {(code === 'connection_expired' || code === 'connection_missing') && mine && (
           <Button type="button" size="sm" onClick={() => void reconnect()} disabled={busy}>
-            {busy && <Spinner />}
+            {busy ? <Spinner /> : <RefreshCw aria-hidden="true" />}
             {tg.sync.reconnect}
           </Button>
         )}
@@ -445,6 +449,7 @@ function Rewritten({ space, remote }: { space: string; remote: Remote }) {
       <p className="text-muted-foreground">{t.remote.rewrittenChoices}</p>
       <div>
         <Button variant="outline" onClick={() => setOpen(true)} disabled={!r}>
+          <Check aria-hidden="true" />
           {t.remote.accept}
         </Button>
       </div>
@@ -728,6 +733,7 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
                     onClick={() => setRotateOpen(true)}
                     disabled={keyBusy}
                   >
+                    <KeyRound aria-hidden="true" />
                     {t.remote.rotateKey}
                   </Button>
                 </div>
@@ -806,7 +812,7 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
       <Problem error={error} />
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={connect.isPending}>
-          {connect.isPending && <Spinner />}
+          {connect.isPending ? <Spinner /> : <Save aria-hidden="true" />}
           {connect.isPending ? t.remote.connecting : existing ? t.remote.saveChanges : t.remote.connect}
         </Button>
       </div>

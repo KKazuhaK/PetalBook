@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react'
+import { Ban, Copy, UserPlus } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
@@ -93,6 +94,7 @@ export function InvitesPanel() {
           />
         </div>
         <Button type="submit" disabled={busy}>
+          <UserPlus aria-hidden="true" />
           {busy ? t.users.creating : t.users.createInvite}
         </Button>
         <p id="invite-days-help" className="basis-full text-xs text-muted-foreground">
@@ -112,7 +114,10 @@ export function InvitesPanel() {
       ) : (
         <ul className="divide-y rounded-lg border">
           {invites.data.invites.map((i) => (
-            <li key={i.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5">
+            <li
+              key={i.id}
+              className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5 transition-colors hover:bg-muted/40"
+            >
               <div className="min-w-0 flex-1 basis-48">
                 <div className="text-sm font-medium">{t.roles[i.role]}</div>
                 <div className="text-xs text-muted-foreground">
@@ -126,6 +131,7 @@ export function InvitesPanel() {
                 onClick={() => void revoke(i.id)}
                 aria-label={t.fmt.labelled(t.users.revoke, `${t.roles[i.role]}, ${absoluteTime(i.expires)}`)}
               >
+                <Ban aria-hidden="true" />
                 {t.users.revoke}
               </Button>
             </li>
@@ -175,6 +181,7 @@ function FreshInvite({ invite, onDismiss }: { invite: CreatedInvite; onDismiss: 
           onFocus={(e) => e.currentTarget.select()}
         />
         <Button type="button" onClick={() => void copy()}>
+          <Copy aria-hidden="true" />
           {copied ? t.users.copied : t.users.copy}
         </Button>
         <Button type="button" variant="ghost" onClick={onDismiss}>
