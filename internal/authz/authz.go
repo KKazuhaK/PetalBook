@@ -59,6 +59,9 @@ type Info struct {
 	// holder of the key across the site.
 	Capability  string
 	Description string
+	// BuiltInOnly: no stored role may hold the key; only the built-in roles
+	// do (see BuiltInOnly).
+	BuiltInOnly bool
 }
 
 var (
@@ -101,6 +104,34 @@ func Register(name string, scope Scope, capability, desc string) Key {
 	k := Key(len(registry))
 	byName[name] = k
 	return k
+}
+
+// BuiltInOnly marks a key that no custom role may hold, at init: what only the
+// built-in roles hold (the content of people's personal spaces). It returns k.
+func BuiltInOnly(k Key) Key {
+	mu.Lock()
+	defer mu.Unlock()
+	if frozen {
+		panic("authz: " + k.info().Name + " marked after the roles were built")
+	}
+	registry[k-1].BuiltInOnly = true
+	return k
+}
+
+// Grantable reports whether a custom role may hold the key.
+func (k Key) Grantable() bool { return !k.info().BuiltInOnly }
+
+// GrantableKeys is every key a custom role may hold.
+func GrantableKeys() Set {
+	mu.Lock()
+	defer mu.Unlock()
+	var s Set
+	for i, in := range registry {
+		if !in.BuiltInOnly {
+			s = s.With(Key(i + 1))
+		}
+	}
+	return s
 }
 
 func (k Key) info() Info {

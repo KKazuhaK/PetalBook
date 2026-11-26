@@ -222,6 +222,21 @@ func (s *Service) SubjectOf(ctx context.Context, u store.User) (authz.Subject, e
 	return sub.WithGrants(gs), nil
 }
 
+// membershipChanged follows a change of people's groups (and spaces): while
+// some custom role exists, a role may be held through a group, so those people
+// are read again. Without custom roles nothing is dropped.
+func (s *Service) membershipChanged(userIDs ...string) {
+	if !s.st.CustomRoles() || len(userIDs) == 0 {
+		return
+	}
+	s.cmu.Lock()
+	defer s.cmu.Unlock()
+	s.gen++
+	for _, id := range userIDs {
+		delete(s.users, id)
+	}
+}
+
 // RolesChanged follows a change of custom roles or their grants: every cached
 // person is read again, with what they hold now.
 func (s *Service) RolesChanged() {

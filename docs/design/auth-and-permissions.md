@@ -179,12 +179,16 @@ What the conventions above became in code:
   asks the caller's subject: `c.can(key)` (held in their own tenant, a site
   key across the site) or `c.siteWide(key)` (a tenant key held in every
   tenant) in `internal/api`, `Subject.Can`/`SiteWide` in `internal/auth` and
-  `internal/spaces`. Two site keys were added for what only a site
+  `internal/spaces`. Three site keys were added for what only a site
   administrator did and no route names: `site.admins.manage` (change, delete,
   make or end a site administrator, reset their password or passkeys, end
-  their sessions and tokens) and `site.spaces.personal` (personal spaces in the
-  bin, in exports, in views, on a person's page, and managing one without
-  being its member). The other moved checks use existing keys: the disk and
+  their sessions, disconnect their accounts, revoke their tokens);
+  `site.spaces.personal.meta` (personal spaces in the bin and on a person's
+  page, restored with their person, managed without being a member); and
+  `site.spaces.personal.content` (the audited view and the export of a
+  personal space). The last is **built-in only** (`authz.BuiltInOnly`): no
+  custom role may list it (`InsertRole` refuses it, the subject builder drops
+  it), so a person's content stays the built-in site administrator's alone. The other moved checks use existing keys: the disk and
   restore counts and evict/pin are `site.storage.manage`; a tenant's slug,
   state and quota and a quota above the tenant's are `site.tenants.manage`;
   an early purge `site.recycle.purge`; a history export, a site-only export or
@@ -208,20 +212,38 @@ What the conventions above became in code:
   builds a subject from the built-in role and, only while
   `Store.CustomRoles()` says some role exists (one atomic load, read at start,
   set when a role is inserted), from the person's grants and their groups'
-  (one query, two index reads). Guardrails in the builder: a tenant role adds
-  only tenant keys, in the tenant it is held in; a site role held in a tenant
-  only its tenant keys there; space grants are the space level's and add
-  nothing outside spaces. A renamed key keeps working in stored roles through
+  (one query, two index reads). Guardrails in the store: `InsertRole` and
+  `UpdateRole` refuse a key that does not exist, one not of the role's scope
+  (a site role holds site and tenant keys, a tenant role tenant keys only, a
+  space role space keys) and a built-in-only key, and store keys by their
+  current names; a site role belongs to no tenant and a tenant role to one;
+  `InsertRoleGrant` refuses a tenant's role held in another tenant, and
+  `HeldRoles` never reads such a row. The builder holds the same lines again:
+  a tenant role adds only tenant keys, in the tenant it is held in; a site
+  role held in a tenant only its tenant keys there; space grants are the
+  space level's and add nothing outside spaces. A renamed key keeps working in stored roles through
   `authz.Alias`; a name that is no key grants nothing and is logged. A
   tenant's roles and grants go with the tenant, a group's grants with the
   group. `auth.Service.RolesChanged` drops the cached people when roles or
-  grants change.
+  grants change; a change of a person's groups drops that person
+  (`spaces.Manager.OnMembershipChanged`, only while some role exists).
 - **The group path is closed.** An administrator adding themselves to a group
   that gives them more in some space than they hold (directly or through
   another group) is `403 takeover_required`; with a `reason` it needs
   `tenant.spaces.takeover` and is audited (`group_self_added`, with the
-  spaces). Adding other people is unchanged. The check is in
-  `spaces.AddGroupPeople`, inside its transaction.
+  spaces). A group that holds a custom role outside spaces counts the same
+  (its keys would be theirs): the choice was to count it as a gain rather
+  than refuse site roles to groups, so groups stay a way to give roles, and
+  the audit row names the roles. Adding other people is unchanged. The check
+  is in `spaces.AddGroupPeople`, inside its transaction.
 - **Owner groups on a takeover or transfer** become editors in the same
   transaction (`store.DemoteOwnerGroups`), their people's lists are dropped at
   once, and the audit row's `ownerGroups` names them.
+- **Known, for the endpoint work.** A site administrator who maps an identity
+  provider's group to a local group and then signs in through it joins that
+  group without the takeover check: this was so before part 2, and the sync
+  is audited (`groups_synced`). `Store.CustomRoles` is per process: a role
+  written by another process (a second server on the same database) is not
+  seen until that process restarts. Neither matters while no endpoint writes
+  roles; the role endpoints must settle both (a check on the mapped sync, and
+  a flag read from the database or told across processes).

@@ -156,7 +156,7 @@ func (s *server) userMemberships(c *call) {
 		Groups []groupItem `json:"groups"`
 	}{[]spaceItem{}, []groupItem{}}
 	for _, sp := range spaces {
-		if sp.Personal && !c.can(authz.SiteSpacesPersonal) {
+		if sp.Personal && !c.can(authz.SiteSpacesPersonalMeta) {
 			continue
 		}
 		if len(out.Spaces) < maxMemberships {

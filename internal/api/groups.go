@@ -364,8 +364,8 @@ func (s *server) adminAddGroupMembers(c *call) {
 	if added > 0 {
 		tenant := s.groupTenant(c, id)
 		s.auditGroup(c, tenant, "group_member_added", "", map[string]any{"group": id, "users": ids})
-		if len(gained) > 0 {
-			s.auditGroup(c, tenant, "group_self_added", c.user().ID, map[string]any{"group": id, "spaces": gained, "reason": reason})
+		if !gained.Empty() {
+			s.auditGroup(c, tenant, "group_self_added", c.user().ID, map[string]any{"group": id, "spaces": nonNil(gained.Spaces), "roles": nonNil(gained.Roles), "reason": reason})
 		}
 	}
 	writeJSON(c.w, http.StatusOK, struct {

@@ -52,12 +52,14 @@ type Grant struct {
 //   - a tenant role adds only tenant keys, in the tenant it is held in (one
 //     held nowhere adds nothing): a role of a tenant never reaches the site;
 //   - a space role is the space level's (reserved) and adds nothing here, and
-//     no space key is ever held outside a space.
+//     no space key is ever held outside a space;
+//   - a key only the built-in roles hold (BuiltInOnly) is never added.
 func (s Subject) WithGrants(gs []Grant) Subject {
 	if len(gs) == 0 {
 		return s
 	}
-	tenantKeys := OfScope(ScopeTenant)
+	grantable := GrantableKeys()
+	tenantKeys := OfScope(ScopeTenant).Intersect(grantable)
 	out := Subject{Site: s.Site, Tenant: make(map[string]Set, len(s.Tenant)+len(gs))}
 	for t, set := range s.Tenant {
 		out.Tenant[t] = set
@@ -65,7 +67,7 @@ func (s Subject) WithGrants(gs []Grant) Subject {
 	for _, g := range gs {
 		switch {
 		case g.Scope == ScopeSite && g.Tenant == "":
-			out.Site = out.Site.Union(g.Keys.Intersect(OfScope(ScopeSite).Union(tenantKeys)))
+			out.Site = out.Site.Union(g.Keys.Intersect(OfScope(ScopeSite).Intersect(grantable).Union(tenantKeys)))
 		case (g.Scope == ScopeSite || g.Scope == ScopeTenant) && g.Tenant != "":
 			out.Tenant[g.Tenant] = out.Tenant[g.Tenant].Union(g.Keys.Intersect(tenantKeys))
 		}

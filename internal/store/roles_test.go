@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 	"petalbook.app/server/internal/store/storetest"
 )
@@ -108,6 +109,64 @@ func TestCustomRolesAndTheirGrants(t *testing.T) {
 		}
 		if err := st.ReloadCustomRoles(); err != nil || st.CustomRoles() {
 			t.Fatal(err)
+		}
+	})
+}
+
+// A role lists keys that exist (by a current or former name), of its scope,
+// and never one only the built-in roles hold; a tenant's role is held in that
+// tenant only.
+func TestARoleHoldsOnlyKeysOfItsScope(t *testing.T) {
+	t.Parallel()
+	authz.Alias("tenant.audit.list", authz.TenantAuditRead)
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Now()
+		q := st.Q()
+		const tn = "T000000002"
+		if err := st.CreateTenant(ctx, store.Tenant{ID: tn, Slug: "two", Name: "Two", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		role := func(id, scope, tenant string, keys ...string) store.Role {
+			return store.Role{ID: id, TenantID: tenant, Scope: scope, Name: id, Keys: keys, Created: now, Updated: now}
+		}
+		for _, r := range []store.Role{
+			role("B1", store.RoleScopeSite, "", "site.nothing"),
+			role("B2", store.RoleScopeSite, "", "space.read"),
+			role("B3", store.RoleScopeTenant, store.DefaultTenantID, "site.status.read"),
+			role("B4", store.RoleScopeSpace, store.DefaultTenantID, "tenant.users.read"),
+			role("B5", store.RoleScopeSite, "", "site.spaces.personal.content"),
+			role("B6", store.RoleScopeTenant, "", "tenant.users.read"),
+		} {
+			if err := st.InsertRole(ctx, q, r); !errors.Is(err, store.ErrInvalidRole) {
+				t.Errorf("%s was stored: %v", r.ID, err)
+			}
+		}
+		if err := st.InsertRole(ctx, q, role("A", store.RoleScopeTenant, store.DefaultTenantID, "tenant.audit.list")); err != nil {
+			t.Fatal(err)
+		}
+		if r, _ := store.GetRole(ctx, q, "A"); !slices.Equal(r.Keys, []string{"tenant.audit.read"}) {
+			t.Fatalf("a former name is stored as the key's name: %v", r.Keys)
+		}
+		if err := store.UpdateRole(ctx, q, "A", "A", []string{"site.status.read"}, now); !errors.Is(err, store.ErrInvalidRole) {
+			t.Fatal(err)
+		}
+		// Held in another tenant: refused, and ignored if it is there anyway.
+		g := store.RoleGrant{RoleID: "A", SubjectKind: store.GrantToUser, SubjectID: "U1", TenantID: tn, Created: now}
+		if err := store.InsertRoleGrant(ctx, q, g); !errors.Is(err, store.ErrInvalidRole) {
+			t.Fatal(err)
+		}
+		if _, err := q.Exec(ctx, `INSERT INTO role_grants(role_id, subject_kind, subject_id, tenant_id, space_id, created) VALUES ('A', 'user', 'U1', ?, '', 0)`, tn); err != nil {
+			t.Fatal(err)
+		}
+		if held, _ := store.HeldRoles(ctx, q, "U1"); len(held) != 0 {
+			t.Fatalf("%+v", held)
+		}
+		g.TenantID = store.DefaultTenantID
+		if err := store.InsertRoleGrant(ctx, q, g); err != nil {
+			t.Fatal(err)
+		}
+		if held, _ := store.HeldRoles(ctx, q, "U1"); len(held) != 1 {
+			t.Fatalf("%+v", held)
 		}
 	})
 }

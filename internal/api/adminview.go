@@ -173,7 +173,7 @@ var adminMetaRoutes = map[string]bool{
 // administrator never sees a person's own space). It answers 404 otherwise.
 func (s *server) adminSpaceFor(c *call, id string) (*store.SpaceInfo, bool) {
 	sp, err := store.GetSpace(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), id)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && sp.Personal && !c.can(authz.SiteSpacesPersonal)) {
+	if errors.Is(err, store.ErrNotFound) || (err == nil && sp.Personal && !c.can(authz.SiteSpacesPersonalContent)) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
 		return nil, false
 	}

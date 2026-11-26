@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
+
+	"petalbook.app/server/internal/authz"
 )
 
 // Custom roles (3.6, reserved: no endpoint makes them yet). A role is a named
@@ -29,6 +32,49 @@ const (
 	GrantToUser  = "user"
 	GrantToGroup = "group"
 )
+
+// ErrInvalidRole is a role or grant the rules refuse: a key that does not
+// exist, is not of the role's scope or is held by the built-in roles only; a
+// role of the site in a tenant or of a tenant in none; a tenant's role held
+// in another tenant.
+var ErrInvalidRole = errors.New("invalid role")
+
+// roleKeys checks a role's keys for its scope and returns them by their
+// current names (a former name is resolved through its alias): a site role
+// holds site and tenant keys, a tenant role tenant keys, a space role space
+// keys; none holds a key only the built-in roles hold.
+func roleKeys(scope, tenantID string, names []string) ([]string, error) {
+	var allowed authz.Set
+	switch scope {
+	case RoleScopeSite:
+		if tenantID != "" {
+			return nil, fmt.Errorf("%w: a role of the site belongs to no tenant", ErrInvalidRole)
+		}
+		allowed = authz.OfScope(authz.ScopeSite).Union(authz.OfScope(authz.ScopeTenant))
+	case RoleScopeTenant:
+		if tenantID == "" {
+			return nil, fmt.Errorf("%w: a role of a tenant belongs to one", ErrInvalidRole)
+		}
+		allowed = authz.OfScope(authz.ScopeTenant)
+	case RoleScopeSpace:
+		allowed = authz.OfScope(authz.ScopeSpace)
+	default:
+		return nil, fmt.Errorf("%w: no scope %q", ErrInvalidRole, scope)
+	}
+	allowed = allowed.Intersect(authz.GrantableKeys())
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		k, ok := authz.Lookup(n)
+		if !ok {
+			return nil, fmt.Errorf("%w: no key %q", ErrInvalidRole, n)
+		}
+		if !allowed.Has(k) {
+			return nil, fmt.Errorf("%w: a %s role cannot hold %s", ErrInvalidRole, scope, k.Name())
+		}
+		out = append(out, k.Name())
+	}
+	return out, nil
+}
 
 // IsAdminRole reports whether an account role is the administrator's. The
 // rules about an account itself (an invitation's role, a person signing in)
@@ -114,7 +160,11 @@ func keysJSON(keys []string) (string, error) {
 // grant ever misses it (in a transaction that rolls back, it stays true
 // until the next start, which costs only the look for grants).
 func (s *Store) InsertRole(ctx context.Context, q Q, r Role) error {
-	keys, err := keysJSON(r.Keys)
+	names, err := roleKeys(r.Scope, r.TenantID, r.Keys)
+	if err != nil {
+		return err
+	}
+	keys, err := keysJSON(names)
 	if err != nil {
 		return err
 	}
@@ -124,9 +174,19 @@ func (s *Store) InsertRole(ctx context.Context, q Q, r Role) error {
 	return err
 }
 
-// UpdateRole changes a role's name and keys.
+// UpdateRole changes a role's name and keys, which are checked as InsertRole does.
 func UpdateRole(ctx context.Context, q Q, id, name string, keys []string, now time.Time) error {
-	k, err := keysJSON(keys)
+	var scope, tenant string
+	if err := q.QueryRow(ctx, `SELECT scope, tenant_id FROM roles WHERE id = ?`, id).Scan(&scope, &tenant); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	names, err := roleKeys(scope, tenant, keys)
+	if err != nil {
+		return err
+	}
+	k, err := keysJSON(names)
 	if err != nil {
 		return err
 	}
@@ -182,8 +242,18 @@ func ListRoles(ctx context.Context, q Q, tenantID string) ([]Role, error) {
 	return out, rows.Err()
 }
 
-// InsertRoleGrant gives a role; the same grant twice is a unique violation.
+// InsertRoleGrant gives a role; the same grant twice is a unique violation. A
+// tenant's role is held in that tenant only (ErrInvalidRole for another).
 func InsertRoleGrant(ctx context.Context, q Q, g RoleGrant) error {
+	var tenant string
+	if err := q.QueryRow(ctx, `SELECT tenant_id FROM roles WHERE id = ?`, g.RoleID).Scan(&tenant); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if tenant != "" && g.TenantID != "" && g.TenantID != tenant {
+		return fmt.Errorf("%w: a role of a tenant is held in that tenant only", ErrInvalidRole)
+	}
 	_, err := q.Exec(ctx, `INSERT INTO role_grants(role_id, subject_kind, subject_id, tenant_id, space_id, created) VALUES (?, ?, ?, ?, ?, ?)`,
 		g.RoleID, g.SubjectKind, g.SubjectID, g.TenantID, g.SpaceID, ms(g.Created))
 	return err
@@ -197,14 +267,16 @@ func DeleteRoleGrant(ctx context.Context, q Q, g RoleGrant) error {
 }
 
 // HeldRoles is every role a person holds: given to them, or to a group they
-// are in. Each half reads role_grants by its index on the subject.
+// are in. Each half reads role_grants by its index on the subject. A grant of
+// a tenant's role in another tenant (which InsertRoleGrant refuses) is not read.
 func HeldRoles(ctx context.Context, q Q, userID string) ([]HeldRole, error) {
 	const cols = `r.scope, r.keys, CASE WHEN g.tenant_id <> '' THEN g.tenant_id ELSE r.tenant_id END, g.space_id`
+	const own = ` AND (g.tenant_id = '' OR r.tenant_id = '' OR g.tenant_id = r.tenant_id)`
 	rows, err := q.Query(ctx, `SELECT `+cols+` FROM role_grants g JOIN roles r ON r.id = g.role_id
-		WHERE g.subject_kind = 'user' AND g.subject_id = ?
+		WHERE g.subject_kind = 'user' AND g.subject_id = ?`+own+`
 		UNION ALL
 		SELECT `+cols+` FROM role_grants g JOIN roles r ON r.id = g.role_id
-		WHERE g.subject_kind = 'group' AND g.subject_id IN (SELECT group_id FROM group_members WHERE user_id = ?)`, userID, userID)
+		WHERE g.subject_kind = 'group' AND g.subject_id IN (SELECT group_id FROM group_members WHERE user_id = ?)`+own, userID, userID)
 	if err != nil {
 		return nil, err
 	}

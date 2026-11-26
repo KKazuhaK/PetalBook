@@ -78,7 +78,7 @@ func (s *server) recycleItemOf(it store.RecycleItem, days int, with []store.Recy
 // person's own space is left out of what they are shown (it comes back with the
 // person all the same).
 func withFor(c *call, with []store.RecycleItem) []store.RecycleItem {
-	if c.can(authz.SiteSpacesPersonal) {
+	if c.can(authz.SiteSpacesPersonalMeta) {
 		return with
 	}
 	out := with[:0:0]

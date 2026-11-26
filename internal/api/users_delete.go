@@ -445,21 +445,21 @@ func (s *server) restoreUser(c *call, it *store.RecycleItem) {
 	// a tenant's administrator and counts it.
 	skipped, spaceIDs, personal := []store.RestoreSkipped{}, []string{}, 0
 	for _, sk := range res.Skipped {
-		if sk.Personal && !c.can(authz.SiteSpacesPersonal) {
+		if sk.Personal && !c.can(authz.SiteSpacesPersonalMeta) {
 			personal++
 			continue
 		}
 		skipped = append(skipped, sk)
 	}
 	for _, id := range res.Spaces {
-		if res.Personal[id] && !c.can(authz.SiteSpacesPersonal) {
+		if res.Personal[id] && !c.can(authz.SiteSpacesPersonalMeta) {
 			personal++
 			continue
 		}
 		spaceIDs = append(spaceIDs, id)
 	}
 	restored := map[string]any{"item": it.ID, "user": s.toUser(res.User), "spaces": spaceIDs}
-	if !c.can(authz.SiteSpacesPersonal) {
+	if !c.can(authz.SiteSpacesPersonalMeta) {
 		restored["personal"] = personal
 	}
 	if res.Transfers == nil {

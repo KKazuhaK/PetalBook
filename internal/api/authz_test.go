@@ -76,8 +76,9 @@ func TestEveryAdminRouteHasAKey(t *testing.T) {
 // askedInHandlers are the keys no route names: a handler asks them for part of
 // what it does (part 2 of 3.6 moved the checks of the site administrator there).
 var askedInHandlers = map[string]string{
-	"site.admins.manage":   "changing, deleting, resetting a site administrator, or making one (accounts, tokens, passkeys, deletion)",
-	"site.spaces.personal": "personal spaces in the bin, exports, views, a person's page, and managing one without being its member",
+	"site.admins.manage":           "changing, deleting, resetting a site administrator, or making one (accounts, tokens, passkeys, deletion)",
+	"site.spaces.personal.meta":    "personal spaces in the bin, on a person's page, restored with their person, and managed without being a member",
+	"site.spaces.personal.content": "the audited view and the export of a personal space (built-in site administrator only)",
 }
 
 // goName is the Go name of a key: site.admins.manage is SiteAdminsManage.

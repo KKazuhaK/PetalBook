@@ -23,6 +23,9 @@ import (
 //   - .SiteAdmin used as a condition: an operand of && or ||, negated, an if or
 //     for condition, or compared with anything but nil. Copying the field
 //     (SiteAdmin: req.SiteAdmin, a function argument) is not a condition;
+//   - a switch on a role with a case "admin", and strings.EqualFold of a role
+//     and "admin";
+//   - a local the function reads .SiteAdmin into, used as such a condition;
 //   - a call of isSiteAdmin, the helper this replaced.
 var authzScanAllowed = []string{"internal/authz/", "internal/store/"}
 
@@ -70,16 +73,63 @@ func TestNoRoleChecksOutsideAuthz(t *testing.T) {
 	}
 }
 
-// roleChecks finds the positions of the checks the test refuses in f.
+// roleChecks finds the positions of the checks the test refuses in f, one
+// function at a time: a local the function reads .SiteAdmin into is a
+// condition wherever the field would be.
 func roleChecks(f *ast.File) []token.Pos {
 	var out []token.Pos
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil {
+			out = append(out, roleChecksIn(fd.Body)...)
+		}
+	}
+	return out
+}
+
+func roleChecksIn(body *ast.BlockStmt) []token.Pos {
+	var out []token.Pos
+	// The locals given .SiteAdmin (x := u.SiteAdmin, x = u.SiteAdmin, var x = u.SiteAdmin).
+	locals := map[string]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if len(n.Lhs) == len(n.Rhs) {
+				for i, r := range n.Rhs {
+					if id, ok := n.Lhs[i].(*ast.Ident); ok && isSiteAdminField(r) {
+						locals[id.Name] = true
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			if len(n.Names) == len(n.Values) {
+				for i, v := range n.Values {
+					if isSiteAdminField(v) {
+						locals[n.Names[i].Name] = true
+					}
+				}
+			}
+		}
+		return true
+	})
 	cond := func(e ast.Expr) {
 		if isSiteAdminField(e) {
 			out = append(out, e.Pos())
+		} else if id, ok := unparen(e).(*ast.Ident); ok && locals[id.Name] {
+			out = append(out, e.Pos())
 		}
 	}
-	ast.Inspect(f, func(n ast.Node) bool {
+	ast.Inspect(body, func(n ast.Node) bool {
 		switch n := n.(type) {
+		case *ast.SwitchStmt:
+			if n.Tag != nil && isRole(n.Tag) {
+				for _, s := range n.Body.List {
+					for _, e := range s.(*ast.CaseClause).List {
+						if isAdminLit(e) {
+							out = append(out, e.Pos())
+						}
+					}
+				}
+			}
 		case *ast.BinaryExpr:
 			switch n.Op {
 			case token.EQL, token.NEQ:
@@ -106,6 +156,10 @@ func roleChecks(f *ast.File) []token.Pos {
 			}
 		case *ast.CallExpr:
 			if sel, ok := n.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "isSiteAdmin" {
+				out = append(out, n.Pos())
+			}
+			if sel, ok := n.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "EqualFold" && len(n.Args) == 2 &&
+				((isRole(n.Args[0]) && isAdminLit(n.Args[1])) || (isRole(n.Args[1]) && isAdminLit(n.Args[0]))) {
 				out = append(out, n.Pos())
 			}
 		}
@@ -168,12 +222,26 @@ func f() {
 	_ = patch.SiteAdmin != nil
 	_ = u.Role == "member"
 	site := u.SiteAdmin
+	_ = site
+	switch u.Role {
+	case "member", "admin":
+	}
+	switch role {
+	case "member":
+	}
+	_ = strings.EqualFold(u.Role, "admin")
+	sa := c.user().SiteAdmin
+	if ok && sa {
+	}
+	var flag bool
+	flag = p.SiteAdmin
+	_ = !flag
 }`
 	f, err := parser.ParseFile(token.NewFileSet(), "x.go", src, parser.SkipObjectResolution)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(roleChecks(f)); got != 7 {
-		t.Fatalf("found %d checks, want 7", got)
+	if got := len(roleChecks(f)); got != 11 {
+		t.Fatalf("found %d checks, want 11", got)
 	}
 }

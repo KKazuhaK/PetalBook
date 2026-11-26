@@ -493,7 +493,7 @@ func (s *server) bulkExport(ctx context.Context, req confirmRequest, actor store
 	personal := false
 	for _, id := range req.Spaces {
 		sp, err := store.GetSpace(ctx, s.opt.Store.Q(), sc, id)
-		if err != nil || (sp.Personal && !access.Can(authz.SiteSpacesPersonal, "")) {
+		if err != nil || (sp.Personal && !access.Can(authz.SiteSpacesPersonalContent, "")) {
 			return spaces.ErrNotFound
 		}
 		sources = append(sources, store.ExportSource{Space: sp.ID, SpaceID: sp.ID, Name: sp.Name})

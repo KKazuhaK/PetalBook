@@ -1450,7 +1450,7 @@ These rows join those of "Audit log":
 |---|---|---|
 | `group_created`, `group_changed`, `group_deleted` | an administrator made, renamed or deleted a group | `group`, `name`, `source`; for a change the changed fields; for a delete `people` and `spaces` |
 | `group_member_added`, `group_member_removed` | an administrator changed a local group's people (one row per request) | `group`, `users` (ids, at most 500) |
-| `group_self_added` | an administrator added themselves to a group that gave them more in some spaces, with a reason (see "Taking over a space") | `group`, `spaces`, `reason` |
+| `group_self_added` | an administrator added themselves to a group that gave them more in some spaces, or a custom role, with a reason (see "Taking over a space") | `group`, `spaces`, `roles`, `reason` |
 | `groups_synced` | a sign-in changed a person's synced groups | `provider`, `added`, `removed` (group ids) |
 | `groups_claim_missing` | a provider with groups on sent no claim (or an overage) | `provider`, `missing` (`keep` or `clear`), `reason` (`absent`, `overage`) |
 | `groups_claim_truncated` | more values than read, or more groups than a person may be in | `provider`, `limit` (`values`, `group_limit`) |
@@ -9493,7 +9493,8 @@ administrator" any more. A key is a name, a scope (`site`, `tenant` or
 `space`), the tenant capability it needs (if any) and a description. The
 registry is in code (`internal/authz`): a key is registered once, and the
 names below, `GET /api/admin/permissions` and the web app's `PermissionKey`
-are the same list (a test compares them).
+are the same list (a test compares them). `site.spaces.personal.content` is
+held by the built-in site administrator only: no custom role may hold it.
 
 | Key | Scope | Capability | What it allows |
 |---|---|---|---|
@@ -9510,7 +9511,8 @@ are the same list (a test compares them).
 | `site.storage.manage` | site | — | Change the server's storage budget and a space's storage, evict and pin spaces, see the disk, and exempt a person from the site's requirement of a remote |
 | `site.recycle.purge` | site | — | Purge an item of the recycle bin for good |
 | `site.admins.manage` | site | — | Change administrators of the whole server (their accounts, passwords, passkeys, sessions and tokens), delete them, and make or end one |
-| `site.spaces.personal` | site | — | Reach people's personal spaces in the administration: list, view, export and restore them, and manage one without being its member |
+| `site.spaces.personal.meta` | site | — | See people's personal spaces in the administration (in lists, the recycle bin and a person's page, with their size), restore them with their person, and manage one without being its member; not their content |
+| `site.spaces.personal.content` | site | — | Open an audited view of a person's personal space and export it; held by the built-in site administrator only |
 | `tenant.settings.read` | tenant | — | Read the tenant and its settings |
 | `tenant.settings.write` | tenant | — | Change the tenant and its settings |
 | `tenant.users.read` | tenant | — | List people and read their accounts, memberships, sessions, identities and passkeys |
@@ -9615,8 +9617,9 @@ saying so. That is closed:
   `403 takeover_required`, and nothing is added. Sending a `reason` makes it
   explicit: it needs `tenant.spaces.takeover` in the group's tenant
   (`403 forbidden` naming it otherwise) and is audited as `group_self_added`
-  with `group`, `spaces` (those it gave them more in) and `reason`. Adding
-  other people is not asked about.
+  with `group`, `spaces` (those it gave them more in), `roles` (the custom
+  roles the group holds outside spaces, which count the same) and `reason`.
+  Adding other people is not asked about.
 - A built-in tenant administrator holds `tenant.spaces.takeover`, but only this
   endpoint (and `…/transfer`) uses it; it never widens what they may do in a
   space implicitly. The same holds for a site administrator.

@@ -129,7 +129,7 @@ func (s *server) adminCreateExport(c *call) {
 	}
 	for _, id := range req.Items {
 		it, ok := items[id]
-		if !ok || it.Kind != store.RecycleSpace || (it.Personal && !c.can(authz.SiteSpacesPersonal)) {
+		if !ok || it.Kind != store.RecycleSpace || (it.Personal && !c.can(authz.SiteSpacesPersonalContent)) {
 			writeError(c.w, http.StatusNotFound, "not_found", "No such item in the recycle bin.")
 			return
 		}
@@ -306,7 +306,7 @@ func (s *server) exportUserSources(c *call, spaceIDs, itemIDs *[]string, user st
 			return false
 		}
 		for _, ch := range children {
-			if ch.State == store.RecycleReady && (!ch.Personal || c.can(authz.SiteSpacesPersonal)) {
+			if ch.State == store.RecycleReady && (!ch.Personal || c.can(authz.SiteSpacesPersonalContent)) {
 				*itemIDs = append(*itemIDs, ch.ID)
 			}
 		}
@@ -318,7 +318,7 @@ func (s *server) exportUserSources(c *call, spaceIDs, itemIDs *[]string, user st
 		return false
 	}
 	for _, r := range plan.Recycle {
-		if !r.Personal || c.can(authz.SiteSpacesPersonal) {
+		if !r.Personal || c.can(authz.SiteSpacesPersonalContent) {
 			*spaceIDs = append(*spaceIDs, r.ID)
 		}
 	}

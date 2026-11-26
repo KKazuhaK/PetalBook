@@ -242,6 +242,11 @@ func DemoteOwnerGroups(ctx context.Context, q Q, spaceID string) error {
 	return err
 }
 
+// GroupRoleIDs lists the custom roles a group holds outside spaces, in order.
+func GroupRoleIDs(ctx context.Context, q Q, groupID string) ([]string, error) {
+	return strCol(ctx, q, `SELECT DISTINCT role_id FROM role_grants WHERE subject_kind = 'group' AND subject_id = ? AND space_id = '' ORDER BY role_id`, groupID)
+}
+
 // GroupSpaceRoles is the role a group holds in each of its spaces, by space id.
 func GroupSpaceRoles(ctx context.Context, q Q, groupID string) (map[string]string, error) {
 	rows, err := q.Query(ctx, `SELECT space_id, role FROM space_groups WHERE group_id = ?`, groupID)

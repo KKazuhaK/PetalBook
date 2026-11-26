@@ -70,11 +70,18 @@ export const PERMISSIONS: PermissionInfo[] = [
       'Change administrators of the whole server (their accounts, passwords, passkeys, sessions and tokens), delete them, and make or end one',
   },
   {
-    name: 'site.spaces.personal',
+    name: 'site.spaces.personal.meta',
     scope: 'site',
     capability: '',
     description:
-      "Reach people's personal spaces in the administration: list, view, export and restore them, and manage one without being its member",
+      "See people's personal spaces in the administration (in lists, the recycle bin and a person's page, with their size), restore them with their person, and manage one without being its member; not their content",
+  },
+  {
+    name: 'site.spaces.personal.content',
+    scope: 'site',
+    capability: '',
+    description:
+      "Open an audited view of a person's personal space and export it; held by the built-in site administrator only",
   },
   { name: 'tenant.settings.read', scope: 'tenant', capability: '', description: 'Read the tenant and its settings' },
   { name: 'tenant.settings.write', scope: 'tenant', capability: '', description: 'Change the tenant and its settings' },

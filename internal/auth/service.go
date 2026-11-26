@@ -315,6 +315,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	} else {
 		s.setupToken = randomToken()
 	}
+	// A custom role held through a group follows the group's people at once.
+	cfg.Spaces.OnMembershipChanged(s.membershipChanged)
 	return s, nil
 }
 

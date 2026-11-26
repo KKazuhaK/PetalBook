@@ -290,8 +290,10 @@ type opening struct {
 
 // Manager is safe for concurrent use.
 type Manager struct {
-	opt    Options
-	single *space.Space
+	opt Options
+	// onMembers is told of MembershipChanged (see OnMembershipChanged).
+	onMembers func(userIDs ...string)
+	single    *space.Space
 	// singleInbox is the inbox folder of the one space of single-user mode.
 	singleInbox string
 	log         *slog.Logger
@@ -628,8 +630,8 @@ func (m *Manager) openForIndex(ctx context.Context, user store.User, access auth
 		// A person's own space is not an organisation's: a tenant's administrator
 		// does not reach it at all, as if it were not there (3.5; a site
 		// administrator, who may read any file on the disk, does: the key
-		// site.spaces.personal).
-		if sp.Personal && !access.Can(authz.SiteSpacesPersonal, "") {
+		// site.spaces.personal.meta).
+		if sp.Personal && !access.Can(authz.SiteSpacesPersonalMeta, "") {
 			return nil, ErrNotFound
 		}
 		// An administrator who is not a member manages the space (its members,
@@ -1308,6 +1310,19 @@ func (m *Manager) UserChanged(ctx context.Context, u store.User) {
 func (m *Manager) MembershipChanged(userIDs ...string) {
 	m.mu.Lock()
 	m.dropListsLocked(userIDs...)
+	fn := m.onMembers
+	m.mu.Unlock()
+	if fn != nil {
+		fn(userIDs...)
+	}
+}
+
+// OnMembershipChanged registers fn, called with the people of every
+// MembershipChanged after their lists are dropped: the session cache drops
+// what they hold outside spaces, which a group may give (custom roles).
+func (m *Manager) OnMembershipChanged(fn func(userIDs ...string)) {
+	m.mu.Lock()
+	m.onMembers = fn
 	m.mu.Unlock()
 }
 

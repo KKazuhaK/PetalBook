@@ -149,6 +149,21 @@ func TestAFormerNameStillNamesItsKey(t *testing.T) {
 	}
 }
 
+// The content of personal spaces is the built-in site administrator's alone: no
+// stored role can hold it, whatever it lists.
+func TestPersonalContentIsNotGrantable(t *testing.T) {
+	if authz.SiteSpacesPersonalContent.Grantable() || !authz.SiteSpacesPersonalMeta.Grantable() || !authz.TenantUsersRead.Grantable() {
+		t.Fatal("grantable marks")
+	}
+	if !authz.SubjectFor("admin", true, "A").Can(authz.SiteSpacesPersonalContent, "") {
+		t.Fatal("the site administrator holds it")
+	}
+	got := authz.Subject{}.WithGrants([]authz.Grant{{Scope: authz.ScopeSite, Keys: authz.Of(authz.SiteSpacesPersonalContent, authz.SiteSpacesPersonalMeta)}})
+	if got.Can(authz.SiteSpacesPersonalContent, "") || !got.Can(authz.SiteSpacesPersonalMeta, "") {
+		t.Fatal(got)
+	}
+}
+
 func TestCustomGrantsKeepToTheirScope(t *testing.T) {
 	mem := authz.SubjectFor("member", false, "A")
 	got := mem.WithGrants([]authz.Grant{
