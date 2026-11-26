@@ -488,6 +488,9 @@ type Registered struct {
 	Token   string
 	Org     *store.Tenant
 	Renamed bool
+	// Held and HeldBy: as LoginResult's.
+	Held   bool
+	HeldBy string
 }
 
 // RegisterConfirm makes the account a registration link is for, and signs it in.
@@ -552,11 +555,12 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*Regis
 		}
 		return nil, err
 	}
-	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u), "registration")
+	held := s.passkeyRequiredOf(st, *u)
+	tok, err := s.issueSession(ctx, u.ID, held, "registration")
 	if err != nil {
 		return nil, err
 	}
-	res := &Registered{User: u, Token: tok}
+	res := &Registered{User: u, Token: tok, Held: held}
 	s.Audit(AuditEvent{Kind: "registered", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"email": reg.Email}})
 	if org {
 		t := p.NewTenant.Made

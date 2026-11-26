@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, providerStartUrl } from '@/api/client'
 import { applySignIn, useAuthProviders, useSession } from '@/api/hooks'
-import type { AuthProviders, EndedReason } from '@/api/types'
+import type { AuthProviders, EndedReason, SignInAnswer } from '@/api/types'
 import { AccountCard } from '@/components/auth/AccountCard'
 import { AuthLayout, OrDivider } from '@/components/auth/AuthLayout'
 import { CaptchaField, useCaptcha } from '@/components/auth/Captcha'
@@ -213,13 +213,13 @@ function LoginForm({
     setPasskeyOnly(false)
     const sent = captcha.value()
     try {
-      const { user } = await api.login({
+      const answer = await api.login({
         username: username.trim(),
         password: pass,
         ...(sent ? { captcha: sent } : {}),
       })
-      rememberAccount(user, { type: 'password' })
-      await applySignIn(qc, user)
+      rememberAccount(answer.user, { type: 'password' })
+      applySignIn(qc, answer)
       navigate(ret, { replace: true })
     } catch (err) {
       setBusy(false)
@@ -239,9 +239,9 @@ function LoginForm({
     }
   }
 
-  const passkeyDone = async (r: { user: Parameters<typeof applySignIn>[1]; return: string }) => {
+  const passkeyDone = (r: SignInAnswer & { return: string }) => {
     rememberAccount(r.user, { type: 'passkey' })
-    await applySignIn(qc, r.user)
+    applySignIn(qc, r)
     navigate(safeReturn(r.return), { replace: true })
   }
 
@@ -260,7 +260,7 @@ function LoginForm({
     <PasskeyButton
       username={username}
       ret={ret}
-      onDone={(r) => void passkeyDone(r)}
+      onDone={passkeyDone}
       onError={(m) => {
         setError(m)
         setPasskeyOnly(false)
@@ -330,7 +330,7 @@ function LoginForm({
           <PasskeyButton
             username={returning.username}
             ret={ret}
-            onDone={(r) => void passkeyDone(r)}
+            onDone={passkeyDone}
             onError={(msg) => {
               setError(msg)
               setPasskeyOnly(false)

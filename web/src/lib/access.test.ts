@@ -32,18 +32,29 @@ describe('can', () => {
     expect(can(null, 'tenant.spaces.create')).toBe(false)
   })
 
-  it('falls back on the built-in role until the session lists the keys', () => {
-    const site = user({ role: 'admin', siteAdmin: true })
-    const ten = user({ role: 'admin', siteAdmin: false })
-    const mem = user({ role: 'member' })
-    expect([can(site, 'site.settings.manage'), acrossSite(site), can(site, 'tenant.users.read')]).toEqual([
+  it('holds nothing while the permissions are not known: the role is never a guess', () => {
+    for (const u of [
+      user({ role: 'admin', siteAdmin: true }),
+      user({ role: 'admin', siteAdmin: false }),
+      user({ role: 'member' }),
+    ]) {
+      expect([can(u, 'tenant.spaces.create'), can(u, 'tenant.users.read'), acrossSite(u), administers(u)]).toEqual([
+        false,
+        false,
+        false,
+        false,
+      ])
+    }
+  })
+
+  it('reads a site administrator, a tenant administrator and a member from their keys', () => {
+    const site = user({ role: 'admin', siteAdmin: true, permissions: ['tenant.users.read', 'site.tenants.manage'] })
+    const ten = user({ role: 'admin', siteAdmin: false, permissions: ['tenant.users.read'] })
+    const mem = user({ role: 'member', permissions: ['tenant.spaces.create'] })
+    expect([acrossSite(site), acrossSite(ten), can(ten, 'tenant.users.read'), administers(ten)]).toEqual([
       true,
-      true,
-      true,
-    ])
-    expect([can(ten, 'site.settings.manage'), acrossSite(ten), can(ten, 'tenant.users.read')]).toEqual([
       false,
-      false,
+      true,
       true,
     ])
     expect([can(mem, 'tenant.spaces.create'), can(mem, 'tenant.users.read'), administers(mem)]).toEqual([

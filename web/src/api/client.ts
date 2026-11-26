@@ -11,6 +11,7 @@ import { viewAsHeaders, viewAsId } from '@/lib/viewAs'
 
 import { ENDED_REASONS } from './types'
 import type {
+  SignInAnswer,
   RegisterInfo,
   RegisteredOrg,
   RegisterInput,
@@ -785,13 +786,13 @@ export const api = {
     password: string
     captcha?: CaptchaAnswer
   }) => {
-    const r = await request<{ user: User }>('/setup', { method: 'POST', body: input })
+    const r = await request<SignInAnswer>('/setup', { method: 'POST', body: input })
     markSignedIn()
     rememberUser(r.user.id)
     return r
   },
   login: async (input: { username: string; password: string; captcha?: CaptchaAnswer }) => {
-    const r = await request<{ user: User }>('/login', { method: 'POST', body: input })
+    const r = await request<SignInAnswer>('/login', { method: 'POST', body: input })
     markSignedIn()
     rememberUser(r.user.id)
     return r
@@ -821,7 +822,7 @@ export const api = {
   passkeyBegin: (username?: string) =>
     request<PasskeyCeremony>('/auth/passkey/begin', { method: 'POST', body: username ? { username } : {} }),
   passkeyFinish: async (ceremony: string, ret: string, credential: unknown) => {
-    const r = await request<{ user: User; return: string }>(
+    const r = await request<SignInAnswer & { return: string }>(
       `/auth/passkey/finish?ceremony=${enc(ceremony)}&return=${enc(ret)}`,
       { method: 'POST', body: credential },
     )
@@ -899,7 +900,7 @@ export const api = {
     request<RegisterInfo>(`/register${tenant ? `?tenant=${enc(tenant)}` : ''}`, { signal }),
   register: (input: RegisterInput) => request<{ sent: boolean }>('/register', { method: 'POST', body: input }),
   registerConfirm: async (token: string) => {
-    const r = await request<{ user: User; tenant?: RegisteredOrg }>('/register/confirm', {
+    const r = await request<SignInAnswer & { tenant?: RegisteredOrg }>('/register/confirm', {
       method: 'POST',
       body: { token },
     })
@@ -941,7 +942,7 @@ export const api = {
     password: string
     captcha?: CaptchaAnswer
   }) => {
-    const r = await request<{ user: User }>('/invites/accept', { method: 'POST', body: input })
+    const r = await request<SignInAnswer>('/invites/accept', { method: 'POST', body: input })
     markSignedIn()
     rememberUser(r.user.id)
     return r

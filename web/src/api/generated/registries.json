@@ -1,0 +1,780 @@
+{
+  "permissions": [
+    {
+      "name": "site.settings.manage",
+      "scope": "site",
+      "feature": "",
+      "description": "Read and change the site's settings",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.security.manage",
+      "scope": "site",
+      "feature": "",
+      "description": "Read and change the sign-in security of the site",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.signin.manage",
+      "scope": "site",
+      "feature": "",
+      "description": "Add, change and remove sign-in providers",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.mail.manage",
+      "scope": "site",
+      "feature": "",
+      "description": "Read and change the mail settings, and send a test message",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.tenants.manage",
+      "scope": "site",
+      "feature": "",
+      "description": "List, create and delete tenants; change a tenant's slug, state and quota, and give a person more than their tenant allows",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.connections.manage",
+      "scope": "site",
+      "feature": "",
+      "description": "Set up the providers people connect to",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.daily.manage",
+      "scope": "site",
+      "feature": "",
+      "description": "Set up the daily text: its interfaces, providers and lines",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.status.read",
+      "scope": "site",
+      "feature": "",
+      "description": "Read the server's status",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.storage.manage",
+      "scope": "site",
+      "feature": "",
+      "description": "Change the server's storage budget and a space's storage, evict and pin spaces, see the disk, and exempt a person from the site's requirement of a remote",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.recycle.purge",
+      "scope": "site",
+      "feature": "",
+      "description": "Purge an item of the recycle bin for good",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.admins.manage",
+      "scope": "site",
+      "feature": "",
+      "description": "Change administrators of the whole server (their accounts, passwords, passkeys, sessions and tokens), delete them, and make or end one",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.spaces.personal.meta",
+      "scope": "site",
+      "feature": "",
+      "description": "See people's personal spaces in the administration (in lists, the recycle bin and a person's page, with their size), restore them with their person, and manage one without being its member; not their content",
+      "builtInOnly": false
+    },
+    {
+      "name": "site.spaces.personal.content",
+      "scope": "site",
+      "feature": "",
+      "description": "Open an audited view of a person's personal space and export it; held by the built-in site administrator only",
+      "builtInOnly": true
+    },
+    {
+      "name": "tenant.settings.read",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Read the tenant and its settings",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.settings.write",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Change the tenant and its settings",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.users.read",
+      "scope": "tenant",
+      "feature": "",
+      "description": "List people and read their accounts, memberships, sessions, identities and passkeys",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.users.manage",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Change people's accounts, end their sessions, remove identities and passkeys, send password resets",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.users.delete",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Delete people",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.invites.manage",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Create, list and withdraw invitations",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.groups.read",
+      "scope": "tenant",
+      "feature": "",
+      "description": "List groups, their members and their spaces",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.groups.manage",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Create, change and delete groups and their members",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.spaces.create",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Create spaces",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.spaces.read",
+      "scope": "tenant",
+      "feature": "",
+      "description": "List the tenant's spaces",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.spaces.manage",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Manage a space without being its member: its settings and members, but not its owners or its remote; measure, disable and enable it",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.spaces.takeover",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Take over a space (become its owner) or transfer it; audited, and its owners are told",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.spaces.delete",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Delete spaces",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.data.view",
+      "scope": "tenant",
+      "feature": "features.adminView",
+      "description": "Open an audited, read-only view of a space",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.users.viewAs",
+      "scope": "tenant",
+      "feature": "features.adminView",
+      "description": "View the app as a person sees it: read only, for an hour, audited; never personal spaces, drafts or the person's account",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.data.export",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Export spaces and download the exports",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.storage.read",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Read the storage used by the tenant and its people",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.recycle.read",
+      "scope": "tenant",
+      "feature": "",
+      "description": "List the recycle bin",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.recycle.restore",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Restore an item of the recycle bin",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.bulk.run",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Confirm and run bulk actions, and follow their jobs",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.usage.read",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Read the usage of the tenant",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.audit.read",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Read the audit log",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.tokens.read",
+      "scope": "tenant",
+      "feature": "",
+      "description": "List people's API tokens and app authorizations",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.tokens.revoke",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Revoke people's API tokens and app authorizations",
+      "builtInOnly": false
+    },
+    {
+      "name": "tenant.permissions.read",
+      "scope": "tenant",
+      "feature": "",
+      "description": "List the permission keys",
+      "builtInOnly": false
+    },
+    {
+      "name": "space.read",
+      "scope": "space",
+      "feature": "",
+      "description": "See pages, history, attachments and search",
+      "builtInOnly": false
+    },
+    {
+      "name": "space.write",
+      "scope": "space",
+      "feature": "",
+      "description": "Create, change, move and delete pages and folders",
+      "builtInOnly": false
+    },
+    {
+      "name": "space.members.manage",
+      "scope": "space",
+      "feature": "",
+      "description": "Add, change and remove the members of the space",
+      "builtInOnly": false
+    },
+    {
+      "name": "space.manage",
+      "scope": "space",
+      "feature": "",
+      "description": "Rename the space; its inbox, remote, sync, types and templates",
+      "builtInOnly": false
+    }
+  ],
+  "auditCategories": [
+    {
+      "id": "security",
+      "core": true,
+      "setting": null,
+      "default": true,
+      "kinds": [
+        {
+          "name": "account_connected",
+          "site": false
+        },
+        {
+          "name": "account_disconnected",
+          "site": false
+        },
+        {
+          "name": "connection_provider_changed",
+          "site": true
+        },
+        {
+          "name": "email_added",
+          "site": false
+        },
+        {
+          "name": "email_claim_withdrawn",
+          "site": false
+        },
+        {
+          "name": "email_primary_changed",
+          "site": false
+        },
+        {
+          "name": "email_released",
+          "site": false
+        },
+        {
+          "name": "email_removed",
+          "site": false
+        },
+        {
+          "name": "email_verified",
+          "site": false
+        },
+        {
+          "name": "identity_linked",
+          "site": false
+        },
+        {
+          "name": "identity_unlinked",
+          "site": false
+        },
+        {
+          "name": "lockout",
+          "site": true
+        },
+        {
+          "name": "login_failed",
+          "site": false
+        },
+        {
+          "name": "mail_changed",
+          "site": true
+        },
+        {
+          "name": "mail_test",
+          "site": true
+        },
+        {
+          "name": "passkey_added",
+          "site": false
+        },
+        {
+          "name": "passkey_clone",
+          "site": false
+        },
+        {
+          "name": "passkey_removed",
+          "site": false
+        },
+        {
+          "name": "password_reset",
+          "site": false
+        },
+        {
+          "name": "password_reset_requested",
+          "site": false
+        },
+        {
+          "name": "password_set_by_admin",
+          "site": false
+        },
+        {
+          "name": "provider_changed",
+          "site": true
+        },
+        {
+          "name": "provider_created",
+          "site": true
+        },
+        {
+          "name": "provider_deleted",
+          "site": true
+        },
+        {
+          "name": "rate_limited",
+          "site": true
+        },
+        {
+          "name": "secret_changed",
+          "site": false
+        },
+        {
+          "name": "sessions_ended",
+          "site": false
+        }
+      ]
+    },
+    {
+      "id": "admin",
+      "core": true,
+      "setting": null,
+      "default": true,
+      "kinds": [
+        {
+          "name": "bulk_finished",
+          "site": false
+        },
+        {
+          "name": "bulk_started",
+          "site": false
+        },
+        {
+          "name": "grant_revoked",
+          "site": false
+        },
+        {
+          "name": "group_changed",
+          "site": false
+        },
+        {
+          "name": "group_created",
+          "site": false
+        },
+        {
+          "name": "group_deleted",
+          "site": false
+        },
+        {
+          "name": "group_member_added",
+          "site": false
+        },
+        {
+          "name": "group_member_removed",
+          "site": false
+        },
+        {
+          "name": "group_members_batch",
+          "site": false
+        },
+        {
+          "name": "group_self_added",
+          "site": false
+        },
+        {
+          "name": "groups_claim_missing",
+          "site": false
+        },
+        {
+          "name": "groups_claim_truncated",
+          "site": false
+        },
+        {
+          "name": "groups_synced",
+          "site": false
+        },
+        {
+          "name": "invites_batch",
+          "site": false
+        },
+        {
+          "name": "members_batch",
+          "site": false
+        },
+        {
+          "name": "plan_changed",
+          "site": true
+        },
+        {
+          "name": "plan_created",
+          "site": true
+        },
+        {
+          "name": "plan_deleted",
+          "site": true
+        },
+        {
+          "name": "quota_exceeded",
+          "site": false
+        },
+        {
+          "name": "registered",
+          "site": false
+        },
+        {
+          "name": "setting_changed",
+          "site": false
+        },
+        {
+          "name": "setting_rule_ended",
+          "site": false
+        },
+        {
+          "name": "setting_rule_started",
+          "site": false
+        },
+        {
+          "name": "space_group_added",
+          "site": false
+        },
+        {
+          "name": "space_group_changed",
+          "site": false
+        },
+        {
+          "name": "space_group_removed",
+          "site": false
+        },
+        {
+          "name": "tenant_changed",
+          "site": false
+        },
+        {
+          "name": "tenant_console_opened",
+          "site": false
+        },
+        {
+          "name": "tenant_created",
+          "site": false
+        },
+        {
+          "name": "tenant_deleted",
+          "site": false
+        },
+        {
+          "name": "tenant_plan_changed",
+          "site": false
+        },
+        {
+          "name": "token_created",
+          "site": false
+        },
+        {
+          "name": "token_revoked",
+          "site": false
+        },
+        {
+          "name": "user_changed",
+          "site": false
+        },
+        {
+          "name": "user_deleted",
+          "site": false
+        },
+        {
+          "name": "user_purged",
+          "site": false
+        },
+        {
+          "name": "user_restored",
+          "site": false
+        }
+      ]
+    },
+    {
+      "id": "data",
+      "core": true,
+      "setting": null,
+      "default": true,
+      "kinds": [
+        {
+          "name": "audit_downloaded",
+          "site": false
+        },
+        {
+          "name": "export_created",
+          "site": false
+        },
+        {
+          "name": "export_deleted",
+          "site": false
+        },
+        {
+          "name": "export_downloaded",
+          "site": false
+        },
+        {
+          "name": "page_viewed",
+          "site": false
+        },
+        {
+          "name": "space_deleted",
+          "site": false
+        },
+        {
+          "name": "space_purged",
+          "site": false
+        },
+        {
+          "name": "space_restored",
+          "site": false
+        },
+        {
+          "name": "space_taken_over",
+          "site": false
+        },
+        {
+          "name": "space_transferred",
+          "site": false
+        },
+        {
+          "name": "space_viewed",
+          "site": false
+        },
+        {
+          "name": "view_as_ended",
+          "site": false
+        },
+        {
+          "name": "view_as_started",
+          "site": false
+        }
+      ]
+    },
+    {
+      "id": "system",
+      "core": true,
+      "setting": null,
+      "default": true,
+      "kinds": [
+        {
+          "name": "dropped",
+          "site": true
+        }
+      ]
+    },
+    {
+      "id": "signins",
+      "core": false,
+      "setting": "audit.signins",
+      "default": true,
+      "kinds": [
+        {
+          "name": "login",
+          "site": false
+        }
+      ]
+    },
+    {
+      "id": "reads",
+      "core": false,
+      "setting": "audit.reads",
+      "default": false,
+      "kinds": [
+        {
+          "name": "file_read",
+          "site": false
+        },
+        {
+          "name": "page_read",
+          "site": false
+        }
+      ]
+    },
+    {
+      "id": "downloads",
+      "core": false,
+      "setting": "audit.downloads",
+      "default": false,
+      "kinds": [
+        {
+          "name": "file_downloaded",
+          "site": false
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "core": false,
+      "setting": "audit.api",
+      "default": false,
+      "kinds": [
+        {
+          "name": "api_call",
+          "site": false
+        }
+      ]
+    }
+  ],
+  "settingKeys": [
+    "features.registration",
+    "registration.domains",
+    "registration.perHour",
+    "legal.termsUrl",
+    "legal.privacyUrl",
+    "daily.own",
+    "daily.api",
+    "daily.default",
+    "features.offline",
+    "files.maxBytes",
+    "storage.assets",
+    "storage.assets.ownStorageExempt",
+    "recycle.days",
+    "exports.days",
+    "exports.maxBytes",
+    "users.emailNonAscii",
+    "accounts.multipleEmails",
+    "users.reuseUsernames",
+    "quota.spacesPerPerson",
+    "quota.bytesPerPerson",
+    "quota.pagesPerPerson",
+    "features.tokens",
+    "features.mcp",
+    "features.tenancy",
+    "features.passkeys",
+    "features.orgCreation",
+    "orgCreation.perPerson",
+    "orgCreation.perHour",
+    "orgCreation.plan",
+    "signin.mode",
+    "signin.ssoOnly",
+    "signin.passkeyRoles",
+    "signin.lockout.enabled",
+    "signin.lockout.minutes",
+    "signin.lockout.scope",
+    "signin.perMinute",
+    "signin.maxFailures",
+    "signin.windowMinutes",
+    "sessions.idleDays",
+    "sessions.maxDays",
+    "captcha.provider",
+    "captcha.contexts",
+    "storage.remotes.require",
+    "storage.remotes.scope",
+    "storage.remotes.graceDays",
+    "storage.localSpaces.maxBytes",
+    "storage.hosts",
+    "cache.partial",
+    "cache.evictAfterDays",
+    "cache.minIdleHours",
+    "cache.clonesBytes",
+    "cache.minFreeBytes",
+    "cache.assetsBytes",
+    "daily.languages",
+    "features.ownSso",
+    "features.domains",
+    "features.managedAccounts",
+    "features.idpAdmins",
+    "features.adminView",
+    "features.auditDownload",
+    "mail.ownSender",
+    "features.ownCaptcha",
+    "features.ownConnections",
+    "features.ownDaily",
+    "storage.mode",
+    "storage.pinnedBytes",
+    "quota.people",
+    "quota.spaces",
+    "quota.bytes",
+    "quota.pages",
+    "rate.apiPerMinute",
+    "rate.mcpPerMinute",
+    "rate.mailPerDay",
+    "rate.outboundPerMinute",
+    "audit.signins",
+    "audit.reads",
+    "audit.downloads",
+    "audit.api",
+    "audit.keepDays",
+    "audit.keepRows",
+    "audit.keepMode",
+    "audit.optionalKeepDays"
+  ]
+}
