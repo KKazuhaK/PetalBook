@@ -60,7 +60,7 @@ func (s *server) featureGate(c *call, rt route) bool {
 	if s.single || s.settings == nil {
 		return true
 	}
-	on, err := s.featureOn(c.r.Context(), c.p.User.TenantID, f)
+	on, err := s.featureOn(c.r.Context(), c.tenant(), f)
 	if err != nil {
 		// Not knowing is not "on": the handler does not run (as the hand checks it replaced answered).
 		s.fail(c.w, err)

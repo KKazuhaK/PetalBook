@@ -118,7 +118,7 @@ func (s *server) listNotifications(c *call) {
 	}
 	next := ""
 	if kind != store.NotifyProblems {
-		rows, err := store.ListNotifications(c.r.Context(), s.opt.Store.Q(), c.user().ID, c.user().TenantID,
+		rows, err := store.ListNotifications(c.r.Context(), s.opt.Store.Q(), c.user().ID, c.tenant(),
 			store.NotifyFilter{Kind: kind, UnreadOnly: unreadOnly, Before: cursor, Limit: limit})
 		if err != nil {
 			s.fail(c.w, err)
@@ -160,7 +160,7 @@ func unreadOf(items []notificationResp) int {
 // unreadCount is the stored unread rows (one index range, counted up to
 // unreadCap) and the derived ones the caller has not read as they are now.
 func (s *server) unreadCount(c *call, derivedUnread int) (int, error) {
-	n, err := store.UnreadCapped(c.r.Context(), s.opt.Store.Q(), c.user().ID, c.user().TenantID, unreadCap)
+	n, err := store.UnreadCapped(c.r.Context(), s.opt.Store.Q(), c.user().ID, c.tenant(), unreadCap)
 	if err != nil {
 		return 0, err
 	}
@@ -208,7 +208,7 @@ func (s *server) markNotificationsRead(c *call) {
 	}
 	ctx, now := c.r.Context(), s.now()
 	if len(stored) > 0 {
-		if _, err := store.MarkNotificationsRead(ctx, s.opt.Store.Q(), c.user().ID, c.user().TenantID, stored, now); err != nil {
+		if _, err := store.MarkNotificationsRead(ctx, s.opt.Store.Q(), c.user().ID, c.tenant(), stored, now); err != nil {
 			s.fail(c.w, err)
 			return
 		}
@@ -261,7 +261,7 @@ func (s *server) markAllNotificationsRead(c *call) {
 	}
 	ctx, now := c.r.Context(), s.now()
 	if req.Kind != store.NotifyProblems {
-		if _, err := store.MarkAllNotificationsRead(ctx, s.opt.Store.Q(), c.user().ID, c.user().TenantID, req.Kind, now); err != nil {
+		if _, err := store.MarkAllNotificationsRead(ctx, s.opt.Store.Q(), c.user().ID, c.tenant(), req.Kind, now); err != nil {
 			s.fail(c.w, err)
 			return
 		}

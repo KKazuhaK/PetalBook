@@ -196,3 +196,38 @@ func TestCustomGrantsKeepToTheirScope(t *testing.T) {
 		t.Fatal("the subject granted to was changed")
 	}
 }
+
+// NarrowTo is a subject cut to one tenant's keys there: never more than it
+// held, and no site key, so a site administrator in a tenant's scope holds
+// exactly what that tenant's administrator does, and features bind them.
+func TestNarrowToKeepsOnlyTheTenantKeysHeldThere(t *testing.T) {
+	site := authz.SubjectFor("admin", true, "t0")
+	tenantAdmin, _ := authz.RoleSet(authz.RoleTenantAdmin)
+	n := site.NarrowTo("t1")
+	if !n.In("t1").Has(authz.TenantUsersRead) || n.In("t1") != tenantAdmin {
+		t.Fatalf("a site administrator narrowed to t1 holds %v there, want the tenant administrator's keys", n.In("t1").Names())
+	}
+	if n.Can(authz.SiteTenantsManage, "t1") || n.SiteWide(authz.TenantUsersRead) || n.Can(authz.SiteSpacesPersonalMeta, "") {
+		t.Fatal("a narrowed subject keeps a site key or a key across the site")
+	}
+	if n.Can(authz.TenantUsersRead, "t0") || n.Can(authz.TenantUsersRead, "t2") {
+		t.Fatal("a narrowed subject holds keys in another tenant")
+	}
+	// It never widens: a tenant administrator of t0 narrowed to t1 holds nothing.
+	if got := authz.SubjectFor("admin", false, "t0").NarrowTo("t1").In("t1"); !got.Empty() {
+		t.Fatalf("narrowing widened: %v", got.Names())
+	}
+	member := authz.SubjectFor("member", false, "t0")
+	if got := member.NarrowTo("t0").In("t0"); got != member.In("t0") {
+		t.Fatalf("a member narrowed to their own tenant holds %v, want %v", got.Names(), member.In("t0").Names())
+	}
+	// Features bind a narrowed site administrator.
+	off := offFeatures{}
+	if d := authz.Decide(context.Background(), n, authz.TenantDataView, "t1", off); d != authz.FeatureOff {
+		t.Fatalf("a narrowed site administrator was not bound by the tenant's feature: %v", d)
+	}
+}
+
+type offFeatures struct{}
+
+func (offFeatures) On(context.Context, string, string) bool { return false }

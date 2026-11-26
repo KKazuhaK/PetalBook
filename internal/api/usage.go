@@ -324,7 +324,7 @@ func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, 
 // after.
 func (s *server) checkQuotaPatch(c *call, id string, raw json.RawMessage) (apply func() bool, ok bool) {
 	ctx := c.r.Context()
-	sc := store.ScopeOf(c.user())
+	sc := c.reach()
 	target, err := store.GetUser(ctx, s.opt.Store.Q(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such user.")

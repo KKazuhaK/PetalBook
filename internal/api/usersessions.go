@@ -123,7 +123,7 @@ const maxMemberships = 200
 func (s *server) userMemberships(c *call) {
 	ctx := c.r.Context()
 	id := c.r.PathValue("id")
-	if _, err := store.GetUser(ctx, s.opt.Store.Q(), store.AdminScopeOf(c.user()), id); errors.Is(err, store.ErrNotFound) {
+	if _, err := store.GetUser(ctx, s.opt.Store.Q(), c.adminReach(), id); errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such user.")
 		return
 	} else if err != nil {

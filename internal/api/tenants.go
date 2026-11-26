@@ -325,7 +325,7 @@ func (s *server) adminPatchTenant(c *call) {
 			writeError(c.w, http.StatusConflict, "default_tenant", "The default tenant cannot be disabled.")
 			return
 		}
-		if v && t.ID == c.user().TenantID {
+		if v && t.ID == c.tenant() {
 			writeError(c.w, http.StatusConflict, "conflict", "You cannot disable your own tenant.")
 			return
 		}

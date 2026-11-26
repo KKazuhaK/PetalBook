@@ -187,7 +187,7 @@ func (s *server) adminListGroups(c *call) {
 }
 
 func (s *server) adminGetGroup(c *call) {
-	g, err := s.spaces.Group(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("group"))
+	g, err := s.spaces.Group(c.r.Context(), c.reach(), c.r.PathValue("group"))
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
@@ -230,7 +230,7 @@ func (s *server) adminPatchGroup(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "The source of a group cannot change.")
 		return
 	}
-	g, changed, err := s.spaces.UpdateGroup(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("group"), req.Name, req.Description)
+	g, changed, err := s.spaces.UpdateGroup(c.r.Context(), c.reach(), c.r.PathValue("group"), req.Name, req.Description)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
@@ -261,7 +261,7 @@ func (s *server) adminDeleteGroup(c *call) {
 	}
 	id := c.r.PathValue("group")
 	ctx := c.r.Context()
-	sc := store.ScopeOf(c.user())
+	sc := c.reach()
 	// The group is looked up in the caller's scope before its mappings are read
 	// or removed: another tenant's group answers as one that does not exist.
 	if _, err := s.spaces.Group(ctx, sc, id); err != nil {
@@ -290,7 +290,7 @@ func (s *server) adminGroupMembers(c *call) {
 		return
 	}
 	q := c.r.URL.Query()
-	rows, next, err := s.spaces.GroupPeople(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("group"), q.Get("q"), q.Get("cursor"), limit)
+	rows, next, err := s.spaces.GroupPeople(c.r.Context(), c.reach(), c.r.PathValue("group"), q.Get("q"), q.Get("cursor"), limit)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
@@ -343,7 +343,7 @@ func (s *server) adminAddGroupMembers(c *call) {
 		// The takeover key, in the group's tenant (a group the caller does not
 		// see is answered as missing by AddGroupPeople).
 		if slices.Contains(req.UserIDs, c.user().ID) {
-			if g, err := s.spaces.Group(c.r.Context(), store.ScopeOf(c.user()), id); err == nil {
+			if g, err := s.spaces.Group(c.r.Context(), c.reach(), id); err == nil {
 				if err := s.allow(c, authz.TenantSpacesTakeover, g.TenantID); err != nil {
 					s.refuse(c.w, err)
 					return
@@ -352,7 +352,7 @@ func (s *server) adminAddGroupMembers(c *call) {
 			}
 		}
 	}
-	added, already, ids, gained, err := s.spaces.AddGroupPeople(c.r.Context(), store.ScopeOf(c.user()), id, req.UserIDs, join)
+	added, already, ids, gained, err := s.spaces.AddGroupPeople(c.r.Context(), c.reach(), id, req.UserIDs, join)
 	if errors.Is(err, spaces.ErrTakeover) {
 		writeError(c.w, http.StatusForbidden, "takeover_required", "Adding yourself to this group gives you a role in spaces you are not a member of: send a reason to do it as an audited takeover.")
 		return
@@ -376,7 +376,7 @@ func (s *server) adminAddGroupMembers(c *call) {
 
 func (s *server) adminRemoveGroupMember(c *call) {
 	id, user := c.r.PathValue("group"), c.r.PathValue("user")
-	if err := s.spaces.RemoveGroupPerson(c.r.Context(), store.ScopeOf(c.user()), id, user); err != nil {
+	if err := s.spaces.RemoveGroupPerson(c.r.Context(), c.reach(), id, user); err != nil {
 		s.failAdminGroup(c.w, err)
 		return
 	}
@@ -389,7 +389,7 @@ func (s *server) adminGroupSpaces(c *call) {
 	if !ok {
 		return
 	}
-	rows, next, err := s.spaces.GroupSpaces(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("group"), c.r.URL.Query().Get("cursor"), limit)
+	rows, next, err := s.spaces.GroupSpaces(c.r.Context(), c.reach(), c.r.PathValue("group"), c.r.URL.Query().Get("cursor"), limit)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return

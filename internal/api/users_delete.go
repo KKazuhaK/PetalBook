@@ -115,7 +115,7 @@ func planSpaceOf(sp store.PlanSpace) planSpaceResp { return planSpaceResp{sp.ID,
 // does not exist).
 func (s *server) userDeletionOf(c *call, id, heir string, transfers map[string]string) (userDeletionResp, bool) {
 	ctx := c.r.Context()
-	sc := store.ScopeOf(c.user())
+	sc := c.reach()
 	target, err := store.GetUser(ctx, s.opt.Store.Q(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "user_not_found", "There is no such user.")
@@ -337,7 +337,7 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 		if ids == nil {
 			ids = []string{}
 		}
-		s.auth.Audit(auth.AuditEvent{Kind: "user_deleted", Actor: in.Actor.ID, User: id, Username: target.Username, Tenant: target.TenantID, IP: in.IP,
+		s.auth.AuditIn(ctx, auth.AuditEvent{Kind: "user_deleted", Actor: in.Actor.ID, User: id, Username: target.Username, Tenant: target.TenantID, IP: in.IP,
 			Detail: map[string]any{"item": item.ID, "user": id, "username": target.Username, "transfers": transfersDetail(out.Transfers), "recycled": ids, "reason": in.Reason, "bulk": in.Bulk}})
 	}
 	return out, nil
@@ -445,7 +445,7 @@ func (s *server) userChildren(c *call, it *store.RecycleItem) []store.RecycleIte
 
 // restoreUser restores a person's item, with the spaces recycled with them.
 func (s *server) restoreUser(c *call, it *store.RecycleItem) {
-	res, err := s.spaces.RestoreUser(c.r.Context(), store.AdminScopeOf(c.user()), it.ID)
+	res, err := s.spaces.RestoreUser(c.r.Context(), c.adminReach(), it.ID)
 	if err != nil {
 		s.fail(c.w, err)
 		return

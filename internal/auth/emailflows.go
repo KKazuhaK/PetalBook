@@ -701,7 +701,7 @@ func (s *Service) resetLinks(ctx context.Context, accounts []store.User, by, act
 			return nil, nil, err
 		}
 		links = append(links, mail.Link{Username: u.Username, URL: s.link("/reset-password", tok)})
-		s.Audit(AuditEvent{Kind: "password_reset_requested", Actor: actor, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"by": by}})
+		s.AuditIn(ctx, AuditEvent{Kind: "password_reset_requested", Actor: actor, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"by": by}})
 	}
 	return links, sso, nil
 }

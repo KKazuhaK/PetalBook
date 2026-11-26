@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/perm"
 	"petalbook.app/server/internal/store"
@@ -144,7 +145,8 @@ func (s *server) viewedWhat(c *call, what string, detail map[string]any) {
 		return
 	}
 	detail["space"] = c.sp.Info.ID
-	s.auditRow(c, "page_viewed", s.spaceTenant(c), detail)
+	// A view is administration even on a space route: the row says as what.
+	s.audit(c, auth.AuditEvent{Kind: "page_viewed", Actor: c.user().ID, Tenant: s.spaceTenant(c), Detail: detail, Capacity: capacityFor(c.p.Access, authz.TenantDataView)})
 }
 
 func (s *server) viewedPage(c *call, id string) {
@@ -158,7 +160,7 @@ func (s *server) spaceTenant(c *call) string {
 	if sp, err := store.GetSpace(c.r.Context(), s.opt.Store.Q(), store.AllTenants(), c.sp.Info.ID); err == nil {
 		return sp.TenantID
 	}
-	return c.user().TenantID
+	return c.tenant()
 }
 
 // adminMeta are the routes an administrator who is not a member and has no view
@@ -172,7 +174,7 @@ var adminMetaRoutes = map[string]bool{
 // scope, and not a personal space unless they are a site administrator (a tenant
 // administrator never sees a person's own space). It answers 404 otherwise.
 func (s *server) adminSpaceFor(c *call, id string) (*store.SpaceInfo, bool) {
-	sp, err := store.GetSpace(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), id)
+	sp, err := store.GetSpace(c.r.Context(), s.opt.Store.Q(), c.adminReach(), id)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && sp.Personal && !c.can(authz.SiteSpacesPersonalContent)) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
 		return nil, false

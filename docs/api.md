@@ -7343,6 +7343,7 @@ the site's own kinds):
 | `kind` | When | `detail` |
 |---|---|---|
 | `tenant_created`, `tenant_changed`, `tenant_deleted` | a tenant was made, changed or deleted | `tenant`, `slug`, the changed fields |
+| `tenant_console_opened` | a site administrator entered a tenant's scope (see "Acting scope"; at most once an hour per session and tenant) | `tenant` |
 | `setting_changed` | a site or tenant setting changed | `key`, `layer`, `from`, `to` |
 | `mail_changed`, `mail_test` | the mail settings changed; a test was sent | the changed fields (password as `"changed"`); `to`, `ok` |
 | `registered` | a registration was confirmed | `email` |
@@ -10021,6 +10022,40 @@ Needs `tenant.permissions.read`. The registry, in its order:
 `GET /api/session` lists the keys the caller holds in their own tenant as
 `user.permissions` (site keys included; `[]` for a request with an API token,
 which no route outside spaces takes).
+
+#### Acting scope: `PetalBook-Scope: tenant:{id}`
+
+3.6 (c3, built). Every request acts in one tenant: by default the caller's own.
+An administration request (a route whose key is a site key, or a tenant key
+the member and viewer roles do not hold) may send the header
+`PetalBook-Scope: tenant:{id}` to act **exactly as that tenant's
+administrator**:
+
+- only the tenant keys the caller holds there apply; site keys are set aside
+  for the request (`403 forbidden` on a site route), and the tenant's features
+  bind the caller (`403 feature_off`) as they bind its administrator;
+- lists, `{id}`s and `?tenant=` reach that tenant only (another one answers
+  `404`); personal spaces and accounts that hold site keys are out of reach;
+- a takeover of a space of another tenant than one's own is refused
+  (`403 forbidden`): it makes a member across tenants, which is done in the
+  site's scope. Transfers inside the tenant work;
+- a bulk job started in the scope keeps to it.
+
+The header only narrows. Who does not hold `tenant.settings.read` in the
+tenant, and a tenant that does not exist, get `404 not_found` (never the
+caller's own scope instead). A malformed header, or the header on a route that
+is not administration (a person's own routes, a space's content), is
+`400 invalid`. No reason is asked; a site administrator's entering a tenant's
+scope is audited as `tenant_console_opened` (`admin`, the tenant's row), at
+most once an hour per session and tenant. The scope is read from the session
+and the header, and the tenant from the cached list of tenants: no query.
+
+**Capacity.** Every audit row written for an administration request records
+the capacity used: `site_admin` for a holder of the route's key across the
+site (in a tenant's scope too), `tenant_admin` for a key held in the tenant,
+none for anything else (sign-ins, a person's own account). A bulk job's and a
+purge's rows record the capacity of the request that started them; a page
+opened in a view records the viewer's capacity.
 
 ### Taking over a space
 

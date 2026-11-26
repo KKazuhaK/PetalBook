@@ -269,7 +269,7 @@ func (s *Service) unlinkIdentity(ctx context.Context, userID, identityID, actor,
 		for _, i := range ids {
 			if i.ID == identityID {
 				_, slug, _ := s.providerOf(i.Issuer)
-				defer s.Audit(AuditEvent{Kind: "identity_unlinked", Actor: actor, User: userID, IP: ip, Detail: map[string]any{"provider": slug, "by": by}})
+				defer s.AuditIn(ctx, AuditEvent{Kind: "identity_unlinked", Actor: actor, User: userID, IP: ip, Detail: map[string]any{"provider": slug, "by": by}})
 			}
 		}
 		return store.DeleteIdentity(ctx, q, identityID, userID)

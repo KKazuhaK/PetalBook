@@ -7963,7 +7963,8 @@ function suite(target: Target) {
       expect(all.items.length).toBeGreaterThan(0)
       for (const r of all.items) {
         expect(r.category).toMatch(/^(security|admin|data|system|signins|reads|downloads|api)$/)
-        expect(r.capacity).toBeNull()
+        // Administration records the capacity it was done in; the rest has none.
+        expect([null, 'site_admin', 'tenant_admin']).toContain(r.capacity)
       }
       const some = await adminApi.audit({ category: ['security', 'admin'], limit: 200 })
       expect(some.items.every((r) => r.category === 'security' || r.category === 'admin')).toBe(true)

@@ -7,7 +7,6 @@ import (
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
-	"petalbook.app/server/internal/store"
 )
 
 const samlACSPattern = "/api/auth/saml/{slug}/acs"
@@ -344,7 +343,7 @@ func (s *server) deleteAccountPasskey(c *call) {
 }
 
 func (s *server) listUserPasskeys(c *call) {
-	l, err := s.auth.UserPasskeys(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("id"))
+	l, err := s.auth.UserPasskeys(c.r.Context(), c.reach(), c.r.PathValue("id"))
 	if err != nil {
 		s.fail(c.w, err)
 		return

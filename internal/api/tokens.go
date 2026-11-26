@@ -317,7 +317,7 @@ func (s *server) revokeMyToken(c *call) {
 // revokeToken revokes a token; owner "" is any (an administrator).
 func (s *server) revokeToken(c *call, owner string) {
 	id := c.r.PathValue("id")
-	rows, err := s.tokens.List(c.r.Context(), store.ScopeOf(c.user()), store.TokenFilter{ID: id, Limit: 1})
+	rows, err := s.tokens.List(c.r.Context(), c.reach(), store.TokenFilter{ID: id, Limit: 1})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -378,7 +378,7 @@ func (s *server) audit(c *call, ev auth.AuditEvent) {
 		return
 	}
 	ev.IP = s.auth.ClientAddr(c.r)
-	s.auth.Audit(ev)
+	s.auth.AuditIn(c.r.Context(), ev)
 }
 
 // --- administration -----------------------------------------------------------

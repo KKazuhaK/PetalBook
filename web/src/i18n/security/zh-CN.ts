@@ -327,6 +327,7 @@ export const securityZhCN = {
       tenant_created: '创建组织',
       tenant_changed: '修改组织',
       tenant_deleted: '删除组织',
+      tenant_console_opened: '以组织管理员身份管理组织',
       registered: '注册',
       user_changed: '修改用户',
       user_deleted: '删除用户',

@@ -66,6 +66,16 @@ func (s *Service) Audit(ev AuditEvent) {
 	}
 }
 
+// AuditIn is Audit for an event of a request: one that does not say its
+// capacity takes the one ctx carries (auditlog.WithCapacity), so every row of
+// an administrator's request records the capacity they acted in.
+func (s *Service) AuditIn(ctx context.Context, ev AuditEvent) {
+	if ev.Capacity == "" {
+		ev.Capacity = auditlog.CapacityOf(ctx)
+	}
+	s.Audit(ev)
+}
+
 func (a *auditLog) row(ev AuditEvent, now time.Time) (store.AuditRow, bool) {
 	detail := "{}"
 	if len(ev.Detail) > 0 {

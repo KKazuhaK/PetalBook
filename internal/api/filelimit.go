@@ -44,7 +44,7 @@ func (s *server) bindDraftFileLimit() {
 
 // fileLimit is fileLimitFor the caller's tenant.
 func (s *server) fileLimit(c *call) int64 {
-	return s.fileLimitFor(c.r.Context(), c.user().TenantID)
+	return s.fileLimitFor(c.r.Context(), c.tenant())
 }
 
 // tooLarge answers 413 file_too_large. size is 0 when the body was cut off at
