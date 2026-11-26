@@ -219,7 +219,7 @@ func (s *server) putSheet(c *call, capsOnly bool) {
 		return
 	}
 	if len(req.Values) == 0 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "values is an object of the keys to change.")
+		writeError(c.w, http.StatusBadRequest, "invalid", "The values field must be an object of the keys to change.")
 		return
 	}
 	changes := map[string]*sheets.Change{}
@@ -356,7 +356,7 @@ func (s *server) adminPutCapabilities(c *call) {
 		return
 	}
 	if len(req.Values) == 0 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "values is an object of the keys to change.")
+		writeError(c.w, http.StatusBadRequest, "invalid", "The values field must be an object of the keys to change.")
 		return
 	}
 	changes := map[string]json.RawMessage{}
