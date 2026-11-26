@@ -741,3 +741,30 @@ path, about 40 bytes an entry. It does not grow with the number of pages. Memory
 trees for the duration of one commit. The split index adds one shared index file in
 `.git` the size of the index (4 MB at 50k pages), rewritten when a fifth of it has changed
 (git's default).
+
+### 4.11 Git lock files: Close and crashes (#78, #79)
+
+Git takes a lock file (`HEAD.lock`, `index.lock`, `refs/**/*.lock`, `packed-refs.lock`,
+`config.lock`) for each write and removes it when it ends. A git that is killed before
+that leaves the lock, and every later command that needs it fails, including the startup
+rollback of an unpushed change.
+
+- **Close.** Cancelling a context kills git with SIGKILL. Commands that write the index,
+  a ref or the configuration under a lock (`lockingWrites` in `gitstore/safegit.go`) are
+  therefore not stopped by cancelling. They end at the caller's deadline if it set one
+  (a restore checks out a whole space under its own), and after 2 minutes otherwise.
+  Network commands are still cancelled. `landedAt`, which asks whether a push whose
+  answer was lost went through, runs on through Close within the network timeout.
+- **Crashes.** When the server holds `DATA/serve.lock`, no other PetalBook process uses
+  its clones. Opening a space or an attachment repository then removes the lock files
+  older than 60 s at the top of the Git directory, under `refs/` and `logs/`, and
+  `objects/info/commit-graphs/commit-graph-chain.lock`, before the recovery. Each
+  removal is logged. Nothing else under `objects/` is touched.
+- **Known issues.**
+  - git is not killed with the server (no `Pdeathsig`): after a server crash a git it
+    started can still be running. It can then hold a lock while the next server
+    starts; locks under 60 s old are left, so such a lock is removed only once it is
+    older than that, while that git could still be writing.
+  - `landedAt` can delay Close by up to `NetTimeout`.
+  - Single-space mode (`petalbook serve --space`) has no `serve.lock` and removes no
+    stale lock: an administrator still deletes it.

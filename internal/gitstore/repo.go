@@ -104,12 +104,13 @@ func (r *Repo) run(ctx context.Context, c Cmd) (string, error) {
 	return out, nil
 }
 
-// notCancelled is ctx without its cancellation, ending at its deadline or
-// after writeCap, whichever comes first.
+// notCancelled is ctx without its cancellation. It ends at ctx's deadline
+// when it has one (a caller that set one knows how long its write may take: a
+// restore checks out a whole large space), and after writeCap otherwise.
 func notCancelled(ctx context.Context) (context.Context, context.CancelFunc) {
-	d := time.Now().Add(writeCap)
-	if pd, ok := ctx.Deadline(); ok && pd.Before(d) {
-		d = pd
+	d, ok := ctx.Deadline()
+	if !ok {
+		d = time.Now().Add(writeCap)
 	}
 	return context.WithDeadline(context.WithoutCancel(ctx), d)
 }

@@ -14,8 +14,8 @@ import (
 // length of one command, which is far shorter.
 const StaleLockAge = 60 * time.Second
 
-// writeCap bounds a command that cancelling does not stop (lockingWrites):
-// one that hangs still ends.
+// writeCap bounds a command that cancelling does not stop (lockingWrites)
+// when its caller set no deadline: one that hangs still ends.
 const writeCap = 2 * time.Minute
 
 // StaleLock is a lock file RemoveStaleLocks removed.
@@ -29,8 +29,10 @@ type StaleLock struct {
 // power loss, an out-of-memory kill) never got to remove, and that otherwise
 // make every later command that takes the same lock fail. They are the
 // <name>.lock files at the top of gitDir (index, HEAD, ORIG_HEAD, config,
-// packed-refs, shallow...) and those under refs/ and logs/. Objects and other
-// checkouts (worktrees/) are not looked at.
+// packed-refs, shallow...), those under refs/ and logs/, and the lock of the
+// commit-graph chain (a killed Maintain would make every later commit-graph
+// write fail). Nothing else under objects/, and no other checkout
+// (worktrees/), is looked at.
 //
 // Only a caller that knows no other process uses the repository may call it:
 // a lock of a git that is running is never that old, but a lock is a lock.
@@ -60,6 +62,10 @@ func RemoveStaleLocks(gitDir string, olderThan time.Duration, now time.Time) ([]
 		if fi, err := e.Info(); err == nil {
 			take(filepath.Join(gitDir, e.Name()), fi)
 		}
+	}
+	chain := filepath.Join(gitDir, "objects", "info", "commit-graphs", "commit-graph-chain.lock")
+	if fi, err := os.Lstat(chain); err == nil {
+		take(chain, fi)
 	}
 	for _, sub := range []string{"refs", "logs"} {
 		err := filepath.WalkDir(filepath.Join(gitDir, sub), func(p string, d fs.DirEntry, err error) error {
