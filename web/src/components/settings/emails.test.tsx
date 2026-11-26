@@ -7,7 +7,7 @@ import { t } from '@/i18n'
 import { byLabel, byText, click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
-// More than one address per account (accounts.multipleEmails), against the mock server: off, the one address as before;
+// More than one address per account (accounts.multipleEmails), against the fixture server: off, the one address as before;
 // on, the list with what each address is, adding one, making a verified one primary and removing one.
 
 beforeAll(installDomShims)

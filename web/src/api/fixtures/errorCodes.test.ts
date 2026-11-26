@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import codes from '../../i18n/errorCodes.json'
 
-const files = import.meta.glob(['/src/**/*.{ts,tsx}', '!/src/api/mock/**', '!/src/api/fixtures/errorCodes.test.ts'], {
+const files = import.meta.glob(['/src/**/*.{ts,tsx}', '!/src/api/fixtures/errorCodes.test.ts'], {
   query: '?raw',
   import: 'default',
   eager: true,
