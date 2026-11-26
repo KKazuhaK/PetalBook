@@ -247,7 +247,7 @@ describe('signing in with a password', () => {
     await open('/login', { providers: [company] })
     await settle(() => passwordForm() !== null, 'the form')
     const person = makePerson(m!.server, 'carol')
-    adminRequests(m!.server)('PUT', '/api/admin/security', { login: { ssoOnly: true } })
+    adminRequests(m!.server)('PUT', '/api/admin/settings/signin.ssoOnly', { value: true })
     await submit(person.username, person.password)
     await settle(() => text().includes(ts.login.localRefused), 'the refusal')
   })

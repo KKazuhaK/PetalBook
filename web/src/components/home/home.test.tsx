@@ -281,7 +281,7 @@ describe('the text of the day', () => {
 
     it('a line the administrators pasted: no page, no link', async () => {
       m = await open((admin) => {
-        admin('PUT', '/api/admin/daily', { default: { kind: 'list' } })
+        admin('PUT', '/api/admin/settings/daily.default', { value: { kind: 'list' } })
         admin('PUT', '/api/admin/daily/lines', { lang: '', text: '山色空蒙雨亦奇\t苏轼', format: 'lines' })
       })
       await ready()

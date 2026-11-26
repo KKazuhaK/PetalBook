@@ -45,7 +45,7 @@ async function openSheet(scene: (server: MockServer) => void) {
     server: { mode: 'accounts', empty: true },
     entries: (server) => {
       const admin = adminRequests(server)
-      admin('PUT', '/api/admin/tenancy', { enabled: true })
+      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
       scene(server)
       return ['/admin/tenants']
     },

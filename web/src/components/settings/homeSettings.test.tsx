@@ -328,7 +328,7 @@ describe('the Home section, accounts mode', () => {
 
   it('a source and the switch saved together: if the second request fails, the choices, the tab and an error stay', async () => {
     await asOwner((admin, space) => {
-      admin('PUT', '/api/admin/daily', { default: { kind: 'list' } })
+      admin('PUT', '/api/admin/settings/daily.default', { value: { kind: 'list' } })
       admin('POST', `/api/spaces/${space}/folders`, { path: '文案' })
     })
     await click(tab('en'))
@@ -359,7 +359,7 @@ describe('the Home section, accounts mode', () => {
   })
 
   it("the server's default is the last resort, a switch the owner may turn off", async () => {
-    await asOwner((admin) => admin('PUT', '/api/admin/daily', { default: { kind: 'list' } }))
+    await asOwner((admin) => admin('PUT', '/api/admin/settings/daily.default', { value: { kind: 'list' } }))
     expect(dialog()!.textContent).toContain(th.settings.inheritHelp)
     const toggle = dialog()!.querySelector<HTMLElement>('[role="switch"]')!
     expect(toggle.getAttribute('aria-checked')).toBe('true')

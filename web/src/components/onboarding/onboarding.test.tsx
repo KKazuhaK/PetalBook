@@ -187,8 +187,14 @@ describe('the tour on a first sign-in', () => {
 })
 
 describe('connecting one’s own repository', () => {
-  const ask = (graceDays: number) => (server: MockServer) =>
-    void adminRequests(server)('PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'all', graceDays } })
+  const ask = (graceDays: number) => (server: MockServer) => {
+    for (const [key, value] of Object.entries({
+      'storage.remotes.require': 'any',
+      'storage.remotes.scope': 'all',
+      'storage.remotes.graceDays': graceDays,
+    }))
+      adminRequests(server)('PUT', `/api/admin/settings/${key}`, { value })
+  }
   const steps = () => [...document.querySelectorAll<HTMLElement>('[data-slot="repo-steps"] li')]
 
   it('is a step of the tour when the site suggests it, with why, what to click, what to authorise and where to get help', async () => {

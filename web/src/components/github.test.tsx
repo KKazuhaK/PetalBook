@@ -708,7 +708,7 @@ describe('the GitHub section of the administration', () => {
     // The rows have cached the tenants (just the default one); a tenant made after that
     // must still be offered when the dialog opens.
     await settle(() => m!.qc.getQueryData(keys.tenants) !== undefined, 'the tenants cached by the rows')
-    admin('PUT', '/api/admin/tenancy', { enabled: true })
+    admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
     const second = (admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' }).body as { id: string }).id
     const choose = (login: string) => byLabel(tg.admin.chooseFor(login))!
     expect(text()).toContain(tg.admin.notShared)
