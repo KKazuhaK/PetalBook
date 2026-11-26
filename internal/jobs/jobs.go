@@ -99,6 +99,27 @@ type Ender interface {
 	Ended(ctx context.Context, j *store.Job)
 }
 
+// QueueEnder is a Handler told when one of its jobs ended in the queue without
+// running (cancelled there, broken before it could start, or ended there by a
+// restart's outcome), with the job as it ended: what the kind keeps for its
+// queued jobs can go.
+type QueueEnder interface {
+	EndedInQueue(ctx context.Context, j *store.Job)
+}
+
+// endedInQueue tells the job's kind that it ended in the queue.
+func (r *Runner) endedInQueue(j *store.Job, state string) {
+	h, ok := r.handler(j.Kind).(QueueEnder)
+	if !ok {
+		return
+	}
+	end := *j
+	end.State = state
+	ctx, cancel := context.WithTimeout(context.Background(), endedWait)
+	defer cancel()
+	r.guard(&end, "EndedInQueue", func() { h.EndedInQueue(ctx, &end) })
+}
+
 // Options configure a Runner.
 type Options struct {
 	Store  *store.Store
@@ -305,6 +326,9 @@ func (r *Runner) settle(j *store.Job, out Outcome) {
 	case out == Resume:
 	default:
 		err = store.SetJobState(context.Background(), q, j.ID, j.State, string(out), now)
+		if err == nil && j.State == store.JobQueued {
+			r.endedInQueue(j, string(out))
+		}
 	}
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		r.log.Warn("could not record what a stop left of a job", "job", j.ID, "kind", j.Kind, "outcome", out, "error", err)
@@ -394,8 +418,11 @@ func (r *Runner) Cancel(ctx context.Context, sc store.Scope, id string) error {
 		// Applied when it starts; and should the claim lose to this, the job
 		// ends cancelled in the queue.
 		c.cancel = true
+		job := c.job
 		r.mu.Unlock()
-		if err := store.SetJobState(ctx, r.opt.Store.Q(), id, store.JobQueued, store.JobCancelled, r.opt.Now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := store.SetJobState(ctx, r.opt.Store.Q(), id, store.JobQueued, store.JobCancelled, r.opt.Now()); err == nil {
+			r.endedInQueue(job, store.JobCancelled) // the claim lost: it never runs
+		} else if !errors.Is(err, store.ErrNotFound) {
 			r.log.Warn("could not cancel a job being claimed", "job", id, "error", err)
 		}
 		return nil
@@ -409,6 +436,9 @@ func (r *Runner) Cancel(ctx context.Context, sc store.Scope, id string) error {
 		return ErrEnded
 	}
 	err = store.SetJobState(ctx, r.opt.Store.Q(), id, store.JobQueued, store.JobCancelled, r.opt.Now())
+	if err == nil {
+		r.endedInQueue(j, store.JobCancelled)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		if j, gerr := store.GetJob(ctx, r.opt.Store.Q(), sc, id); gerr == nil && store.JobEnded(j.State) {
 			return ErrEnded
@@ -579,7 +609,10 @@ func (r *Runner) dispatch() error {
 func (r *Runner) failQueued(j *store.Job) {
 	end := *j
 	end.State, end.Error = store.JobFailed, "an internal error stopped the job"
-	if err := store.EndJob(context.Background(), r.opt.Store.Q(), end, store.JobQueued, r.opt.Now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+	err := store.EndJob(context.Background(), r.opt.Store.Q(), end, store.JobQueued, r.opt.Now())
+	if err == nil {
+		r.endedInQueue(j, store.JobFailed)
+	} else if !errors.Is(err, store.ErrNotFound) {
 		r.log.Warn("could not record that a job broke", "job", j.ID, "error", err)
 	}
 }

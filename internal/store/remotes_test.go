@@ -178,3 +178,33 @@ func TestRemotesAreKeyedBySpaceAndRole(t *testing.T) {
 		}
 	})
 }
+
+// Another attachment repository in place of the old one starts unused and
+// with no move: what went to the old one is not in it.
+func TestAnotherAttachmentRepositoryStartsUnused(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		now := time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC)
+		if err := store.InsertSpace(ctx, q, store.DefaultTenantID, "S1", "S1", "", "", now); err != nil {
+			t.Fatal(err)
+		}
+		a := store.Remote{SpaceID: "S1", Role: store.RoleAssets, URL: "https://example.test/a.git", Branch: "main", CredType: "token", State: store.RemoteOK, Updated: now}
+		if err := store.PutRemote(ctx, q, a); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkAssetsMoved(ctx, q, "S1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetAssetsMoveJob(ctx, q, "S1", "J1"); err != nil {
+			t.Fatal(err)
+		}
+		a.URL = "https://example.test/b.git"
+		if err := store.PutRemote(ctx, q, a); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := store.GetRemote(ctx, q, "S1", store.RoleAssets); err != nil || got.Used != store.AssetsUnused || got.JobID != "" || got.URL != a.URL {
+			t.Fatalf("%+v %v", got, err)
+		}
+	})
+}

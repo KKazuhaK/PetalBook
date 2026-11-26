@@ -411,6 +411,7 @@ func (m *Manager) attachAssets(ctx context.Context, id string, sp *space.Space) 
 	if r == nil {
 		return
 	}
+	m.settleSwitch(ctx, id, sp)
 	sp.SetAssets(backend{m, id, r})
 	m.goBg(func() { m.refreshAssets(id, sp) })
 }

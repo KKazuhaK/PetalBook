@@ -480,6 +480,54 @@ func TestCancel(t *testing.T) {
 	}
 }
 
+// A kind that keeps something for its queued jobs is told when one ends in
+// the queue without running: cancelled there, or broken before it could start.
+func TestAJobThatEndsInTheQueueIsToldToItsKind(t *testing.T) {
+	t.Parallel()
+	f := newFix(t, storetest.Open(t, "sqlite"), Bulk, nil)
+	k := &queueEndKind{kind: f.k, got: make(chan *store.Job, 4)}
+	f.r.Register("test", k)
+	f.enqueue("Q", "")
+	if err := f.r.Cancel(context.Background(), store.AllTenants(), "Q"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case j := <-k.got:
+		if j.ID != "Q" || j.State != store.JobCancelled {
+			t.Fatalf("%+v", j)
+		}
+	default:
+		t.Fatal("the kind was not told")
+	}
+	k.broken = true
+	f.enqueue("B", "")
+	f.drain()
+	f.r.dispatch()
+	select {
+	case j := <-k.got:
+		if j.ID != "B" || j.State != store.JobFailed {
+			t.Fatalf("%+v", j)
+		}
+	default:
+		t.Fatal("the kind was not told of a job that broke in the queue")
+	}
+}
+
+type queueEndKind struct {
+	*kind
+	broken bool
+	got    chan *store.Job
+}
+
+func (k *queueEndKind) Class() Class {
+	if k.broken {
+		panic("broken")
+	}
+	return k.kind.Class()
+}
+
+func (k *queueEndKind) EndedInQueue(_ context.Context, j *store.Job) { k.got <- j }
+
 // Close stops the running jobs through their contexts and returns once they
 // have ended (interrupted, with what was done); the jobs it had queued get
 // their kind's outcome, and nothing is enqueued after it.

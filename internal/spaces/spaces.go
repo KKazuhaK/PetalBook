@@ -1337,6 +1337,9 @@ func (m *Manager) dropListsLocked(userIDs ...string) {
 
 // Close commits what the open spaces have pending and closes them. Call it
 // after the HTTP server has stopped. Single-user mode's space belongs to the caller.
+// A move of attachments still running when the runner's wait for it ends
+// (jobs.Options.StopWait) is left running in its row and resumed at the next
+// start: each of its steps is safe to cut short (see assets_move.go).
 func (m *Manager) Close() error {
 	// The jobs first (the API has closed the runner already when it was its):
 	// a move stopped now is queued again for the next start, which it would not

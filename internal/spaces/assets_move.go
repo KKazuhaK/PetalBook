@@ -6,7 +6,11 @@ package spaces
 // per tenant, two on the server), its lock key space:<id> (one at a time for a
 // space, and never with another job on the space's storage), and a restart, or
 // a close of the server, queues it again: it goes on from what the attachment
-// repository has. The remote row of the attachment repository names the last
+// repository has. One still running when the close stops waiting for it
+// (jobs.Options.StopWait) is left running in its row, and the next start
+// resumes it as after a crash: every step below is safe to cut short. Opening
+// a space whose move is queued finishes a switch a stop cut short at once
+// (settleSwitch), without waiting for the job's slot. The remote row of the attachment repository names the last
 // move (job_id), and records once the switch has landed (used = moved).
 //
 // The steps, and what a crash at each leaves:
@@ -269,6 +273,37 @@ func (m *Manager) settleMove(ctx context.Context, h *Handle, row *store.Remote) 
 	row.Used = store.AssetsMoved
 }
 
+// settleSwitch is the part of opening a space whose move is queued or running
+// (since a stop, say) that cannot wait for the move's job, which may wait long
+// for its slot: a switch the stop cut short between its commit and the reset
+// of the work tree is finished (space.RecoverSwitch), and once the space is
+// past the switch its uploads go to the attachment repository again, as they
+// do once the switch is pushed; assets/ is ignored by its .gitignore. The
+// job, when it runs, finds nothing left to copy and pushes the switch.
+func (m *Manager) settleSwitch(ctx context.Context, id string, sp *space.Space) {
+	if !m.moveRunning(id) {
+		return
+	}
+	if recovered, err := sp.RecoverSwitch(ctx); err != nil {
+		m.log.Warn("could not finish a switch of attachments a stop cut short; the move's job tries again", "space", id, "error", err)
+		return
+	} else if recovered {
+		m.log.Info("finished a switch of attachments a stop of the server cut short", "space", id)
+	}
+	if ok, err := sp.AssetsSwitched(ctx); err == nil && ok {
+		m.releaseUploads(id)
+		m.setPhase(id, MoveSwitching)
+	}
+}
+
+// releaseUploads lets the space's uploads go to the attachment repository
+// (backend.Direct) while its move goes on.
+func (m *Manager) releaseUploads(id string) {
+	m.as.mu.Lock()
+	delete(m.as.moving, id)
+	m.as.mu.Unlock()
+}
+
 // moveKind runs the moves on the jobs runner.
 type moveKind struct{ m *Manager }
 
@@ -276,6 +311,9 @@ func (moveKind) Class() jobs.Class { return jobs.IO }
 
 // Recover takes a move up again: it goes on from what the attachment
 // repository has. Until it runs, the space's uploads go into assets/.
+// EndedInQueue: a move cancelled or broken before it ran holds no uploads.
+func (k moveKind) EndedInQueue(_ context.Context, j *store.Job) { k.m.clearMoving(j.Subject) }
+
 func (k moveKind) Recover(_ context.Context, j *store.Job) jobs.Outcome {
 	if !k.m.isClosed() {
 		k.m.setMoving(j.Subject, MoveCopying)
@@ -298,9 +336,16 @@ func (k moveKind) Run(ctx context.Context, j *store.Job, p *jobs.Progress) error
 	defer cancel()
 	stopCtx := context.AfterFunc(m.closedCtx(), cancel)
 	defer stopCtx()
-	m.setMoving(id, MoveCopying)
+	// The uploads are held in assets/ since the enqueue (or the start's
+	// Recover), unless the space was found past the switch when it was opened.
+	m.setPhase(id, MoveCopying)
 	defer m.clearMoving(id)
-	err := m.doMove(ctx, id, j, p)
+	err := m.assetsHook("started")
+	if err != nil {
+		err = errCrash{err}
+	} else {
+		err = m.doMove(ctx, id, j, p)
+	}
 	var crash errCrash
 	switch {
 	case err == nil:
@@ -395,6 +440,9 @@ func (m *Manager) doMove(ctx context.Context, id string, j *store.Job, p *jobs.P
 	} else if recovered {
 		m.log.Info("finished a switch of attachments a stop of the server cut short", "space", id)
 	}
+	if ok, err := sp.AssetsSwitched(ctx); err == nil && ok {
+		m.releaseUploads(id) // past the switch: nothing goes into assets/ any more
+	}
 	prog := &moveProgress{p: p, stepped: j.Done, stepByte: j.BytesDone}
 	// copyMissing pushes the files the repository does not have, in commits of
 	// at most MaxCommitBytes, and counts what is there as done.
@@ -479,9 +527,7 @@ func (m *Manager) doMove(ctx context.Context, id string, j *store.Job, p *jobs.P
 		if step == "pushed" {
 			// With the space's writes still held: from here on uploads go to
 			// the attachment repository again, never to a new assets/ folder.
-			m.as.mu.Lock()
-			delete(m.as.moving, id)
-			m.as.mu.Unlock()
+			m.releaseUploads(id)
 		}
 		if err := m.assetsHook("switch-" + step); err != nil {
 			return errCrash{err}

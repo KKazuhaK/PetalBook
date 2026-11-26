@@ -68,7 +68,8 @@ type Remote struct {
 
 	// Role "assets" only: what has gone to it (AssetsUnused, AssetsUsed,
 	// AssetsMoved) and the last move of the space's attachments into it (a job's
-	// id; the job may have been pruned). PutRemote keeps both.
+	// id; the job may have been pruned). PutRemote keeps both while the address
+	// stays the same.
 	Used  int
 	JobID string
 }
@@ -119,7 +120,8 @@ func GetRemote(ctx context.Context, q Q, spaceID, role string) (*Remote, error) 
 
 // PutRemote inserts or replaces the remote of a space in its role (r.Role, ""
 // for RoleContent): its address, credential and state. Of an attachment
-// repository, Used and JobID are kept. When the remote goes to a repository of
+// repository, Used and JobID are kept while the address stays the same (another
+// repository starts with what r says, unused). When the remote goes to a repository of
 // a provider, the reminders of that repository as an empty leftover are
 // cleared, in the same transaction.
 func PutRemote(ctx context.Context, q Q, r Remote) error {
@@ -141,7 +143,9 @@ func PutRemote(ctx context.Context, q Q, r Remote) error {
 			last_good = excluded.last_good, state = excluded.state, error_kind = excluded.error_kind, last_error = excluded.last_error,
 			remote_tip = excluded.remote_tip, last_sync = excluded.last_sync, updated = excluded.updated, provider = excluded.provider,
 			via = excluded.via, installation_id = excluded.installation_id, repo_id = excluded.repo_id, cred_user_id = excluded.cred_user_id,
-			target_id = excluded.target_id`,
+			target_id = excluded.target_id,
+			used = CASE WHEN remotes.url = excluded.url THEN remotes.used ELSE excluded.used END,
+			job_id = CASE WHEN remotes.url = excluded.url THEN remotes.job_id ELSE excluded.job_id END`,
 			r.SpaceID, r.Role, r.URL, r.Branch, r.CredType, r.Username, r.TokenEnc, r.PrivKeyEnc, r.PubKey, r.LastGood,
 			r.State, r.ErrorKind, r.LastError, r.RemoteTip, sync, ms(r.Updated), r.Provider, r.Via, r.InstallationID, r.RepoID, r.CredUserID,
 			r.TargetID, r.Used, r.JobID)

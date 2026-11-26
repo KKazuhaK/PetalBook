@@ -1,6 +1,7 @@
 package spaces
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,12 +9,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"petalbook.app/server/internal/gitstore"
 	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/jobs"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/space"
 	"petalbook.app/server/internal/store"
@@ -999,6 +1002,168 @@ func TestARefreshCancelledByAReconnectLeavesTheStateAlone(t *testing.T) {
 		}
 		if row.State != store.RemoteOK {
 			t.Fatalf("the state is %q (%s) after connecting again", row.State, row.LastError)
+		}
+	})
+}
+
+// A stop between the switch's commit and the work tree's reset: the next start
+// puts the work tree in line when the space is opened, before the move's job
+// has run (it may wait long for its slot), and an upload then goes to the
+// attachment repository rather than into an ignored assets/.
+func TestAnUploadWorksAfterAStopInTheSwitchBeforeTheMoveRunsAgain(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		var crash atomic.Value
+		crash.Store("")
+		gate := make(chan struct{})
+		var once sync.Once
+		open := func() { once.Do(func() { close(gate) }) }
+		t.Cleanup(open)
+		hook := func(s string) error {
+			if s == crash.Load().(string) {
+				return errors.New("crash at " + s)
+			}
+			if s == "started" && crash.Load().(string) == "" {
+				<-gate
+			}
+			return nil
+		}
+		crashed := make(chan struct{}, 1)
+		a := newAssetFixture(t, st, func(o *Options) {
+			o.AssetsHook = func(s string) error {
+				err := hook(s)
+				if err != nil {
+					select {
+					case crashed <- struct{}{}:
+					default:
+					}
+				}
+				return err
+			}
+		})
+		want := a.uploadBeforeMove()
+		a.connectAssets()
+		crash.Store("switch-committed")
+		if _, _, err := a.m.StartMove(ctx, a.h, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-crashed:
+		case <-time.After(20 * time.Second):
+			t.Fatal("the move never reached the switch's commit")
+		}
+		a.h.Release()
+		a.m.Close()
+		crash.Store("")
+		// The next start: the move's job is held before it touches the space.
+		b := reopen(t, a, serving, func(o *Options) {
+			o.AssetsHook = hook
+		})
+		h, err := b.m.Open(ctx, b.user, b.in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Release()
+		as, err := h.Space.PutAsset(space.Author{}, pageB, "after.txt", []byte("AFTER"))
+		if err != nil {
+			t.Fatalf("an upload before the move ran again: %v", err)
+		}
+		if body, _, err := readAsset(t, h.Space, as.Rel); err != nil || body != "AFTER" {
+			t.Fatalf("%q %v", body, err)
+		}
+		for rel, data := range want {
+			if body, _, err := readAsset(t, h.Space, rel); err != nil || body != data {
+				t.Fatalf("%s: %v", rel, err)
+			}
+		}
+		nothingLost(t, b, want)
+		// Let the move run: it has nothing left to copy, and is done.
+		open()
+		b.h = h
+		b.waitMove(MoveDone)
+		nothingLost(t, b, want)
+	})
+}
+
+// holdKind takes the tenant's IO slot until released.
+type holdKind struct{ release chan struct{} }
+
+func (holdKind) Class() jobs.Class                                { return jobs.IO }
+func (holdKind) Recover(context.Context, *store.Job) jobs.Outcome { return jobs.Interrupt }
+func (k holdKind) Run(ctx context.Context, _ *store.Job, _ *jobs.Progress) error {
+	select {
+	case <-k.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// A move cancelled while it waits for its slot lets the uploads go to the
+// attachment repository again, and says it did not happen.
+func TestAMoveCancelledInTheQueueHoldsNoUploads(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		a.uploadBeforeMove()
+		a.connectAssets()
+		r := a.m.runner()
+		release := make(chan struct{})
+		defer close(release)
+		r.Register("hold", holdKind{release})
+		sp, err := store.GetSpace(ctx, st.Q(), store.AllTenants(), a.in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.Enqueue(ctx, store.Job{ID: "HOLD", TenantID: sp.TenantID, Kind: "hold"}); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if j, err := r.Get(ctx, store.AllTenants(), "HOLD"); err == nil && j.State == store.JobRunning {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the holding job did not start")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if _, started, err := a.m.StartMove(ctx, a.h, "", ""); err != nil || !started {
+			t.Fatalf("%v %v", started, err)
+		}
+		row, err := store.GetRemote(ctx, st.Q(), a.in.ID, store.RoleAssets)
+		if err != nil || !a.m.moveRunning(a.in.ID) {
+			t.Fatalf("the queued move does not hold the uploads: %+v %v", row, err)
+		}
+		if err := r.Cancel(ctx, store.AllTenants(), row.JobID); err != nil {
+			t.Fatal(err)
+		}
+		if a.m.moveRunning(a.in.ID) {
+			t.Fatal("a move cancelled in the queue still holds the uploads in assets/")
+		}
+		if v, err := a.m.AssetsRemote(ctx, a.h); err != nil || v.Move == nil || v.Move.State != MoveFailed {
+			t.Fatalf("%+v %v", v, err)
+		}
+	})
+}
+
+// A move asked for while the server stops is not added: jobs.ErrClosed (the
+// API answers 503), and the row names the move it named before.
+func TestAMoveAskedForWhileTheServerStopsIsNotAdded(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		a.uploadBeforeMove()
+		a.connectAssets()
+		a.m.runner().Close()
+		if _, _, err := a.m.StartMove(ctx, a.h, "", ""); !errors.Is(err, jobs.ErrClosed) {
+			t.Fatalf("%v", err)
+		}
+		row, err := store.GetRemote(ctx, st.Q(), a.in.ID, store.RoleAssets)
+		if err != nil || row.JobID != "" || a.m.moveRunning(a.in.ID) {
+			t.Fatalf("%+v %v", row, err)
 		}
 	})
 }

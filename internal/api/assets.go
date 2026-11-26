@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/jobs"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -139,6 +140,11 @@ func (s *server) deleteAssetsRemote(c *call) {
 
 func (s *server) moveAssets(c *call) {
 	v, started, err := s.spaces.StartMove(c.r.Context(), c.sp, c.user().ID, c.user().Username)
+	if errors.Is(err, jobs.ErrClosed) {
+		// The server is stopping: the move is not added (as a bulk action).
+		writeError(c.w, http.StatusServiceUnavailable, "unavailable", "The server is stopping: ask again once it has started.")
+		return
+	}
 	if err != nil {
 		s.fail(c.w, err)
 		return
