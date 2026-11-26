@@ -41,6 +41,7 @@ type Service struct {
 	st   *store.Store
 	defs []*Def
 	byK  map[string]*Def
+	bmu  sync.RWMutex // the bindings are set while the servers of one store start, and read at any time
 	bind map[string]SiteBinding
 	now  func() time.Time
 
@@ -183,12 +184,21 @@ func (s *Service) Defs() []*Def { return s.defs }
 // Def returns the definition of a key.
 func (s *Service) Def(key string) (*Def, bool) { d, ok := s.byK[key]; return d, ok }
 
+func (s *Service) binding(key string) (SiteBinding, bool) {
+	s.bmu.RLock()
+	b, ok := s.bind[key]
+	s.bmu.RUnlock()
+	return b, ok
+}
+
 // Bind attaches a site binding to a key.
 func (s *Service) Bind(key string, b SiteBinding) {
 	if _, ok := s.byK[key]; !ok {
 		panic("settings: no setting " + key)
 	}
+	s.bmu.Lock()
 	s.bind[key] = b
+	s.bmu.Unlock()
 }
 
 // SetDefault makes v the value of a setting until a site administrator sets one
@@ -514,7 +524,7 @@ func rowsByKey(rows []store.LayeredRow) map[string]*store.LayeredRow {
 
 func (s *Service) siteView(ctx context.Context, q store.Q, d *Def, r *store.LayeredRow) (SiteView, error) {
 	v := SiteView{Value: d.Default, Lower: d.Lower}
-	b, bound := s.bind[d.Key]
+	b, bound := s.binding(d.Key)
 	bound = bound && b.Get != nil
 	switch {
 	case bound:
@@ -579,7 +589,7 @@ func (s *Service) check(ctx context.Context, d *Def, tenant string, v any) (any,
 			return nil, err
 		}
 	}
-	if b, ok := s.bind[d.Key]; ok && b.Check != nil && v != nil {
+	if b, ok := s.binding(d.Key); ok && b.Check != nil && v != nil {
 		return b.Check(ctx, tenant, v)
 	}
 	return v, nil
@@ -594,7 +604,7 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 	}
 	var val any
 	if ch.HasValue {
-		b, bound := s.bind[key]
+		b, bound := s.binding(key)
 		if bound && b.ReadOnly != nil && b.ReadOnly() {
 			return 0, &Error{Code: CodeConflict, Msg: key + " is set by a command-line flag; change the flag"}
 		}
@@ -643,7 +653,7 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 		}
 		var before any
 		if ch.HasValue {
-			b, bound := s.bind[key]
+			b, bound := s.binding(key)
 			if bound && b.After != nil {
 				v, err := s.siteView(ctx, q, d, row)
 				if err != nil {
@@ -674,7 +684,7 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 		if err := store.PutLayered(ctx, q, *row); err != nil {
 			return err
 		}
-		if b := s.bind[key]; ch.HasValue && b.After != nil {
+		if b, _ := s.binding(key); ch.HasValue && b.After != nil {
 			if err := b.After(ctx, q, before, val); err != nil {
 				return err
 			}
