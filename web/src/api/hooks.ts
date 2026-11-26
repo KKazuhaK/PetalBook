@@ -249,6 +249,7 @@ export function refreshSpaceAccess(qc: QueryClient, space: string | null, notFou
 
 const LAST_SPACE_KEY = 'pb.space'
 export function rememberSpace(id: string) {
+  if (viewAsId() !== null) return // a view's space is the person's, not this browser's last one
   try {
     localStorage.setItem(LAST_SPACE_KEY, id)
   } catch {

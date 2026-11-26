@@ -184,7 +184,7 @@ func (s *server) viewedWhat(c *call, what string, detail map[string]any) {
 	}
 	if va := c.viewAs; va != nil {
 		// In a view as a person the administrator opened it, as the person.
-		if !s.views.firstOpen(va.v.viewer, c.sp.Info.ID, what, s.now()) {
+		if !s.views.firstOpen(va.v.viewer, c.sp.Info.ID, what+"\x00"+va.v.id, s.now()) {
 			return
 		}
 		detail["space"], detail["viewAs"] = c.sp.Info.ID, va.v.id

@@ -211,6 +211,23 @@ func (s *server) enterViewAs(c *call) bool {
 	if v.scope != "" {
 		_, access = narrowTo(c.p.User, access, v.scope)
 	}
+	// The person is read again from the user cache (no query until the entry
+	// expires or the account changes): disabled, gone, or holding site keys
+	// the administrator may not view as, ends the view.
+	u, held, err := s.auth.CachedAccess(c.r.Context(), v.target.ID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		s.viewsAs.drop(v.id)
+		viewAsEnded(c.w)
+		return false
+	case err != nil:
+		s.fail(c.w, err)
+		return false
+	case u.Disabled || (!held.Site.Empty() && !access.SiteWide(authz.SiteAdminsManage)):
+		s.viewsAs.drop(v.id)
+		viewAsEnded(c.w)
+		return false
+	}
 	// The administrator still holds the key in the person's tenant (one AND),
 	// with the feature on: losing either ends the view.
 	viewer := *c.p
@@ -235,7 +252,14 @@ func (s *server) enterViewAs(c *call) bool {
 // personal space, in a tenant the administrator holds the key in (their
 // scope), and not in a disabled tenant.
 func (s *server) viewAsShows(c *call, in *spaces.Info) bool {
-	return !in.Personal && c.viewAs.access.Can(authz.TenantUsersViewAs, in.TenantID) && !s.opt.Store.TenantDisabled(in.TenantID)
+	if in.Personal || s.opt.Store.TenantDisabled(in.TenantID) {
+		return false
+	}
+	// The tenant's adminView feature binds an administrator who is not a
+	// site-wide holder; a failed read shows nothing.
+	feats := &featureRead{s: s}
+	d := authz.Decide(c.r.Context(), c.viewAs.access, authz.TenantUsersViewAs, in.TenantID, feats.features())
+	return feats.err == nil && d == authz.Allowed
 }
 
 // viewAsSpaces is the person's spaces as the view shows them, cut to read,

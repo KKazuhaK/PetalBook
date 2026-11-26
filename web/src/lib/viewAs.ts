@@ -28,9 +28,39 @@ export function startViewAs(loc: Pick<Location, 'pathname'> = window.location): 
     current = m ? m[1] : null
     if (m) window.history.replaceState(null, '', '/')
   }
-  if (current) document.documentElement.dataset.viewAs = ''
-  else delete document.documentElement.dataset.viewAs
+  if (current) {
+    document.documentElement.dataset.viewAs = ''
+    freezeSharedStorage()
+  } else delete document.documentElement.dataset.viewAs
   return current
+}
+
+// localStorage is shared with the administrator's own tabs: what the person's state would write there (last space,
+// recents, sidebar, preferences) must not reach them. In a view tab every write to it is dropped; reads still work.
+// sessionStorage (the tab's own) is untouched. Undone by `forgetViewAs`.
+let unfreeze: (() => void) | null = null
+function freezeSharedStorage(): void {
+  if (unfreeze) return
+  try {
+    const local = window.localStorage
+    const proto = Object.getPrototypeOf(local) as Storage
+    const { setItem, removeItem, clear } = proto
+    const guard = <A extends unknown[]>(fn: (this: Storage, ...a: A) => void) =>
+      function (this: Storage, ...a: A) {
+        if (this !== local) return fn.apply(this, a)
+      }
+    proto.setItem = guard(setItem)
+    proto.removeItem = guard(removeItem)
+    proto.clear = guard(clear)
+    unfreeze = () => {
+      proto.setItem = setItem
+      proto.removeItem = removeItem
+      proto.clear = clear
+      unfreeze = null
+    }
+  } catch {
+    // No storage: nothing to leak.
+  }
 }
 
 // The id of this tab's view, or null when the tab is not one.
@@ -48,6 +78,7 @@ export function forgetViewAs(): void {
     // nothing kept
   }
   delete document.documentElement.dataset.viewAs
+  unfreeze?.()
 }
 
 // Minutes left until `until`, at least 0.

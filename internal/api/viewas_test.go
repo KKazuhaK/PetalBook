@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/store"
 )
 
 // Viewing as a person (docs/design/3-6-c.md section 6).
@@ -269,6 +270,61 @@ func TestWhoMayBeViewedAs(t *testing.T) {
 			if row["capacity"] != "site_admin" {
 				t.Fatalf("%v", row)
 			}
+		}
+	})
+}
+
+// A page opened in two views (as one person, then another, or after the
+// administrator's own space view) is a row for each view, not one an hour.
+func TestEachViewAuditsThePagesItOpens(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newViewAsFx(t, a)
+		for range 2 {
+			as := []string{viewAsHeader, f.start(t, f.admA, f.userA)}
+			f.admA.do("GET", spacePath(f.spaceA)+"/pages/"+f.page, nil, as...).want(t, 200, "")
+			f.admA.do("GET", spacePath(f.spaceA)+"/pages/"+f.page, nil, as...).want(t, 200, "")
+		}
+		a.auth.FlushAudit(context.Background())
+		ids := map[any]bool{}
+		for _, pv := range f.admA.audit(t, "page_viewed") {
+			if d := pv["detail"].(map[string]any); d["page"] == f.page {
+				ids[d["viewAs"]] = true
+			}
+		}
+		if len(ids) != 2 {
+			t.Fatalf("rows for %d views, want 2: %v", len(ids), ids)
+		}
+	})
+}
+
+// The person is read again on every request: a disabled account ends the view.
+func TestAViewEndsWhenThePersonIsDisabled(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newViewAsFx(t, a)
+		as := []string{viewAsHeader, f.start(t, f.admA, f.userA)}
+		f.admA.do("GET", "/api/spaces", nil, as...).want(t, 200, "")
+		f.admA.do("PATCH", "/api/users/"+f.userA, map[string]any{"disabled": true}).want(t, 200, "")
+		f.admA.do("GET", "/api/spaces", nil, as...).want(t, 403, "view_as_ended")
+	})
+}
+
+// An administrator's key in another tenant, with that tenant's feature off,
+// does not change what a view in their own tenant shows.
+func TestAViewShowsSpacesWhereTheFeatureIsOn(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newViewAsFx(t, a)
+		grantRole(t, a, "RB", store.RoleScopeTenant, f.tenB, store.GrantToUser, mustUserID(t, a, "adm-a"), "tenant.users.viewAs")
+		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.adminView", map[string]any{"siteLock": true, "value": false}).want(t, 200, "")
+		as := []string{viewAsHeader, f.start(t, f.admA, f.userA)}
+		var listed []string
+		for _, it := range f.admA.do("GET", "/api/spaces", nil, as...).want(t, 200, "").body["spaces"].([]any) {
+			listed = append(listed, it.(map[string]any)["id"].(string))
+		}
+		if !slices.Contains(listed, f.spaceA) || slices.Contains(listed, f.spaceB) {
+			t.Fatalf("%v", listed)
 		}
 	})
 }
