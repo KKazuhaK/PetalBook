@@ -184,7 +184,7 @@ func (s *Service) OnFor(ctx context.Context, tenant string) (bool, error) {
 func (s *Service) onForUser(ctx context.Context, userID string) (bool, error) {
 	u, err := s.cfg.Users.CachedUser(ctx, userID)
 	if errors.Is(err, store.ErrNotFound) {
-		return false, nil
+		return true, nil // a person who is gone is refused at the exchange (ownerUsable)
 	}
 	if err != nil {
 		return false, err
