@@ -152,11 +152,47 @@ function seedEmails(server: ReturnType<typeof createMockServer>) {
   call('POST', '/api/account/emails', { email: 'shared@example.org' })
 }
 
+// MOCK_ORGS=1 (accounts mode) starts with mail, tenants and organisations people create switched on, registration for
+// joining open, and one organisation a person made already (to see its badge on the Tenants page).
+function seedOrgs(server: ReturnType<typeof createMockServer>) {
+  const login = server.handle(
+    'POST',
+    '/api/login',
+    JSON.stringify({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }),
+    'application/json',
+    null,
+  )
+  const cookie = login.headers?.['Set-Cookie']?.split(';')[0] ?? null
+  const call = (method: string, path: string, body: unknown) =>
+    server.handle(method, path, JSON.stringify(body), 'application/json', cookie)
+  call('PUT', '/api/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' })
+  call('PUT', '/api/admin/settings/features.tenancy', { value: true })
+  call('PUT', '/api/admin/settings/features.orgCreation', { value: true })
+  call('PUT', '/api/admin/settings/features.registration', { value: true })
+  call('POST', '/api/admin/tenants', { slug: 'globex', name: 'Globex Corporation' })
+  server.handle(
+    'POST',
+    '/api/register',
+    JSON.stringify({
+      username: 'bea',
+      name: 'Bea',
+      email: 'bea@example.org',
+      password: 'a-long-password',
+      org: { name: 'Bea Bakery', slug: 'bea-bakery' },
+    }),
+    'application/json',
+    null,
+  )
+  const link = server.mail.outbox.find((m) => m.kind === 'register_org')?.token
+  if (link) server.handle('POST', '/api/register/confirm', JSON.stringify({ token: link }), 'application/json', null)
+}
+
 export function mockApi(): Plugin {
   const options = optionsFromEnv()
   const server = createMockServer(options)
   if (options.mode === 'accounts' && options.admin !== false) seedNotifications(server)
   if (options.mode === 'accounts' && options.admin !== false && process.env.MOCK_EMAILS === '1') seedEmails(server)
+  if (options.mode === 'accounts' && options.admin !== false && process.env.MOCK_ORGS === '1') seedOrgs(server)
   const delay = Number(process.env.MOCK_DELAY_MS ?? 0)
   return {
     name: 'petalbook-mock-api',

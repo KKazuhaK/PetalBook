@@ -23,6 +23,7 @@ const zhCN: Record<FeatureKey, string> = {
   'features.ownDaily': '组织自己的每日一句',
   'mail.ownSender': '组织自己的发信服务器',
   'accounts.multipleEmails': '一个账号多个邮箱',
+  'features.orgCreation': '自己创建组织',
 }
 
 const en: Record<FeatureKey, string> = {
@@ -43,6 +44,7 @@ const en: Record<FeatureKey, string> = {
   'features.ownDaily': 'the organisation’s own daily text',
   'mail.ownSender': 'the organisation’s own mail server',
   'accounts.multipleEmails': 'more than one email address per account',
+  'features.orgCreation': 'organisations people create themselves',
 }
 
 const names: Record<string, string> = lang === 'en' ? en : zhCN

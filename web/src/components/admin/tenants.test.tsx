@@ -115,6 +115,36 @@ describe('the Tenants page', () => {
     await settle(() => document.querySelectorAll('[data-slot="tenant-list"] li').length === 2, 'gone')
   })
 
+  it('tells the organisations people made themselves from the others, and the filter shows only those', async () => {
+    await open('tenants', (server) => {
+      const admin = adminRequests(server)
+      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
+      admin('PUT', '/api/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' })
+      admin('PUT', '/api/admin/settings/features.orgCreation', { value: true })
+      admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
+      server.handle(
+        'POST',
+        '/api/register',
+        JSON.stringify({
+          username: 'bee',
+          name: 'Bee',
+          email: 'bee@example.test',
+          password: 'a-long-password',
+          org: { name: 'Bee Co', slug: 'bee-co' },
+        }),
+        'application/json',
+      )
+      const link = server.mail.outbox.find((x) => x.kind === 'register_org')!.link!
+      server.handle('POST', '/api/register/confirm', JSON.stringify({ token: link.split('#')[1] }), 'application/json')
+    })
+    await settle(() => document.querySelectorAll('[data-slot="tenant-list"] li').length === 3, 'the tenants')
+    expect(document.querySelectorAll('[data-slot="tenant-list"] li')[2].textContent).toContain(tt.list.originSelf)
+    expect(document.querySelectorAll('[data-slot="tenant-list"] li')[1].textContent).not.toContain(tt.list.originSelf)
+    await click(button(tt.list.filterSelf(1)))
+    await settle(() => document.querySelectorAll('[data-slot="tenant-list"] li').length === 1, 'only the made ones')
+    expect(text()).toContain('Bee Co')
+  })
+
   it('nothing on it can be wider than a phone', async () => {
     await open('tenants', (server) =>
       adminRequests(server)('PUT', '/api/admin/settings/features.tenancy', { value: true }),

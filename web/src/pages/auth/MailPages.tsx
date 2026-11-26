@@ -9,6 +9,7 @@ import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { forgetFragmentToken, fragmentToken } from '@/lib/auth'
+import type { RegisteredOrg, RegisterInfo } from '@/api/types'
 import { lang, t } from '@/i18n'
 import { tm } from '@/i18n/mail'
 import { ts } from '@/i18n/signin'
@@ -58,7 +59,7 @@ export function RegisterPage() {
         onRetry={() => void info.refetch()}
       />
     )
-  if (!info.data.open) {
+  if (!info.data.open && !info.data.orgCreation.open) {
     return (
       <AuthLayout title={tm.register.title} intro={tm.register.closed}>
         <p className="text-sm text-muted-foreground">{tm.register.closedHelp}</p>
@@ -68,16 +69,32 @@ export function RegisterPage() {
       </AuthLayout>
     )
   }
-  return <RegisterForm tenant={tenant} info={info.data} />
+  return <RegisterForm tenant={tenant} info={info.data} wantsOrg={params.get('org') === '1'} />
 }
 
-function RegisterForm({
-  tenant,
-  info,
-}: {
-  tenant?: string
-  info: Extract<Awaited<ReturnType<typeof api.registerInfo>>, { open: true }>
-}) {
+// A slug suggested from an organisation's name: lower case letters and digits, joined by single dashes, at most 32
+// characters. Empty when the name has nothing to make one of.
+export function slugFromName(name: string): string {
+  const s = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+/, '')
+    .slice(0, 32)
+    .replace(/-+$/, '')
+  return s.length >= 2 ? s : ''
+}
+const SLUG = /^[a-z0-9][a-z0-9-]{1,31}$/
+
+function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: RegisterInfo; wantsOrg: boolean }) {
+  const joinOpen = info.open
+  const orgOpen = info.orgCreation.open
+  const [mode, setMode] = useState<'join' | 'org'>(orgOpen && (wantsOrg || !joinOpen) ? 'org' : 'join')
+  const org = mode === 'org'
+  const [orgName, setOrgName] = useState('')
+  const [orgSlug, setOrgSlug] = useState('')
+  const [slugEdited, setSlugEdited] = useState(false)
   const captcha = useCaptcha('register')
   const [username, setUsername] = useState('')
   const [name, setName] = useState('')
@@ -90,8 +107,11 @@ function RegisterForm({
   const [fields, setFields] = useState<Record<string, string>>({})
   const [sent, setSent] = useState('')
   const messageRef = useRef<HTMLParagraphElement>(null)
-  const needsTerms = info.termsUrl !== '' || info.privacyUrl !== ''
-  const min = info.password.minLength
+  const domains = info.domains ?? []
+  const termsUrl = info.termsUrl ?? ''
+  const privacyUrl = info.privacyUrl ?? ''
+  const needsTerms = termsUrl !== '' || privacyUrl !== ''
+  const min = info.password?.minLength ?? 8
   useEffect(() => {
     if (error) messageRef.current?.focus()
   }, [error])
@@ -104,13 +124,18 @@ function RegisterForm({
     if (pass.length < min) problems.password = tm.register.tooShort(min)
     else if (pass !== again) problems.password = tm.register.mismatch
     if (needsTerms && !accept) problems.terms = tm.register.termsRequired
+    if (org) {
+      if (!orgName.trim()) problems.orgName = tm.register.orgNameRequired
+      if (!SLUG.test(orgSlug)) problems.orgSlug = tm.register.orgSlugInvalid
+    }
     setFields(problems)
     if (Object.keys(problems).length) return
     setBusy(true)
     const answer = captcha.value()
     try {
       await api.register({
-        ...(tenant ? { tenant } : {}),
+        ...(tenant && !org ? { tenant } : {}),
+        ...(org ? { org: { name: orgName.trim(), slug: orgSlug } } : {}),
         username: username.trim(),
         name: name.trim() || username.trim(),
         email: email.trim(),
@@ -133,6 +158,7 @@ function RegisterForm({
       if (err instanceof ApiError && err.code === 'rate_limited') setError(rateText(err))
       else if (err instanceof ApiError && err.code === 'registration_closed') setError(tm.register.closedNow)
       else if (err instanceof ApiError && err.code === 'exists') setFields({ username: tm.register.taken })
+      else if (err instanceof ApiError && err.code === 'slug_taken') setFields({ orgSlug: tm.register.orgSlugTaken })
       else if (err instanceof ApiError && err.code === 'email_domain_not_allowed')
         setFields({ email: tm.register.domainNotAllowed })
       else if (err instanceof ApiError && err.code === 'terms_required') setFields({ terms: tm.register.termsRequired })
@@ -161,9 +187,64 @@ function RegisterForm({
     )
   }
   return (
-    <AuthLayout title={tm.register.title} intro={tm.register.intro(info.tenant.name)}>
+    <AuthLayout
+      title={org ? tm.register.orgDialogTitle : tm.register.title}
+      intro={org ? tm.register.orgIntro : tm.register.intro(info.tenant?.name ?? '')}
+    >
       <FormMessage focusRef={messageRef}>{error}</FormMessage>
       <form className="grid gap-4" onSubmit={(e) => void submit(e)} noValidate>
+        {joinOpen && orgOpen && (
+          <div role="radiogroup" aria-label={tm.register.choiceLabel} className="grid gap-2 sm:grid-cols-2">
+            {(
+              [
+                ['join', tm.register.join(info.tenant?.name ?? '')],
+                ['org', tm.register.createOrg],
+              ] as const
+            ).map(([value, text]) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={mode === value}
+                onClick={() => setMode(value)}
+                className={`min-h-11 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none ${mode === value ? 'border-brand bg-brand/10 text-foreground' : 'border-input text-muted-foreground hover:bg-muted'}`}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+        )}
+        {org && (
+          <>
+            <Field
+              label={tm.register.orgName}
+              error={fields.orgName}
+              value={orgName}
+              maxLength={80}
+              onChange={(e) => {
+                setOrgName(e.target.value)
+                if (!slugEdited) setOrgSlug(slugFromName(e.target.value))
+              }}
+              autoComplete="organization"
+              required
+            />
+            <Field
+              label={tm.register.orgSlug}
+              help={tm.register.orgSlugHelp}
+              error={fields.orgSlug}
+              value={orgSlug}
+              maxLength={32}
+              onChange={(e) => {
+                setSlugEdited(true)
+                setOrgSlug(e.target.value.toLowerCase())
+              }}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              required
+            />
+          </>
+        )}
         <Field
           label={tm.register.username}
           help={t.auth.usernameHelp}
@@ -182,8 +263,8 @@ function RegisterForm({
           label={tm.register.email}
           type="email"
           help={
-            info.domains.length
-              ? `${tm.register.emailHelp} ${tm.register.domains(info.domains.join(', '))}`
+            domains.length && !org
+              ? `${tm.register.emailHelp} ${tm.register.domains(domains.join(', '))}`
               : tm.register.emailHelp
           }
           error={fields.email}
@@ -222,9 +303,9 @@ function RegisterForm({
               />
               <span>
                 {tm.register.accept}{' '}
-                {info.termsUrl && (
+                {termsUrl && (
                   <a
-                    href={info.termsUrl}
+                    href={termsUrl}
                     target="_blank"
                     rel="noreferrer"
                     className="text-brand underline underline-offset-4"
@@ -232,10 +313,10 @@ function RegisterForm({
                     {tm.register.terms}
                   </a>
                 )}
-                {info.termsUrl && info.privacyUrl && ` ${tm.register.and} `}
-                {info.privacyUrl && (
+                {termsUrl && privacyUrl && ` ${tm.register.and} `}
+                {privacyUrl && (
                   <a
-                    href={info.privacyUrl}
+                    href={privacyUrl}
                     target="_blank"
                     rel="noreferrer"
                     className="text-brand underline underline-offset-4"
@@ -250,7 +331,7 @@ function RegisterForm({
         )}
         <CaptchaField captcha={captcha} disabled={busy} />
         <Button type="submit" disabled={busy || captcha.missing}>
-          {busy ? tm.register.submitting : tm.register.submit}
+          {busy ? tm.register.submitting : org ? tm.register.orgSubmit : tm.register.submit}
         </Button>
       </form>
       <Link to="/login" className="text-sm text-brand underline underline-offset-4">
@@ -266,18 +347,20 @@ export function RegisterConfirmPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [token] = useState(() => fragmentToken('register-confirm'))
-  const [state, setState] = useState<{ kind: 'working' } | { kind: 'error'; message: string }>(
-    token ? { kind: 'working' } : { kind: 'error', message: '' },
-  )
+  const [state, setState] = useState<
+    { kind: 'working' } | { kind: 'error'; message: string } | { kind: 'org'; org: RegisteredOrg }
+  >(token ? { kind: 'working' } : { kind: 'error', message: '' })
   const started = useRef(false)
   useEffect(() => () => forgetFragmentToken('register-confirm'), [])
   useEffect(() => {
     if (gate !== null || !token || started.current) return
     started.current = true
     api.registerConfirm(token).then(
-      async ({ user }) => {
+      async ({ user, tenant: org }) => {
         await applySignIn(qc, user)
-        navigate('/', { replace: true })
+        // A person who made an organisation is told so, and what its address is.
+        if (org) setState({ kind: 'org', org })
+        else navigate('/', { replace: true })
       },
       (err: unknown) => {
         const code = err instanceof ApiError ? err.code : ''
@@ -290,9 +373,11 @@ export function RegisterConfirmPage() {
                 ? tm.confirm.closed
                 : code === 'exists'
                   ? tm.confirm.exists
-                  : code === 'rate_limited' && err instanceof ApiError
-                    ? rateText(err)
-                    : tm.confirm.failed,
+                  : code === 'org_limit'
+                    ? tm.confirm.orgLimit
+                    : code === 'rate_limited' && err instanceof ApiError
+                      ? rateText(err)
+                      : tm.confirm.failed,
         })
       },
     )
@@ -308,6 +393,18 @@ export function RegisterConfirmPage() {
     return (
       <AuthLayout title={tm.confirm.title} intro={tm.confirm.working}>
         <div aria-busy="true" role="status" className="h-16 animate-pulse rounded-lg bg-muted" />
+      </AuthLayout>
+    )
+  if (state.kind === 'org')
+    return (
+      <AuthLayout
+        title={tm.confirm.orgReady(state.org.name)}
+        intro={tm.confirm.orgBody(state.org.name, state.org.slug)}
+      >
+        {state.org.renamed && <FormMessage tone="info">{tm.confirm.orgRenamed(state.org.slug)}</FormMessage>}
+        <Button type="button" onClick={() => navigate('/', { replace: true })}>
+          {tm.confirm.orgContinue}
+        </Button>
       </AuthLayout>
     )
   return (

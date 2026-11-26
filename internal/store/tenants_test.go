@@ -216,7 +216,7 @@ func TestTenantsTable(t *testing.T) {
 		var names []string
 		after := ""
 		for {
-			page, next, err := store.ListTenants(ctx, st.Q(), st.Dialect(), "", after, 2)
+			page, next, err := store.ListTenants(ctx, st.Q(), st.Dialect(), "", "", after, 2)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -231,7 +231,7 @@ func TestTenantsTable(t *testing.T) {
 		if fmt.Sprint(names) != "[Default alpha Beta Zed]" {
 			t.Fatalf("the default first, then by name: %v", names)
 		}
-		if l, _, _ := store.ListTenants(ctx, st.Q(), st.Dialect(), "ALPH", "", 10); len(l) != 1 || l[0].Name != "alpha" {
+		if l, _, _ := store.ListTenants(ctx, st.Q(), st.Dialect(), "ALPH", "", "", 10); len(l) != 1 || l[0].Name != "alpha" {
 			t.Fatalf("%v", l)
 		}
 		// Disabling is in memory at once.

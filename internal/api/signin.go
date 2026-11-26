@@ -108,7 +108,9 @@ func (s *server) getAuthProviders(c *call) {
 		Passkey   bool                  `json:"passkey"`
 		Register  bool                  `json:"register"`
 		Forgot    bool                  `json:"forgot"`
-	}{info.Providers, info.Mode, info.Local, info.SSO, info.Passkey, rules.Open, s.auth.MailEnabled()})
+		// OrgCreation: a person may register an organisation of their own.
+		OrgCreation bool `json:"orgCreation"`
+	}{info.Providers, info.Mode, info.Local, info.SSO, info.Passkey, rules.Open, s.auth.MailEnabled(), s.auth.OrgCreation(c.r.Context()).Open})
 }
 
 func (s *server) getCaptcha(c *call) {

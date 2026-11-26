@@ -827,6 +827,10 @@ export type ErrorCode =
   | 'setting_restricted'
   | 'setting_above_max'
   | 'mail_not_configured'
+  | 'needs_mail'
+  | 'needs_tenancy'
+  | 'slug_taken'
+  | 'org_limit'
   | 'mail_insecure'
   | 'mail_from_required'
   | 'mail_needs_public_url'
@@ -1145,6 +1149,8 @@ export interface AuthProviders {
   // 3.3: whether the page links to registration and to password reset.
   register?: boolean
   forgot?: boolean
+  // A person may register an organisation of their own (features.orgCreation).
+  orgCreation?: boolean
 }
 
 // --- mail, registration, email verification and password reset (3.3) ---
@@ -1178,18 +1184,29 @@ export interface MailTestResult {
   ok: boolean
   message?: string
 }
-export type RegisterInfo =
-  | { open: false }
-  | {
-      open: true
-      tenant: { slug: string; name: string }
-      domains: string[]
-      termsUrl: string
-      privacyUrl: string
-      password: { minLength: number }
-    }
+// What registration offers: a place in the tenant (`open`) and, when the site allows it, an organisation of the person's
+// own (`orgCreation.open`). When neither is open only those two flags are there.
+export interface RegisterInfo {
+  open: boolean
+  orgCreation: { open: boolean }
+  tenant?: { slug: string; name: string }
+  domains?: string[]
+  termsUrl?: string
+  privacyUrl?: string
+  password?: { minLength: number }
+}
+// The organisation a registration makes, and the registration answer that made one (renamed: the slug was taken in
+// the meantime and a number was added).
+export interface RegisterOrg {
+  name: string
+  slug: string
+}
+export interface RegisteredOrg extends RegisterOrg {
+  renamed: boolean
+}
 export interface RegisterInput {
   tenant?: string
+  org?: RegisterOrg
   username: string
   name: string
   email: string
@@ -1945,10 +1962,15 @@ export interface Tenant extends TenantRef {
   quota: Record<TenantQuotaKey, number | null>
   // The plan the tenant has, null for none.
   plan: PlanRef | null
+  // How the tenant came to be: with the database, by a site administrator, or by a person who registered it (then
+  // `createdBy` is that person's id).
+  origin: TenantOrigin
+  createdBy: string
   usage: TenantUsage
   created: string
   updated: string
 }
+export type TenantOrigin = 'default' | 'admin' | 'self'
 export interface TenantList {
   items: Tenant[]
   next: string
@@ -2117,6 +2139,7 @@ export type FeatureKey =
   | 'features.ownDaily'
   | 'mail.ownSender'
   | 'accounts.multipleEmails'
+  | 'features.orgCreation'
 // What GET /api/settings answers: the features as the caller's tenant has them, and the settings a space or a person can
 // change.
 export interface MySettings {

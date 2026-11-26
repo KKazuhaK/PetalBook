@@ -10,13 +10,17 @@ import (
 
 // The kinds of message the server sends.
 const (
-	KindVerify       = "verify"
-	KindEmailClaim   = "email_claim" // verify, for an address another account holds unverified
-	KindRegister     = "register"
-	KindRegisterDup  = "register_exists"
-	KindReset        = "reset"
-	KindResetSSO     = "reset_sso"
-	KindEmailChanged = "email_changed"
+	KindVerify      = "verify"
+	KindEmailClaim  = "email_claim" // verify, for an address another account holds unverified
+	KindRegister    = "register"
+	KindRegisterDup = "register_exists"
+	// KindRegisterOrg confirms a registration that makes an organisation;
+	// KindRegisterOrgRefused says that none was made (a cap was reached).
+	KindRegisterOrg        = "register_org"
+	KindRegisterOrgRefused = "register_org_refused"
+	KindReset              = "reset"
+	KindResetSSO           = "reset_sso"
+	KindEmailChanged       = "email_changed"
 	// Notes with no link about the addresses of an account with several
 	// (accounts.multipleEmails): one was added, removed, or made primary.
 	KindEmailAdded   = "email_added"
@@ -31,6 +35,7 @@ type Vars struct {
 	Site     string // the host of the public address
 	Name     string // the account's display name, beside its username
 	Username string
+	Org      string // the name of the organisation a registration makes
 	Email    string
 	Link     string
 	Links    []Link // reset: one per account sharing the address
@@ -125,6 +130,10 @@ func en(kind string, v Vars) body {
 		return body{subject: "Confirm adding this address to an account", paras: []string{fmt.Sprintf("Someone asked to add %s to the account %s on %s. Follow this link to confirm that it is yours: it is then added to that account, and if another account has it without having confirmed it, it is moved away from that account. It works once and for %d hours.", v.Email, account(v), v.Site, v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegister:
 		return body{subject: "Confirm your registration", paras: []string{fmt.Sprintf("Follow this link to finish making your account %q on %s. It works once and for %d hours.", v.Username, v.Site, v.Hours)}, link: v.Link, foot: ignore}
+	case KindRegisterOrg:
+		return body{subject: "Confirm your registration", paras: []string{fmt.Sprintf("Follow this link to finish making your account %q and your organization %q on %s. You will be its administrator. It works once and for %d hours.", v.Username, v.Org, v.Site, v.Hours)}, link: v.Link, foot: ignore}
+	case KindRegisterOrgRefused:
+		return body{subject: "Your organization was not made", paras: []string{fmt.Sprintf("Someone asked to register this address on %s and to make the organization %q, but no organization can be made right now, so nothing was made. You can try again later.", v.Site, v.Org)}, foot: ignore}
 	case KindRegisterDup:
 		return body{subject: "You already have an account", paras: []string{fmt.Sprintf("Someone tried to register this address on %s, but it already has an account. If it was you, you can reset the password with this link (it works once and for %d hour).", v.Site, v.Hours)}, link: v.Link, foot: ignore}
 	case KindReset:
@@ -159,6 +168,10 @@ func zh(kind string, v Vars) body {
 		return body{subject: "确认把这个邮箱加到账号", paras: []string{fmt.Sprintf("有人要把 %s 加到 %s 上的账号 %s。点开下面的链接确认它是你的：它会加到该账号；如果另一个账号持有它但没有确认过，它会从那个账号移走。链接只能用一次，%d 小时内有效。", v.Email, v.Site, account(v), v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegister:
 		return body{subject: "确认你的注册", paras: []string{fmt.Sprintf("点开下面的链接，完成在 %s 上创建账号「%s」。链接只能用一次，%d 小时内有效。", v.Site, v.Username, v.Hours)}, link: v.Link, foot: ignore}
+	case KindRegisterOrg:
+		return body{subject: "确认你的注册", paras: []string{fmt.Sprintf("点开下面的链接，完成在 %s 上创建账号「%s」和组织「%s」，你将是这个组织的管理员。链接只能用一次，%d 小时内有效。", v.Site, v.Username, v.Org, v.Hours)}, link: v.Link, foot: ignore}
+	case KindRegisterOrgRefused:
+		return body{subject: "你的组织没有创建", paras: []string{fmt.Sprintf("有人想用这个邮箱在 %s 上注册并创建组织「%s」，但现在不能再创建组织，所以什么都没有创建。可以稍后再试。", v.Site, v.Org)}, foot: ignore}
 	case KindRegisterDup:
 		return body{subject: "你已经有账号了", paras: []string{fmt.Sprintf("有人想用这个邮箱在 %s 上注册，但它已经有账号了。如果是你，可以用下面的链接重置密码（只能用一次，%d 小时内有效）。", v.Site, v.Hours)}, link: v.Link, foot: ignore}
 	case KindReset:

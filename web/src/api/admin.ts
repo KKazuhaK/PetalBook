@@ -47,6 +47,7 @@ import type {
   Tenancy,
   Tenant,
   TenantList,
+  TenantOrigin,
   TenantSetting,
   TenantSettingWritten,
   Group,
@@ -229,9 +230,13 @@ export const adminApi = {
     request<{ sent: boolean }>(`/users/${enc(id)}/password-reset`, { method: 'POST', body: lang ? { lang } : {} }),
 
   // --- tenants (3.3) ---
-  tenants: (params: { q?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+  tenants: (
+    params: { q?: string; origin?: TenantOrigin; cursor?: string; limit?: number } = {},
+    signal?: AbortSignal,
+  ) => {
     const q = new URLSearchParams()
     if (params.q) q.set('q', params.q)
+    if (params.origin) q.set('origin', params.origin)
     if (params.cursor) q.set('cursor', params.cursor)
     if (params.limit) q.set('limit', String(params.limit))
     const qs = q.toString()

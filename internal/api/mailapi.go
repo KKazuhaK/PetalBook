@@ -166,17 +166,28 @@ func (s *server) getRegister(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	if !rules.Open {
-		writeJSON(c.w, http.StatusOK, map[string]any{"open": false})
+	// A person may also make an organisation of their own (the default tenant's
+	// terms apply), when the site lets them.
+	orgOpen := s.auth.OrgCreation(c.r.Context()).Open
+	if !rules.Open && !orgOpen {
+		writeJSON(c.w, http.StatusOK, map[string]any{"open": false, "orgCreation": map[string]bool{"open": false}})
 		return
+	}
+	joinOpen := rules.Open
+	if !rules.Open {
+		id = store.DefaultTenantID
+		if rules, err = s.auth.Registration(c.r.Context(), id); err != nil {
+			s.fail(c.w, err)
+			return
+		}
 	}
 	ref, _ := s.opt.Store.TenantRefOf(id)
 	domains := rules.Domains
 	if domains == nil {
 		domains = []string{}
 	}
-	writeJSON(c.w, http.StatusOK, map[string]any{"open": true, "tenant": map[string]string{"slug": ref.Slug, "name": ref.Name},
-		"domains": domains, "termsUrl": rules.TermsURL, "privacyUrl": rules.PrivacyURL, "password": map[string]int{"minLength": auth.MinPasswordChars}})
+	writeJSON(c.w, http.StatusOK, map[string]any{"open": joinOpen, "orgCreation": map[string]bool{"open": orgOpen},
+		"tenant": map[string]string{"slug": ref.Slug, "name": ref.Name}, "domains": domains, "termsUrl": rules.TermsURL, "privacyUrl": rules.PrivacyURL, "password": map[string]int{"minLength": auth.MinPasswordChars}})
 }
 
 func (s *server) postRegister(c *call) {
@@ -189,16 +200,27 @@ func (s *server) postRegister(c *call) {
 		AcceptTerms bool                `json:"acceptTerms"`
 		Captcha     *auth.CaptchaAnswer `json:"captcha"`
 		Lang        string              `json:"lang"`
+		// Org asks for an organisation of the person's own (the site must allow it).
+		Org *struct {
+			Name string `json:"name"`
+			Slug string `json:"slug"`
+		} `json:"org"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	id, ok := s.tenantOfRequest(c, req.Tenant)
-	if !ok {
-		return
+	id, ok := store.DefaultTenantID, true
+	if req.Org == nil {
+		if id, ok = s.tenantOfRequest(c, req.Tenant); !ok {
+			return
+		}
 	}
-	err := s.auth.Register(c.r.Context(), auth.RegisterParams{TenantID: id, Username: req.Username, Name: req.Name, Email: req.Email, Password: req.Password,
-		AcceptTerms: req.AcceptTerms, Captcha: req.Captcha, Lang: langOf(c, req.Lang), IP: s.auth.ClientAddr(c.r)})
+	p := auth.RegisterParams{TenantID: id, Username: req.Username, Name: req.Name, Email: req.Email, Password: req.Password,
+		AcceptTerms: req.AcceptTerms, Captcha: req.Captcha, Lang: langOf(c, req.Lang), IP: s.auth.ClientAddr(c.r)}
+	if req.Org != nil {
+		p.Org = &auth.OrgParams{Name: req.Org.Name, Slug: req.Org.Slug}
+	}
+	err := s.auth.Register(c.r.Context(), p)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -215,15 +237,28 @@ func (s *server) registerConfirm(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, tok, err := s.auth.RegisterConfirm(c.r.Context(), req.Token, s.auth.ClientAddr(c.r))
+	res, err := s.auth.RegisterConfirm(c.r.Context(), req.Token, s.auth.ClientAddr(c.r))
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	s.startSession(c, tok)
-	writeJSON(c.w, http.StatusCreated, struct {
-		User userResp `json:"user"`
-	}{s.toUser(*u)})
+	s.startSession(c, res.Token)
+	out := struct {
+		User   userResp `json:"user"`
+		Tenant *struct {
+			Slug    string `json:"slug"`
+			Name    string `json:"name"`
+			Renamed bool   `json:"renamed"`
+		} `json:"tenant,omitempty"`
+	}{User: s.toUser(*res.User)}
+	if res.Org != nil {
+		out.Tenant = &struct {
+			Slug    string `json:"slug"`
+			Name    string `json:"name"`
+			Renamed bool   `json:"renamed"`
+		}{res.Org.Slug, res.Org.Name, res.Renamed}
+	}
+	writeJSON(c.w, http.StatusCreated, out)
 }
 
 // --- email verification ---------------------------------------------------------------

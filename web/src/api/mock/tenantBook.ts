@@ -224,6 +224,7 @@ const WHY = {
   sessions: "sessions are the server's until organisations get their own lifetimes",
   storage: 'the requirement of a remote is worked out over every space of the server',
   cache: "the cache is on the server's own disk",
+  orgCreation: "a tenant does not exist yet; creating one takes the site's resources",
 }
 const site = (def: Partial<Def> & Pick<Def, 'key' | 'kind' | 'def'>): Def => ({
   layers: ['site'],
@@ -236,6 +237,18 @@ const FOLDED: Def[] = [
   { key: 'features.tokens', kind: 'boolean', layers: ['site', 'tenant'], def: true, lower: { mode: 'allow' } },
   { key: 'features.mcp', kind: 'boolean', layers: ['site', 'tenant'], def: true, lower: { mode: 'allow' } },
   site({ key: 'features.tenancy', kind: 'boolean', def: false, why: 'whether tenants besides the default one exist' }),
+  site({ key: 'features.orgCreation', kind: 'boolean', def: false, why: WHY.orgCreation }),
+  site({ key: 'orgCreation.perPerson', kind: 'limit', def: 3, min: 0, max: 100, why: WHY.orgCreation }),
+  site({
+    key: 'orgCreation.perHour',
+    kind: 'limit',
+    def: null,
+    min: 1,
+    max: 100000,
+    nullable: true,
+    why: WHY.orgCreation,
+  }),
+  site({ key: 'orgCreation.plan', kind: 'text', def: '', why: WHY.orgCreation }),
   site({ key: 'features.passkeys', kind: 'boolean', def: true, bound: true, why: WHY.signin }),
   site({
     key: 'signin.mode',
@@ -517,6 +530,8 @@ export function createTenantBook(o: TenantBookOptions) {
     registration: { open: false },
     quota: { people: null, spaces: null, bytes: null, pages: null },
     plan: null,
+    origin: 'default',
+    createdBy: '',
     usage: ZERO,
     created: stamp,
     updated: stamp,
@@ -654,6 +669,14 @@ export function createTenantBook(o: TenantBookOptions) {
         'password sign-in is refused (ssoOnly), so nobody could finish registering',
       )
   }
+  // Organisations people create need tenants, mail, and password sign-in for the link they confirm with.
+  const checkOrgOpening = () => {
+    if (siteRows.get('features.tenancy')?.value !== true)
+      throw new HttpError(409, 'needs_tenancy', 'organisations people create need the multiple tenants feature')
+    if (!o.mailReady()) throw new HttpError(409, 'needs_mail', 'organisations people create are confirmed by mail')
+    if (o.ssoOnlyStored())
+      throw new HttpError(409, 'sso_only_with_registration', 'password sign-in is refused (ssoOnly)')
+  }
   const anyOpen = () => [...tenants.keys()].some((id) => effectiveOf(id, DEFS[0]).effective === true)
   const visible = (me: string, id: string): Tenant => {
     const t = tenants.get(id)
@@ -685,6 +708,8 @@ export function createTenantBook(o: TenantBookOptions) {
             ? d.def
             : checkValue(d, body.value)
       if (key === 'features.registration' && v === true) checkOpening()
+      if (key === 'features.orgCreation' && v === true) checkOrgOpening()
+      if (key === 'orgCreation.plan' && v !== '' && !plans.has(v as string)) bad('there is no plan with that slug')
       // The server's aboveMax: a site value over its own maximum is refused, not capped.
       const l = 'lower' in body ? (body.lower === null ? d.lower : checkLower(d, body.lower)) : (row.lower ?? d.lower)
       if (d.kind === 'limit' && l.mode === 'restrict' && !allows(l, d, v)) throw aboveMax()
@@ -1023,6 +1048,43 @@ export function createTenantBook(o: TenantBookOptions) {
     quotaOf,
     registrationStored: anyOpen,
     exists: (id: string) => tenants.has(id),
+    // Organisations people create themselves (docs/design/3-6-c.md, 2).
+    orgRules: () => {
+      const v = (key: string) => siteValue(DEFS.find((d) => d.key === key)!)
+      return {
+        open: v('features.orgCreation') === true && v('features.tenancy') === true && o.mailReady(),
+        perPerson: v('orgCreation.perPerson') as number,
+        perHour: v('orgCreation.perHour') as number | null,
+      }
+    },
+    slugTaken: (slug: string) => [...tenants.values()].some((t) => t.slug === slug),
+    tenantCount: () => tenants.size,
+    // Makes the tenant of a person's own organisation: the slug gets a number when it was taken since.
+    makeSelf: (name: string, slug: string, createdBy: string): Tenant & { renamed: boolean } => {
+      let use = slug
+      for (let n = 2; [...tenants.values()].some((t) => t.slug === use); n++) use = `${slug.slice(0, 29)}-${n}`
+      const id = `T${String(seq++).padStart(9, '0')}`
+      const stampNow = o.now()
+      const planSlug = siteValue(DEFS.find((d) => d.key === 'orgCreation.plan')!) as string
+      const t: Tenant = {
+        id,
+        slug: use,
+        name,
+        default: false,
+        disabled: false,
+        registration: { open: false },
+        quota: { people: null, spaces: null, bytes: null, pages: null },
+        plan: null,
+        origin: 'self',
+        createdBy,
+        usage: ZERO,
+        created: stampNow,
+        updated: stampNow,
+      }
+      tenants.set(id, t)
+      if (planSlug && plans.has(planSlug)) tenantPlan.set(id, planSlug)
+      return { ...tenantOut(t), renamed: use !== slug }
+    },
     // Whether daily.own / daily.api are in effect for a person's tenant (the mock has one world: the default).
     effective: (key: string): unknown =>
       effectiveOf(
@@ -1042,7 +1104,11 @@ export function createTenantBook(o: TenantBookOptions) {
           const q = (url.searchParams.get('q') ?? '').toLowerCase()
           const limit = Number(url.searchParams.get('limit') ?? 50)
           if (!(limit >= 1 && limit <= 200)) bad('limit is a number from 1 to 200')
+          const origin = url.searchParams.get('origin') ?? ''
+          if (origin !== '' && origin !== 'default' && origin !== 'admin' && origin !== 'self')
+            bad('origin is default, admin or self')
           const all = [...tenants.values()]
+            .filter((t) => !origin || t.origin === origin)
             .filter((t) => !q || t.name.toLowerCase().includes(q) || t.slug.includes(q))
             .sort((a, b) => (a.default ? -1 : b.default ? 1 : a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1))
           return j({ ...page(all, url.searchParams.get('cursor') ?? '', limit), count: tenants.size })
@@ -1074,6 +1140,8 @@ export function createTenantBook(o: TenantBookOptions) {
             registration: { open: false },
             quota: { people: null, spaces: null, bytes: null, pages: null },
             plan: null,
+            origin: 'admin',
+            createdBy: me,
             usage: ZERO,
             created: stampNow,
             updated: stampNow,
