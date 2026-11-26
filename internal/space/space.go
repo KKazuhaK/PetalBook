@@ -72,6 +72,11 @@ type Options struct {
 	// SlotContext, when set, ends the wait of Open's index sync for one of the
 	// server's rebuild slots: Open then fails with its error.
 	SlotContext context.Context
+	// ClearStaleGitLocks says no other process uses the repository (the
+	// server holds the data directory's serve.lock): lock files git left there
+	// longer ago than gitstore.StaleLockAge are a crash's, and Open removes
+	// them before it looks at the clone.
+	ClearStaleGitLocks bool
 }
 
 // Space is safe for concurrent use.
@@ -257,6 +262,11 @@ func Open(opt Options) (*Space, error) {
 		return nil, err
 	}
 	g.dirs = dirs
+	if opt.ClearStaleGitLocks {
+		// Before anything takes a lock: what a crash left would refuse the
+		// recovery below, and every change after it.
+		clearStaleLocks(dirs, log)
+	}
 
 	heal := &healer{root: root, repo: g.r, log: log, gitDir: dirs.git}
 	// A local space writes space.yml at the start when there is none: a link

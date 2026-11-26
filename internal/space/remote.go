@@ -472,8 +472,14 @@ func firstN(l []string, n int) []string {
 // --- fetching -----------------------------------------------------------------
 
 // fetch brings the remote branch up to date unless that was done a moment ago
-// (and force is false). It runs without s.mu.
+// (and force is false). It runs without s.mu. Closing the space stops it.
 func (s *Space) fetch(ctx context.Context, r *remote, force bool) error {
+	return s.fetchAs(ctx, r, force, true)
+}
+
+// fetchAs is fetch; closeStops false lets it run on while the space is
+// closed, within the network timeout.
+func (s *Space) fetchAs(ctx context.Context, r *remote, force, closeStops bool) error {
 	r.fetchMu.Lock()
 	defer r.fetchMu.Unlock()
 	if !force && r.failErr != nil && time.Since(r.failedAt) < r.failFast {
@@ -484,8 +490,10 @@ func (s *Space) fetch(ctx context.Context, r *remote, force bool) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stop := context.AfterFunc(s.ctx, cancel)
-	defer stop()
+	if closeStops {
+		stop := context.AfterFunc(s.ctx, cancel)
+		defer stop()
+	}
 	if err := r.repo.Fetch(ctx, r.branch, false); err != nil {
 		r.failedAt, r.failErr = time.Now(), err
 		return err
@@ -1467,7 +1475,7 @@ func (s *Space) pushGroupLocked(ctx context.Context, r *remote) {
 		// The answer was lost, but the push went through.
 		pushed = r.repo.RemoteTip(local, r.branch)
 	} else {
-		moved := lerr == nil && r.repo.RemoteTip(ctx, r.branch) != parent
+		moved := lerr == nil && r.repo.RemoteTip(local, r.branch) != parent
 		var err error
 		switch {
 		case lerr != nil:
@@ -1503,9 +1511,13 @@ func (s *Space) pushGroupLocked(ctx context.Context, r *remote) {
 	}
 }
 
-// landedAt is landed for the commit top: whether the remote has it.
+// landedAt is landed for the commit top: whether the remote has it. It is
+// not stopped by closing the space (only by the network timeout): a push
+// that went through just before Close is then answered as done, not taken
+// back from the clone while the remote has it.
 func (s *Space) landedAt(ctx context.Context, r *remote, top string) (bool, error) {
-	if err := s.fetch(ctx, r, true); err != nil {
+	ctx = context.WithoutCancel(ctx)
+	if err := s.fetchAs(ctx, r, true, false); err != nil {
 		return false, err
 	}
 	tip := r.repo.RemoteTip(ctx, r.branch)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,25 @@ import (
 // submodule and a repository made with --separate-git-dir have a .git file
 // that names it, and .git can be a link to a folder elsewhere. Git itself
 // says where it is.
+
+// clearStaleLocks removes the lock files a crash left in the Git directories
+// of the space (gitstore.RemoveStaleLocks), and logs each. The caller makes
+// sure no other process uses the repository (Options.ClearStaleGitLocks).
+func clearStaleLocks(d gitDirs, log *slog.Logger) {
+	dirs := []string{d.git}
+	if d.common != d.git {
+		dirs = append(dirs, d.common)
+	}
+	for _, dir := range dirs {
+		removed, err := gitstore.RemoveStaleLocks(dir, gitstore.StaleLockAge, time.Now())
+		for _, l := range removed {
+			log.Warn("removed a lock file an earlier run of git left behind", "gitDir", dir, "lock", l.Path, "age", l.Age.Round(time.Second))
+		}
+		if err != nil {
+			log.Error("could not remove the lock files an earlier run of git left behind", "gitDir", dir, "error", err)
+		}
+	}
+}
 
 // gitDirs is where the Git directory of a space is.
 type gitDirs struct {

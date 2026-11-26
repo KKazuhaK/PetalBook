@@ -104,15 +104,14 @@ func (r *Repo) run(ctx context.Context, c Cmd) (string, error) {
 	return out, nil
 }
 
-// notCancelled is ctx without its cancellation but with its deadline, if it
-// has one.
+// notCancelled is ctx without its cancellation, ending at its deadline or
+// after writeCap, whichever comes first.
 func notCancelled(ctx context.Context) (context.Context, context.CancelFunc) {
-	d, ok := ctx.Deadline()
-	ctx = context.WithoutCancel(ctx)
-	if !ok {
-		return ctx, func() {}
+	d := time.Now().Add(writeCap)
+	if pd, ok := ctx.Deadline(); ok && pd.Before(d) {
+		d = pd
 	}
-	return context.WithDeadline(ctx, d)
+	return context.WithDeadline(context.WithoutCancel(ctx), d)
 }
 
 // git runs a command that does not touch the network and returns its output

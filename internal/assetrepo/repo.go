@@ -73,6 +73,10 @@ type Options struct {
 	// FetchFresh: a refresh is skipped when one succeeded this recently (default 5 s).
 	FetchFresh time.Duration
 	Logger     *slog.Logger
+	// ClearStaleLocks says no other process uses the repository (the server
+	// holds the data directory's serve.lock): Open removes the lock files git
+	// left there longer ago than gitstore.StaleLockAge.
+	ClearStaleLocks bool
 }
 
 type entry struct {
@@ -124,6 +128,19 @@ func Open(ctx context.Context, o Options) (*Repo, error) {
 		o.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	meta := gitstore.New(gitstore.Options{Dir: o.Dir, Runner: o.Runner, Cred: o.Cred, NetTimeout: o.NetTimeout, AllowUnsafe: o.AllowUnsafe})
+	if o.ClearStaleLocks {
+		// The meta repository's own Git directory (isOwnRepo), before
+		// anything here takes a lock.
+		if gd := filepath.Join(o.Dir, ".git"); isDir(gd) {
+			removed, err := gitstore.RemoveStaleLocks(gd, gitstore.StaleLockAge, time.Now())
+			for _, l := range removed {
+				o.Logger.Warn("removed a lock file an earlier run of git left behind", "gitDir", gd, "lock", l.Path, "age", l.Age.Round(time.Second))
+			}
+			if err != nil {
+				o.Logger.Error("could not remove the lock files an earlier run of git left behind", "gitDir", gd, "error", err)
+			}
+		}
+	}
 	if !meta.IsRepo(ctx) || !isOwnRepo(o.Dir) {
 		if err := os.MkdirAll(o.Dir, 0o755); err != nil {
 			return nil, err
@@ -149,6 +166,12 @@ func Open(ctx context.Context, o Options) (*Repo, error) {
 		}
 	}
 	return r, nil
+}
+
+// isDir: p is a directory (not a link to one).
+func isDir(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.IsDir()
 }
 
 // isOwnRepo: the directory has its own .git (not one found in a parent).
