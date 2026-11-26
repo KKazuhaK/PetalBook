@@ -6,6 +6,7 @@ import { api, markSignedIn } from '@/api/client'
 import { applySession } from '@/api/hooks'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
+import { tp } from '@/i18n/people'
 import { tc } from '@/i18n/console'
 import { ta } from '@/i18n/admin'
 import { tg } from '@/i18n/manage'
@@ -384,6 +385,10 @@ describe('server status and users', () => {
       [...document.querySelectorAll('nav[aria-label="' + tc.tabsLabel + '"] a')].map((a) => a.textContent),
     ).toEqual([tc.tabs.users.all, tc.tabs.users.invites, tc.tabs.users.deleted])
     await click([...document.querySelectorAll('nav a')].find((a) => a.textContent === tc.tabs.users.invites))
+    // Adding is behind a button: the dialog opens on the invitation link, with the file import beside it.
+    await settle(() => text().includes(tp.add), 'the add button')
+    await click([...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === tp.add))
     await settle(() => text().includes(t.users.createInvite), 'the invite form')
+    expect(text()).toContain(tp.tabCsv)
   })
 })

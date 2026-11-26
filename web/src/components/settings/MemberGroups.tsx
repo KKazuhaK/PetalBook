@@ -1,11 +1,11 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useAddGroup, useEffectiveMembers, useGroupSearch, useRemoveGroup, useSetGroupRole } from '@/api/hooks'
-import type { GroupMember, GroupRef, SpaceInfo, SpaceRole } from '@/api/types'
+import { useAddGroup, useEffectiveMembers, useRemoveGroup, useSetGroupRole } from '@/api/hooks'
+import type { GroupMember, SpaceInfo, SpaceRole } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
-import { ErrorState, PageFallback, Spinner } from '@/components/common'
+import { ErrorState, PageFallback } from '@/components/common'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,10 +19,12 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
+import { AddPeopleDialog } from '@/components/people/AddPeopleDialog'
+import { RowMenu } from '@/components/people/RowMenu'
 import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
+import { tp } from '@/i18n/people'
 import { tg } from '@/i18n/groups'
 import { SettingsSection } from './SettingsParts'
 
@@ -56,6 +58,7 @@ export function GroupMembers({ space, groups, manage }: { space: SpaceInfo; grou
   const remove = useRemoveGroup(space.id)
   const [error, setError] = useState('')
   const [asking, setAsking] = useState<GroupMember | null>(null)
+  const [adding, setAdding] = useState(false)
 
   const change = async (g: GroupMember, role: SpaceRole) => {
     if (role === g.role) return
@@ -82,6 +85,14 @@ export function GroupMembers({ space, groups, manage }: { space: SpaceInfo; grou
 
   return (
     <SettingsSection title={tgs.title} id="space-groups-heading" description={tgs.help}>
+      {manage && !space.personal && (
+        <div className="flex justify-end">
+          <Button type="button" onClick={() => setAdding(true)}>
+            <Plus aria-hidden="true" />
+            {tp.add}
+          </Button>
+        </div>
+      )}
       <FormMessage>{error}</FormMessage>
       {groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">{tgs.none}</p>
@@ -121,22 +132,18 @@ export function GroupMembers({ space, groups, manage }: { space: SpaceInfo; grou
                 )}
               </div>
               {manage && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  aria-label={t.fmt.labelled(tgs.remove, g.name)}
-                  onClick={() => setAsking(g)}
-                >
-                  <Trash2 aria-hidden="true" />
-                  {tgs.remove}
-                </Button>
+                <RowMenu
+                  label={t.fmt.labelled(tp.list.more, g.name)}
+                  actions={[{ label: tgs.remove, icon: <Trash2 />, onSelect: () => setAsking(g), destructive: true }]}
+                />
               )}
             </li>
           ))}
         </ul>
       )}
-      {manage && !space.personal && <AddGroup space={space.id} taken={groups.map((g) => g.groupId)} />}
+      {manage && !space.personal && (
+        <AddGroupDialog space={space.id} taken={groups.map((g) => g.groupId)} open={adding} onOpenChange={setAdding} />
+      )}
       <AlertDialog open={asking !== null} onOpenChange={(o) => !o && setAsking(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -155,101 +162,39 @@ export function GroupMembers({ space, groups, manage }: { space: SpaceInfo; grou
   )
 }
 
-// Finding a group by name (anyone signed in may) and giving it a role.
-function AddGroup({ space, taken }: { space: string; taken: string[] }) {
+// Finding groups by name (anyone signed in may), several at once, and giving them a role.
+function AddGroupDialog({
+  space,
+  taken,
+  open,
+  onOpenChange,
+}: {
+  space: string
+  taken: string[]
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const add = useAddGroup(space)
-  const [term, setTerm] = useState('')
-  const found = useGroupSearch(useDebounced(term.trim(), 250))
-  const [chosen, setChosen] = useState<GroupRef | null>(null)
-  const [role, setRole] = useState<SpaceRole>('viewer')
-  const [error, setError] = useState('')
-  const matches = (found.data?.groups ?? []).filter((g) => !taken.includes(g.id))
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (add.isPending) return
-    if (!chosen) return setError(tgs.pick)
-    setError('')
-    try {
-      const g = await add.mutateAsync({ groupId: chosen.id, role })
-      toast.success(tgs.added(g.name))
-      setChosen(null)
-      setTerm('')
-    } catch (err) {
-      setError(groupMemberError(err))
-    }
-  }
-
   return (
-    <form
-      className="grid gap-3 rounded-lg border p-3"
-      onSubmit={(e) => void submit(e)}
-      noValidate
-      aria-label={tgs.addTitle}
-    >
-      <div>
-        <h3 className="text-sm font-semibold">{tgs.addTitle}</h3>
-        <p className="text-xs text-muted-foreground">{tgs.addHelp}</p>
-      </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor="space-group-search">{tgs.search}</Label>
-        <Input
-          id="space-group-search"
-          type="search"
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
-          placeholder={tgs.searchPlaceholder}
-          autoComplete="off"
-          spellCheck={false}
-          className="max-w-xs"
-        />
-        {term.trim() === '' ? (
-          <p className="text-xs text-muted-foreground">{tgs.searchHint}</p>
-        ) : found.isSuccess && matches.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{tgs.noMatch}</p>
-        ) : null}
-      </div>
-      {matches.length > 0 && (
-        <ul className="max-h-40 divide-y overflow-y-auto rounded-md border" aria-label={tgs.search}>
-          {matches.map((g) => (
-            <li key={g.id} className="flex items-center justify-between gap-3 px-3 py-1.5 text-sm">
-              <span className="min-w-0 truncate">
-                {g.name} <span className="text-xs text-muted-foreground">{tg.sourceNames[g.source]}</span>
-              </span>
-              <Button
-                type="button"
-                variant={chosen?.id === g.id ? 'secondary' : 'outline'}
-                size="sm"
-                aria-pressed={chosen?.id === g.id}
-                aria-label={t.fmt.labelled(tgs.choose, g.name)}
-                onClick={() => setChosen(g)}
-              >
-                {chosen?.id === g.id ? tgs.chosen : tgs.choose}
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="grid gap-1.5">
-          <Label htmlFor="space-group-role">{tgs.role}</Label>
-          <div className="w-32">
-            <NativeSelect id="space-group-role" value={role} onChange={(e) => setRole(e.target.value as SpaceRole)}>
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {t.roles[r]}
-                </option>
-              ))}
-            </NativeSelect>
-          </div>
-        </div>
-        <Button type="submit" disabled={add.isPending}>
-          {add.isPending ? <Spinner /> : <Plus aria-hidden="true" />}
-          {chosen ? `${add.isPending ? tgs.adding : tgs.add}: ${chosen.name}` : add.isPending ? tgs.adding : tgs.add}
-        </Button>
-      </div>
-      <FormMessage>{error}</FormMessage>
-    </form>
+    <AddPeopleDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={tgs.addTitle}
+      description={tp.addGroupsHelp}
+      kind="groups"
+      roles={ROLES.map((r) => ({ value: r, label: t.roles[r] }))}
+      defaultRole="viewer"
+      excluded={new Set(taken)}
+      pick={async (picks, role) => {
+        for (const g of picks) {
+          try {
+            await add.mutateAsync({ groupId: g.id, role: role as SpaceRole })
+          } catch (e) {
+            throw new Error(`${g.label}: ${groupMemberError(e)}`, { cause: e })
+          }
+        }
+      }}
+    />
   )
 }
 

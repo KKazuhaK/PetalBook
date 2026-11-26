@@ -1,20 +1,25 @@
 import { useRef, useState, type FormEvent } from 'react'
-import { Ban, Copy, UserPlus } from 'lucide-react'
+import { Ban, Copy, Plus, UserPlus } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { adminApi, useInvites, useUserRow } from '@/api/admin'
 import { keys } from '@/api/hooks'
+import { peopleApi } from '@/api/people'
 import type { CreatedInvite, Role } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { ErrorState } from '@/components/common'
+import { AddPeopleDialog } from '@/components/people/AddPeopleDialog'
+import { RowMenu } from '@/components/people/RowMenu'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { absoluteTime } from '@/lib/time'
+import { adminPath } from '@/lib/urls'
 import { t } from '@/i18n'
+import { tp } from '@/i18n/people'
 
 // The name of whoever made an invite: one person by their id (cached), their id until it is read.
 function CreatedBy({ id }: { id: string }) {
@@ -25,6 +30,92 @@ function CreatedBy({ id }: { id: string }) {
 export function InvitesPanel() {
   const qc = useQueryClient()
   const invites = useInvites()
+  const [adding, setAdding] = useState(false)
+
+  const revoke = async (id: string) => {
+    try {
+      await adminApi.revokeInvite(id)
+      qc.setQueryData<{ invites: { id: string }[] }>(
+        keys.invites,
+        (prev) => prev && { invites: prev.invites.filter((i) => i.id !== id) },
+      )
+      toast.success(t.users.revoked)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t.auth.failed)
+    }
+  }
+
+  return (
+    <SettingsSection title={t.users.invites} id="invites-heading">
+      <p className="text-sm text-muted-foreground">{t.users.invitesHelp}</p>
+      <div className="flex justify-end">
+        <Button type="button" onClick={() => setAdding(true)}>
+          <Plus aria-hidden="true" />
+          {tp.add}
+        </Button>
+      </div>
+      <AddMembersDialog open={adding} onOpenChange={setAdding} />
+
+      <h3 className="mt-2 text-sm font-medium">{t.users.open}</h3>
+      {invites.isPending ? (
+        <div aria-busy="true" className="h-12 animate-pulse rounded-lg bg-muted" />
+      ) : invites.isError ? (
+        <ErrorState message={invites.error.message} onRetry={() => void invites.refetch()} />
+      ) : invites.data.invites.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t.users.noInvites}</p>
+      ) : (
+        <ul className="divide-y rounded-lg border">
+          {invites.data.invites.map((i) => (
+            <li
+              key={i.id}
+              className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 transition-colors hover:bg-muted/40"
+            >
+              <div className="min-w-0 flex-1 basis-48">
+                <div className="text-sm font-medium">{t.roles[i.role]}</div>
+                <div className="text-xs text-muted-foreground">
+                  {t.users.expires(absoluteTime(i.expires))} · <CreatedBy id={i.createdBy} />
+                </div>
+              </div>
+              <RowMenu
+                label={t.fmt.labelled(t.users.revoke, `${t.roles[i.role]}, ${absoluteTime(i.expires)}`)}
+                actions={[
+                  { label: t.users.revoke, icon: <Ban />, destructive: true, onSelect: () => void revoke(i.id) },
+                ]}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </SettingsSection>
+  )
+}
+
+// Adding people to the organization: a file of addresses (existing people go into their groups, new addresses are
+// invited), or one invitation link made by hand.
+function AddMembersDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <AddPeopleDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t.users.invites}
+      kind="people"
+      roles={[
+        { value: 'member', label: t.roles.member },
+        { value: 'admin', label: t.roles.admin },
+      ]}
+      defaultRole="member"
+      csvRun={(rows, dryRun) => peopleApi.tenantBatch(rows, dryRun)}
+      csvHelp={tp.csv.helpTenant}
+      mailPage={adminPath('mail')}
+      extra={{ label: tp.tabLink, body: <InviteLinkForm /> }}
+      startOn="extra"
+    />
+  )
+}
+
+// One invitation link, to hand over yourself.
+function InviteLinkForm() {
+  const qc = useQueryClient()
   const [role, setRole] = useState<Role>('member')
   const [days, setDays] = useState('7')
   const [busy, setBusy] = useState(false)
@@ -49,27 +140,10 @@ export function InvitesPanel() {
     setBusy(false)
   }
 
-  const revoke = async (id: string) => {
-    try {
-      await adminApi.revokeInvite(id)
-      qc.setQueryData<{ invites: { id: string }[] }>(
-        keys.invites,
-        (prev) => prev && { invites: prev.invites.filter((i) => i.id !== id) },
-      )
-      toast.success(t.users.revoked)
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : t.auth.failed)
-    }
-  }
-
   return (
-    <SettingsSection title={t.users.invites} id="invites-heading">
-      <p className="text-sm text-muted-foreground">{t.users.invitesHelp}</p>
-      <form
-        className="flex flex-wrap items-end gap-3 rounded-lg border p-3"
-        onSubmit={(e) => void create(e)}
-        noValidate
-      >
+    <div className="grid gap-3">
+      <p className="text-sm text-muted-foreground">{tp.link.help}</p>
+      <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => void create(e)} noValidate>
         <div className="grid gap-1.5">
           <Label htmlFor="invite-role">{t.users.inviteRole}</Label>
           <div className="w-32">
@@ -103,42 +177,7 @@ export function InvitesPanel() {
       </form>
       <FormMessage>{error}</FormMessage>
       {fresh && <FreshInvite invite={fresh} onDismiss={() => setFresh(null)} />}
-
-      <h3 className="mt-2 text-sm font-medium">{t.users.open}</h3>
-      {invites.isPending ? (
-        <div aria-busy="true" className="h-12 animate-pulse rounded-lg bg-muted" />
-      ) : invites.isError ? (
-        <ErrorState message={invites.error.message} onRetry={() => void invites.refetch()} />
-      ) : invites.data.invites.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t.users.noInvites}</p>
-      ) : (
-        <ul className="divide-y rounded-lg border">
-          {invites.data.invites.map((i) => (
-            <li
-              key={i.id}
-              className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5 transition-colors hover:bg-muted/40"
-            >
-              <div className="min-w-0 flex-1 basis-48">
-                <div className="text-sm font-medium">{t.roles[i.role]}</div>
-                <div className="text-xs text-muted-foreground">
-                  {t.users.expires(absoluteTime(i.expires))} · <CreatedBy id={i.createdBy} />
-                </div>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void revoke(i.id)}
-                aria-label={t.fmt.labelled(t.users.revoke, `${t.roles[i.role]}, ${absoluteTime(i.expires)}`)}
-              >
-                <Ban aria-hidden="true" />
-                {t.users.revoke}
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </SettingsSection>
+    </div>
   )
 }
 

@@ -54,6 +54,8 @@ import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
 import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { createGroupBook } from './groupBook.ts'
+import { createPeopleBook, readBatch, type PeopleUser } from './peopleBook.ts'
+import type { BatchRowOut } from '../peopleTypes.ts'
 import { createTenantBook, DEFAULT_TENANT } from './tenantBook.ts'
 import { sha256Hex } from './sha256.ts'
 import { createQuotaBook } from './quotaBook.ts'
@@ -435,7 +437,9 @@ export function createMockServer(options: MockOptions = {}) {
     onMappingRemoved: (slug, value, keep) => groupBook.dropMapped(slug, value, keep),
     registrationOpen: () => tenantBook.registrationStored(),
   })
+  const peopleBook = createPeopleBook({ users: () => users as unknown as Map<string, PeopleUser> })
   const groupBook = createGroupBook({
+    resolve: (keys) => peopleBook.resolve(keys),
     now: () => new Date(now()).toISOString().replace(/\.\d{3}Z$/, 'Z'),
     users: () => users,
     spaces: () => spaces,
@@ -3091,6 +3095,29 @@ export function createMockServer(options: MockOptions = {}) {
       if (u.id !== me.id) notifyBook.add(u.id, 'invite', s.id, { space: s.name, role, by: me.name })
       return j(memberOf(s, u.id, me.id), 201)
     }
+    if (rest === '/members/batch' && method === 'POST') {
+      if (s.personal)
+        throw new HttpError(409, 'personal_space', 'a personal space belongs to one person and cannot be shared')
+      const input = readBatch(body)
+      const res = peopleBook.resolve(input.rows.map((r) => r.user))
+      const out: BatchRowOut[] = res.map((r, i) => {
+        const row: BatchRowOut = { row: i + 1, user: input.rows[i].user, role: input.rows[i].role, status: r.status }
+        if (!r.hit) return row
+        row.userId = r.hit.id
+        row.username = r.hit.username
+        row.name = r.hit.name
+        const role = input.rows[i].role ?? ''
+        if (role !== 'owner' && role !== 'editor' && role !== 'viewer') row.status = 'invalid'
+        else if (viaAdmin && (role === 'owner' || r.hit.id === me.id)) row.status = 'forbidden'
+        else if (s.members.has(r.hit.id)) row.status = 'already_member'
+        else if (!input.dryRun) {
+          s.members.set(r.hit.id, { role, joined: ++counter })
+          notifyBook.add(r.hit.id, 'invite', s.id, { space: s.name, role, by: me.name })
+        }
+        return row
+      })
+      return j(peopleBook.answer(input.dryRun, out))
+    }
     if (rest === '/members/effective' && method === 'GET')
       return groupBook.effective(s, me.id, new URL(`http://mock${rest}${query}`))
     const one = /^\/members\/([^/]+)$/.exec(rest)
@@ -4782,6 +4809,67 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       requireUser(ctx)
       return groupBook.find(url)
+    }
+    if (path === '/people' && method === 'GET') {
+      accountsOnly()
+      requireUser(ctx)
+      const limit = Number(url.searchParams.get('limit') ?? 20)
+      return j({ people: peopleBook.search(url.searchParams.get('q') ?? '', Math.min(Math.max(limit || 20, 1), 20)) })
+    }
+    if (path === '/admin/members/batch' && method === 'POST') {
+      accountsOnly()
+      const me = requireAdmin(ctx)
+      const input = readBatch(body)
+      const res = peopleBook.resolve(input.rows.map((r) => r.user))
+      const groups = [...groupBook.groups.values()].filter((g) => g.source === 'local')
+      const sender = mailBook.ready() ? 'site' : ''
+      const invited = new Set<string>()
+      const out: BatchRowOut[] = res.map((r, i) => {
+        const inRow = input.rows[i]
+        const row: BatchRowOut = { row: i + 1, user: inRow.user, role: inRow.role, status: r.status }
+        const role = inRow.role ?? 'member'
+        const found = (inRow.groups ?? []).map((n) =>
+          groups.find((g) => g.name.toLowerCase() === n.trim().toLowerCase()),
+        )
+        if (found.some((g) => !g)) {
+          row.status = 'invalid'
+          row.detail = `No group is called ${(inRow.groups ?? [])[found.findIndex((g) => !g)]}.`
+          return row
+        }
+        if (r.hit) {
+          row.userId = r.hit.id
+          row.username = r.hit.username
+          row.name = r.hit.name
+          if (found.length === 0) row.status = 'already_member'
+          else if (r.hit.id === me.id) row.status = 'forbidden'
+          else {
+            row.status = 'added'
+            if (!input.dryRun) for (const g of found) g!.people.set(r.hit.id, [{ provider: '', value: '' }])
+          }
+          return row
+        }
+        if (r.status === 'not_found' && inRow.user.includes('@')) {
+          const key = inRow.user.toLowerCase()
+          if (invited.has(key)) row.status = 'duplicate'
+          else if (role !== 'member' && role !== 'admin') row.status = 'invalid'
+          else {
+            invited.add(key)
+            row.status = 'invited'
+            if (input.dryRun) row.mail = sender ? 'sent' : 'none'
+            else {
+              const made = createInvite(me, { role })
+              row.mail = sender ? 'sent' : 'none'
+              if (!sender) row.token = (made.body as { token: string }).token
+            }
+          }
+        } else if (r.status === 'not_found') {
+          row.status = 'invalid'
+          row.detail = 'Nobody has this username; to invite someone, give an email address.'
+        }
+        return row
+      })
+      if (!input.dryRun) book.record('invites_batch', { actor: me.id, detail: { rows: out.length, sender } })
+      return j(peopleBook.answer(input.dryRun, out, { mail: { configured: sender !== '', sender } }))
     }
     if (path === '/admin/groups' || path.startsWith('/admin/groups/')) {
       accountsOnly()

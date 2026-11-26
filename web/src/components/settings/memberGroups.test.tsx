@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/groups'
+import { tp } from '@/i18n/people'
 import type { MockServer } from '@/api/mock/server'
 import {
   adminRequests,
@@ -62,20 +63,28 @@ async function openAsOwner(scene?: (server: MockServer, space: string) => void) 
       return ['/settings/members']
     },
   })
-  await settle(() => panelText().includes(tgs.addTitle), 'the groups of the members')
+  await settle(() => button(tp.add) !== null, 'the groups of the members')
 }
 
+// The add dialog is in a portal, not in the settings dialog.
+// The members have an add button too; the groups' is the last.
+const addGroupsButton = () =>
+  [...dialog().querySelectorAll('button')].filter((b) => b.textContent?.trim() === tp.add).at(-1)
+const adder = () => document.querySelector<HTMLElement>('[data-slot="dialog-content"]')
+
 describe('the groups of a space: an owner', () => {
-  it('finds a group by name, adds it with a role, and the list shows it with its people', async () => {
+  it('finds groups by name, adds one with a role, and the list shows it with its people', async () => {
     await openAsOwner()
     expect(panelText()).toContain(tgs.none)
-    await type(dialog().querySelector<HTMLInputElement>('#space-group-search')!, 'eng')
-    await settle(() => button(t.fmt.labelled(tgs.choose, 'Engineering')) !== null, 'the match')
+    await click(addGroupsButton())
+    await settle(() => adder() !== null, 'the add dialog')
+    await type(adder()!.querySelector<HTMLInputElement>('#add-people-search')!, 'eng')
+    await settle(() => adder()!.querySelector('input[type="checkbox"]') !== null, 'the match')
     // Anyone may find a group by name: it is the ordinary search endpoint, not the administration's.
     expect(m!.requests.some((r) => r.url.startsWith('/api/groups?q=eng'))).toBe(true)
-    await click(button(t.fmt.labelled(tgs.choose, 'Engineering')))
-    await type(dialog().querySelector<HTMLSelectElement>('#space-group-role')!, 'editor')
-    await click(button(`${tgs.add}: Engineering`))
+    await click(adder()!.querySelector('input[type="checkbox"]'))
+    await type(adder()!.querySelector<HTMLSelectElement>('#add-people-role')!, 'editor')
+    await click(button(tp.addSelected(1), adder()!))
     await settle(() => groupRows().length === 1, 'the group in the list')
     const post = m!.requests.find((r) => r.method === 'POST' && r.url.endsWith('/groups'))!
     expect(JSON.parse(post.body!)).toEqual({ groupId: expect.any(String), role: 'editor' })
@@ -86,9 +95,11 @@ describe('the groups of a space: an owner', () => {
       dialog().querySelector<HTMLSelectElement>(`select[aria-label="${t.fmt.labelled('Engineering', tgs.role)}"]`)!
         .value,
     ).toBe('editor')
-    // It is not offered again.
-    await type(dialog().querySelector<HTMLInputElement>('#space-group-search')!, 'eng')
-    await settle(() => panelText().includes(tgs.noMatch), 'nothing left to add')
+    // It is marked as in already when the dialog is opened again.
+    await click(addGroupsButton())
+    await settle(() => adder() !== null, 'the add dialog again')
+    await type(adder()!.querySelector<HTMLInputElement>('#add-people-search')!, 'eng')
+    await settle(() => adder()!.textContent!.includes(tp.alreadyIn), 'the group marked')
   })
 
   it('asks for a group before adding, and changes a role and removes a group after asking', async () => {
@@ -101,14 +112,14 @@ describe('the groups of a space: an owner', () => {
       })
     })
     await settle(() => groupRows().length === 1, 'the group')
-    await click(button(tgs.add, dialog().querySelector(`form[aria-label="${tgs.addTitle}"]`)!))
-    await settle(() => panelText().includes(tgs.pick), 'the question')
     const select = dialog().querySelector<HTMLSelectElement>(
       `select[aria-label="${t.fmt.labelled('Engineering', tgs.role)}"]`,
     )!
     await type(select, 'owner')
     await settle(() => sent().some((r) => r.startsWith('PATCH') && r.includes('/groups/')), 'the change is sent')
-    await click(button(t.fmt.labelled(tgs.remove, 'Engineering')))
+    await click(button(t.fmt.labelled(tp.list.more, 'Engineering')))
+    await settle(() => document.querySelector('[role="menuitem"]') !== null, 'the menu')
+    await click([...document.querySelectorAll('[role="menuitem"]')].find((e) => e.textContent?.trim() === tgs.remove))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
     expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(tgs.removeHelp('Engineering'))
     await click(
