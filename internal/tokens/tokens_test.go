@@ -1,6 +1,8 @@
 package tokens
 
 import (
+	"petalbook.app/server/internal/ratelimit"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -92,10 +94,64 @@ func TestLimiterIsBounded(t *testing.T) {
 	for i := 0; i < maxClients+500; i++ {
 		l.Fail(strings.Repeat("x", 1) + string(rune('a'+i%26)) + time.Duration(i).String())
 	}
-	l.mu.Lock()
-	n := len(l.m)
-	l.mu.Unlock()
-	if n > maxClients {
+	if n := l.table().Len(); n > maxClients {
 		t.Fatalf("%d clients kept", n)
+	}
+}
+
+// A flood of new addresses used to evict arbitrary clients, a blocked one
+// among them, giving it a fresh allowance. Now the blocked client stays.
+func TestAFloodOfAddressesKeepsABlockedClientBlocked(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+	l := &Limiter{Now: func() time.Time { return now }}
+	for range 10 {
+		l.Fail("victim")
+	}
+	for i := range 3 * maxClients {
+		l.Fail("flood" + strconv.Itoa(i))
+	}
+	if blocked, _ := l.Blocked("victim"); !blocked {
+		t.Fatal("the flood unblocked the victim")
+	}
+}
+
+// The OAuth registrations keep their own cap and window.
+func TestLimiterTakesItsCapAndWindow(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+	l := &Limiter{Max: 2, Window: time.Hour, Now: func() time.Time { return now }}
+	l.Fail("a")
+	l.Fail("a")
+	if blocked, wait := l.Blocked("a"); !blocked || wait != 3601 {
+		t.Fatalf("%v %d", blocked, wait)
+	}
+}
+
+// A table full of blocked clients used to let a new client's failures go
+// uncounted (Open), so a bearer token could be guessed without limit. They are
+// now counted in the table's overflow sketch: the new client is blocked at its
+// cap, and another new client is not.
+func TestAFullTableStillBlocksANewClient(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+	l := &Limiter{Max: 3, Now: func() time.Time { return now }}
+	l.once.Do(func() { l.t = ratelimit.NewLockout(3, l.now).OnFull(ratelimit.Open) })
+	for i := range 3 {
+		for range 3 {
+			l.Fail("full" + strconv.Itoa(i))
+		}
+	}
+	for range 3 {
+		if blocked, _ := l.Blocked("guesser"); blocked {
+			t.Fatal("blocked within the cap")
+		}
+		l.Fail("guesser")
+	}
+	if blocked, _ := l.Blocked("guesser"); !blocked {
+		t.Fatal("a new client in a full table guesses without limit")
+	}
+	if blocked, _ := l.Blocked("other"); blocked {
+		t.Fatal("another new client is blocked")
 	}
 }
