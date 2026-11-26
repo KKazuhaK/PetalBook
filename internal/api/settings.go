@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"petalbook.app/server/internal/auth"
@@ -57,9 +58,22 @@ type tenantSettingResp struct {
 	Choices []string `json:"choices,omitempty"`
 }
 
-func tenantSettingOf(e *settings.Effective) tenantSettingResp {
+// tenantSettingOf is a setting as the API shows it for a tenant. Who set a rule
+// (a site administrator's id) is shown to site administrators only: for
+// anyone else the rules are copies without it (the cached view is shared).
+func tenantSettingOf(e *settings.Effective, showSetBy bool) tenantSettingResp {
 	d := e.Def
-	return tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{e.Site.Value, e.Site.Lower}, e.Tenant, e.Value, d.Choices}
+	tv := e.Tenant
+	if !showSetBy && tv != nil && slices.ContainsFunc(tv.Rules, func(r settings.RuleView) bool { return r.SetBy != "" }) {
+		cp := *tv
+		cp.Rules = slices.Clone(tv.Rules)
+		for i := range cp.Rules {
+			cp.Rules[i].SetBy = ""
+		}
+		cp.SiteRule = nil
+		tv = &cp
+	}
+	return tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{e.Site.Value, e.Site.Lower}, tv, e.Value, d.Choices}
 }
 
 // tenantSiteView is what a tenant is shown of the site's layer: the value and
@@ -224,7 +238,7 @@ func (s *server) adminPutSetting(c *call) {
 	writeJSON(c.w, http.StatusOK, out)
 }
 
-func (s *server) tenantSettingsOf(ctx context.Context, tenant string) ([]tenantSettingResp, error) {
+func (s *server) tenantSettingsOf(ctx context.Context, tenant string, showSetBy bool) ([]tenantSettingResp, error) {
 	eff, err := s.settings.For(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -235,7 +249,7 @@ func (s *server) tenantSettingsOf(ctx context.Context, tenant string) ([]tenantS
 			continue
 		}
 		e := eff[d.Key]
-		out = append(out, tenantSettingOf(e))
+		out = append(out, tenantSettingOf(e, showSetBy))
 	}
 	return out, nil
 }
@@ -245,7 +259,7 @@ func (s *server) adminGetTenantSettings(c *call) {
 	if !ok {
 		return
 	}
-	out, err := s.tenantSettingsOf(c.r.Context(), t.ID)
+	out, err := s.tenantSettingsOf(c.r.Context(), t.ID, c.siteWide(authz.TenantSettingsWrite))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -303,7 +317,7 @@ func (s *server) adminPutTenantSetting(c *call) {
 	out := struct {
 		tenantSettingResp
 		Warning *warningResp `json:"warning,omitempty"`
-	}{tenantSettingResp: tenantSettingOf(after)}
+	}{tenantSettingResp: tenantSettingOf(after, ch.Site)}
 	if res.UndatedReplaced {
 		out.Warning = &warningResp{"undated_value_replaced", []string{key},
 			"There is one manual rule for each setting. A dated rule replaced the undated one: when its window ends, the value is not the undated one but what is below it (billing, the plan, the site)."}

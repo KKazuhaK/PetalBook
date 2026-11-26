@@ -125,16 +125,15 @@ func DeleteLayered(ctx context.Context, q Q, layer, layerID, key, source string)
 	return err
 }
 
-// DeleteUndatedRules removes the undated manual rules of a tenant (the site's
-// rules for it with no end: a rule with an end is a time-limited grant) and
-// answers them.
-func DeleteUndatedRules(ctx context.Context, q Q, tenant string) ([]LayeredRow, error) {
-	rows, err := queryLayered(ctx, q, `SELECT `+layeredCols+` FROM layered_settings WHERE layer = ? AND layer_id = ? AND source = ? AND ends IS NULL`,
+// DeleteManualRules removes every manual rule of a tenant (the site's rules
+// for it of source manual, dated or not; billing's stay) and answers them.
+func DeleteManualRules(ctx context.Context, q Q, tenant string) ([]LayeredRow, error) {
+	rows, err := queryLayered(ctx, q, `SELECT `+layeredCols+` FROM layered_settings WHERE layer = ? AND layer_id = ? AND source = ?`,
 		LayeredSite, tenant, SourceManual)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
-	if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer = ? AND layer_id = ? AND source = ? AND ends IS NULL`,
+	if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer = ? AND layer_id = ? AND source = ?`,
 		LayeredSite, tenant, SourceManual); err != nil {
 		return nil, err
 	}

@@ -102,6 +102,7 @@ func TestAManualQuotaWithAWindowHoldsOnlyInsideIt(t *testing.T) {
 			t.Fatalf("next is the start of the window: %s", r.raw)
 		}
 		f.root.do("PUT", path, map[string]any{"siteRule": map[string]any{"value": 1, "from": until.Format(time.RFC3339), "until": from.Format(time.RFC3339)}}).want(t, 400, "invalid")
+		f.root.do("PUT", path, map[string]any{"siteRule": map[string]any{"value": 1, "until": now.Add(-time.Hour).Format(time.RFC3339)}}).want(t, 400, "setting_until_past")
 		a.clock.Advance(time.Hour)
 		mk().want(t, 403, "quota_exceeded")
 		a.clock.Advance(time.Hour)
@@ -110,9 +111,9 @@ func TestAManualQuotaWithAWindowHoldsOnlyInsideIt(t *testing.T) {
 }
 
 // A plan with a restriction, a tenant on it, a manual override that cannot go
-// above it, and a change of plan that clears the undated override and keeps the
-// dated grant.
-func TestAPlanRestrictsAndAChangeOfPlanKeepsTheDatedGrants(t *testing.T) {
+// above it, and a change of plan that clears every manual rule, the undated
+// override and the dated grant alike.
+func TestAPlanRestrictsAndAChangeOfPlanClearsTheManualRules(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		f := newTenFx(t, a)
@@ -136,9 +137,9 @@ func TestAPlanRestrictsAndAChangeOfPlanKeepsTheDatedGrants(t *testing.T) {
 		f.root.do("PUT", path+"/settings/quota.bytes", map[string]any{"siteRule": map[string]any{"value": 1000, "until": until}}).want(t, 200, "")
 		f.root.do("PUT", path+"/plan", map[string]any{"plan": "none"}).want(t, 400, "invalid")
 		r = f.root.do("PUT", path+"/plan", map[string]any{"plan": "team"}).want(t, 200, "")
-		cleared, kept := r.body["cleared"].([]any), r.body["kept"].([]any)
-		if r.body["plan"].(map[string]any)["slug"] != "team" || len(cleared) != 1 || cleared[0].(map[string]any)["key"] != "quota.pages" ||
-			len(kept) != 1 || kept[0].(map[string]any)["key"] != "quota.bytes" {
+		cleared := r.body["cleared"].([]any)
+		if _, has := r.body["kept"]; has || r.body["plan"].(map[string]any)["slug"] != "team" || len(cleared) != 2 ||
+			cleared[0].(map[string]any)["key"] != "quota.bytes" || cleared[1].(map[string]any)["key"] != "quota.pages" {
 			t.Fatal(r.raw)
 		}
 		s := f.admB.do("GET", path+"/settings", nil).want(t, 200, "")
@@ -148,14 +149,14 @@ func TestAPlanRestrictsAndAChangeOfPlanKeepsTheDatedGrants(t *testing.T) {
 		if e := settingOf(t, s, "quota.pages"); e["effective"] != nil {
 			t.Fatalf("the undated rule is cleared: %v", e)
 		}
-		if e := settingOf(t, s, "quota.bytes"); e["effective"] != float64(1000) {
-			t.Fatalf("the grant is kept: %v", e)
+		if e := settingOf(t, s, "quota.bytes"); e["effective"] != nil {
+			t.Fatalf("the dated rule is cleared too: %v", e)
 		}
 		if ruleOf(t, s, "features.ownSso", "plan")["inEffect"] != true {
 			t.Fatal("the plan's lock is in effect")
 		}
-		// A tenant cannot go above the plan, nor can a manual rule hold more than its own max.
-		f.admB.do("PUT", path+"/settings/quota.people", map[string]any{"value": 50}).want(t, 409, "setting_restricted")
+		// A tenant cannot set its own total, nor can a manual rule hold more than its own max.
+		f.admB.do("PUT", path+"/settings/quota.people", map[string]any{"value": 50}).want(t, 409, "setting_locked")
 		f.root.do("PUT", path+"/settings/quota.people", map[string]any{"siteRule": map[string]any{"value": 30, "lower": map[string]any{"mode": "restrict", "max": 20}}}).want(t, 400, "setting_above_max")
 
 		// A change of the plan reaches the tenants on it, and a plan in use stays.
@@ -225,4 +226,59 @@ func peopleOver(t *testing.T, f *tenFx, used float64) int {
 		}
 	}
 	return n
+}
+
+// A tenant's totals are the site's: a tenant administrator cannot write them,
+// as a value or as a rule, so they cannot raise what their tenant may use.
+// The other settings a site rule allows a tenant (features.*, rate.*,
+// storage.pinnedBytes, mail.ownSender) are refused the same way.
+func TestATenantAdministratorCannotRaiseTheTenantsOwnAllowance(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		setTotals(t, f.root, f.tenB, map[string]any{"spaces": 1})
+		base := "/api/admin/tenants/" + f.tenB
+		quotaOf := func() any {
+			return f.root.do("GET", base, nil).want(t, 200, "").body["quota"].(map[string]any)["spaces"]
+		}
+		if got := quotaOf(); got != float64(1) {
+			t.Fatalf("spaces total %v", got)
+		}
+		for _, key := range []string{"quota.spaces", "quota.people", "quota.bytes", "quota.pages", "rate.apiPerMinute", "storage.pinnedBytes"} {
+			f.admB.do("PUT", base+"/settings/"+key, map[string]any{"value": 1 << 40}).want(t, 409, "setting_locked")
+			f.admB.do("PUT", base+"/settings/"+key, map[string]any{"value": nil}).want(t, 409, "setting_locked")
+		}
+		for _, key := range []string{"features.adminView", "mail.ownSender"} {
+			f.admB.do("PUT", base+"/settings/"+key, map[string]any{"value": true}).want(t, 409, "setting_locked")
+		}
+		f.admB.do("PUT", base+"/settings/quota.spaces", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 409, "setting_locked")
+		if got := quotaOf(); got != float64(1) {
+			t.Fatalf("a tenant administrator changed the spaces total to %v", got)
+		}
+	})
+}
+
+// Who set a rule is a site administrator's id: the site's administrators see
+// it, the tenant's administrators see the rule without it.
+func TestATenantAdministratorSeesARuleButNotWhoSetIt(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		path := "/api/admin/tenants/" + f.tenB + "/settings"
+		r := f.root.do("PUT", path+"/quota.spaces", map[string]any{"siteRule": map[string]any{"value": 3}}).want(t, 200, "")
+		if r.body["tenant"].(map[string]any)["rules"].([]any)[0].(map[string]any)["setBy"] == nil {
+			t.Fatalf("the site administrator sees who set it: %s", r.raw)
+		}
+		if rule := ruleOf(t, f.root.do("GET", path, nil).want(t, 200, ""), "quota.spaces", "manual"); rule["setBy"] == nil {
+			t.Fatalf("%v", rule)
+		}
+		rule := ruleOf(t, f.admB.do("GET", path, nil).want(t, 200, ""), "quota.spaces", "manual")
+		if _, has := rule["setBy"]; has || rule["value"] != float64(3) {
+			t.Fatalf("the tenant administrator sees the rule, not who set it: %v", rule)
+		}
+		// The cached view is not changed for the next reader.
+		if rule := ruleOf(t, f.root.do("GET", path, nil).want(t, 200, ""), "quota.spaces", "manual"); rule["setBy"] == nil {
+			t.Fatalf("%v", rule)
+		}
+	})
 }

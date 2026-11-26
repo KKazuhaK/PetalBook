@@ -173,13 +173,13 @@ type KeyedRule struct {
 	RuleView
 }
 
-// SetTenantPlan gives a tenant a plan ("" for none) and clears its undated
-// manual rules, which were adjustments to the old plan (docs/api.md, "Plans").
-// A manual rule with an end is a time-limited grant and is kept. It answers the
-// rules it cleared and the ones it kept.
-func (s *Service) SetTenantPlan(ctx context.Context, tenant, planID string) (cleared, kept []KeyedRule, err error) {
+// SetTenantPlan gives a tenant a plan ("" for none) and clears every manual
+// rule of the tenant, dated or not: they were adjustments to the old plan
+// (docs/api.md, "Plans"; the owner's decision of 2026-11-26). The billing
+// rules stay. It answers the rules it cleared.
+func (s *Service) SetTenantPlan(ctx context.Context, tenant, planID string) (cleared []KeyedRule, err error) {
 	if _, ok := s.st.TenantRefOf(tenant); !ok {
-		return nil, nil, store.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 	var gone []store.LayeredRow
 	err = s.write(ctx, func(q store.Q) error {
@@ -187,29 +187,18 @@ func (s *Service) SetTenantPlan(ctx context.Context, tenant, planID string) (cle
 			return err
 		}
 		var err error
-		gone, err = store.DeleteUndatedRules(ctx, q, tenant)
+		gone, err = store.DeleteManualRules(ctx, q, tenant)
 		return err
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if err := s.st.TenantStateReload(ctx); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	s.InvalidateTenant(tenant)
 	s.rearm(ctx)
-	cleared = s.keyed(gone)
-	rows, err := store.ListLayered(ctx, s.st.Q(), string(Site), tenant)
-	if err != nil {
-		return cleared, nil, err
-	}
-	var left []store.LayeredRow
-	for _, r := range rows {
-		if sourceOf(&r) == store.SourceManual && !r.Ends.IsZero() {
-			left = append(left, r)
-		}
-	}
-	return cleared, s.keyed(left), nil
+	return s.keyed(gone), nil
 }
 
 // keyed makes the rules of rows, sorted by key.

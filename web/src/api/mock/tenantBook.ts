@@ -166,11 +166,13 @@ const DEFS: Def[] = [
   ).map(([key, max]): Def => ({
     key,
     kind: 'limit',
-    layers: ['site', 'tenant'],
+    // No tenant layer: a tenant's own value would rank above the site's rule for it.
+    layers: ['site'],
     def: null,
     lower: { mode: 'allow' },
     min: 0,
     max,
+    forTenant: true,
   })),
   ...['rate.apiPerMinute', 'rate.mcpPerMinute', 'rate.mailPerDay', 'rate.outboundPerMinute'].map((key): Def => ({
     key,
@@ -567,6 +569,12 @@ export function createTenantBook(o: TenantBookOptions) {
       }
       if (rule?.from && rule.until && Date.parse(rule.until) <= Date.parse(rule.from))
         bad(`${key}: until is not after from`)
+      if (rule?.until && Date.parse(rule.until) <= Date.parse(o.now()))
+        throw new HttpError(
+          400,
+          'setting_until_past',
+          `The rule for ${key} ends at ${rule.until}, which has already passed: give a later until, or none.`,
+        )
     }
     if (siteOnly && hasValue) {
       rule = {

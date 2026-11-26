@@ -111,10 +111,10 @@ func TestARuleOfTheStrongerSourceWins(t *testing.T) {
 		if err := s.SetPlanRules(ctx, "P1", "U1", map[string]*settings.Rule{settings.QuotaSpaces: {Value: int64(30)}}); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := s.SetTenantPlan(ctx, ten, "P1"); err != nil {
+		if _, err := s.SetTenantPlan(ctx, ten, "P1"); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := s.SetTenantPlan(ctx, "T000000003", "P1"); err != nil {
+		if _, err := s.SetTenantPlan(ctx, "T000000003", "P1"); err != nil {
 			t.Fatal(err)
 		}
 		if v := spaces(t, s, ten); v != int64(30) {
@@ -228,7 +228,7 @@ func TestADatedRuleReplacesAnUndatedOneAndSaysSo(t *testing.T) {
 		if v := spaces(t, s, ten); v != nil {
 			t.Fatalf("it does not return to the old manual rule: %v", v)
 		}
-		if res := setManual(t, s, quotaRule(int64(1), time.Time{}, c.Now().Add(-time.Hour))); res.UndatedReplaced {
+		if res := setManual(t, s, quotaRule(int64(1), time.Time{}, c.Now().Add(time.Hour))); res.UndatedReplaced {
 			t.Fatal("a dated rule was replaced by a dated one")
 		}
 		if _, err := s.SetTenantResult(ctx, ten, settings.QuotaSpaces, settings.Change{Site: true, HasSiteRule: true,
@@ -271,21 +271,24 @@ func TestARestrictionClampsAndAValueAboveItsOwnMaxIsRefused(t *testing.T) {
 		if err := s.SetPlanRules(ctx, "P1", "U1", map[string]*settings.Rule{settings.QuotaSpaces: {Lower: max10}}); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := s.SetTenantPlan(ctx, ten, "P1"); err != nil {
+		if _, err := s.SetTenantPlan(ctx, ten, "P1"); err != nil {
 			t.Fatal(err)
 		}
 		// No limit is above any max: max 10 means max 10.
 		if v := spaces(t, s, ten); v != int64(10) {
 			t.Fatalf("no limit under a restriction: %v", v)
 		}
-		if err := s.SetTenant(ctx, ten, settings.QuotaSpaces, settings.Change{HasValue: true, Value: int64(50)}); code(err) != settings.CodeRestricted {
-			t.Fatalf("a tenant above the plan's max: %v", err)
+		// The totals have no tenant layer: a tenant sets neither more nor less.
+		for _, n := range []int64{50, 4} {
+			if err := s.SetTenant(ctx, ten, settings.QuotaSpaces, settings.Change{HasValue: true, Value: n}); code(err) != settings.CodeLocked {
+				t.Fatalf("a tenant's own total of %d: %v", n, err)
+			}
 		}
-		if err := s.SetTenant(ctx, ten, settings.QuotaSpaces, settings.Change{HasValue: true, Value: int64(4)}); err != nil {
+		if err := s.SetTenant(ctx, ten, settings.QuotaSpaces, settings.Change{Site: true, HasValue: true, Value: int64(4)}); err != nil {
 			t.Fatal(err)
 		}
 		if v := spaces(t, s, ten); v != int64(4) {
-			t.Fatalf("a tenant under it: %v", v)
+			t.Fatalf("the site's value for the tenant: %v", v)
 		}
 		if err := s.SetPlanRules(ctx, "P1", "U1", map[string]*settings.Rule{settings.QuotaSpaces: {Lower: max10, From: time.Now()}}); code(err) != settings.CodeInvalid {
 			t.Fatalf("a plan's rule has no dates: %v", err)
@@ -299,7 +302,7 @@ func TestAPlanWriteIsSeenThroughItsGenerationAndNoOtherTenantComputesTwice(t *te
 		if err := store.InsertPlan(ctx, st.Q(), store.Plan{ID: "P1", Slug: "team", Name: "Team"}); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := s.SetTenantPlan(ctx, ten, "P1"); err != nil {
+		if _, err := s.SetTenantPlan(ctx, ten, "P1"); err != nil {
 			t.Fatal(err)
 		}
 		spaces(t, s, ten)
@@ -314,6 +317,40 @@ func TestAPlanWriteIsSeenThroughItsGenerationAndNoOtherTenantComputesTwice(t *te
 		}
 		if v := spaces(t, s, ten); v != int64(3) || n != 1 {
 			t.Fatalf("%v after %d computations", v, n)
+		}
+	})
+}
+
+// A plan written while a tenant's settings are computed from its old rules:
+// the map shared by the plan's tenants is labelled with the generation of the
+// rows it was built from, so the next read builds it again from the new ones.
+func TestASharedPlanMapIsLabelledWithTheGenerationOfItsRows(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s, _ := withClock(t, st)
+		if err := store.InsertPlan(ctx, st.Q(), store.Plan{ID: "P1", Slug: "team", Name: "Team"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetPlanRules(ctx, "P1", "U1", map[string]*settings.Rule{settings.QuotaSpaces: {Value: int64(3)}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.SetTenantPlan(ctx, ten, "P1"); err != nil {
+			t.Fatal(err)
+		}
+		once := true
+		s.SetAfterPlanRows(func() {
+			if once {
+				once = false
+				if err := s.SetPlanRules(ctx, "P1", "U1", map[string]*settings.Rule{settings.QuotaSpaces: {Value: int64(7)}}); err != nil {
+					t.Error(err)
+				}
+			}
+		})
+		if v := spaces(t, s, ten); v != int64(3) {
+			t.Fatalf("the read that began before the write: %v", v)
+		}
+		s.SetAfterPlanRows(nil)
+		if v := spaces(t, s, ten); v != int64(7) {
+			t.Fatalf("the plan's old rules are still shared after its write: %v", v)
 		}
 	})
 }
@@ -346,6 +383,51 @@ func TestTheBoundaryTimerFiresOncePerBoundaryAndNothingIsArmedWithoutWindows(t *
 	})
 }
 
+// When the boundaries cannot be read, the timer tries again a minute later
+// instead of never firing.
+func TestTheBoundaryTimerRetriesAfterAFailedRead(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s, c := withClock(t, st)
+		setManual(t, s, quotaRule(int64(5), c.Now().Add(time.Hour), time.Time{}))
+		failing := true
+		s.SetBoundaryFault(func() bool { return failing })
+		var got []settings.Boundary
+		s.Watch(ctx, func(_ context.Context, b []settings.Boundary) { got = append(got, b...) })
+		if c.armed() != 1 {
+			t.Fatalf("no retry armed after a failed read: %d", c.armed())
+		}
+		failing = false
+		c.advance(settings.BoundaryRetry)
+		if c.armed() != 1 || len(got) != 0 {
+			t.Fatalf("armed %d, got %+v", c.armed(), got)
+		}
+		c.advance(time.Hour)
+		if len(got) != 1 || !got[0].Started {
+			t.Fatalf("%+v", got)
+		}
+	})
+}
+
+// A rule whose window has already ended would never count: it is refused,
+// for a manual rule and for billing's.
+func TestARuleThatHasAlreadyEndedIsRefused(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s, c := withClock(t, st)
+		past := c.Now().Add(-time.Minute)
+		_, err := s.SetTenantResult(ctx, ten, settings.QuotaSpaces, settings.Change{Site: true, HasSiteRule: true, SiteRule: quotaRule(int64(5), time.Time{}, past)})
+		if code(err) != settings.CodeUntilPast {
+			t.Fatalf("a manual rule that ended: %v", err)
+		}
+		if err := s.SetBilling(ctx, ten, "billing", map[string]*settings.Rule{settings.QuotaSpaces: quotaRule(int64(5), time.Time{}, c.Now())}); code(err) != settings.CodeUntilPast {
+			t.Fatalf("a billing rule that ends now: %v", err)
+		}
+		if v := spaces(t, s, ten); v != nil {
+			t.Fatalf("nothing was written: %v", v)
+		}
+		setManual(t, s, quotaRule(int64(5), time.Time{}, c.Now().Add(time.Minute)))
+	})
+}
+
 func TestAChangeByAnotherProcessIsSeenAfterTheRevisionCheck(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		a, c := withClock(t, st)
@@ -374,7 +456,51 @@ func TestAChangeByAnotherProcessIsSeenAfterTheRevisionCheck(t *testing.T) {
 	})
 }
 
-func TestAPlanChangeClearsTheUndatedManualRulesAndKeepsTheDatedGrants(t *testing.T) {
+// Another process gives a tenant a plan and later changes the plan's rules:
+// both are seen after the revision check, the tenant's plan from the tenants
+// read again and the rules from the plans read again.
+func TestAPlanChangeByAnotherProcessIsSeenAfterTheRevisionCheck(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a, c := withClock(t, st)
+		b := settings.New(st) // another process on the same database
+		b.SetClock(c.Now)
+		if err := store.InsertPlan(ctx, st.Q(), store.Plan{ID: "P1", Slug: "team", Name: "Team"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.SetPlanRules(ctx, "P1", "U1", map[string]*settings.Rule{settings.QuotaSpaces: {Value: int64(3)}}); err != nil {
+			t.Fatal(err)
+		}
+		if v := spaces(t, b, ten); v != nil {
+			t.Fatal(v)
+		}
+		// The other process's own write of the plan: this one's tenants in memory
+		// are not told.
+		if err := st.Tx(ctx, func(q store.Q) error {
+			if err := store.SetTenantPlan(ctx, q, ten, "P1"); err != nil {
+				return err
+			}
+			_, err := store.BumpSettingsRev(ctx, q)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		c.advance(settings.RevCheck)
+		if v := spaces(t, b, ten); v != int64(3) {
+			t.Fatalf("the tenant's new plan: %v", v)
+		}
+		if err := a.SetPlanRules(ctx, "P1", "U1", map[string]*settings.Rule{settings.QuotaSpaces: {Value: int64(9)}}); err != nil {
+			t.Fatal(err)
+		}
+		c.advance(settings.RevCheck)
+		if v := spaces(t, b, ten); v != int64(9) {
+			t.Fatalf("the plan's new rules: %v", v)
+		}
+	})
+}
+
+// A change of plan clears every manual rule of the tenant, an undated one and
+// a dated grant alike, and leaves the billing rules.
+func TestAPlanChangeClearsEveryManualRuleAndLeavesBilling(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s, c := withClock(t, st)
 		if err := store.InsertPlan(ctx, st.Q(), store.Plan{ID: "P1", Slug: "team", Name: "Team"}); err != nil {
@@ -385,18 +511,24 @@ func TestAPlanChangeClearsTheUndatedManualRulesAndKeepsTheDatedGrants(t *testing
 			SiteRule: quotaRule(int64(1000), time.Time{}, c.Now().Add(24*time.Hour))}); err != nil {
 			t.Fatal(err)
 		}
-		cleared, kept, err := s.SetTenantPlan(ctx, ten, "P1")
+		if err := s.SetBilling(ctx, ten, "billing", map[string]*settings.Rule{settings.QuotaPages: {Value: int64(70)}}); err != nil {
+			t.Fatal(err)
+		}
+		cleared, err := s.SetTenantPlan(ctx, ten, "P1")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(cleared) != 1 || cleared[0].Key != settings.QuotaSpaces || len(kept) != 1 || kept[0].Key != settings.QuotaBytes {
-			t.Fatalf("cleared %+v kept %+v", cleared, kept)
+		if len(cleared) != 2 || cleared[0].Key != settings.QuotaBytes || cleared[1].Key != settings.QuotaSpaces {
+			t.Fatalf("cleared %+v", cleared)
 		}
 		if v := spaces(t, s, ten); v != nil {
 			t.Fatalf("the undated rule is gone: %v", v)
 		}
-		if e, _ := s.Get(ctx, ten, settings.QuotaBytes); e.Value != int64(1000) {
-			t.Fatalf("the grant is kept: %v", e.Value)
+		if e, _ := s.Get(ctx, ten, settings.QuotaBytes); e.Value != nil {
+			t.Fatalf("the dated rule is gone: %v", e.Value)
+		}
+		if e, _ := s.Get(ctx, ten, settings.QuotaPages); e.Value != int64(70) {
+			t.Fatalf("the billing rule stays: %v", e.Value)
 		}
 	})
 }

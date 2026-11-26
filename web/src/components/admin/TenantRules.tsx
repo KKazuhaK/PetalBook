@@ -344,7 +344,12 @@ function RuleDialog({
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
-        <form onSubmit={submit} className="grid gap-4" noValidate data-slot="rule-form">
+        <form
+          onSubmit={submit}
+          className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4"
+          noValidate
+          data-slot="rule-form"
+        >
           <DialogHeader>
             <DialogTitle className="text-base">{nameOf(s.key)}</DialogTitle>
             <DialogDescription className="font-mono">{s.key}</DialogDescription>
@@ -407,10 +412,22 @@ function RuleDialog({
               />
             </SettingsRow>
             <SettingsRow title={tx.fromLabel} help={tx.windowHelp} controlId="rule-from">
-              <Input id="rule-from" type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <Input
+                id="rule-from"
+                type="datetime-local"
+                className="w-full min-w-0"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+              />
             </SettingsRow>
             <SettingsRow title={tx.untilLabel} controlId="rule-until">
-              <Input id="rule-until" type="datetime-local" value={until} onChange={(e) => setUntil(e.target.value)} />
+              <Input
+                id="rule-until"
+                type="datetime-local"
+                className="w-full min-w-0"
+                value={until}
+                onChange={(e) => setUntil(e.target.value)}
+              />
             </SettingsRow>
           </SettingsRows>
           {(from || until) && <p className="text-xs text-muted-foreground">{tx.replaceNote}</p>}

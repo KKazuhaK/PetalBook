@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"petalbook.app/server/internal/store"
@@ -15,6 +16,12 @@ type Boundary struct {
 	Started bool
 	At      time.Time
 }
+
+// BoundaryRetry is how long the timer waits to try again when the boundaries
+// could not be read.
+const BoundaryRetry = time.Minute
+
+var errBoundaryFault = errors.New("settings: boundary read failed (test)")
 
 // SetAfter sets how a timer is made (tests give a clock they move by hand).
 func (s *Service) SetAfter(f func(d time.Duration, fn func()) interface{ Stop() bool }) {
@@ -63,16 +70,39 @@ func (s *Service) rearm(ctx context.Context) {
 		s.armed = nil
 	}
 	now := s.now()
+	fault := func() error {
+		if s.boundaryFault != nil && s.boundaryFault() {
+			return errBoundaryFault
+		}
+		return nil
+	}
+	// A failed read is tried again after BoundaryRetry: nothing else would
+	// arm the timer before the next write of a rule.
+	failed := false
 	var due []store.RuleBoundary
 	if now.After(s.handled) {
-		var err error
-		if due, err = store.RuleBoundaries(ctx, s.st.Q(), s.handled, now); err != nil {
-			due = nil
+		err := fault()
+		if err == nil {
+			due, err = store.RuleBoundaries(ctx, s.st.Q(), s.handled, now)
+		}
+		if err != nil {
+			due, failed = nil, true
 		} else {
 			s.handled = now
 		}
 	}
-	if next, ok, err := store.NextRuleBoundary(ctx, s.st.Q(), now); err == nil && ok {
+	next, ok, err := time.Time{}, false, fault()
+	if err == nil {
+		next, ok, err = store.NextRuleBoundary(ctx, s.st.Q(), now)
+	}
+	switch {
+	case err != nil || failed:
+		wait := BoundaryRetry
+		if err == nil && ok {
+			wait = min(wait, max(next.Sub(now), time.Millisecond))
+		}
+		s.armed = s.afterFunc(wait, func() { s.rearm(ctx) })
+	case ok:
 		s.armed = s.afterFunc(max(next.Sub(now), time.Millisecond), func() { s.rearm(ctx) })
 	}
 	cb := s.onBound

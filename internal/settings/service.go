@@ -44,6 +44,14 @@ type Service struct {
 	// from the database.
 	onCompute func(tenant string)
 
+	// afterPlanRows, set by tests only, runs when a tenant's computation has
+	// read the plans' rules, before it uses them.
+	afterPlanRows func()
+
+	// boundaryFault, set by tests only, makes the timer's reads fail while it
+	// answers true.
+	boundaryFault func() bool
+
 	ceiling atomic.Int64 // --max-upload, see SetFileCeiling
 
 	// The cache. A site write bumps siteGen, which every snapshot is checked
@@ -333,7 +341,9 @@ func (s *Service) snapshotOf(ctx context.Context, tenant string) (*snapshot, err
 
 // checkRev reads settings_rev when RevCheck has passed since the last time, one
 // request paying for it, and drops every cached value when a write of another
-// process moved it.
+// process moved it: the site's and the tenants' (siteGen), the plans' rules
+// (planGen), and the tenants in memory, whose PlanID a change of plan there
+// moved (read again before the generations move, so a recomputation sees it).
 func (s *Service) checkRev(ctx context.Context, now time.Time) {
 	t, last := now.UnixMilli(), s.lastCheck.Load()
 	if t-last < s.revCheck.Milliseconds() || !s.lastCheck.CompareAndSwap(last, t) {
@@ -344,6 +354,10 @@ func (s *Service) checkRev(ctx context.Context, now time.Time) {
 		return
 	}
 	if old := s.seenRev.Swap(rev); old != rev && last != 0 {
+		if err := s.st.TenantStateReload(ctx); err != nil {
+			s.seenRev.CompareAndSwap(rev, old) // seen at the next check instead
+		}
+		s.planGen.Add(1)
 		s.siteGen.Add(1)
 	}
 }

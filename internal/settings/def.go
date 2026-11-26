@@ -116,6 +116,9 @@ const (
 	// value to (its own restriction, or its rule's for one tenant), which
 	// would only be capped.
 	CodeAboveMax = "setting_above_max"
+	// CodeUntilPast: a rule for a tenant whose until is already past, which
+	// would never count.
+	CodeUntilPast = "setting_until_past"
 )
 
 // aboveMax refuses a site value over the restriction it is held to; a value

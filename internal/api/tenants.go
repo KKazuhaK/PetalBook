@@ -330,7 +330,7 @@ func (s *server) adminPatchTenant(c *call) {
 		switch k {
 		case "name":
 		case "quota":
-			writeError(c.w, http.StatusBadRequest, "invalid", "The totals are set through PUT /api/admin/tenants/{tenant}/limits (other.people, storage.quota.*).")
+			writeError(c.w, http.StatusBadRequest, "invalid", "The totals are settings: a site administrator sets them with PUT /api/admin/tenants/{tenant}/settings/quota.people (and quota.spaces, quota.bytes, quota.pages).")
 			return
 		case "slug", "disabled":
 			if !c.can(authz.SiteTenantsManage) {

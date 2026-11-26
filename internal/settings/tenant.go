@@ -168,18 +168,22 @@ func (s *Service) computeTenant(ctx context.Context, tenant string, now time.Tim
 	}
 	var plan map[string]*store.LayeredRow
 	var planID string
+	var planGen uint64
 	if ref, ok := s.st.TenantRefOf(tenant); ok && ref.PlanID != "" {
 		ps, err := s.planRows(ctx)
 		if err != nil {
 			return nil, 0, err
 		}
-		planID, plan = ref.PlanID, ps.rows[ref.PlanID]
+		planID, plan, planGen = ref.PlanID, ps.rows[ref.PlanID], ps.gen
+		if s.afterPlanRows != nil {
+			s.afterPlanRows()
+		}
 	}
 	if len(ruleRows) == 0 && len(ownRows) == 0 {
 		if len(plan) == 0 {
 			return sp.all, math.MaxInt64, nil
 		}
-		m, err := s.sharedPlan(ctx, sp, planID, plan, now)
+		m, err := s.sharedPlan(ctx, sp, planID, planGen, plan, now)
 		return m, math.MaxInt64, err
 	}
 	rules, own := rulesByKey(ruleRows), rowsByKey(ownRows)
@@ -222,9 +226,11 @@ func (s *Service) computeTenant(ctx context.Context, tenant string, now time.Tim
 }
 
 // sharedPlan is the map of every tenant that has the plan and no rows of its
-// own: built once for the site's snapshot and the plan's generation.
-func (s *Service) sharedPlan(ctx context.Context, sp *snapshot, planID string, plan map[string]*store.LayeredRow, now time.Time) (map[string]*Effective, error) {
-	gen := s.planGen.Load()
+// own: built once for the site's snapshot and the plan's generation. gen is
+// the generation the rows plan were read at (planSnapshot.gen), not the one
+// now: a plan written since then must not find its old rows under its new
+// generation.
+func (s *Service) sharedPlan(ctx context.Context, sp *snapshot, planID string, gen uint64, plan map[string]*store.LayeredRow, now time.Time) (map[string]*Effective, error) {
 	if v, ok := sp.plans.Load(planID); ok && v.(*sharedPlanMap).gen == gen {
 		return v.(*sharedPlanMap).m, nil
 	}
@@ -323,6 +329,10 @@ func (s *Service) ruleRow(ctx context.Context, d *Def, layer, layerID, tenant, s
 	}
 	if !r.From.IsZero() && !r.Until.IsZero() && !r.Until.After(r.From) {
 		return nil, bad("%s: until is not after from", d.Key)
+	}
+	if !r.Until.IsZero() && !r.Until.After(s.now()) {
+		return nil, &Error{Code: CodeUntilPast, Msg: "The rule for " + d.Key + " ends at " + r.Until.UTC().Format(time.RFC3339) +
+			", which has already passed: give a later until, or none."}
 	}
 	row.Starts, row.Ends = r.From.UTC(), r.Until.UTC()
 	if r.Value != nil {

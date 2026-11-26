@@ -1,9 +1,10 @@
 # Settings fold: capabilities, limits and stray site settings become layered settings
 
 Status: plan, 2026-11-26, on main f379e41. PR 1 (section 6) is built; PRs 2 and 3 are not.
-Open question 2 is implemented with its recommended default (a change of plan clears
-only the undated manual rules and keeps the dated grants), in one place:
-`store.DeleteUndatedRules`.
+Open question 2 is decided (owner, 2026-11-26): a change of plan clears **every**
+manual rule of the tenant, dated or not, and leaves billing's; the answer lists
+`cleared` only. One place: `store.DeleteManualRules`. Round 1 of the review also
+took the tenant layer off `quota.*` (section 3.1).
 
 Owner decisions this plan implements (2026-11-25/26, approved):
 
@@ -168,6 +169,8 @@ CREATE TABLE settings_rev (id BIGINT PRIMARY KEY CHECK (id = 1), rev BIGINT NOT 
   one, as today, with the warning `undated_value_replaced`. When the window ends
   the rule falls to billing, then the plan, then nothing. It does not return to
   the old manual rule.
+- **A rule that has already ended is refused** (`400 setting_until_past`), a
+  manual rule and billing's alike: it would never count.
 
 ### 2.2 Resolving the site's rule for a tenant
 
@@ -204,9 +207,17 @@ tenant default > site default > space owner) is this same order.
 - **Sharing.** A tenant with no manual or billing rule and no row of its own uses
   the plan's shared map (built once per plan, site generation and plan
   generation), just as tenants with no rows share the site's `follow` map today.
-- `PUT …/tenants/{t}/plan` sets `plan_id` and, as documented today, clears the
-  tenant's manual rules and lists them in the answer (see open question 2). It
-  bumps that tenant's generation.
+- `PUT …/tenants/{t}/plan` sets `plan_id` and clears every manual rule of the
+  tenant, an undated adjustment and a dated grant alike (billing's stay), and
+  lists them in the answer as `cleared` (open question 2, decided). It bumps
+  that tenant's generation. A grant that should outlive the change is set again
+  after it.
+- The map a plan's tenants share is labelled with the generation of the plan
+  rows it was built from (`planSnapshot.gen`), never the generation read later:
+  a plan written meanwhile must not find its old rows under its new generation.
+- A write by another process (seen through `settings_rev`) moves both the site
+  and the plan generations and reads the tenants again, so a tenant's `plan_id`
+  changed there is seen too.
 
 ### 2.4 Expiry without polling
 
@@ -320,7 +331,7 @@ with the reason given in the registry.
 | `storage.modes` | `storage.mode` | choice `server` / `own` / `tenant`, S+T. Restrict = the allowed modes |
 | `storage.maxFileBytes` | **dropped**: a per-tenant rule restricting `files.maxBytes` | — |
 | `storage.perPerson.*` | **dropped**: per-tenant rules restricting `quota.*PerPerson` | — |
-| `storage.quota.spaces`, `.bytes`, `.pages` | `quota.spaces`, `quota.bytes`, `quota.pages` | limit or null, S+T, null. A plan restricts the max; a tenant may set lower |
+| `storage.quota.spaces`, `.bytes`, `.pages` | `quota.spaces`, `quota.bytes`, `quota.pages` | limit or null, S+rule, null. **No tenant layer** (review round 1): a tenant's own value ranks above the rule's, so its administrators could raise their own totals. Set by a manual, billing or plan rule only |
 | `other.people` | `quota.people` | as above (counted and shown, not refused) |
 | `storage.pinnedBytes` | `storage.pinnedBytes` | limit, S+rule, `0` |
 | `usage.apiPerMinute`, `usage.mcpPerMinute`, `usage.mailPerDay`, `usage.outboundPerMinute` | `rate.apiPerMinute`, `rate.mcpPerMinute`, `rate.mailPerDay`, `rate.outboundPerMinute` | limit or null, S+rule, null |
@@ -567,8 +578,29 @@ run on SQLite and PostgreSQL (`PETALBOOK_TEST_POSTGRES`).
    password and the captcha secret would sit in `site_records`. Settings only
    hold policy, so no settings read can ever return a secret.
    Recommended: yes.
-2. **Changing a tenant's plan clears its manual rules** (today's documented
-   behaviour). Recommended: clear only the *undated* manual rules, which were
-   adjustments to the old plan. Keep the *dated* ones, which are time-limited
-   grants (for example "extra 50 GB until January"), and list both in the
-   answer.
+2. **Changing a tenant's plan clears its manual rules.** Decided (owner,
+   2026-11-26): every manual rule goes, undated and dated alike; billing's
+   rules stay; the answer lists `cleared` only. (The recommendation had been
+   to keep the dated grants; it was not taken.)
+
+## 9. Review round 1 (2026-11-26)
+
+- **Allowances have no tenant layer.** A tenant's own value ranks above the
+  site's rule for it (section 2.2), so a setting whose value *is* the tenant's
+  allowance must have no tenant layer, or its administrators raise it. Checked:
+  `quota.people`, `.spaces`, `.bytes`, `.pages` had one and lost it (S+rule);
+  `features.*` (3.1), `mail.ownSender`, `storage.pinnedBytes`, `rate.*`,
+  `storage.assets.ownStorageExempt` and `exports.days` were S+rule already.
+  Kept with a tenant layer, because the allowance there is the site's
+  *restriction* (a tenant value outside it is `setting_restricted`, and a
+  tenant's own lower may only tighten): `storage.mode` (the allowed modes),
+  `files.maxBytes` (`--max-upload` and per-tenant restrictions),
+  `quota.*PerPerson` (the tenant's choice for its people, under the site's
+  restriction), `features.registration`, `features.offline`, `registration.*`,
+  `daily.*`, `legal.*`, `storage.assets`. For these a site rule that should hold
+  must be a lock or a restriction; a value alone is a default the tenant may
+  change, by design ("default or forced").
+- **Who set a rule** (`setBy`, a site administrator's id) is shown to site
+  administrators only.
+- **The boundary timer** tries again after `settings.BoundaryRetry` (1 minute)
+  when the boundaries cannot be read, instead of arming nothing.

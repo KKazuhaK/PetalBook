@@ -73,8 +73,9 @@ const (
 	// StoragePinnedBytes is what the tenant's administrators may pin.
 	StoragePinnedBytes = "storage.pinnedBytes"
 
-	// What a tenant may use in all. A plan restricts the maximum; null is no
-	// limit. QuotaPeople is counted and shown, not refused.
+	// What a tenant may use in all: set for a tenant by a site rule or its
+	// plan, never by the tenant (no tenant layer); null is no limit.
+	// QuotaPeople is counted and shown, not refused.
 	QuotaPeople = "quota.people"
 	QuotaSpaces = "quota.spaces"
 	QuotaBytes  = "quota.bytes"
@@ -169,11 +170,13 @@ func Definitions() []*Def {
 		{Key: StorageMode, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: "server", Choices: []string{"server", "own", "tenant"}, Lower: Lower{Mode: Allow}},
 		{Key: StoragePinnedBytes, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: int64(0), Min: 0, Max: 1 << 50, Lower: Lower{Mode: Allow}},
 
-		// The tenant's totals.
-		{Key: QuotaPeople, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
-		{Key: QuotaSpaces, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
-		{Key: QuotaBytes, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: nil, Min: 0, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}},
-		{Key: QuotaPages, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
+		// The tenant's totals: the site's, for each tenant by a rule (manual,
+		// billing or the plan's). No tenant layer: a tenant's own value would rank
+		// above the rule's, and its administrators could raise their own totals.
+		{Key: QuotaPeople, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
+		{Key: QuotaSpaces, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
+		{Key: QuotaBytes, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}},
+		{Key: QuotaPages, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
 
 		// What a tenant may ask of the server.
 		{Key: RateAPIPerMinute, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},

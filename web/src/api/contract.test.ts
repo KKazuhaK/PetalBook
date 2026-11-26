@@ -1758,6 +1758,9 @@ function suite(target: Target) {
             expect(row.tenant.next).toBe(from)
             // Until must be after from.
             expect((await put('quota.people', { value: 9, from: until, until: from })).json.error).toBe('invalid')
+            // A rule that has already ended would never count.
+            const past = await put('quota.people', { value: 9, until: iso(Date.now() - 3600_000) })
+            expect([past.status, past.json.error]).toEqual([400, 'setting_until_past'])
           } finally {
             expect((await put('quota.people', null)).status).toBe(200)
           }

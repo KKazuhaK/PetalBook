@@ -104,7 +104,10 @@ func TestTenantCrudAndItsErrors(t *testing.T) {
 		}
 		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"slug": "zed"}).want(t, 409, "exists")
 		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"slug": "Bad Slug"}).want(t, 400, "invalid")
-		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"quota": map[string]any{"people": 1}}).want(t, 400, "invalid")
+		if r := root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"quota": map[string]any{"people": 1}}).want(t, 400, "invalid"); !strings.Contains(r.body["message"].(string), "/settings/quota.") ||
+			strings.Contains(r.body["message"].(string), "/limits") {
+			t.Fatalf("the refusal names the settings that hold the totals: %s", r.raw)
+		}
 		root.do("PUT", "/api/admin/tenants/"+id+"/settings/quota.people", map[string]any{"siteRule": map[string]any{"value": -1}}).want(t, 400, "invalid")
 		root.do("PUT", "/api/admin/tenants/"+id+"/settings/mood", map[string]any{"siteRule": map[string]any{"value": 1}}).want(t, 404, "not_found")
 		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"mood": 1}).want(t, 400, "invalid")

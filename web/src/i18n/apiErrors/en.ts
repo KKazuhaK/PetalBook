@@ -76,6 +76,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   setting_locked: 'This setting is locked by the level above and cannot be changed.',
   setting_restricted: 'This value is outside what the level above allows.',
   setting_above_max: 'The value is above the maximum; raise the maximum first.',
+  setting_until_past: 'The rule ends at a time that has already passed: give a later end, or none.',
   mail_not_configured: 'Mail is not set up, so that cannot be done.',
   mail_insecure: 'The mail connection is not encrypted. Use an encrypted one.',
   mail_from_required: 'Give the address mail is sent from.',

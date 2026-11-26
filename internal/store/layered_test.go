@@ -112,14 +112,14 @@ func TestRulesAreOneRowPerTenantKeyAndSource(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// The undated manual rules go on a change of plan; a rule with an end stays.
+		// Every manual rule goes on a change of plan, dated or not; billing's stay.
 		must(put(tenB, "quota.pages", "manual", "9", time.Time{}, at.Add(time.Hour)))
-		gone, err := store.DeleteUndatedRules(ctx, q, tenB)
-		if err != nil || len(gone) != 1 || gone[0].Key != "quota.bytes" {
+		gone, err := store.DeleteManualRules(ctx, q, tenB)
+		if err != nil || len(gone) != 2 {
 			t.Fatalf("%+v %v", gone, err)
 		}
-		if rows, _ = store.ListLayered(ctx, q, "site", tenB); len(rows) != 2 {
-			t.Fatalf("billing and the dated rule stay: %+v", rows)
+		if rows, _ = store.ListLayered(ctx, q, "site", tenB); len(rows) != 1 || rows[0].Source != "billing" {
+			t.Fatalf("billing stays alone: %+v", rows)
 		}
 
 		// The rows of a tenant go with it, and counting a write moves the revision.

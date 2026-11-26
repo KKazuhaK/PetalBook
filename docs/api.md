@@ -6540,10 +6540,11 @@ that is not valid, and no tenant is made. `409 exists` for a slug taken;
 
 `{"name": "…", "slug": "…", "disabled": true}`, each optional. A
 tenant administrator may send `name` only (`403 forbidden` for the rest). From
-3.6 the totals are values of the limits sheet (`other.people`,
-`storage.quota.spaces`, `.bytes`, `.pages`), set through `PUT …/limits`; this
-endpoint no longer takes `quota` (`400 invalid`), and the tenant's `quota` shows
-the values in force, read only.
+3.6 the totals are the settings `quota.people`, `quota.spaces`, `quota.bytes`
+and `quota.pages`, which a site administrator sets for the tenant with
+`PUT /api/admin/tenants/{tenant}/settings/{key}` (a rule; they have no tenant
+layer); this endpoint no longer takes `quota` (`400 invalid`), and the tenant's
+`quota` shows the values in force, read only.
 `200` with the tenant. `409 default_tenant` for disabling the default tenant;
 `409 exists` for a slug taken; `409 conflict` when disabling the tenant of the
 caller, or when no enabled site administrator would be left outside the tenant.
@@ -7153,6 +7154,7 @@ not fill the log).
 | `setting_locked` | 409 | setting a value the layer above locks |
 | `setting_restricted` | 409 | a value outside the layer above's options or `max`, or a `lower` looser than it |
 | `setting_above_max` | 400 | a site value (or the value of the site's rule for a tenant) above the `max` it is held to |
+| `setting_until_past` | 400 | a rule for a tenant whose `until` has already passed (it would never count) |
 | `registration_closed` | 403 | registering or confirming while registration is not open for the tenant |
 | `password_reset_off` | 403 | asking for a reset while mail is not enabled |
 | `mail_not_configured` | 409 | opening registration, asking for a verification, or sending a reset while mail is not enabled |
@@ -8532,7 +8534,9 @@ the **site layer's rule for that tenant** in the layered settings (owner,
   organisation does not have feature X" is X's value `false`, locked, for that
   tenant.
 - **Quotas and limits** are settings too: `quota.people`, `quota.spaces`,
-  `quota.bytes`, `quota.pages` (the tenant's totals; `null` is no limit),
+  `quota.bytes`, `quota.pages` (the tenant's totals; `null` is no limit; no
+  tenant layer, so only a rule sets them and a tenant administrator's write is
+  `409 setting_locked`),
   `storage.pinnedBytes`, `storage.mode` (restrict = the modes allowed),
   `rate.apiPerMinute`, `rate.mcpPerMinute`, `rate.mailPerDay`,
   `rate.outboundPerMinute`. A restriction clamps the value in effect: "at most
@@ -8555,7 +8559,8 @@ source**.
 `from` up to, not including, `until`. A dated manual rule replaces an undated
 one (the answer carries the warning `undated_value_replaced`); when its window
 ends the value falls to billing, then the plan, then the site's, and does not
-return to the old manual rule. `until` must be after `from` (`400 invalid`).
+return to the old manual rule. `until` must be after `from` (`400 invalid`) and
+must not have passed already (`400 setting_until_past`).
 Reads are right without a timer: each tenant's cached settings record the next
 start or end of a window and are computed again when the clock passes it. One
 timer on the active server writes the audit entry for a boundary
@@ -8580,8 +8585,9 @@ them). Each entry's `tenant` has the tenant's own `value` and `lower`, and
 `rules` are at most three, in the order manual, billing, plan. `inEffect` marks
 the rule applied (it is false while the site's lock over everyone beats the
 rule); `underlying` marks the one that applies when it ends or is removed;
-`next` is the next start or end of a window. The tenant object's `quota` is read
-from `quota.*` and is read only.
+`next` is the next start or end of a window. `setBy` (the id of the site
+administrator who set the rule) is shown to site administrators only. The
+tenant object's `quota` is read from `quota.*` and is read only.
 
 #### `PUT /api/admin/tenants/{tenant}/settings/{key}`
 
@@ -8605,10 +8611,10 @@ internal billing module's unit; the site's administrators define them.
   `409 plan_limit` at 100 plans, `409 exists` for a slug in use. `PATCH`
   answers `affected`, the tenants that have the plan.
 - `PUT /api/admin/tenants/{tenant}/plan` `{"plan": "slug"|null}` gives a tenant a
-  plan. It clears the tenant's **undated** manual rules, which were adjustments
-  to the old plan, and keeps the **dated** ones, which are time-limited grants
-  ("extra room until January"): the answer is `{"plan", "cleared": [...],
-  "kept": [...]}`, each rule with its `key`.
+  plan. It clears **every** manual rule of the tenant, undated adjustments and
+  dated grants alike (a grant that should outlive the change is set again
+  after it); billing's rules stay. The answer is `{"plan", "cleared": [...]}`,
+  each rule with its `key`.
 - Plans are held in memory as one snapshot with its own generation; a plan
   change recomputes the tenants lazily at their next read.
 
@@ -9919,7 +9925,7 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
 | `role_from_idp` | `groups.admins` promoted or demoted a person, or skipped a demotion | `user`, `provider`, `from`, `to`, `skipped` |
 | `email_released` | an unverified address moved to the account that confirmed it | `user` (the one cleared), `to` |
 | `plan_created`, `plan_changed`, `plan_deleted` | a plan | `plan`, `rules`, `affected`; `plan_changed` also `from` and `to` (each key's rule before and after, `null` for none) |
-| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (the undated manual rules, each `{key, value, lower, from, until}`), `kept` (the dated ones) |
+| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (the manual rules, dated or not, each `{key, value, lower, from, until}`) |
 | `storage_target_changed` | a tenant's storage target made, changed or removed | `tenant`, `kind`, `owner` or `host` and `namespace`, secrets as `"changed"` |
 | `storage_repository_created` | a repository made at a tenant's target for a space | `space`, `repository` |
 | `space_storage_moved` | a space moved between modes or targets | `space`, `from`, `to`, `job` |

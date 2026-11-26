@@ -300,9 +300,9 @@ func (s *server) adminDeletePlan(c *call) {
 	c.w.WriteHeader(http.StatusNoContent)
 }
 
-// adminPutTenantPlan gives a tenant a plan, or none, and clears its undated
-// manual rules, which were adjustments to the old plan; a manual rule with an
-// end is a time-limited grant and stays. The answer lists both.
+// adminPutTenantPlan gives a tenant a plan, or none, and clears every manual
+// rule of the tenant, dated or not, which were adjustments to the old plan
+// (billing's stay). The answer lists what it cleared.
 func (s *server) adminPutTenantPlan(c *call) {
 	var req struct {
 		Plan    *string `json:"plan"`
@@ -338,7 +338,7 @@ func (s *server) adminPutTenantPlan(c *call) {
 	if plan != nil {
 		id = plan.ID
 	}
-	cleared, kept, err := s.settings.SetTenantPlan(ctx, t.ID, id)
+	cleared, err := s.settings.SetTenantPlan(ctx, t.ID, id)
 	if errors.Is(err, store.ErrNotFound) {
 		tenantNotFound(c)
 		return
@@ -354,12 +354,12 @@ func (s *server) adminPutTenantPlan(c *call) {
 	if plan != nil {
 		to = plan.Slug
 	}
-	s.audit(c, auth.AuditEvent{Kind: "tenant_plan_changed", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "from": from, "to": to, "cleared": cleared, "kept": kept}})
+	s.audit(c, auth.AuditEvent{Kind: "tenant_plan_changed", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "from": from, "to": to, "cleared": cleared}})
 	s.evaluateQuotas(ctx, []string{t.ID})
 	ref, err := s.planRef(ctx, t.ID)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	writeJSON(c.w, http.StatusOK, map[string]any{"plan": ref, "cleared": cleared, "kept": kept})
+	writeJSON(c.w, http.StatusOK, map[string]any{"plan": ref, "cleared": cleared})
 }
