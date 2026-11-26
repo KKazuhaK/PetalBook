@@ -1,4 +1,7 @@
 import {
+  cloneElement,
+  createContext,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -6,6 +9,7 @@ import {
   useState,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactElement,
   type ReactNode,
 } from 'react'
 import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
@@ -126,10 +130,49 @@ function titleIfClipped(e: ReactPointerEvent<HTMLElement>) {
   else el.removeAttribute('title')
 }
 
+const NarrowContext = createContext(false)
+
+// A row's action as a button with an icon and a label: the label goes while the table's box is narrow (it stays as
+// the button's accessible name and tooltip, and the button keeps a 40px target). `render` makes it a link.
+export function RowAction({
+  icon,
+  label,
+  ariaLabel,
+  render,
+  onClick,
+}: {
+  icon?: ReactNode
+  label: string
+  ariaLabel?: string
+  render?: ReactElement<Record<string, unknown>>
+  onClick?: () => void
+}) {
+  const narrow = useContext(NarrowContext)
+  const name = ariaLabel ?? label
+  return (
+    <Button
+      type={render ? undefined : 'button'}
+      variant="ghost"
+      className={narrow ? 'size-10 px-0' : 'h-10 px-3'}
+      title={narrow ? label : undefined}
+      aria-label={narrow ? name : ariaLabel}
+      render={render && cloneElement(render, { 'aria-label': name, title: narrow ? label : undefined })}
+      nativeButton={render ? false : undefined}
+      onClick={onClick}
+    >
+      {icon}
+      {!narrow && label}
+    </Button>
+  )
+}
+
 const ROW_HEIGHT: Record<Density, string> = { compact: 'h-10', comfortable: 'h-14' }
 const SELECT_W = 40
 const ACTIONS_W = 148
 const SETTINGS_W = 48
+// A box narrower than this (the table's own box, not the screen) collapses its row actions to icons.
+const NARROW_BOX = 640
+const NARROW_ACTIONS_W = 96
 const AUTO_MAX = 320
 // The padding of a cell (px-3) and of a header's sort button (px-2 with a -mx-2), in pixels, added to what is measured.
 const CELL_PAD = 24
@@ -217,7 +260,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
   )
   const hiddenIds = prefs.custom || !defaultHidden ? prefs.hidden : defaultHidden
   const chosen = ordered.filter((c) => c.required || !hiddenIds.includes(c.id))
-  const fixed = (selection ? SELECT_W : 0) + (actions ? ACTIONS_W : SETTINGS_W) + (actions ? SETTINGS_W : 0)
+  // A box measured and narrower than NARROW_BOX has its row actions as icons; one never measured keeps them in full.
+  const narrow = boxW > 0 && boxW < NARROW_BOX
+  const lastW = actions ? (narrow ? NARROW_ACTIONS_W : ACTIONS_W + SETTINGS_W) : SETTINGS_W
+  const fixed = (selection ? SELECT_W : 0) + lastW
   const minOf = (c: Column<T>) => c.min ?? 96
 
   // What still fits: the least important column goes first (the last of those, when equal) until the rest fit. A
@@ -566,7 +612,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             {shown.map((c) => (
               <col key={c.id} style={{ width: px ? px[c.id] : `${have[c.id] * 100}%` }} />
             ))}
-            <col style={{ width: actions ? ACTIONS_W + SETTINGS_W : SETTINGS_W }} />
+            <col style={{ width: lastW }} />
           </colgroup>
           <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
             <tr>
@@ -753,7 +799,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     <td
                       className={`sticky right-0 bg-background bg-[linear-gradient(var(--row-tint,transparent),var(--row-tint,transparent))] px-1 text-right ${STICKY_SHADE}`}
                     >
-                      <div className="flex items-center justify-end gap-1">{actions?.(row)}</div>
+                      <div className="flex items-center justify-end gap-1">
+                        <NarrowContext.Provider value={narrow}>{actions?.(row)}</NarrowContext.Provider>
+                      </div>
                     </td>
                   </tr>
                 )

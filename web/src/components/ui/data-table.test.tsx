@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DataTable, type Column, type DataTableSort } from '@/components/ui/data-table'
+import { DataTable, RowAction, type Column, type DataTableSort } from '@/components/ui/data-table'
 import { readPrefs, shares, sanitize, useTablePrefs, orderIds, PAGE_SIZES } from '@/lib/tablePrefs'
 import { tc } from '@/i18n/console'
 import { click, installDomShims, mount, press, settle, type, type Mounted } from '@/testing/harness'
@@ -228,13 +228,13 @@ describe('the table', () => {
   })
 
   it('takes the least important columns away first when the box is narrow, and scrolls inside its own box', async () => {
-    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(480)
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(660)
     m = await mount(<Probe />)
-    // 480 less the 148 + 48 of the actions and the settings leaves 284: the name (120) and one more of 100 fit.
-    expect(headers()).toEqual(['name', 'role'])
-    expect(document.querySelector('[data-slot="columns-hidden"]')!.textContent).toBe(tc.table.hiddenNarrow(2))
+    // 660 less the 148 + 48 of the actions and the settings leaves 464: the mail (160) is the one that does not fit.
+    expect(headers()).toEqual(['name', 'role', 'seen'])
+    expect(document.querySelector('[data-slot="columns-hidden"]')!.textContent).toBe(tc.table.hiddenNarrow(1))
     // What is left still has its least width, and the box is the one that scrolls.
-    expect(document.querySelector('table')!.style.minWidth).toBe(`${120 + 100 + 148 + 48}px`)
+    expect(document.querySelector('table')!.style.minWidth).toBe(`${120 + 100 + 100 + 148 + 48}px`)
     expect(document.querySelector('[data-slot="data-table"] > div.overflow-x-auto')).not.toBeNull()
     width.mockReturnValue(2000)
     window.dispatchEvent(new Event('resize'))
@@ -730,5 +730,42 @@ describe('fitting the columns to their content', () => {
       cell.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
     })
     expect(cell.title).toBe('m'.repeat(60))
+  })
+})
+
+describe('row actions in a narrow box', () => {
+  function Acting() {
+    const prefs = useTablePrefs('acting')
+    return (
+      <DataTable
+        prefs={prefs}
+        columns={COLUMNS}
+        rows={ROWS}
+        rowId={(r) => r.id}
+        rowLabel={(r) => r.name}
+        empty="Nobody."
+        actions={(r) => (
+          <RowAction icon={<i data-icon />} label="View" ariaLabel={`View ${r.name}`} onClick={() => {}} />
+        )}
+      />
+    )
+  }
+  const action = () => document.querySelector<HTMLElement>('tbody tr button[aria-label="View Ann"]')!
+
+  it('keeps the label of an action while the box is wide', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+    m = await mount(<Acting />)
+    expect(action().textContent).toBe('View')
+    expect(document.querySelectorAll('col')[4].style.width).toBe('196px')
+  })
+
+  it('shows only the icon, with its name and a tooltip and a 40px target, once the box is under 640px', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(500)
+    m = await mount(<Acting />)
+    expect(action().textContent).toBe('')
+    expect(action().getAttribute('title')).toBe('View')
+    expect(action().className).toContain('size-10')
+    // The column of the actions shrinks with them.
+    expect(parseFloat(document.querySelector<HTMLElement>('colgroup > col:last-child')!.style.width)).toBeLessThan(120)
   })
 })

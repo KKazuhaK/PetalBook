@@ -7,6 +7,7 @@ import {
   Eye,
   HardDrive,
   MoreHorizontal,
+  ExternalLink,
   Pin,
   PinOff,
   RefreshCw,
@@ -58,7 +59,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { DataTable, type Column } from '@/components/ui/data-table'
+import { DataTable, RowAction, type Column } from '@/components/ui/data-table'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -448,14 +449,12 @@ function RowActions({
   const sp = ta.spaces
   return (
     <>
-      <Button
-        variant="ghost"
-        className="h-10 px-3"
-        render={<Link to={spaceUrls(s.id).home()} aria-label={t.fmt.labelled(sp.open, s.name)} />}
-        nativeButton={false}
-      >
-        {sp.open}
-      </Button>
+      <RowAction
+        icon={<ExternalLink aria-hidden="true" />}
+        label={sp.open}
+        ariaLabel={t.fmt.labelled(sp.open, s.name)}
+        render={<Link to={spaceUrls(s.id).home()} />}
+      />
       <DropdownMenu>
         <DropdownMenuTrigger render={<Button variant="ghost" className="size-10" aria-label={sp.moreFor(s.name)} />}>
           <MoreHorizontal />

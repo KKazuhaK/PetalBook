@@ -9,7 +9,7 @@ import type { ConfirmAction, User, UserSort, UsersParams } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { DataTable, type Column } from '@/components/ui/data-table'
+import { DataTable, RowAction, type Column } from '@/components/ui/data-table'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -288,15 +288,12 @@ export function UsersList() {
         }
         actions={(u) => (
           <>
-            <Button
-              variant="ghost"
-              className="h-10 px-3"
-              render={<Link to={adminUserPath(u.id)} aria-label={t.fmt.labelled(tc.table.view, u.name)} />}
-              nativeButton={false}
-            >
-              <Eye aria-hidden="true" />
-              {tc.table.view}
-            </Button>
+            <RowAction
+              icon={<Eye aria-hidden="true" />}
+              label={tc.table.view}
+              ariaLabel={t.fmt.labelled(tc.table.view, u.name)}
+              render={<Link to={adminUserPath(u.id)} />}
+            />
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={t.fmt.labelled(tc.table.more, u.name)}
