@@ -5,7 +5,7 @@ import { ThemeProvider } from '@/providers/theme'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
-import { ApiError, onForbidden, onHold, onSignedOut, onSpaceAccess, onUnavailable } from '@/api/client'
+import { ApiError, onForbidden, onHold, onSignedOut, onSpaceAccess, onUnavailable, onViewAsEnded } from '@/api/client'
 import { keys, lastSpace, refreshSpaceAccess, useSession, useSpaces } from '@/api/hooks'
 import { AdminGate } from '@/components/admin/AdminGate'
 import { SpaceGate } from '@/components/layout/SpaceGate'
@@ -19,6 +19,8 @@ import { loginUrl } from '@/lib/auth'
 import { refreshFeaturesOnRefusal } from '@/lib/features'
 import { installSyncedPrefs } from '@/lib/syncedPrefs'
 import { t } from '@/i18n'
+import { ViewAsBanner, ViewAsEnded } from '@/components/viewas/Banner'
+import { viewAsId } from '@/lib/viewAs'
 
 // The editor drags in Tiptap, ProseMirror and the Markdown pipeline; the list
 // views do not need any of it, so it loads only when a page is opened. The
@@ -56,8 +58,11 @@ const PREFS_WAIT_MS = 1200
 
 // Reads the person's file once, before the pages that read their preferences are shown.
 function PrefsGate({ userId, children }: { userId: string; children: ReactNode }) {
-  const [ready, setReady] = useState(prefs.status().hydrated)
+  // A view as a person reads nothing of the person's own: the browser's copy is used, and nothing is written back.
+  const viewing = viewAsId() !== null
+  const [ready, setReady] = useState(viewing || prefs.status().hydrated)
   useEffect(() => {
+    if (viewing) return
     let live = true
     const done = () => live && setReady(true)
     const wait = setTimeout(done, PREFS_WAIT_MS)
@@ -69,7 +74,7 @@ function PrefsGate({ userId, children }: { userId: string; children: ReactNode }
       live = false
       clearTimeout(wait)
     }
-  }, [userId])
+  }, [userId, viewing])
   return ready ? children : <PageFallback />
 }
 
@@ -101,6 +106,22 @@ function AuthGate() {
   const session = useSession()
   const { pathname, search } = useLocation()
   if (session.isPending) return <PageFallback />
+  // A tab that views the app as a person shows the person's app under the view's banner, or that the view is over.
+  if (viewAsId() !== null) {
+    const view = session.data?.viewAs
+    const person = session.data?.user
+    if (view && person)
+      return (
+        <PrefsGate key={person.id} userId={person.id}>
+          <ViewAsBanner view={view} user={person.id} name={person.name} />
+          <Outlet />
+        </PrefsGate>
+      )
+    // A session without the view (the server does not know it) or the view's refusal; a failure to reach the server
+    // is shown as any other below.
+    if (session.data || (session.error instanceof ApiError && session.error.code === 'view_as_ended'))
+      return <ViewAsEnded />
+  }
   // Only when there is nothing to go on: a failed refresh in the background
   // (offline for a moment) must not take away the page someone is typing in.
   if (session.isError && !session.data)
@@ -149,6 +170,14 @@ function ToTheServer() {
   return <PageFallback />
 }
 
+// `/as/<id>` reached inside the app (the console opens it in a new tab, where it is read before the app starts): a load
+// of the address lets that happen.
+function ToViewAs() {
+  const { pathname } = useLocation()
+  useEffect(() => window.location.replace(pathname), [pathname])
+  return <PageFallback />
+}
+
 // useBlocker (leave-with-unsaved-text guard) needs a data router.
 const router = createBrowserRouter([
   { path: 'login', element: later(<LoginPage />) },
@@ -160,6 +189,7 @@ const router = createBrowserRouter([
   { path: 'forgot', element: later(<ForgotPage />) },
   { path: 'reset-password', element: later(<ResetPasswordPage />) },
   { path: 'oauth/authorize', element: <ToTheServer /> },
+  { path: 'as/:id', element: <ToViewAs /> },
   {
     element: <AuthGate />,
     children: [
@@ -197,6 +227,9 @@ const router = createBrowserRouter([
 ])
 
 export default function App() {
+  // A view as a person that the server says is over takes the tab's place (lib/viewAs).
+  const [viewEnded, setViewEnded] = useState(false)
+  useEffect(() => onViewAsEnded(() => setViewEnded(true)), [])
   // A refused origin makes every request fail the same way; one notice that
   // stays until the page is reloaded says why.
   useEffect(() => onForbidden((message) => void toast.error(message, { id: 'forbidden', duration: Infinity })), [])
@@ -239,7 +272,7 @@ export default function App() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <RememberAccount />
-          <RouterProvider router={router} />
+          {viewEnded ? <ViewAsEnded /> : <RouterProvider router={router} />}
           <Toaster position="bottom-right" />
         </TooltipProvider>
       </QueryClientProvider>

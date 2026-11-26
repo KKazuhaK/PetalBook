@@ -71,6 +71,10 @@ var routeAccessAdded = map[string][4]string{
 
 	"POST /api/admin/spaces/{space}/takeover": {"ok", "ok", "403 forbidden", "403 token_scope"},
 
+	// 3.6 part c6: viewing the app as a person.
+	"POST /api/admin/users/{id}/view-as":   {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"DELETE /api/admin/users/{id}/view-as": {"ok", "ok", "403 forbidden", "403 token_scope"},
+
 	// A temporary password for a person.
 	"POST /api/users/{id}/password": {"ok", "ok", "403 forbidden", "403 token_scope"},
 	// A batch of people by file, and the picker's search.

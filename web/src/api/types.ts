@@ -863,6 +863,9 @@ export type ErrorCode =
   | 'exists'
   | 'unauthenticated'
   | 'forbidden'
+  // A view as a person (docs/api.md, "Viewing as a person"): a route it does not reach, and a view that is over.
+  | 'view_as_read_only'
+  | 'view_as_ended'
   | 'no_permission'
   | 'space_disabled'
   | 'user_not_found'
@@ -976,6 +979,7 @@ export type PermissionKey =
   | 'tenant.spaces.takeover'
   | 'tenant.spaces.delete'
   | 'tenant.data.view'
+  | 'tenant.users.viewAs'
   | 'tenant.data.export'
   | 'tenant.storage.read'
   | 'tenant.recycle.read'
@@ -1019,6 +1023,17 @@ export interface SessionInfo {
   methods?: { password: boolean; oidc: { name: string } | null }
   // The API token the request was made with; the app's own requests have none.
   token?: { id: string; name: string; access: TokenAccess; spaces: string[] } | null
+  // In a tab that views the app as a person: the view (`user` is then the person, with no permissions).
+  viewAs?: ViewAsInfo
+}
+
+// A view as a person (docs/api.md, "Viewing as a person"): who is looking, until when, and how many of the person's
+// spaces it leaves out (personal ones, and those outside the administrator's organisation).
+export interface ViewAsInfo {
+  id: string
+  viewer: { name: string }
+  until: string
+  hidden: number
 }
 
 // An API token (docs/api.md, "API tokens"). The secret is never in one of these.
@@ -2447,6 +2462,7 @@ export const NOTIFY_KINDS = [
   'account_changed',
   'password_set',
   'email_released',
+  'viewed_as',
 ] as const
 export type NotifyKind = (typeof NOTIFY_KINDS)[number]
 

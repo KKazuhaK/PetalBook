@@ -132,6 +132,13 @@ export const PERMISSIONS: PermissionInfo[] = [
     description: 'Open an audited, read-only view of a space',
   },
   {
+    name: 'tenant.users.viewAs',
+    scope: 'tenant',
+    feature: 'features.adminView',
+    description:
+      "View the app as a person sees it: read only, for an hour, audited; never personal spaces, drafts or the person's account",
+  },
+  {
     name: 'tenant.data.export',
     scope: 'tenant',
     feature: '',

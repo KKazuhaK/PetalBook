@@ -15,6 +15,7 @@ import { DailyBlock } from './DailyBlock'
 import { Greeting } from './Greeting'
 import { HomeFavorites } from './HomeFavorites'
 import { QuickNote } from './QuickNote'
+import { viewAsId } from '@/lib/viewAs'
 
 const CONTINUE_COUNT = 8
 const INBOX_COUNT = 5
@@ -168,9 +169,11 @@ export default function HomePage() {
           </Block>
         )}
 
-        <Block id="home-favorites" title={th.favorites.title}>
-          <HomeFavorites />
-        </Block>
+        {viewAsId() === null && (
+          <Block id="home-favorites" title={th.favorites.title}>
+            <HomeFavorites />
+          </Block>
+        )}
       </div>
     </>
   )

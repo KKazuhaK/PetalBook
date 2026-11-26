@@ -10,6 +10,7 @@ import {
   Home,
   House,
   Inbox,
+  LogOut,
   MoreHorizontal,
   PenLine,
   Search,
@@ -55,6 +56,8 @@ import { SidebarToggle } from './SidebarToggle'
 import { SpaceSwitcher } from './SpaceSwitcher'
 import { ThemeToggle } from './ThemeToggle'
 import { UserMenu } from './UserMenu'
+import { viewAsId } from '@/lib/viewAs'
+import { exitViewAs } from '@/components/viewas/Banner'
 
 const OPEN_KEY = 'pb.folders.open'
 // A folder that would accept what is being dragged.
@@ -425,6 +428,20 @@ function TagLink({
   )
 }
 
+// In a view as a person the account menu is the way out of the view.
+function ExitViewButton({ user }: { user: string }) {
+  return (
+    <Button
+      variant="ghost"
+      className="h-9 min-w-0 flex-1 justify-start gap-2 px-1.5"
+      onClick={() => void exitViewAs(user)}
+    >
+      <LogOut className="size-4" aria-hidden="true" />
+      <span className="truncate">{t.viewAs.exitView}</span>
+    </Button>
+  )
+}
+
 export function AppSidebar() {
   const { pathname } = useLocation()
   const urls = useUrls()
@@ -440,7 +457,8 @@ export function AppSidebar() {
   const spaceName = current?.name
 
   return (
-    <Sidebar>
+    // Below the banner of a view as a person, in its tab (0 otherwise).
+    <Sidebar className="top-(--viewas-h) h-[calc(100svh-var(--viewas-h))]">
       <SidebarHeader className="gap-3 p-3 pb-1">
         <div className="flex items-center gap-1">
           <div className="min-w-0 flex-1">
@@ -520,7 +538,11 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="flex-row items-center justify-between gap-1 border-t p-2">
-        {accounts ? <UserMenu /> : null}
+        {viewAsId() !== null && session?.user ? (
+          <ExitViewButton user={session.user.id} />
+        ) : accounts ? (
+          <UserMenu />
+        ) : null}
         <div className="ml-auto flex items-center">
           {/* With accounts, Settings is in the account menu; a single-user server has no such menu. */}
           {!accounts && (

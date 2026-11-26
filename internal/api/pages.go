@@ -254,6 +254,11 @@ func (s *server) getPage(c *call) {
 	}
 	s.activity(c, "page_read", "page", id)
 	out := pageWithDraft{pageResp: toPage(p)}
+	if c.viewAs != nil {
+		// A view as a person never reads the person's draft.
+		writeJSON(c.w, http.StatusOK, out)
+		return
+	}
 	d, err := s.drafts.Get(c.r.Context(), c.sp.Space, c.sp.Info.ID, id, c.user().ID, p.Rev)
 	if err != nil {
 		s.fail(c.w, err)

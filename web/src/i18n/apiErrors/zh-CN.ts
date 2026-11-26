@@ -43,6 +43,8 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   owner_not_allowed: '不能用这个所有者。',
   user_not_found: '没有这个用户，或者这个用户已被停用。请检查用户名。',
   user_disabled: '这个用户已被停用，不能拥有空间。',
+  view_as_read_only: '以他人身份查看时只能读，不能改。',
+  view_as_ended: '这次查看已经结束。',
   heir_required: '这个人还拥有空间，请先指定接手的人。',
   quota_exceeded: (p) =>
     p.quota === 'spaces' && p.limit

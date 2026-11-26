@@ -365,6 +365,8 @@ export const securityZhCN = {
       space_transferred: '转让空间',
       space_viewed: '查看空间',
       page_viewed: '查看页面',
+      view_as_started: '以他人身份查看',
+      view_as_ended: '结束以他人身份查看',
       export_created: '创建导出',
       export_deleted: '删除导出',
       export_downloaded: '下载导出',

@@ -57,8 +57,12 @@
 }
 
 :root {
-    /* The top bar: 56 px, and under the notch (or the status bar of an installed app) the safe area above it. */
-    --topbar-h: calc(3.5rem + env(safe-area-inset-top, 0px));
+    /* What is above the app: the safe area (the notch, or the status bar of an installed app), and in a tab that views
+       the app as a person the banner of the view, which sits in it (components/viewas/Banner.tsx). */
+    --viewas-h: 0px;
+    --app-top: env(safe-area-inset-top, 0px);
+    /* The top bar: 56 px, under what is above the app. */
+    --topbar-h: calc(3.5rem + var(--app-top));
     --background: oklch(1 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
@@ -1348,4 +1352,10 @@ html[data-palette="rose-pine"].dark {
     --icon-blue: #60a5fa;
     --icon-purple: #a78bfa;
     --icon-pink: #f472b6;
+}
+
+/* A tab that views the app as a person: its banner, 44 px under the safe area, is above the app (lib/viewAs.ts). */
+html[data-view-as] {
+    --viewas-h: calc(2.75rem + env(safe-area-inset-top, 0px));
+    --app-top: var(--viewas-h);
 }

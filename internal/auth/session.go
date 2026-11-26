@@ -171,6 +171,12 @@ func (s *Service) CachedUser(ctx context.Context, id string) (*store.User, error
 	return s.cachedUser(ctx, id)
 }
 
+// CachedAccess is CachedUser with what the person holds outside spaces, from
+// the same entry (no extra query).
+func (s *Service) CachedAccess(ctx context.Context, id string) (*store.User, authz.Subject, error) {
+	return s.cachedEntry(ctx, id)
+}
+
 func (s *Service) cachedUser(ctx context.Context, id string) (*store.User, error) {
 	u, _, err := s.cachedEntry(ctx, id)
 	return u, err
