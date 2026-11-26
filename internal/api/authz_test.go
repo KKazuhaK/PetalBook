@@ -90,9 +90,9 @@ func goName(name string) string {
 	return b.String()
 }
 
-// The table of keys in docs/api.md and the PermissionKey union of the web app
-// list exactly the registry, in its order.
-func TestPermissionKeysMatchTheDocsAndTheWebApp(t *testing.T) {
+// The table of keys in docs/api.md lists exactly the registry, in its order (the
+// web app's keys are generated: TestWebRegistriesAreCurrent).
+func TestPermissionKeysMatchTheDocs(t *testing.T) {
 	t.Parallel()
 	var want []string
 	scopes := map[string]string{}
@@ -134,28 +134,6 @@ func TestPermissionKeysMatchTheDocsAndTheWebApp(t *testing.T) {
 	}
 	if !slices.Equal(docKeys, want) {
 		t.Errorf("docs/api.md lists\n%v\nthe registry has\n%v", docKeys, want)
-	}
-
-	ts, err := os.ReadFile("../../web/src/api/types.ts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(ts)
-	i = strings.Index(src, "export type PermissionKey =")
-	if i < 0 {
-		t.Fatal("web/src/api/types.ts has no PermissionKey")
-	}
-	var webKeys []string
-	lit := regexp.MustCompile(`^\s*\|\s*'([^']+)'\s*$`)
-	for _, line := range strings.Split(src[i:], "\n")[1:] {
-		m := lit.FindStringSubmatch(line)
-		if m == nil {
-			break
-		}
-		webKeys = append(webKeys, m[1])
-	}
-	if !slices.Equal(webKeys, want) {
-		t.Errorf("web/src/api/types.ts PermissionKey lists\n%v\nthe registry has\n%v", webKeys, want)
 	}
 }
 
