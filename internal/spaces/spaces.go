@@ -320,14 +320,13 @@ type Manager struct {
 	remoteMu sync.Mutex      // one connect, disconnect or key change at a time
 	pullWake chan struct{}   // a space with a remote was just opened: pull it now
 
-	st        storageState // the storage policy (storage.go) and its caches
-	storageMu sync.Mutex   // one change of the settings at a time
-	ev        evictState   // eviction and restoring (evict.go)
-	cs        cacheStates  // cache states in memory (partial.go)
-	as        assetState   // attachment repositories and their cache (assets.go)
-	recycle   recycleState // the recycle bin (recycle.go)
-	exp       exportState  // exports (export.go)
-	problems  problemMemo  // what each space said of its problems last (problems.go)
+	st       storageState // the storage policy (storage.go) and its caches
+	ev       evictState   // eviction and restoring (evict.go)
+	cs       cacheStates  // cache states in memory (partial.go)
+	as       assetState   // attachment repositories and their cache (assets.go)
+	recycle  recycleState // the recycle bin (recycle.go)
+	exp      exportState  // exports (export.go)
+	problems problemMemo  // what each space said of its problems last (problems.go)
 
 	trimMu    sync.Mutex // one trim at a time
 	trimming  bool       // a background trim is queued or running (guarded by mu)

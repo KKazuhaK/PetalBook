@@ -14,13 +14,12 @@ import (
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
 // Tenants (milestone 3.3, docs/api.md "Tenants, registration and mail"): the
 // switch that allows more than the default tenant, and the tenants themselves.
-
-const tenancyKey = "tenancy"
 
 var tenantSlugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,31}$`)
 
@@ -87,62 +86,15 @@ func tenantNotFound(c *call) { writeError(c.w, http.StatusNotFound, "not_found",
 
 // --- the switch ------------------------------------------------------------------------
 
+// tenancyEnabled is the setting features.tenancy: whether tenants besides the
+// default one may exist. One read of the settings' cache, no query.
 func (s *server) tenancyEnabled(ctx context.Context) (bool, error) {
-	raw, ok, err := store.GetSiteSetting(ctx, s.opt.Store.Q(), tenancyKey)
-	if err != nil || !ok {
+	e, err := s.settings.Get(ctx, "", settings.FeatureTenancy)
+	if err != nil {
 		return false, err
 	}
-	var v struct {
-		Enabled bool `json:"enabled"`
-	}
-	if json.Unmarshal([]byte(raw), &v) != nil {
-		return false, nil
-	}
-	return v.Enabled, nil
-}
-
-type tenancyResp struct {
-	Enabled bool `json:"enabled"`
-	Tenants int  `json:"tenants"`
-}
-
-func (s *server) adminGetTenancy(c *call) {
-	on, err := s.tenancyEnabled(c.r.Context())
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, tenancyResp{on, s.opt.Store.TenantCount()})
-}
-
-func (s *server) adminPutTenancy(c *call) {
-	var req struct {
-		Enabled *bool `json:"enabled"`
-	}
-	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
-		return
-	}
-	if req.Enabled == nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "Give enabled: true or false.")
-		return
-	}
-	ctx := c.r.Context()
-	was, err := s.tenancyEnabled(ctx)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	b, _ := json.Marshal(struct {
-		Enabled bool `json:"enabled"`
-	}{*req.Enabled})
-	if err := store.SetSiteSetting(ctx, s.opt.Store.Q(), tenancyKey, string(b), time.Now()); err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	if was != *req.Enabled {
-		s.audit(c, auth.AuditEvent{Kind: "setting_changed", Actor: c.user().ID, Tenant: "-", Detail: map[string]any{"key": "tenancy.enabled", "layer": "site", "from": was, "to": *req.Enabled}})
-	}
-	s.adminGetTenancy(c)
+	on, _ := e.Value.(bool)
+	return on, nil
 }
 
 // --- the tenants -----------------------------------------------------------------------
@@ -177,7 +129,9 @@ func (s *server) adminListTenants(c *call) {
 	writeJSON(c.w, http.StatusOK, struct {
 		Items []tenantResp `json:"items"`
 		Next  string       `json:"next"`
-	}{items, next})
+		// Count is how many tenants the server has, the default one included.
+		Count int `json:"count"`
+	}{items, next, s.opt.Store.TenantCount()})
 }
 
 // visibleTenant reads the {tenant} of the path for a caller who may see it: a
@@ -245,7 +199,7 @@ func (s *server) adminCreateTenant(c *call) {
 		return
 	}
 	if !on {
-		writeError(c.w, http.StatusConflict, "tenants_off", "More than the default tenant is switched off; switch it on at /api/admin/tenancy.")
+		writeError(c.w, http.StatusConflict, "tenants_off", "More than the default tenant is switched off; switch features.tenancy on in the site settings.")
 		return
 	}
 	name, ok := cleanTenantName(req.Name)

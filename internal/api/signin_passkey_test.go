@@ -479,7 +479,7 @@ func TestSetupAndInvitesStartAHeldSessionWhenAPasskeyIsRequired(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		// Stored before anyone exists, as a restored database could have it.
-		if _, err := store.PutSetting(context.Background(), a.st.Q(), "security", `{"passkeys":{"enabled":true,"requireRoles":["admin","member"]}}`, time.Now()); err != nil {
+		if _, err := store.PutRecord(context.Background(), a.st.Q(), "security", `{"passkeys":{"enabled":true,"requireRoles":["admin","member"]}}`, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		a.clock.Advance(6 * time.Minute) // past the settings cache

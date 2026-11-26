@@ -168,37 +168,37 @@ func UserHasIdentityOf(ctx context.Context, q Q, userID, issuer string) (bool, e
 
 // --- site settings -----------------------------------------------------------
 
-// GetSetting returns a value of site_settings, its update time (the revision
+// GetRecord returns a value of site_records, its update time (the revision
 // of the row), or ErrNotFound.
-func GetSetting(ctx context.Context, q Q, key string) (value string, updated int64, err error) {
-	err = q.QueryRow(ctx, `SELECT value, updated FROM site_settings WHERE key = ?`, key).Scan(&value, &updated)
+func GetRecord(ctx context.Context, q Q, key string) (value string, updated int64, err error) {
+	err = q.QueryRow(ctx, `SELECT value, updated FROM site_records WHERE key = ?`, key).Scan(&value, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, ErrNotFound
 	}
 	return
 }
 
-// SettingRevision is the update time of a setting, 0 when there is none: one
+// RecordRevision is the update time of a setting, 0 when there is none: one
 // small query, for noticing a change made by another process.
-func SettingRevision(ctx context.Context, q Q, key string) (int64, error) {
+func RecordRevision(ctx context.Context, q Q, key string) (int64, error) {
 	var rev int64
-	err := q.QueryRow(ctx, `SELECT updated FROM site_settings WHERE key = ?`, key).Scan(&rev)
+	err := q.QueryRow(ctx, `SELECT updated FROM site_records WHERE key = ?`, key).Scan(&rev)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	return rev, err
 }
 
-// PutSetting stores a value; the revision is the larger of now and the
+// PutRecord stores a value; the revision is the larger of now and the
 // previous revision plus one, so it always grows.
-func PutSetting(ctx context.Context, q Q, key, value string, now time.Time) (int64, error) {
+func PutRecord(ctx context.Context, q Q, key, value string, now time.Time) (int64, error) {
 	var old int64
-	err := q.QueryRow(ctx, `SELECT updated FROM site_settings WHERE key = ?`, key).Scan(&old)
+	err := q.QueryRow(ctx, `SELECT updated FROM site_records WHERE key = ?`, key).Scan(&old)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	rev := max(ms(now), old+1)
-	_, err = q.Exec(ctx, `INSERT INTO site_settings(key, value, updated) VALUES (?, ?, ?)
+	_, err = q.Exec(ctx, `INSERT INTO site_records(key, value, updated) VALUES (?, ?, ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated = excluded.updated`, key, value, rev)
 	return rev, err
 }

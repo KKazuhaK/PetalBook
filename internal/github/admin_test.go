@@ -25,7 +25,7 @@ func TestSaveChecksWithGitHubAndStoresSealed(t *testing.T) {
 			t.Fatalf("%+v", v)
 		}
 		// The key and the secret are in the database only sealed.
-		raw, ok, err := store.GetSiteSetting(ctx, st.Q(), "github_app")
+		raw, ok, err := store.GetSiteRecord(ctx, st.Q(), "github_app")
 		if err != nil || !ok {
 			t.Fatal(err)
 		}
@@ -67,7 +67,7 @@ func TestSaveRefusesWhatGitHubRefusesAndSavesNothing(t *testing.T) {
 				t.Errorf("%s: %v (%s)", c.name, err, code(err))
 			}
 		}
-		if _, ok, _ := store.GetSiteSetting(ctx, st.Q(), "github_app"); ok {
+		if _, ok, _ := store.GetSiteRecord(ctx, st.Q(), "github_app"); ok {
 			t.Fatal("a refused save stored something")
 		}
 		// GitHub that cannot be reached: 503, nothing saved.
@@ -75,7 +75,7 @@ func TestSaveRefusesWhatGitHubRefusesAndSavesNothing(t *testing.T) {
 		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM()}); code(err) != "unavailable" || status(err) != 503 {
 			t.Fatalf("%v", err)
 		}
-		if _, ok, _ := store.GetSiteSetting(ctx, st.Q(), "github_app"); ok {
+		if _, ok, _ := store.GetSiteRecord(ctx, st.Q(), "github_app"); ok {
 			t.Fatal("an unreachable GitHub left settings")
 		}
 	})

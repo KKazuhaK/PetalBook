@@ -167,11 +167,16 @@ func (s *Service) Challenge() string {
 	return `Bearer resource_metadata="` + s.issuer + PathResourceMCP + `", scope="read write"`
 }
 
-// On says whether the authorization server answers: an administrator may
-// switch MCP, and with it OAuth, off.
+// On says whether the authorization server answers: the site's own features.mcp.
+// An administrator may switch MCP, and with it OAuth, off for everybody (a lock)
+// or for one tenant, whose people are then refused at /mcp (see OnFor).
 func (s *Service) On(ctx context.Context) (bool, error) {
-	a, err := s.cfg.Machine.Access(ctx)
-	return a.MCP, err
+	return s.cfg.Machine.MCPOn(ctx, "")
+}
+
+// OnFor says whether MCP is on for a tenant.
+func (s *Service) OnFor(ctx context.Context, tenant string) (bool, error) {
+	return s.cfg.Machine.MCPOn(ctx, tenant)
 }
 
 // Run keeps the tables tidy until ctx ends: grants nobody refreshed for 90 days

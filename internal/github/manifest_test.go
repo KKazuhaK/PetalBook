@@ -74,7 +74,7 @@ func TestMakingTheAppFromAManifest(t *testing.T) {
 			t.Fatalf("%+v %v", v, err)
 		}
 		// Stored sealed, exactly as an App entered by hand, and the webhook secret too.
-		raw, _, _ := store.GetSiteSetting(ctx, st.Q(), "github_app")
+		raw, _, _ := store.GetSiteRecord(ctx, st.Q(), "github_app")
 		for _, plain := range []string{h.f.ClientSecret, "BEGIN RSA PRIVATE KEY", "MIIE", "fake-webhook-secret"} {
 			if strings.Contains(raw, plain) {
 				t.Fatalf("the stored settings hold %q", plain)

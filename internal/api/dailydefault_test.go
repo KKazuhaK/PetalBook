@@ -132,7 +132,7 @@ func TestDailySettingsThatCannotBeReadAreNotOverwritten(t *testing.T) {
 		t := x.t
 		ctx := context.Background()
 		const bad = `{"languages": "not a list"}`
-		if err := store.SetSiteSetting(ctx, x.a.st.Q(), "daily", bad, x.now); err != nil {
+		if err := store.SetSiteRecord(ctx, x.a.st.Q(), "daily", bad, x.now); err != nil {
 			t.Fatal(err)
 		}
 		if code, _ := x.adm("GET", "/api/admin/daily", nil); code != 500 {
@@ -141,7 +141,7 @@ func TestDailySettingsThatCannotBeReadAreNotOverwritten(t *testing.T) {
 		if code, _ := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"en"}}); code != 500 {
 			t.Errorf("PUT: %d", code)
 		}
-		if raw, _, err := store.GetSiteSetting(ctx, x.a.st.Q(), "daily"); err != nil || raw != bad {
+		if raw, _, err := store.GetSiteRecord(ctx, x.a.st.Q(), "daily"); err != nil || raw != bad {
 			t.Fatalf("%v %s", err, raw)
 		}
 	})
@@ -158,7 +158,7 @@ func TestDailyLanguagesAreCanonical(t *testing.T) {
 		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"zh", "pt-br", "en"}}); code != 200 || fmt.Sprint(r["languages"]) != "[zh-Hans pt-BR en]" {
 			t.Fatalf("%d %v", code, r)
 		}
-		raw, _, err := store.GetSiteSetting(ctx, st.Q(), "daily")
+		raw, _, err := store.GetSiteRecord(ctx, st.Q(), "daily")
 		if err != nil || !strings.Contains(raw, `"languages":["zh-Hans","pt-BR","en"]`) {
 			t.Fatalf("%v %s", err, raw)
 		}

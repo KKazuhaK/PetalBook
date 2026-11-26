@@ -84,7 +84,7 @@ func TestTheMailPasswordIsSealedAndNeverShown(t *testing.T) {
 			t.Fatal("the password is shown")
 		}
 		var stored string
-		if err := a.st.Q().QueryRow(context.Background(), `SELECT value FROM site_settings WHERE key = 'mail'`).Scan(&stored); err != nil {
+		if err := a.st.Q().QueryRow(context.Background(), `SELECT value FROM site_records WHERE key = 'mail'`).Scan(&stored); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(stored, secret) || !strings.Contains(stored, "passwordEnc") {

@@ -169,7 +169,7 @@ func TestFirstUserMarkIsASiteSetting(t *testing.T) {
 		if err := store.MarkFirstUser(ctx, st.Q(), false, now); err != nil {
 			t.Fatal(err)
 		}
-		if n := count(t, st, `SELECT COUNT(*) FROM site_settings WHERE key = 'first_user'`); n != 1 {
+		if n := count(t, st, `SELECT COUNT(*) FROM site_records WHERE key = 'first_user'`); n != 1 {
 			t.Fatalf("%d", n)
 		}
 	})

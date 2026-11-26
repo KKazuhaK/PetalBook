@@ -7202,7 +7202,7 @@ before the milestone is released.
   terms accepted as JSON, created, expires), `email_tokens` (the SHA-256 of the
   token, kind `verify` or `reset`, user, address, created, expires, used) and the
   column `users.terms_accepted` (JSON: `at`, `termsUrl`, `privacyUrl`). The mail
-  settings are a record of `site_settings` (key `mail`, the password sealed).
+  settings are a record of `site_records` (key `mail`, the password sealed).
 - Added by the third part: `usage` (kind `user` or `tenant`, id, tenant_id,
   spaces, bytes, pages, people, over, measured; primary key `(kind, id)`; indexes
   `(kind, tenant_id, bytes DESC, id)` and `(kind, bytes DESC, id)` for the list of
@@ -8481,7 +8481,7 @@ data-preserving upgrade, and the new columns start empty.
   `(tenant_id, cache_state, last_used, id)` for the candidates;
   `remote_hosts` (host, partial `yes`/`no`, checked); `storage_reclaims` (the
   last 1,000 rows, for `recent`); `restore_waits` (one row per day per tenant:
-  opens, restores, p95); the settings in `site_settings` and
+  opens, restores, p95); the settings in `site_records` and
   `layered_settings`.
 - **The simulator** (`internal/storagepressure/sim`): deterministic (a fixed
   seed), synthetic people, spaces, sign-in and open patterns sized as 3.1's
@@ -9880,12 +9880,12 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
 - Settings: `layered_settings.note`, `.set_by`, `.site_lock`.
 - Tenant-owned: `tenant_mail`, `tenant_captcha`, `tenant_daily` (and its
   interfaces and lines, by tenant), `github_apps` (owner `site` or a tenant;
-  the site's App moves into it from `site_settings`, where 2.7 keeps it),
+  the site's App moves into it from `site_records`, where 2.7 keeps it),
   `tenant_domains` (tenant, domain, code hash, code expires, verified, checked,
   missing since, last check JSON, provider, join, restrict orgs; unique on
   verified domain), `storage_targets` (id, tenant, kind, host, owner or
   namespace, installation, app, sealed token, prefix, state, in use), each with
-  `updated_by` and `updated_at`; `site_settings` key `publicMailDomains`.
+  `updated_by` and `updated_at`; `site_records` key `publicMailDomains`.
   `github_apps` is the GitHub provider's table; 3.8's providers have their own.
 - Sign-in: `sign_in_providers.owner`, `.class`, `.tenants`; `identities.owner`
   (unique `(owner, issuer, subject)`); `github_installations` name the App

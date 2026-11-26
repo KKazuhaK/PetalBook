@@ -33,6 +33,7 @@ import (
 	"petalbook.app/server/internal/perm"
 	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/secrets"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -121,6 +122,8 @@ type Service struct {
 	// providers, passkeys and captcha.
 	secPtr       atomic.Pointer[secState]
 	secMu        sync.Mutex
+	keysMu       sync.Mutex // the captcha's keys
+	vault        *secrets.Service
 	audit        *auditLog
 	provs        *providerSet
 	replay       *authsaml.MemoryReplayCache
@@ -281,6 +284,9 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		pending: newPendingStore(cfg.Now),
 	}
 	s.initLimits(cfg.Now)
+	s.vault = secrets.Of(cfg.Store, s.rawBox())
+	s.settings.Store(settings.Of(cfg.Store))
+	s.bindSettings()
 	mo := cfg.Mail
 	if mo.Now == nil {
 		mo.Now = cfg.Now

@@ -12,25 +12,25 @@ import (
 
 	"petalbook.app/server/internal/mail"
 	"petalbook.app/server/internal/ratelimit"
+	"petalbook.app/server/internal/secrets"
 	"petalbook.app/server/internal/store"
 )
 
-// Mail settings (docs/api.md, "Mail"): one sender for the whole server, in the
-// site settings, with the password sealed. Nothing is sent until they are
-// enabled.
+// Mail settings (docs/api.md, "Mail"): one sender for the whole server, in a
+// site record; its password is the secret mail.password. Nothing is sent until
+// they are enabled.
 
 const mailKey = "mail"
 
 type mailStored struct {
-	Enabled     bool   `json:"enabled"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	Security    string `json:"security"`
-	Username    string `json:"username"`
-	PasswordEnc string `json:"passwordEnc,omitempty"`
-	From        string `json:"from"`
-	FromName    string `json:"fromName"`
-	ReplyTo     string `json:"replyTo"`
+	Enabled  bool   `json:"enabled"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Security string `json:"security"`
+	Username string `json:"username"`
+	From     string `json:"from"`
+	FromName string `json:"fromName"`
+	ReplyTo  string `json:"replyTo"`
 }
 
 func defaultMail() mailStored { return mailStored{Port: 587, Security: mail.StartTLS} }
@@ -62,13 +62,13 @@ func (s *Service) loadMail(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.applyMail(m)
+	s.applyMail(ctx, m)
 	return nil
 }
 
 func (s *Service) readMail(ctx context.Context) (mailStored, error) {
 	m := defaultMail()
-	raw, _, err := store.GetSetting(ctx, s.st.Q(), mailKey)
+	raw, _, err := store.GetRecord(ctx, s.st.Q(), mailKey)
 	if errors.Is(err, store.ErrNotFound) {
 		return m, nil
 	}
@@ -81,18 +81,24 @@ func (s *Service) readMail(ctx context.Context) (mailStored, error) {
 	return m, nil
 }
 
-func (s *Service) applyMail(m mailStored) {
+func (s *Service) applyMail(ctx context.Context, m mailStored) {
 	cfg := mail.Settings{Enabled: m.Enabled && s.cfg.PublicURL != "", Host: m.Host, Port: m.Port, Security: m.Security, Username: m.Username,
 		From: m.From, FromName: m.FromName, ReplyTo: m.ReplyTo}
-	if m.PasswordEnc != "" {
-		pw, err := s.open("mail", m.PasswordEnc)
-		if err != nil {
-			s.log.Warn("the stored mail password cannot be opened with this server's key; mail is off")
-			cfg.Enabled = false
-		}
-		cfg.Password = pw
+	pw, _, err := s.vault.Open(ctx, s.st.Q(), "", secrets.MailPassword)
+	if err != nil {
+		s.log.Warn("the stored mail password cannot be opened with this server's key; mail is off")
+		cfg.Enabled = false
 	}
+	cfg.Password = pw
 	s.mail.Configure(cfg)
+}
+
+// ReloadMail makes the stored mail settings and password the ones in force:
+// after the mail password was changed as a secret.
+func (s *Service) ReloadMail(ctx context.Context) error {
+	s.mailMu.Lock()
+	defer s.mailMu.Unlock()
+	return s.loadMail(ctx)
 }
 
 // MailEnabled says whether mail can be sent: enabled, with a public address.
@@ -104,7 +110,11 @@ func (s *Service) GetMail(ctx context.Context) (*MailView, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &MailView{mailStored: m, HasPassword: m.PasswordEnc != "", Status: s.mail.LastStatus(), Queue: s.mail.Stats()}, nil
+	has, err := s.vault.Has(ctx, s.st.Q(), "", secrets.MailPassword)
+	if err != nil {
+		return nil, err
+	}
+	return &MailView{mailStored: m, HasPassword: has, Status: s.mail.LastStatus(), Queue: s.mail.Stats()}, nil
 }
 
 func plainAddress(a string) bool {
@@ -201,17 +211,6 @@ func (s *Service) UpdateMail(ctx context.Context, actorID, ip string, p MailPatc
 			return nil, coded(400, "mail_needs_public_url", "The links in the messages point to --public-url; start the server with it.")
 		}
 	}
-	if passwordGiven {
-		if *p.Password == "" {
-			next.PasswordEnc = ""
-		} else {
-			enc, err := s.seal("mail", *p.Password)
-			if err != nil {
-				return nil, err
-			}
-			next.PasswordEnc = enc
-		}
-	}
 	diff := func(k string, a, b any) {
 		if a != b {
 			changed[k] = b
@@ -225,18 +224,30 @@ func (s *Service) UpdateMail(ctx context.Context, actorID, ip string, p MailPatc
 	diff("from", cur.From, next.From)
 	diff("fromName", cur.FromName, next.FromName)
 	diff("replyTo", cur.ReplyTo, next.ReplyTo)
-	if passwordGiven && cur.PasswordEnc != next.PasswordEnc || passwordGiven && next.PasswordEnc != "" {
-		changed["password"] = "changed"
+	if passwordGiven {
+		changed["password"] = "changed" // never the value
 	}
 	if len(changed) > 0 {
 		raw, err := json.Marshal(next)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := store.PutSetting(ctx, s.st.Q(), mailKey, string(raw), s.now()); err != nil {
+		err = s.st.Tx(ctx, func(q store.Q) error {
+			if _, err := store.PutRecord(ctx, q, mailKey, string(raw), s.now()); err != nil {
+				return err
+			}
+			switch {
+			case !passwordGiven:
+				return nil
+			case *p.Password == "":
+				return s.vault.Clear(ctx, q, "", secrets.MailPassword)
+			}
+			return s.vault.Set(ctx, q, "", secrets.MailPassword, *p.Password, actorID)
+		})
+		if err != nil {
 			return nil, err
 		}
-		s.applyMail(next)
+		s.applyMail(ctx, next)
 		s.Audit(AuditEvent{Kind: "mail_changed", Actor: actorID, IP: ip, Tenant: "-", Detail: changed})
 	}
 	return s.GetMail(ctx)
@@ -269,10 +280,8 @@ func (s *Service) TestMail(ctx context.Context, actorID, ip, to, lang string) (*
 		return nil, retryAfter(wait)
 	}
 	cfg := mail.Settings{Enabled: m.Enabled, Host: m.Host, Port: m.Port, Security: m.Security, Username: m.Username, From: m.From, FromName: m.FromName, ReplyTo: m.ReplyTo}
-	if m.PasswordEnc != "" {
-		if cfg.Password, err = s.open("mail", m.PasswordEnc); err != nil {
-			return &MailTestResult{false, "the stored password cannot be opened with this server's key"}, nil
-		}
+	if cfg.Password, _, err = s.vault.Open(ctx, s.st.Q(), "", secrets.MailPassword); err != nil {
+		return &MailTestResult{false, "the stored password cannot be opened with this server's key"}, nil
 	}
 	msg := mail.Render(mail.KindTest, lang, mail.Vars{Site: s.siteName()})
 	msg.To = to

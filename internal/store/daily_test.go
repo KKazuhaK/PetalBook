@@ -14,18 +14,18 @@ import (
 func TestSiteSettings(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		if _, ok, err := store.GetSiteSetting(ctx, st.Q(), "daily"); ok || err != nil {
+		if _, ok, err := store.GetSiteRecord(ctx, st.Q(), "daily"); ok || err != nil {
 			t.Fatalf("%v %v", ok, err)
 		}
 		for _, v := range []string{`{"a":1}`, `{"a":2,"b":"字"}`} {
-			if err := store.SetSiteSetting(ctx, st.Q(), "daily", v, time.Now()); err != nil {
+			if err := store.SetSiteRecord(ctx, st.Q(), "daily", v, time.Now()); err != nil {
 				t.Fatal(err)
 			}
-			if got, ok, err := store.GetSiteSetting(ctx, st.Q(), "daily"); !ok || err != nil || got != v {
+			if got, ok, err := store.GetSiteRecord(ctx, st.Q(), "daily"); !ok || err != nil || got != v {
 				t.Fatalf("%q %v %v", got, ok, err)
 			}
 		}
-		if _, ok, _ := store.GetSiteSetting(ctx, st.Q(), "other"); ok {
+		if _, ok, _ := store.GetSiteRecord(ctx, st.Q(), "other"); ok {
 			t.Fatal("another key")
 		}
 	})
@@ -208,15 +208,15 @@ func TestLockSiteSetting(t *testing.T) {
 		for i := 0; i < n; i++ {
 			go func() {
 				errs <- st.Tx(ctx, func(q store.Q) error {
-					if err := store.LockSiteSetting(ctx, q, "k", time.Now()); err != nil {
+					if err := store.LockSiteRecord(ctx, q, "k", time.Now()); err != nil {
 						return err
 					}
-					v, _, err := store.GetSiteSetting(ctx, q, "k")
+					v, _, err := store.GetSiteRecord(ctx, q, "k")
 					if err != nil {
 						return err
 					}
 					time.Sleep(5 * time.Millisecond)
-					return store.SetSiteSetting(ctx, q, "k", v+"x", time.Now())
+					return store.SetSiteRecord(ctx, q, "k", v+"x", time.Now())
 				})
 			}()
 		}
@@ -225,7 +225,7 @@ func TestLockSiteSetting(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if v, _, _ := store.GetSiteSetting(ctx, st.Q(), "k"); v != "{}"+strings.Repeat("x", n) {
+		if v, _, _ := store.GetSiteRecord(ctx, st.Q(), "k"); v != "{}"+strings.Repeat("x", n) {
 			t.Fatalf("%q", v)
 		}
 	})
@@ -235,20 +235,20 @@ func TestCompareAndSetSiteSetting(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		q, now := st.Q(), time.Now()
-		if ok, err := store.CompareAndSetSiteSetting(ctx, q, "k", "a", "b", now); err != nil || ok {
+		if ok, err := store.CompareAndSetSiteRecord(ctx, q, "k", "a", "b", now); err != nil || ok {
 			t.Fatalf("a setting that is not there was set: %v %v", ok, err)
 		}
-		if err := store.SetSiteSetting(ctx, q, "k", "a", now); err != nil {
+		if err := store.SetSiteRecord(ctx, q, "k", "a", now); err != nil {
 			t.Fatal(err)
 		}
-		if ok, err := store.CompareAndSetSiteSetting(ctx, q, "k", "a", "b", now); err != nil || !ok {
+		if ok, err := store.CompareAndSetSiteRecord(ctx, q, "k", "a", "b", now); err != nil || !ok {
 			t.Fatalf("%v %v", ok, err)
 		}
 		// Read as "a", but it is "b" now: not written.
-		if ok, err := store.CompareAndSetSiteSetting(ctx, q, "k", "a", "c", now); err != nil || ok {
+		if ok, err := store.CompareAndSetSiteRecord(ctx, q, "k", "a", "c", now); err != nil || ok {
 			t.Fatalf("%v %v", ok, err)
 		}
-		if v, _, _ := store.GetSiteSetting(ctx, q, "k"); v != "b" {
+		if v, _, _ := store.GetSiteRecord(ctx, q, "k"); v != "b" {
 			t.Fatal(v)
 		}
 	})

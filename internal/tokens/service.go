@@ -3,7 +3,6 @@ package tokens
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,23 +15,22 @@ import (
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
 // Limits and times of docs/api.md.
 const (
-	MaxNameRunes   = 80
-	MaxSpaces      = 100
-	MaxLive        = 50
-	DefaultDays    = 90
-	MaxDays        = 365
-	KeepAfterEnd   = 90 * 24 * time.Hour
-	DefaultTTL     = 30 * time.Second
-	touchEvery     = time.Hour
-	maxCached      = 10_000
-	maxNegative    = 4096
-	accessKey      = "machine_access"
-	accessCacheTTL = 30 * time.Second
+	MaxNameRunes = 80
+	MaxSpaces    = 100
+	MaxLive      = 50
+	DefaultDays  = 90
+	MaxDays      = 365
+	KeepAfterEnd = 90 * 24 * time.Hour
+	DefaultTTL   = 30 * time.Second
+	touchEvery   = time.Hour
+	maxCached    = 10_000
+	maxNegative  = 4096
 )
 
 // Error is a refusal of a token request, with the status and code of the API.
@@ -89,10 +87,7 @@ type Service struct {
 	byID  map[string]*entry
 	neg   map[[32]byte]time.Time
 
-	amu       sync.Mutex
-	access    Access
-	accessAt  time.Time
-	accessSet bool
+	set *settings.Service
 }
 
 type entry struct {
@@ -121,8 +116,12 @@ func New(cfg Config) *Service {
 	if lim == nil {
 		lim = &Limiter{Now: cfg.Now}
 	}
-	return &Service{cfg: cfg, st: cfg.Store, log: cfg.Logger, now: cfg.Now, limiter: lim,
+	s := &Service{cfg: cfg, st: cfg.Store, log: cfg.Logger, now: cfg.Now, limiter: lim,
 		byKey: map[[32]byte]*entry{}, byID: map[string]*entry{}, neg: map[[32]byte]time.Time{}}
+	if cfg.Store != nil {
+		s.set = settings.Of(cfg.Store)
+	}
+	return s
 }
 
 // Now is the service's clock.
@@ -138,13 +137,6 @@ func (s *Service) Authenticate(ctx context.Context, secret, ip string) (*auth.Pr
 	if blocked, wait := s.limiter.Blocked(ip); blocked {
 		return nil, &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "Too many failed tokens from this address; wait before trying again.",
 			RetryAfter: time.Duration(wait) * time.Second}
-	}
-	acc, err := s.Access(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !acc.Tokens {
-		return nil, refuse(http.StatusForbidden, "tokens_off", "An administrator has switched API tokens off.")
 	}
 	if !WellFormed(secret) {
 		s.limiter.Fail(ip)
@@ -176,6 +168,11 @@ func (s *Service) Authenticate(ctx context.Context, secret, ip string) (*auth.Pr
 	}
 	if u.Disabled || s.st != nil && s.st.TenantDisabled(u.TenantID) { // a disabled tenant is a disabled account
 		return nil, refuse(http.StatusUnauthorized, "token_owner_disabled", "The account this token belongs to is disabled.")
+	}
+	if on, err := s.TokensOn(ctx, u.TenantID); err != nil {
+		return nil, err
+	} else if !on {
+		return nil, refuse(http.StatusForbidden, "tokens_off", "An administrator has switched API tokens off.")
 	}
 	s.touch(ctx, e.key, now)
 	if s.st != nil {
@@ -408,66 +405,28 @@ func (s *Service) Run(ctx context.Context) {
 
 // --- what an administrator switched on --------------------------------------
 
-// Access is what an administrator allows machines to do ("Machine access" in
-// docs/api.md). Both are on until switched off.
-type Access struct {
-	Tokens bool `json:"tokens"`
-	MCP    bool `json:"mcp"`
+// TokensOn says whether people of a tenant may use API tokens: the setting
+// features.tokens in effect for the tenant ("Machine access" in docs/api.md).
+// It is one read of the settings' cache, so a request costs no query. Tenant ""
+// is the site's own value.
+func (s *Service) TokensOn(ctx context.Context, tenant string) (bool, error) {
+	return s.featureOn(ctx, tenant, settings.FeatureTokens)
 }
 
-// Access reads the setting. It is kept in memory and read again at most every
-// 30 seconds, so a request costs no query.
-func (s *Service) Access(ctx context.Context) (Access, error) {
-	now := s.now()
-	s.amu.Lock()
-	if s.accessSet && now.Sub(s.accessAt) <= accessCacheTTL {
-		a := s.access
-		s.amu.Unlock()
-		return a, nil
-	}
-	s.amu.Unlock()
-	a := Access{Tokens: true, MCP: true}
-	v, ok, err := store.GetSiteSetting(ctx, s.st.Q(), accessKey)
-	if err != nil {
-		return a, err
-	}
-	if ok {
-		if err := json.Unmarshal([]byte(v), &a); err != nil {
-			s.log.Warn("the machine access setting is not readable; everything is left on", "error", err)
-			a = Access{Tokens: true, MCP: true}
-		}
-	}
-	s.amu.Lock()
-	s.access, s.accessAt, s.accessSet = a, now, true
-	s.amu.Unlock()
-	return a, nil
+// MCPOn says whether MCP, and with it the authorization server, is on for a
+// tenant (features.mcp).
+func (s *Service) MCPOn(ctx context.Context, tenant string) (bool, error) {
+	return s.featureOn(ctx, tenant, settings.FeatureMCP)
 }
 
-// SetAccess changes the parts of the setting that are given.
-func (s *Service) SetAccess(ctx context.Context, tokens, mcp *bool) (Access, error) {
-	var out Access
-	err := s.st.Tx(ctx, func(q store.Q) error {
-		a := Access{Tokens: true, MCP: true}
-		if v, ok, err := store.GetSiteSetting(ctx, q, accessKey); err != nil {
-			return err
-		} else if ok {
-			_ = json.Unmarshal([]byte(v), &a)
-		}
-		if tokens != nil {
-			a.Tokens = *tokens
-		}
-		if mcp != nil {
-			a.MCP = *mcp
-		}
-		b, _ := json.Marshal(a)
-		out = a
-		return store.SetSiteSetting(ctx, q, accessKey, string(b), s.now())
-	})
-	if err != nil {
-		return Access{}, err
+func (s *Service) featureOn(ctx context.Context, tenant, key string) (bool, error) {
+	if s.set == nil {
+		return true, nil
 	}
-	s.amu.Lock()
-	s.access, s.accessAt, s.accessSet = out, s.now(), true
-	s.amu.Unlock()
-	return out, nil
+	e, err := s.set.Get(ctx, tenant, key)
+	if err != nil {
+		return false, err
+	}
+	on, _ := e.Value.(bool)
+	return on, nil
 }

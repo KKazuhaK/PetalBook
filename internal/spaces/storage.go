@@ -3,9 +3,9 @@ package spaces
 // The server's storage policy (milestone 3.1, docs/api.md "Server storage"):
 // the site's settings, the requirement of a remote with its grace period, the
 // limit on local spaces, and the record of when a space was used. The
-// settings are in the state database (site_settings, key "storage") and are
-// kept in memory: a request reads them with one atomic load, and a change
-// applies to the next request. Eviction and restoring are in evict.go.
+// settings are layered settings (storage.*, cache.*; see internal/settings),
+// worked out into one value for each set of their values: a request reads it
+// with one atomic load, and a change applies to the next request. Eviction and restoring are in evict.go.
 
 import (
 	"context"
@@ -15,14 +15,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
-
-const storageKey = "storage"
 
 // Limits of the settings.
 const (
@@ -116,8 +116,12 @@ var ErrGitTooOld = errors.New("this server's Git is older than 2.44 and cannot m
 
 // storageState is the part of the manager the storage policy uses.
 type storageState struct {
-	cur  settingsBox
 	once sync.Once
+	set  *settings.Service
+	// derived is the policy worked out from the settings, with the number of the
+	// set of settings it was worked out from (see settings.Service.Site).
+	derived atomic.Pointer[derivedStorage]
+	buildMu sync.Mutex
 
 	factsMu sync.Mutex
 	facts   map[string]store.PolicyFacts
@@ -130,68 +134,225 @@ type storageState struct {
 	gitPartial bool
 }
 
-type settingsBox struct {
-	mu sync.RWMutex
-	s  StorageSettings
-	ok bool
+type derivedStorage struct {
+	serial uint64
+	s      StorageSettings
 }
 
-func (b *settingsBox) get() StorageSettings {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.s
+// sinceRecord is the site record that keeps when the requirement of a remote
+// took its present form: observed state, not a setting.
+const sinceRecord = "storage"
+
+type sinceRec struct {
+	Since time.Time `json:"since"`
 }
 
-func (b *settingsBox) set(s StorageSettings) {
-	b.mu.Lock()
-	b.s, b.ok = s, true
-	b.mu.Unlock()
-}
-
-// initStorage reads the Git version and the settings; it is called once.
+// initStorage reads the Git version and binds the storage settings; it is
+// called once.
 func (m *Manager) initStorage(ctx context.Context) {
 	m.st.once.Do(func() {
 		m.st.gitVersion, m.st.gitPartial = gitstore.GitVersion(ctx, m.opt.RemoteRunner)
 		if m.opt.GitSupportsPartial != nil {
 			m.st.gitPartial = *m.opt.GitSupportsPartial
 		}
-		s := m.defaultStorage()
-		if v, ok, err := store.GetSiteSetting(ctx, m.opt.Store.Q(), storageKey); err != nil {
-			m.log.Warn("could not read the storage settings; the defaults apply", "error", err)
-		} else if ok {
-			if err := json.Unmarshal([]byte(v), &s); err != nil {
-				m.log.Warn("the stored storage settings are not usable; the defaults apply", "error", err)
-				s = m.defaultStorage()
-			}
-			if !m.st.gitPartial {
-				s.Cache.Partial = false
-			}
+		if m.single == nil {
+			m.st.set = settings.Of(m.opt.Store)
+			m.bindSettings()
 		}
-		m.st.cur.set(s)
 	})
 }
 
-// defaultStorage is DefaultStorage with the hosts the server was started with
-// (the default of --remote-host) as the starting point of the setting.
-func (m *Manager) defaultStorage() StorageSettings {
-	s := DefaultStorage(m.st.gitPartial)
+// hostsDefault is the hosts the server was started with (the default of
+// --remote-host) as the starting point of storage.hosts.
+func (m *Manager) hostsDefault() []string {
 	if len(m.opt.RemotePolicy.Hosts) > 0 {
-		s.Hosts.Allowed = append([]string{}, m.opt.RemotePolicy.Hosts...)
+		return append([]string{}, m.opt.RemotePolicy.Hosts...)
 	}
-	return s
+	return append([]string{}, gitstore.DefaultHosts...)
 }
 
-// Storage is the site's storage policy as it is now.
+// bindSettings makes the layered settings check the storage policy as the
+// policy needs, and keep its "since".
+func (m *Manager) bindSettings() {
+	set := m.st.set
+	bad := func(f string, a ...any) error { return fmt.Errorf("%w: "+f, append([]any{ErrInvalid}, a...)...) }
+	hosts := m.hostsDefault()
+	set.SetDefault(settings.StorageHosts, hosts)
+	hb := settings.SiteBinding{Check: func(_ context.Context, _ string, v any) (any, error) {
+		in, _ := v.([]string)
+		if len(in) == 0 {
+			return nil, bad("storage.hosts needs at least one host (or *)")
+		}
+		out := make([]string, len(in))
+		for i, h := range in {
+			h = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(h, ".")))
+			if h != "*" && (h == "" || strings.ContainsAny(h, " /:@\\") || len(h) > 253) {
+				return nil, bad("storage.hosts: %q is not a host name", in[i])
+			}
+			out[i] = h
+		}
+		return out, nil
+	}}
+	if m.opt.HostsFromFlag {
+		// The flag decides: the value is read-only.
+		hb.Get = func(context.Context, store.Q) (any, error) { return hosts, nil }
+		hb.Set = func(context.Context, store.Q, any) error { return ErrConflictFlag }
+		hb.ReadOnly = func() bool { return true }
+	}
+	set.Bind(settings.StorageHosts, hb)
+
+	set.Bind(settings.StorageRemotesRequire, settings.SiteBinding{
+		Check: func(ctx context.Context, _ string, v any) (any, error) {
+			r, _ := v.(string)
+			r = strings.TrimSpace(r)
+			if r == connections.GitID {
+				return nil, bad(`storage.remotes.require is "", "any" or the id of a provider`)
+			}
+			if r != "" && r != "any" {
+				// A provider this server has: requiring one it does not have would
+				// leave nobody a way to meet the requirement.
+				if _, ok := m.opt.Connections.Get(r); !ok {
+					return nil, bad(`storage.remotes.require is "", "any" or the id of a provider of this server`)
+				}
+				p, err := m.provider(r)
+				if err != nil {
+					return nil, err
+				}
+				if in, err := p.Info(ctx, ""); err != nil {
+					return nil, err
+				} else if !in.Configured {
+					d := p.Descriptor()
+					return nil, connections.Errorf(d.ID, http.StatusConflict, connections.CodeNotConfigured, "This server has no %s connection set up; set it up before requiring it.", d.Name)
+				}
+			}
+			return r, nil
+		},
+		// "since" is when the requirement took its present form: a tightening
+		// starts the grace period afresh, a relaxation clears it.
+		After: func(ctx context.Context, q store.Q, old, new any) error {
+			o, n := fmt.Sprint(old), fmt.Sprint(new)
+			switch {
+			case n == "":
+				return m.putSince(ctx, q, time.Time{})
+			case o != n:
+				return m.putSince(ctx, q, m.opt.Now().UTC().Truncate(time.Millisecond))
+			}
+			return nil
+		},
+	})
+	set.Bind(settings.StorageRemotesScope, settings.SiteBinding{
+		After: func(ctx context.Context, q store.Q, old, new any) error {
+			if old == new {
+				return nil
+			}
+			if e, err := set.Get(ctx, "", settings.StorageRemotesRequire); err != nil {
+				return err
+			} else if r, _ := e.Value.(string); r != "" {
+				return m.putSince(ctx, q, m.opt.Now().UTC().Truncate(time.Millisecond))
+			}
+			return nil
+		},
+	})
+	set.Bind(settings.CachePartial, settings.SiteBinding{Check: func(_ context.Context, _ string, v any) (any, error) {
+		if v == true && !m.st.gitPartial {
+			return nil, ErrGitTooOld
+		}
+		return v, nil
+	}})
+}
+
+func (m *Manager) putSince(ctx context.Context, q store.Q, t time.Time) error {
+	raw, _ := json.Marshal(sinceRec{Since: t})
+	_, err := store.PutRecord(ctx, q, sinceRecord, string(raw), m.opt.Now())
+	return err
+}
+
+// Storage is the site's storage policy as it is now: worked out from the
+// settings (storage.*, cache.*) once for each set of their values, so a request
+// costs one atomic load and the settings' own cached read.
 func (m *Manager) Storage() StorageSettings {
 	if m.single != nil {
 		return DefaultStorage(false)
 	}
 	m.initStorage(context.Background())
-	s := m.st.cur.get()
-	if m.opt.HostsFromFlag {
-		s.Hosts.Allowed = append([]string{}, m.opt.RemotePolicy.Hosts...)
+	ctx := context.Background()
+	eff, serial, err := m.st.set.Site(ctx)
+	if err != nil {
+		m.log.Warn("could not read the storage settings; the last ones apply", "error", err)
+		if d := m.st.derived.Load(); d != nil {
+			return d.s
+		}
+		return m.defaultStorage()
 	}
+	if d := m.st.derived.Load(); d != nil && d.serial == serial {
+		return d.s
+	}
+	m.st.buildMu.Lock()
+	defer m.st.buildMu.Unlock()
+	if d := m.st.derived.Load(); d != nil && d.serial == serial {
+		return d.s
+	}
+	s := m.buildStorage(ctx, eff)
+	m.st.derived.Store(&derivedStorage{serial: serial, s: s})
 	return s
+}
+
+// defaultStorage is DefaultStorage with the hosts the server was started with.
+func (m *Manager) defaultStorage() StorageSettings {
+	s := DefaultStorage(m.st.gitPartial)
+	s.Hosts.Allowed = m.hostsDefault()
+	return s
+}
+
+func (m *Manager) buildStorage(ctx context.Context, eff map[string]*settings.Effective) StorageSettings {
+	var s StorageSettings
+	str := func(k string) string { v, _ := eff[k].Value.(string); return v }
+	num := func(k string) *int64 {
+		if n, ok := eff[k].Value.(int64); ok {
+			return &n
+		}
+		return nil
+	}
+	if r := str(settings.StorageRemotesRequire); r != "" {
+		s.Remotes.Require = &r
+	}
+	s.Remotes.Scope = str(settings.StorageRemotesScope)
+	s.Remotes.GraceDays = int(*num(settings.StorageRemotesGraceDays))
+	if raw, _, err := store.GetRecord(ctx, m.opt.Store.Q(), sinceRecord); err == nil {
+		var rec sinceRec
+		if json.Unmarshal([]byte(raw), &rec) == nil {
+			s.Remotes.Since = rec.Since
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		m.log.Warn("could not read when the remote requirement took its form", "error", err)
+	}
+	s.Hosts.Allowed, _ = eff[settings.StorageHosts].Value.([]string)
+	s.Hosts.Allowed = append([]string{}, s.Hosts.Allowed...)
+	s.LocalSpaces.MaxBytes = num(settings.StorageLocalMaxBytes)
+	c := &s.Cache
+	c.Partial, _ = eff[settings.CachePartial].Value.(bool)
+	c.Partial = c.Partial && m.st.gitPartial
+	if n := num(settings.CacheEvictAfterDays); n != nil {
+		d := int(*n)
+		c.EvictAfterDays = &d
+	}
+	c.MinIdleHours = int(*num(settings.CacheMinIdleHours))
+	c.ClonesBytes = num(settings.CacheClonesBytes)
+	c.MinFreeBytes = num(settings.CacheMinFreeBytes)
+	c.AssetsBytes = *num(settings.CacheAssetsBytes)
+	return s
+}
+
+// StoragePolicyChanged tells the manager that the requirement of a remote
+// changed: what is cached of it is dropped, and the people's counts of spaces
+// by deadline follow the policy. It returns how many spaces the policy asks
+// something of.
+func (m *Manager) StoragePolicyChanged(ctx context.Context) (Affected, error) {
+	m.dropFacts("")
+	if _, err := m.opt.Store.SettleDeadlines(ctx, m.remotePolicy()); err != nil {
+		m.log.Warn("could not count the spaces by deadline", "error", err)
+	}
+	return m.Affected(ctx)
 }
 
 // GitInfo is the Git the server runs and whether it can make partial clones.
@@ -226,127 +387,14 @@ func (m *Manager) hostPolicy() gitstore.Policy {
 	return p
 }
 
-// StoragePatch is a change to the settings; a nil section stays as it is.
-type StoragePatch func(*StorageSettings) error
-
 // Affected is how many spaces the policy asks something of.
 type Affected struct{ InGrace, Overdue, Exempt int }
-
-// SetStorage applies a change to the settings, checks the result, stores it
-// and makes it the policy of the next request. It returns the policy as it is
-// then and how many spaces it now asks something of.
-func (m *Manager) SetStorage(ctx context.Context, patch StoragePatch) (StorageSettings, Affected, error) {
-	if m.single != nil {
-		return StorageSettings{}, Affected{}, ErrNotFound
-	}
-	m.initStorage(ctx)
-	m.storageMu.Lock()
-	defer m.storageMu.Unlock()
-	cur := m.st.cur.get()
-	next := cur
-	next.Hosts.Allowed = append([]string{}, cur.Hosts.Allowed...)
-	if err := patch(&next); err != nil {
-		return StorageSettings{}, Affected{}, err
-	}
-	if err := m.validateStorage(&next); err != nil {
-		return StorageSettings{}, Affected{}, err
-	}
-	// "since" is when the requirement took its present form: a tightening
-	// starts the grace period afresh, a relaxation clears it.
-	reqOld, reqNew := deref(cur.Remotes.Require), deref(next.Remotes.Require)
-	switch {
-	case reqNew == "":
-		next.Remotes.Since = time.Time{}
-	case reqOld != reqNew || cur.Remotes.Scope != next.Remotes.Scope:
-		next.Remotes.Since = m.opt.Now().UTC().Truncate(time.Millisecond)
-	}
-	b, err := json.Marshal(next)
-	if err != nil {
-		return StorageSettings{}, Affected{}, err
-	}
-	if err := store.SetSiteSetting(ctx, m.opt.Store.Q(), storageKey, string(b), m.opt.Now()); err != nil {
-		return StorageSettings{}, Affected{}, err
-	}
-	m.st.cur.set(next)
-	m.dropFacts("")
-	// The people's counts of spaces by deadline follow the policy.
-	if _, err := m.opt.Store.SettleDeadlines(ctx, m.remotePolicy()); err != nil {
-		m.log.Warn("could not count the spaces by deadline", "error", err)
-	}
-	aff, err := m.Affected(ctx)
-	return m.Storage(), aff, err
-}
 
 func deref(p *string) string {
 	if p == nil {
 		return ""
 	}
 	return *p
-}
-
-func (m *Manager) validateStorage(s *StorageSettings) error {
-	bad := func(f string, a ...any) error { return fmt.Errorf("%w: "+f, append([]any{ErrInvalid}, a...)...) }
-	if r := s.Remotes.Require; r != nil && (*r == "" || *r == connections.GitID) {
-		return bad(`remotes.require is null, "any" or the id of a provider`)
-	}
-	if s.Remotes.Scope != "new" && s.Remotes.Scope != "all" {
-		return bad(`remotes.scope is "new" or "all"`)
-	}
-	if s.Remotes.GraceDays < 0 || s.Remotes.GraceDays > maxGraceDays {
-		return bad("remotes.graceDays is 0 to %d", maxGraceDays)
-	}
-	if r := deref(s.Remotes.Require); r != "" && r != "any" {
-		// A provider this server has: requiring one it does not have would leave
-		// nobody a way to meet the requirement.
-		if _, ok := m.opt.Connections.Get(r); !ok {
-			return bad(`remotes.require is null, "any" or the id of a provider of this server`)
-		}
-		p, err := m.provider(r)
-		if err != nil {
-			return err
-		}
-		if in, err := p.Info(context.Background(), ""); err != nil {
-			return err
-		} else if !in.Configured {
-			d := p.Descriptor()
-			return connections.Errorf(d.ID, http.StatusConflict, connections.CodeNotConfigured, "This server has no %s connection set up; set it up before requiring it.", d.Name)
-		}
-	}
-	if m.single == nil && !m.opt.HostsFromFlag {
-		if len(s.Hosts.Allowed) == 0 {
-			return bad("hosts.allowed needs at least one host (or *)")
-		}
-		for i, h := range s.Hosts.Allowed {
-			h = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(h, ".")))
-			if h != "*" && (h == "" || strings.ContainsAny(h, " /:@\\") || len(h) > 253) {
-				return bad("hosts.allowed: %q is not a host name", s.Hosts.Allowed[i])
-			}
-			s.Hosts.Allowed[i] = h
-		}
-	}
-	if v := s.LocalSpaces.MaxBytes; v != nil && *v < MinLocalMaxBytes {
-		return bad("localSpaces.maxBytes is null or at least 1 MiB")
-	}
-	c := &s.Cache
-	if c.EvictAfterDays != nil && (*c.EvictAfterDays < 1 || *c.EvictAfterDays > maxEvictDays) {
-		return bad("cache.evictAfterDays is 1 to %d, or null", maxEvictDays)
-	}
-	if c.MinIdleHours < 1 || c.MinIdleHours > maxIdleHours {
-		return bad("cache.minIdleHours is 1 to %d", maxIdleHours)
-	}
-	if c.ClonesBytes != nil && *c.ClonesBytes < MinClonesBytes {
-		return bad("cache.clonesBytes is null or at least 1 GiB")
-	}
-	if c.MinFreeBytes != nil && *c.MinFreeBytes < 0 {
-		return bad("cache.minFreeBytes is null or at least 0")
-	}
-	if c.AssetsBytes < MinAssetsBytes {
-		return bad("cache.assetsBytes is at least 64 MiB")
-	}
-	if c.Partial && !m.st.gitPartial {
-		return ErrGitTooOld
-	}
-	return nil
 }
 
 // Affected counts the spaces the requirement asks something of now: one query.
@@ -437,8 +485,7 @@ func (m *Manager) CheckWritable(id string) error {
 	if m.single != nil {
 		return nil
 	}
-	m.initStorage(context.Background())
-	if m.st.cur.get().Remotes.Require == nil {
+	if m.Storage().Remotes.Require == nil {
 		return nil // the usual case: one load
 	}
 	n, err := m.Notice(context.Background(), id)

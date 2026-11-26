@@ -22,6 +22,7 @@ import (
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/githubapp"
 	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/secrets"
 	"petalbook.app/server/internal/store"
 )
 
@@ -95,9 +96,10 @@ type Options struct {
 
 // Service is safe for concurrent use.
 type Service struct {
-	opt Options
-	log *slog.Logger
-	c   *githubapp.Client
+	opt   Options
+	vault *secrets.Service
+	log   *slog.Logger
+	c     *githubapp.Client
 
 	mu        sync.Mutex
 	cur       *appState // nil: not loaded
@@ -137,7 +139,7 @@ func New(opt Options) (*Service, error) {
 	}
 	opt.PublicURL = strings.TrimRight(opt.PublicURL, "/")
 	opt.Client.UseLogger(opt.Logger) // what GitHub refuses is told in the server's log
-	return &Service{opt: opt, log: opt.Logger, c: opt.Client, tokens: map[string]cachedUser{}, renewing: map[string]*renewal{}, gens: map[string]uint64{},
+	return &Service{opt: opt, vault: secrets.Of(opt.Store, opt.Secrets), log: opt.Logger, c: opt.Client, tokens: map[string]cachedUser{}, renewing: map[string]*renewal{}, gens: map[string]uint64{},
 		attempts: newAttemptStore(opt.Now, attemptCapacity), manifests: newAttemptStore(opt.Now, manifestCapacity),
 		noApp: map[string]time.Time{}, rechecked: map[string]time.Time{}, pending: map[string]*pendingApp{}}, nil
 }
@@ -166,22 +168,21 @@ func (s *Service) changed(userID string) {
 
 const settingKey = "github_app"
 
-// appRecord is what is stored of the App; the key and the secret are sealed.
+// appRecord is what is stored of the App in the record github_app. Its secrets
+// are not in it: the private key, the client secret and the webhook secret
+// (which GitHub gives with an App made from a manifest; no webhook is used, so
+// it is only kept) are secrets of the site (internal/secrets). The fingerprint
+// of the key says which key the record was made with.
 type appRecord struct {
-	AppID     string `json:"appId"`
-	ClientID  string `json:"clientId,omitempty"`
-	KeyEnc    string `json:"keyEnc"`
-	SecretEnc string `json:"secretEnc,omitempty"`
-	// WebhookSecretEnc is the secret GitHub gives with an App made from a
-	// manifest; no webhook is used, so it is only kept, sealed.
-	WebhookSecretEnc string            `json:"webhookSecretEnc,omitempty"`
-	Fingerprint      string            `json:"fingerprint"`
-	Slug             string            `json:"slug"`
-	Name             string            `json:"name"`
-	Owner            string            `json:"owner"`
-	HTMLURL          string            `json:"htmlUrl"`
-	Permissions      map[string]string `json:"permissions"`
-	Checked          time.Time         `json:"checked"`
+	AppID       string            `json:"appId"`
+	ClientID    string            `json:"clientId,omitempty"`
+	Fingerprint string            `json:"fingerprint"`
+	Slug        string            `json:"slug"`
+	Name        string            `json:"name"`
+	Owner       string            `json:"owner"`
+	HTMLURL     string            `json:"htmlUrl"`
+	Permissions map[string]string `json:"permissions"`
+	Checked     time.Time         `json:"checked"`
 	// Gaps are the installations that lack a permission the App needs (an
 	// App whose permissions grew, installed where nobody accepted that yet).
 	Gaps []gapRec `json:"gaps,omitempty"`
@@ -195,13 +196,6 @@ type gapRec struct {
 	Account string   `json:"account"`
 	Missing []string `json:"missing"`
 }
-
-const (
-	purposeKey    = "github-app-key"
-	purposeSecret = "github-client-secret"
-	purposeHook   = "github-webhook-secret"
-	siteBinding   = "site"
-)
 
 // appState is the App ready for use. Once published in Service.cur it is
 // immutable: a reload builds a new one and swaps it in under mu, so a caller
@@ -222,13 +216,13 @@ func (s *Service) state(ctx context.Context) (*appState, error) {
 		return cur, nil
 	}
 	s.mu.Unlock()
-	raw, ok, err := store.GetSiteSetting(ctx, s.opt.Store.Q(), settingKey)
+	raw, ok, err := store.GetSiteRecord(ctx, s.opt.Store.Q(), settingKey)
 	if err != nil {
 		return nil, err
 	}
 	var st *appState
 	if ok {
-		if st, err = s.build(raw); err != nil {
+		if st, err = s.build(ctx, raw); err != nil {
 			return nil, err
 		}
 	}
@@ -236,7 +230,7 @@ func (s *Service) state(ctx context.Context) (*appState, error) {
 	// Keep the App client already in use when the saved one is the same (it
 	// holds the token cache), but publish a new state: callers may still be
 	// reading the one they took, so a published state is never written to.
-	if st != nil && s.cur != nil && s.cur.rec.KeyEnc == st.rec.KeyEnc && s.cur.rec.AppID == st.rec.AppID {
+	if st != nil && s.cur != nil && s.cur.rec.Fingerprint == st.rec.Fingerprint && s.cur.rec.AppID == st.rec.AppID {
 		st.app, st.key = s.cur.app, s.cur.key
 	}
 	s.cur, s.curAt = st, s.opt.Now()
@@ -244,16 +238,20 @@ func (s *Service) state(ctx context.Context) (*appState, error) {
 	return st, nil
 }
 
-func (s *Service) build(raw string) (*appState, error) {
+func (s *Service) build(ctx context.Context, raw string) (*appState, error) {
 	var rec appRecord
 	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
 		return nil, fmt.Errorf("the GitHub App settings are unreadable: %w", err)
 	}
-	pemb, err := s.opt.Secrets.Open(siteBinding, purposeKey, rec.KeyEnc)
-	if err != nil {
+	q := s.opt.Store.Q()
+	pemb, ok, err := s.vault.Open(ctx, q, "", secrets.GitHubAppKey)
+	if err != nil || !ok {
+		if err == nil {
+			err = errors.New("there is none")
+		}
 		return nil, fmt.Errorf("the GitHub App key: %w", err)
 	}
-	key, err := githubapp.ParseKey(pemb)
+	key, err := githubapp.ParseKey([]byte(pemb))
 	if err != nil {
 		return nil, fmt.Errorf("the GitHub App key: %w", err)
 	}
@@ -262,12 +260,14 @@ func (s *Service) build(raw string) (*appState, error) {
 		return nil, err
 	}
 	st := &appState{rec: rec, app: app, key: key}
-	if rec.SecretEnc != "" {
-		b, err := s.opt.Secrets.Open(siteBinding, purposeSecret, rec.SecretEnc)
+	if rec.ClientID != "" {
+		v, ok, err := s.vault.Open(ctx, q, "", secrets.GitHubClientSecret)
 		if err != nil {
 			return nil, fmt.Errorf("the GitHub client secret: %w", err)
 		}
-		st.secret = string(b)
+		if ok {
+			st.secret = v
+		}
 	}
 	return st, nil
 }

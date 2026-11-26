@@ -24,7 +24,7 @@ import (
 
 // What the administrators of a server give the daily text: a default for the
 // spaces that have no source of their own, and external interfaces the spaces
-// may choose. They are in the state database (site_settings and daily_lines),
+// may choose. They are in the state database (site_records and daily_lines),
 // and are not part of any space.
 
 const siteDailyKey = "daily"
@@ -239,11 +239,11 @@ type providerView struct {
 	Options []dailyfetch.Option `json:"options"`
 }
 
+// adminDailyResp is the interfaces, the built-in providers and the lines. The
+// default, the languages and what spaces may do are settings (daily.default,
+// daily.languages, daily.own, daily.api), under /api/admin/settings.
 type adminDailyResp struct {
-	Default        *siteDefault       `json:"default"`
-	Languages      []string           `json:"languages"`
 	KnownLanguages []langtag.Language `json:"knownLanguages"`
-	Allow          dailyAllow         `json:"allow"`
 	APIs           []apiView          `json:"apis"`
 	Providers      []providerView     `json:"providers"`
 	Lines          dailyLinesInfo     `json:"lines"`
@@ -273,7 +273,7 @@ func (s *server) adminDailyView(ctx context.Context) (adminDailyResp, error) {
 		b := builtinAPI(p, st)
 		providers = append(providers, providerView{p.ID, p.Name, p.Languages, p.Site, p.Note, st.Enabled, b.Refresh, b.RefreshMinutes, b.RPS, p.RPS, b.SkipNew, optionsOf(p)})
 	}
-	return adminDailyResp{site.Default, site.Languages, langtag.Known(), *site.Allow, apis, providers, dailyLinesInfo{total, counts, store.MaxDailyLines}}, nil
+	return adminDailyResp{langtag.Known(), apis, providers, dailyLinesInfo{total, counts, store.MaxDailyLines}}, nil
 }
 
 func (s *server) adminGetDaily(c *call) {

@@ -11,6 +11,7 @@ import (
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/settings"
+	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
 )
 
@@ -231,9 +232,22 @@ func (s *server) adminPutSetting(c *call) {
 	out := struct {
 		siteSettingResp
 		Affected *int `json:"affected,omitempty"`
+		// Remotes is how many spaces the requirement of a remote now asks
+		// something of, with a change of storage.remotes.*.
+		Remotes *spaces.Affected `json:"remotes,omitempty"`
 	}{siteSettingResp: siteSettingResp{d.Key, d.Kind, d.Layers, after.Site, d.Choices, d.ForTenant, d.ServerWide}}
 	if ch.HasLower {
 		out.Affected = &affected
+	}
+	if ch.HasValue && strings.HasPrefix(key, "storage.remotes.") && s.spaces != nil {
+		// The requirement changed: what is cached of it goes, the people's counts
+		// follow it.
+		aff, err := s.spaces.StoragePolicyChanged(ctx)
+		if err != nil {
+			s.failSetting(c, err)
+			return
+		}
+		out.Remotes = &aff
 	}
 	writeJSON(c.w, http.StatusOK, out)
 }

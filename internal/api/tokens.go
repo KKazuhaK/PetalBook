@@ -383,43 +383,6 @@ func (s *server) audit(c *call, ev auth.AuditEvent) {
 
 // --- administration -----------------------------------------------------------
 
-type accessResp struct {
-	Tokens bool `json:"tokens"`
-	MCP    bool `json:"mcp"`
-	// OAuth is whether the authorization server is there: it needs MCP on and a
-	// public URL.
-	OAuth bool `json:"oauth"`
-}
-
-func (s *server) accessResp(a tokens.Access) accessResp {
-	return accessResp{Tokens: a.Tokens, MCP: a.MCP, OAuth: a.MCP && s.oauth != nil}
-}
-
-func (s *server) adminGetAccess(c *call) {
-	a, err := s.tokens.Access(c.r.Context())
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, s.accessResp(a))
-}
-
-func (s *server) adminPutAccess(c *call) {
-	var req struct {
-		Tokens *bool `json:"tokens"`
-		MCP    *bool `json:"mcp"`
-	}
-	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
-		return
-	}
-	a, err := s.tokens.SetAccess(c.r.Context(), req.Tokens, req.MCP)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, s.accessResp(a))
-}
-
 func (s *server) adminListTokens(c *call) {
 	sc, ok := s.adminScope(c)
 	if !ok {

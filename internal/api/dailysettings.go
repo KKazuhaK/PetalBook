@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"petalbook.app/server/internal/langtag"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/space"
@@ -13,54 +14,35 @@ import (
 )
 
 // The daily text's settings on the layered mechanism: daily.own and daily.api
-// are the 2.3 switches of what a space may do, and daily.default is the
-// default of /api/admin/daily. The site's value of each stays in the daily
-// text's own record (so /api/admin/daily and /api/admin/settings are one
-// thing); the tenant layer, and the locks, are the new mechanism's.
+// are the 2.3 switches of what a space may do, daily.default the default of
+// the daily text, and daily.languages the languages of its settings pages. All
+// are ordinary rows of the layered settings (the daily record holds the
+// interfaces, the providers and the lines only); this checks the two that need
+// the daily text's own rules.
 
 func (s *server) bindDailySettings() {
-	flag := func(pick func(*dailyAllow) *bool) settings.SiteBinding {
-		return settings.SiteBinding{
-			Get: func(ctx context.Context, q store.Q) (any, error) {
-				d, err := s.loadSiteQ(ctx, q)
-				if err != nil {
-					return nil, err // d is empty then (a context that ended, say)
+	s.settings.Bind(settings.DailyLanguages, settings.SiteBinding{
+		Check: func(_ context.Context, _ string, v any) (any, error) {
+			given, _ := v.([]string)
+			if len(given) > 30 {
+				return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "At most 30 languages."}
+			}
+			seen := map[string]bool{}
+			langs := []string{}
+			for _, l := range given {
+				cl, ok := langtag.Canonical(l)
+				if !ok {
+					return nil, badLangError(l)
 				}
-				return *pick(d.Allow), nil
-			},
-			Set: func(ctx context.Context, q store.Q, v any) error {
-				return s.editSiteQ(ctx, q, func(_ store.Q, d *siteDaily) error {
-					*pick(d.Allow) = v.(bool)
-					return nil
-				})
-			},
-		}
-	}
-	s.settings.Bind(settings.DailyOwn, flag(func(a *dailyAllow) *bool { return &a.Own }))
-	s.settings.Bind(settings.DailyAPI, flag(func(a *dailyAllow) *bool { return &a.API }))
+				if !seen[cl] {
+					seen[cl] = true
+					langs = append(langs, cl)
+				}
+			}
+			return langs, nil
+		},
+	})
 	s.settings.Bind(settings.DailyDefault, settings.SiteBinding{
-		Get: func(ctx context.Context, q store.Q) (any, error) {
-			d, err := s.loadSiteQ(ctx, q)
-			if err != nil || d.Default == nil {
-				return nil, err
-			}
-			return toGeneric(d.Default)
-		},
-		Set: func(ctx context.Context, q store.Q, v any) error {
-			def, err := fromGeneric(v)
-			if err != nil {
-				return err
-			}
-			return s.editSiteQ(ctx, q, func(_ store.Q, d *siteDaily) error {
-				if def != nil && def.Kind == "api" {
-					if err := checkDefaultAPIs(def, d); err != nil {
-						return err
-					}
-				}
-				d.Default = def
-				return nil
-			})
-		},
 		Check: func(ctx context.Context, tenant string, v any) (any, error) {
 			def, err := fromGeneric(v)
 			if err != nil || def == nil {

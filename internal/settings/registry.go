@@ -89,6 +89,51 @@ const (
 	RateMailPerDay        = "rate.mailPerDay"
 	RateOutboundPerMinute = "rate.outboundPerMinute"
 
+	// Machine access: whether people may make API tokens, and whether MCP and the
+	// authorization server for it answer. Site and tenant: the site switches one
+	// off for everybody (a lock) or for one tenant (a rule), a tenant for itself.
+	FeatureTokens = "features.tokens"
+	FeatureMCP    = "features.mcp"
+	// FeatureTenancy is whether tenants besides the default one may exist.
+	FeatureTenancy = "features.tenancy"
+	// FeaturePasskeys is whether passkeys may be used to sign in.
+	FeaturePasskeys = "features.passkeys"
+
+	// The sign-in policy, the same for every tenant: the sign-in page comes
+	// before any tenant is known.
+	SigninMode           = "signin.mode" // dual, sso_first, sso_redirect or local_only
+	SigninSSOOnly        = "signin.ssoOnly"
+	SigninPasskeyRoles   = "signin.passkeyRoles" // the roles that must hold a passkey: admin, member
+	SigninLockoutEnabled = "signin.lockout.enabled"
+	SigninLockoutMinutes = "signin.lockout.minutes"
+	SigninLockoutScope   = "signin.lockout.scope" // ip_account, ip or account
+	SigninPerMinute      = "signin.perMinute"
+	SigninMaxFailures    = "signin.maxFailures"
+	SigninWindowMinutes  = "signin.windowMinutes"
+	SessionsIdleDays     = "sessions.idleDays"
+	SessionsMaxDays      = "sessions.maxDays"
+	CaptchaProvider      = "captcha.provider" // image, turnstile, recaptcha or hcaptcha
+	CaptchaContexts      = "captcha.contexts" // {login, invite, setup, forgot, register: {on, when, failures}}
+
+	// The server's storage policy (3.1): the requirement of a remote, the limit
+	// on spaces that have none, the hosts a remote may be on, and the cache of
+	// clones and attachments on the server's own disk.
+	StorageRemotesRequire   = "storage.remotes.require" // "" (none), "any" or a provider's id
+	StorageRemotesScope     = "storage.remotes.scope"   // new or all
+	StorageRemotesGraceDays = "storage.remotes.graceDays"
+	StorageLocalMaxBytes    = "storage.localSpaces.maxBytes"
+	StorageHosts            = "storage.hosts"
+	CachePartial            = "cache.partial"
+	CacheEvictAfterDays     = "cache.evictAfterDays"
+	CacheMinIdleHours       = "cache.minIdleHours"
+	CacheClonesBytes        = "cache.clonesBytes"
+	CacheMinFreeBytes       = "cache.minFreeBytes"
+	CacheAssetsBytes        = "cache.assetsBytes"
+
+	// DailyLanguages are the languages the daily text's settings pages have a
+	// tab for, besides all languages.
+	DailyLanguages = "daily.languages"
+
 	QuotaSpacesPerPerson = "quota.spacesPerPerson"
 	QuotaBytesPerPerson  = "quota.bytesPerPerson"
 	QuotaPagesPerPerson  = "quota.pagesPerPerson"
@@ -96,15 +141,12 @@ const (
 
 // Definitions are the settings that exist, in the order the pages show them.
 //
-// Reserved, not defined here yet: 3.1's storage.remotes.require (choice,
-// ordered null < any < a provider's id), storage.remotes.graceDays and
-// storage.localSpaces.maxBytes (limits) join with layers site and tenant and a
-// site Lower of lock, and a tenant may only tighten them. Until then they are
-// the site's own record (internal/spaces, /api/admin/storage), as are 3.1's
-// hosts (what --remote-host sets) and cache settings, which stay site-only. 2.7's GitHub App settings have no tenant layer
-// and never appear here. The person layer of the quota.* limits is an
-// administrator's override on the user (users.quota), read by internal/quota,
-// not something a person sets for themselves.
+// The storage policy is server-wide for now: the requirement of a remote is
+// worked out by queries over every space (store.RemotePolicy), so a tenant's
+// own tightening of it is later work. The GitHub App's credentials and the
+// captcha's keys are not settings (records and secrets). The person layer of
+// the quota.* limits is an administrator's override on the user (users.quota),
+// read by internal/quota, not something a person sets for themselves.
 func Definitions() []*Def {
 	return []*Def{
 		{Key: RegistrationOpen, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Lock}},
@@ -113,13 +155,12 @@ func Definitions() []*Def {
 			Lower: Lower{Mode: Restrict, Max: i64(50)}},
 		{Key: LegalTermsURL, Kind: Text, Layers: []Layer{Site, Tenant}, Default: "", Lower: Lower{Mode: Allow}, Check: checkHTTPS},
 		{Key: LegalPrivacyURL, Kind: Text, Layers: []Layer{Site, Tenant}, Default: "", Lower: Lower{Mode: Allow}, Check: checkHTTPS},
-		// What a space may do with the daily text (2.3's allow switches); the
-		// site's value lives in the daily text's own record (see Service.Bind).
+		// What a space may do with the daily text (2.3's allow switches).
 		{Key: DailyOwn, Kind: Bool, Layers: []Layer{Site, Tenant, Space}, Default: true, Lower: Lower{Mode: Allow}},
 		{Key: DailyAPI, Kind: Bool, Layers: []Layer{Site, Tenant, Space}, Default: true, Lower: Lower{Mode: Allow}},
 		// The default of the daily text: the shape of /api/admin/daily's default;
 		// the tenant's comes between the space's and the site's. Validated by
-		// the daily text's code (see Service.BindCheck).
+		// the daily text's code (see Service.Bind, Check).
 		{Key: DailyDefault, Kind: Doc, Layers: []Layer{Site, Tenant}, Default: nil, Lower: Lower{Mode: Allow}},
 		// Offline copies (4.1): allowed unless the site or the tenant turns them
 		// off. No space or person layer: a person who is not allowed has none, and
@@ -154,6 +195,50 @@ func Definitions() []*Def {
 		{Key: QuotaBytesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: nil, Min: 1, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}},
 		{Key: QuotaPagesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: nil, Min: 1, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
 
+		// Machine access, and whether tenants exist at all.
+		{Key: FeatureTokens, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureMCP, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureTenancy, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow},
+			ServerWide: "whether tenants besides the default one exist is the server's"},
+		{Key: FeaturePasskeys, Kind: Bool, Layers: []Layer{Site}, Default: true, Lower: Lower{Mode: Allow},
+			ServerWide: signinWhy},
+
+		// The sign-in policy.
+		{Key: SigninMode, Kind: Choice, Layers: []Layer{Site}, Default: "dual", Choices: []string{"dual", "sso_first", "sso_redirect", "local_only"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: SigninSSOOnly, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: SigninPasskeyRoles, Kind: List, Layers: []Layer{Site}, Default: []string{}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: SigninLockoutEnabled, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: SigninLockoutMinutes, Kind: Limit, Layers: []Layer{Site}, Default: int64(15), Min: 1, Max: 10080, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: SigninLockoutScope, Kind: Choice, Layers: []Layer{Site}, Default: "ip_account", Choices: []string{"ip_account", "ip", "account"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: SigninPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(10), Min: 1, Max: 100000, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: SigninMaxFailures, Kind: Limit, Layers: []Layer{Site}, Default: int64(10), Min: 1, Max: 100000, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: SigninWindowMinutes, Kind: Limit, Layers: []Layer{Site}, Default: int64(15), Min: 1, Max: 10080, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		// The server's flags are the defaults (SetDefault); per-organisation
+		// lifetimes come later.
+		{Key: SessionsIdleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow}, ServerWide: sessionsWhy},
+		{Key: SessionsMaxDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(90), Min: 1, Max: 3650, Lower: Lower{Mode: Allow}, ServerWide: sessionsWhy},
+		{Key: CaptchaProvider, Kind: Choice, Layers: []Layer{Site}, Default: "image", Choices: []string{"image", "turnstile", "recaptcha", "hcaptcha"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		// Validated and made whole by internal/auth (see its BindSettings).
+		{Key: CaptchaContexts, Kind: Doc, Layers: []Layer{Site}, Default: nil, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+
+		// The storage policy.
+		{Key: StorageRemotesRequire, Kind: Text, Layers: []Layer{Site}, Default: "", Lower: Lower{Mode: Allow}, ServerWide: storageWhy},
+		{Key: StorageRemotesScope, Kind: Choice, Layers: []Layer{Site}, Default: "new", Choices: []string{"new", "all"}, Lower: Lower{Mode: Allow}, ServerWide: storageWhy},
+		{Key: StorageRemotesGraceDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 0, Max: 365, Lower: Lower{Mode: Allow}, ServerWide: storageWhy},
+		{Key: StorageLocalMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: nil, Min: 1 << 20, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}, ServerWide: storageWhy},
+		{Key: StorageHosts, Kind: List, Layers: []Layer{Site}, Default: []string{}, Lower: Lower{Mode: Allow}, ServerWide: "the hosts a remote may be on are the server's network policy"},
+		{Key: CachePartial, Kind: Bool, Layers: []Layer{Site}, Default: true, Lower: Lower{Mode: Allow}, ServerWide: cacheWhy},
+		{Key: CacheEvictAfterDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(14), Min: 1, Max: 365, Nullable: true, Lower: Lower{Mode: Allow}, ServerWide: cacheWhy},
+		{Key: CacheMinIdleHours, Kind: Limit, Layers: []Layer{Site}, Default: int64(24), Min: 1, Max: 720, Lower: Lower{Mode: Allow}, ServerWide: cacheWhy},
+		{Key: CacheClonesBytes, Kind: Limit, Layers: []Layer{Site}, Default: nil, Min: 1 << 30, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}, ServerWide: cacheWhy},
+		{Key: CacheMinFreeBytes, Kind: Limit, Layers: []Layer{Site}, Default: int64(10 << 30), Min: 0, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}, ServerWide: cacheWhy},
+		{Key: CacheAssetsBytes, Kind: Limit, Layers: []Layer{Site}, Default: int64(5 << 30), Min: 64 << 20, Max: 1 << 50, Lower: Lower{Mode: Allow}, ServerWide: cacheWhy},
+
+		// The languages of the daily text's settings pages (canonical BCP 47 tags,
+		// checked by the daily text's code).
+		{Key: DailyLanguages, Kind: List, Layers: []Layer{Site}, Default: []string{"zh-Hans", "en"}, Lower: Lower{Mode: Allow},
+			ServerWide: "the pages of the daily text's settings are the server's"},
+
 		// The features of 3.1: site-wide on, off for one tenant by a rule.
 		{Key: FeatureOwnSSO, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
 		{Key: FeatureDomains, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
@@ -187,6 +272,14 @@ func Definitions() []*Def {
 }
 
 func i64(n int64) *int64 { return &n }
+
+// Why the groups of server-wide settings are server-wide.
+const (
+	signinWhy   = "the sign-in page comes before any tenant is known"
+	sessionsWhy = "a session is the server's: per-organisation lifetimes come later"
+	storageWhy  = "the server's storage policy is worked out over every space at once"
+	cacheWhy    = "the cache is the server's own disk"
+)
 
 func checkHTTPS(v any) (any, error) {
 	s := strings.TrimSpace(v.(string))

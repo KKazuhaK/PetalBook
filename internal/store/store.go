@@ -53,6 +53,20 @@ type Store struct {
 	// localeWarning is what is wrong with a PostgreSQL database's locale ("" when
 	// nothing is; see LocaleWarning).
 	localeWarning string
+	// shared holds one object per kind that every user of the store must share
+	// (see Shared).
+	shared sync.Map
+}
+
+// Shared returns the one object of a kind that belongs to this store, making it
+// with make the first time: the layered settings and the secrets are one cache
+// each, however many services read them.
+func (s *Store) Shared(kind string, make func() any) any {
+	if v, ok := s.shared.Load(kind); ok {
+		return v
+	}
+	v, _ := s.shared.LoadOrStore(kind, make())
+	return v
 }
 
 // Q is what queries run on: the database, or a transaction of it.

@@ -32,6 +32,8 @@ import (
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/quota"
 	"petalbook.app/server/internal/ratelimit"
+	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/secrets"
 	"petalbook.app/server/internal/sentence"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/space"
@@ -128,6 +130,8 @@ type server struct {
 	oauth  *oauth.Service
 	// settings are the layered settings (site, tenant; see internal/settings).
 	settings *settings.Service
+	// vault is the secrets of the site and of tenants.
+	vault *secrets.Service
 	// quota knows which limits apply and notices crossings (accounts mode).
 	quota *quota.Service
 	// localAccess is what the built-in user of single-user mode holds.
@@ -236,7 +240,7 @@ func New(opt Options) *Handler {
 		ps := opt.Connections.List()
 		opt.Connections = connections.NewRegistry(append(ps, connections.NewGit())...)
 	}
-	s := &server{opt: opt, log: opt.Logger, settings: settings.New(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
+	s := &server{opt: opt, log: opt.Logger, settings: settings.Of(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1),
 		confirms: newConfirmStore(), views: newViewTable(), jobs: newJobRunner(), now: opt.Now}
 	if s.now == nil {
@@ -267,6 +271,7 @@ func New(opt Options) *Handler {
 		s.localAccess = auth.AccessOf(s.local)
 	}
 	s.settings.SetClock(s.now)
+	s.vault = secrets.Of(opt.Store, boxOf(opt))
 	s.settings.SetFileCeiling(opt.MaxUpload)
 	s.bindRecycle()
 	s.bindDraftFileLimit()
@@ -729,6 +734,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	var req *spaces.RequiredError
 	var full *spaces.SpaceFullError
 	var setErr *settings.Error
+	var secErr *secrets.Error
 	var nc *space.NotCachedError
 	var rst *spaces.RestoringError
 	var rf *spaces.RestoreFailed
@@ -793,6 +799,12 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 			status = http.StatusConflict
 		}
 		writeError(w, status, setErr.Code, setErr.Msg)
+	case errors.As(err, &secErr):
+		status := http.StatusBadRequest
+		if secErr.Code == "not_found" {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, secErr.Code, secErr.Msg)
 	case errors.As(err, &coded):
 		writeCoded(w, coded)
 	case errors.As(err, &te):
@@ -1056,4 +1068,13 @@ func nonNil(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+// boxOf is the server's box of sealed secrets: the space manager's (nil in
+// single-user mode, which has no secrets to keep).
+func boxOf(opt Options) *secret.Box {
+	if opt.Spaces == nil {
+		return nil
+	}
+	return opt.Spaces.Secrets()
 }

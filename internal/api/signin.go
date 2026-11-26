@@ -367,18 +367,10 @@ func (s *server) deleteUserPasskey(c *call) {
 
 // --- administration -------------------------------------------------------------------------
 
-type captchaCtxResp struct {
-	On       bool   `json:"on"`
-	When     string `json:"when"`
-	Failures int    `json:"failures"`
-}
-
+// securityBody is what GET /api/admin/security shows: what the sign-in policy
+// means now (the policy itself is under /api/admin/settings) and the captcha's
+// keys, the secret only as set or not.
 func (s *server) securityBody(v *auth.SecurityView) any {
-	ctxs := map[string]captchaCtxResp{}
-	for _, k := range auth.CaptchaContexts {
-		c := v.Captcha.Contexts[k]
-		ctxs[k] = captchaCtxResp{c.On, c.When, c.Failures}
-	}
 	type notice struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
@@ -389,18 +381,10 @@ func (s *server) securityBody(v *auth.SecurityView) any {
 	for i, n := range v.Notices {
 		notices[i] = notice{n.Code, n.Message, n.Slug, n.Field}
 	}
-	roles := v.Passkeys.RequireRoles
-	if roles == nil {
-		roles = []string{}
-	}
 	return map[string]any{
-		"login": map[string]any{"mode": v.Login.Mode, "effectiveMode": v.EffectiveMode, "ssoOnly": v.Login.SSOOnly, "ssoOnlyInEffect": v.SSOOnlyInEffect, "ssoAvailable": v.SSOAvailable},
-		"passkeys": map[string]any{"enabled": v.Passkeys.Enabled, "available": v.PasskeysAvailable, "requireRoles": roles,
-			"required": v.Required, "requiredWithout": v.RequiredWithout},
-		"captcha": map[string]any{"provider": v.Captcha.Provider, "siteKey": v.Captcha.SiteKey, "hasSecret": v.CaptchaHasSecret, "contexts": ctxs},
-		"lockout": map[string]any{"enabled": v.Lockout.Enabled, "minutes": v.Lockout.Minutes, "scope": v.Lockout.Scope},
-		"limits": map[string]any{"perMinute": v.Limits.PerMinute, "maxFailures": v.Limits.MaxFailures, "windowMinutes": v.Limits.WindowMinutes,
-			"sessionIdleDays": v.Limits.SessionIdleDays, "sessionMaxDays": v.Limits.SessionMaxDays},
+		"login":          map[string]any{"effectiveMode": v.EffectiveMode, "ssoOnlyInEffect": v.SSOOnlyInEffect, "ssoAvailable": v.SSOAvailable},
+		"passkeys":       map[string]any{"available": v.PasskeysAvailable, "required": v.Required, "requiredWithout": v.RequiredWithout},
+		"captcha":        map[string]any{"siteKey": v.CaptchaSiteKey, "hasSecret": v.CaptchaHasSecret},
 		"passwordAdmins": v.PasswordAdmins,
 		"notices":        notices,
 	}
@@ -415,21 +399,27 @@ func (s *server) adminGetSecurity(c *call) {
 	writeJSON(c.w, http.StatusOK, s.securityBody(v))
 }
 
+// adminPutSecurity sets the captcha provider's keys, the part of the sign-in
+// policy that is not a setting. The secret is write-only.
 func (s *server) adminPutSecurity(c *call) {
-	var req auth.SecurityPatch
+	var req struct {
+		Captcha *struct {
+			SiteKey *string `json:"siteKey"`
+			Secret  *string `json:"secret"`
+		} `json:"captcha"`
+	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	if _, err := s.auth.UpdateSecurity(c.r.Context(), c.user().ID, s.auth.ClientAddr(c.r), req); err != nil {
+	if req.Captcha == nil {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give captcha: {siteKey, secret}. The rest of the sign-in policy is under /api/admin/settings.")
+		return
+	}
+	if err := s.auth.UpdateCaptchaKeys(c.r.Context(), c.user().ID, s.auth.ClientAddr(c.r), req.Captcha.SiteKey, req.Captcha.Secret); err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	v, err := s.auth.SecurityView(c.r.Context())
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, s.securityBody(v))
+	s.adminGetSecurity(c)
 }
 
 func (s *server) adminListProviders(c *call) {

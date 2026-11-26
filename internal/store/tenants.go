@@ -385,6 +385,9 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer IN ('tenant', 'site') AND layer_id = ?`, id); err != nil {
 			return err
 		}
+		if _, err := q.Exec(ctx, `DELETE FROM secrets WHERE scope = 'tenant' AND tenant_id = ?`, id); err != nil {
+			return err
+		}
 		if _, err := BumpSettingsRev(ctx, q); err != nil {
 			return err
 		}

@@ -13,6 +13,7 @@ import (
 
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/githubapp"
+	"petalbook.app/server/internal/secrets"
 	"petalbook.app/server/internal/store"
 )
 
@@ -85,7 +86,7 @@ func (s *Service) View(ctx context.Context) (*AppView, error) {
 	r := st.rec
 	v.Configured, v.AppID, v.ClientID, v.Slug, v.Name, v.Owner, v.HTMLURL = true, r.AppID, r.ClientID, r.Slug, r.Name, r.Owner, r.HTMLURL
 	v.InstallURL = installURL(r.HTMLURL)
-	v.KeySet, v.Fingerprint, v.SecretSet = true, r.Fingerprint, r.SecretEnc != ""
+	v.KeySet, v.Fingerprint, v.SecretSet = true, r.Fingerprint, st.secret != ""
 	v.Permissions, v.Missing = r.Permissions, missingPermissions(r.Permissions)
 	v.UserAuthorizaton = st.userAuth(s.opt.PublicURL)
 	v.Checked, v.Spaces, v.Authorizations = r.Checked, spaces, auths
@@ -112,6 +113,8 @@ type SaveRequest struct {
 	ClientSecret string
 	// WebhookSecret is kept sealed when given (an App made from a manifest has one).
 	WebhookSecret string
+	// By is who makes the change (a user id), kept with the secrets.
+	By string
 }
 
 func appInUse(spaces, auths int) *connections.Error {
@@ -163,9 +166,14 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 	if keyPEM != "" {
 		pemBytes = []byte(keyPEM)
 	} else if old != nil {
-		if pemBytes, err = s.opt.Secrets.Open(siteBinding, purposeKey, old.rec.KeyEnc); err != nil {
+		pem, ok, err := s.vault.Open(ctx, s.opt.Store.Q(), "", secrets.GitHubAppKey)
+		if err != nil {
 			return nil, err
 		}
+		if !ok {
+			return nil, errf(http.StatusBadRequest, CodeInvalid, "The App has no private key; give privateKey.")
+		}
+		pemBytes = []byte(pem)
 	}
 	key, err := githubapp.ParseKey(pemBytes)
 	if err != nil {
@@ -229,23 +237,31 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 	if old != nil && old.rec.AppID == appID && rec.AnyAccount == nil {
 		rec.AnyAccount = old.rec.AnyAccount
 	}
-	if rec.KeyEnc, err = s.opt.Secrets.Seal(siteBinding, purposeKey, pemBytes); err != nil {
-		return nil, err
-	}
-	if secret != "" {
-		if rec.SecretEnc, err = s.opt.Secrets.Seal(siteBinding, purposeSecret, []byte(secret)); err != nil {
-			return nil, err
-		}
-	}
-	if req.WebhookSecret != "" {
-		if rec.WebhookSecretEnc, err = s.opt.Secrets.Seal(siteBinding, purposeHook, []byte(req.WebhookSecret)); err != nil {
-			return nil, err
-		}
-	} else if old != nil && old.rec.AppID == appID {
-		rec.WebhookSecretEnc = old.rec.WebhookSecretEnc
-	}
 	raw, _ := json.Marshal(rec)
-	if err := store.SetSiteSetting(ctx, s.opt.Store.Q(), settingKey, string(raw), s.opt.Now()); err != nil {
+	// The record and its secrets are written together.
+	err = s.opt.Store.Tx(ctx, func(q store.Q) error {
+		if err := store.SetSiteRecord(ctx, q, settingKey, string(raw), s.opt.Now()); err != nil {
+			return err
+		}
+		if err := s.vault.Set(ctx, q, "", secrets.GitHubAppKey, string(pemBytes), req.By); err != nil {
+			return err
+		}
+		if secret == "" {
+			if err := s.vault.Clear(ctx, q, "", secrets.GitHubClientSecret); err != nil {
+				return err
+			}
+		} else if err := s.vault.Set(ctx, q, "", secrets.GitHubClientSecret, secret, req.By); err != nil {
+			return err
+		}
+		switch {
+		case req.WebhookSecret != "":
+			return s.vault.Set(ctx, q, "", secrets.GitHubWebhookSecret, req.WebhookSecret, req.By)
+		case old == nil || old.rec.AppID != appID:
+			return s.vault.Clear(ctx, q, "", secrets.GitHubWebhookSecret)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	s.forget()
@@ -302,8 +318,15 @@ func (s *Service) Delete(ctx context.Context) error {
 		if err := store.DeleteGitHubInstallations(ctx, q); err != nil {
 			return err
 		}
-		_, err := q.Exec(ctx, `DELETE FROM site_settings WHERE key = ?`, settingKey)
-		return err
+		if _, err := q.Exec(ctx, `DELETE FROM site_records WHERE key = ?`, settingKey); err != nil {
+			return err
+		}
+		for _, name := range []string{secrets.GitHubAppKey, secrets.GitHubClientSecret, secrets.GitHubWebhookSecret} {
+			if err := s.vault.Clear(ctx, q, "", name); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return err
@@ -531,12 +554,12 @@ func (s *Service) refresh(ctx context.Context, st *appState) error {
 		page = next
 	}
 	// Write onto what is stored now, and only if it is still this App.
-	raw, ok, err := store.GetSiteSetting(ctx, s.opt.Store.Q(), settingKey)
+	raw, ok, err := store.GetSiteRecord(ctx, s.opt.Store.Q(), settingKey)
 	if err != nil {
 		return err
 	}
 	var rec appRecord
-	if !ok || json.Unmarshal([]byte(raw), &rec) != nil || rec.AppID != st.rec.AppID || rec.KeyEnc != st.rec.KeyEnc {
+	if !ok || json.Unmarshal([]byte(raw), &rec) != nil || rec.AppID != st.rec.AppID || rec.Fingerprint != st.rec.Fingerprint {
 		return nil // saved again or removed meanwhile: that is newer than this
 	}
 	rec.Slug, rec.Name, rec.Owner, rec.HTMLURL = info.Slug, info.Name, info.Owner.Login, info.HTMLURL
@@ -554,7 +577,7 @@ func (s *Service) refresh(ctx context.Context, st *appState) error {
 	}
 	// Written only if the setting is still the one read above: an App saved in
 	// the meantime is newer than this check and stays.
-	if _, err := store.CompareAndSetSiteSetting(ctx, s.opt.Store.Q(), settingKey, raw, string(b), s.opt.Now()); err != nil {
+	if _, err := store.CompareAndSetSiteRecord(ctx, s.opt.Store.Q(), settingKey, raw, string(b), s.opt.Now()); err != nil {
 		return err
 	}
 	s.forget()

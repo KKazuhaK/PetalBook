@@ -17,9 +17,17 @@ import (
 // "the same record" is what keeps /api/admin/daily and this API one thing. Its
 // Lower still lives here.
 type SiteBinding struct {
-	// Get reads the site value; Set writes it (inside the transaction q).
+	// Get reads the site value; Set writes it (inside the transaction q). Both
+	// nil: the value is stored in layered_settings as usual, and the binding
+	// only checks it (Check) and follows it (After).
 	Get func(ctx context.Context, q store.Q) (any, error)
 	Set func(ctx context.Context, q store.Q, v any) error
+	// After runs inside the transaction of a change of the site's value, once
+	// the value is written: old is the value in effect before, new the one
+	// written (nil for a limit that was set to none). The code that keeps
+	// something in step with a setting (the storage policy's "since", a secret
+	// that belongs to a provider) does it here, in the same transaction.
+	After func(ctx context.Context, q store.Q, old, new any) error
 	// Check validates a value of any layer beyond its shape; it may read the
 	// database. tenant is the layer's tenant ("" for the site).
 	Check func(ctx context.Context, tenant string, v any) (any, error)
@@ -61,7 +69,8 @@ type Service struct {
 	// window of one of its rules.
 	siteGen atomic.Uint64
 	planGen atomic.Uint64
-	slots   sync.Map // tenant id ("" for the site alone) -> *slot
+	serials atomic.Uint64 // numbers the snapshots (see Site)
+	slots   sync.Map      // tenant id ("" for the site alone) -> *slot
 
 	// plans is every rule of every plan, read again when planGen moves.
 	planMu   sync.Mutex
@@ -103,6 +112,7 @@ type slot struct {
 
 type snapshot struct {
 	site, tenant, plan uint64
+	serial             uint64
 	// next is the earliest start or end of a window of a rule in m after the
 	// snapshot was made, in Unix milliseconds (math.MaxInt64: none): the
 	// snapshot is current only before it.
@@ -114,6 +124,13 @@ type snapshot struct {
 	// plan and no rows of their own, by plan id.
 	follow, all map[string]*Effective
 	plans       sync.Map
+}
+
+// Of returns the settings of a store: one for every package that reads them, so
+// that a change made through any of them drops the one cache. Tests of the
+// package make their own with New.
+func Of(st *store.Store) *Service {
+	return st.Shared("settings", func() any { return New(st) }).(*Service)
 }
 
 // New makes the service over the Definitions.
@@ -172,6 +189,35 @@ func (s *Service) Bind(key string, b SiteBinding) {
 		panic("settings: no setting " + key)
 	}
 	s.bind[key] = b
+}
+
+// SetDefault makes v the value of a setting until a site administrator sets one
+// (a value the server was started with, such as the session lifetimes). v is
+// checked like any value; it panics on a key or value that is not one, since
+// that is a mistake of the program.
+func (s *Service) SetDefault(key string, v any) {
+	d, ok := s.byK[key]
+	if !ok {
+		panic("settings: no setting " + key)
+	}
+	nv, err := d.Value(v)
+	if err != nil {
+		panic("settings: default of " + key + ": " + err.Error())
+	}
+	d.Default = nv
+	s.Invalidate()
+}
+
+// Site is the site's own settings (as For does for "") with a number that is
+// different for every set of values the service has made: the code that works
+// something out from them (the sign-in policy, the storage policy) keeps its
+// result with the number, and works it out again only when the number moves.
+func (s *Service) Site(ctx context.Context) (map[string]*Effective, uint64, error) {
+	p, err := s.snapshotOf(ctx, "")
+	if err != nil {
+		return nil, 0, err
+	}
+	return p.m, p.serial, nil
 }
 
 // SetClock sets the clock (tests).
@@ -327,6 +373,7 @@ func (s *Service) snapshotOf(ctx context.Context, tenant string) (*snapshot, err
 			return nil, err
 		}
 		p.site, p.tenant, p.plan, p.next = site, gen, plan, math.MaxInt64
+		p.serial = s.serials.Add(1)
 		sl.snap.Store(p)
 		return p, nil
 	}
@@ -465,6 +512,7 @@ func rowsByKey(rows []store.LayeredRow) map[string]*store.LayeredRow {
 func (s *Service) siteView(ctx context.Context, q store.Q, d *Def, r *store.LayeredRow) (SiteView, error) {
 	v := SiteView{Value: d.Default, Lower: d.Lower}
 	b, bound := s.bind[d.Key]
+	bound = bound && b.Get != nil
 	switch {
 	case bound:
 		val, err := b.Get(ctx, q)
@@ -590,8 +638,17 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 				return err
 			}
 		}
+		var before any
 		if ch.HasValue {
-			if b, bound := s.bind[key]; bound {
+			b, bound := s.bind[key]
+			if bound && b.After != nil {
+				v, err := s.siteView(ctx, q, d, row)
+				if err != nil {
+					return err
+				}
+				before = v.Value
+			}
+			if bound && b.Set != nil {
 				if err := b.Set(ctx, q, val); err != nil {
 					return err
 				}
@@ -613,6 +670,11 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 		row.Updated, row.SetBy = s.now(), ch.By
 		if err := store.PutLayered(ctx, q, *row); err != nil {
 			return err
+		}
+		if b := s.bind[key]; ch.HasValue && b.After != nil {
+			if err := b.After(ctx, q, before, val); err != nil {
+				return err
+			}
 		}
 		if ch.HasLower {
 			affected, err = s.affected(ctx, q, d, lower)

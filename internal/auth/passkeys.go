@@ -99,7 +99,7 @@ func (s *Service) initPasskeys(ctx context.Context) error {
 // passkeyFakeKey is the server key the made-up credential ids of unknown
 // users come from; it is made once and kept sealed.
 func (s *Service) passkeyFakeKey(ctx context.Context) ([]byte, error) {
-	if raw, _, err := store.GetSetting(ctx, s.st.Q(), passkeyFakeKeyName); err == nil {
+	if raw, _, err := store.GetRecord(ctx, s.st.Q(), passkeyFakeKeyName); err == nil {
 		if b, err := s.open("passkey-fake", raw); err == nil {
 			if k, err := base64.RawURLEncoding.DecodeString(b); err == nil && len(k) == 32 {
 				return k, nil
@@ -114,7 +114,7 @@ func (s *Service) passkeyFakeKey(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := store.PutSetting(ctx, s.st.Q(), passkeyFakeKeyName, enc, s.now()); err != nil {
+	if _, err := store.PutRecord(ctx, s.st.Q(), passkeyFakeKeyName, enc, s.now()); err != nil {
 		return nil, err
 	}
 	return k, nil

@@ -376,10 +376,13 @@ CREATE TABLE asset_remotes (
 -- The few attachment repositories a move is under way for.
 CREATE INDEX asset_remotes_move ON asset_remotes(move_state) WHERE move_state <> '';
 
--- Server-wide settings as text by key (most are JSON): the daily text, the
--- security settings, the storage policy, the GitHub App, and 'first_user', the
--- time the first account was made (MarkFirstUser).
-CREATE TABLE site_settings (
+-- Server-wide records as text by key (most are JSON): what is not a setting.
+-- The daily text's interfaces and providers, the captcha's site key, the
+-- storage policy's 'since', the mail sender, the GitHub App's record, the
+-- markers 'oidc_imported' and 'passkey_fake_key', and 'first_user', the time
+-- the first account was made (MarkFirstUser). Policy is in layered_settings and
+-- every secret in secrets; nothing here is a setting or a secret.
+CREATE TABLE site_records (
   key     TEXT COLLATE "C" PRIMARY KEY,
   value   TEXT COLLATE "C" NOT NULL,
   updated BIGINT NOT NULL
@@ -413,6 +416,24 @@ CREATE TABLE layered_settings (
 );
 CREATE INDEX layered_settings_starts ON layered_settings(starts) WHERE starts IS NOT NULL;
 CREATE INDEX layered_settings_ends ON layered_settings(ends) WHERE ends IS NOT NULL;
+
+-- Every secret the server keeps for the site or for a tenant, sealed with the
+-- server's key (internal/secret) and bound to its scope and name. The API only
+-- ever says whether one is set and when it changed; the value goes to the code
+-- that uses it, nowhere else. There is no foreign key on the shared tenant_id
+-- column: DeleteTenant deletes a tenant's rows.
+--   scope 'site',   tenant_id '':        a secret of the site.
+--   scope 'tenant', tenant_id a tenant:  a secret of that tenant.
+CREATE TABLE secrets (
+  scope      TEXT COLLATE "C" NOT NULL CHECK (scope IN ('site', 'tenant')),
+  tenant_id  TEXT COLLATE "C" NOT NULL DEFAULT '',
+  name       TEXT COLLATE "C" NOT NULL,
+  value      TEXT COLLATE "C" NOT NULL,
+  updated    BIGINT NOT NULL,
+  updated_by TEXT COLLATE "C" NOT NULL DEFAULT '',
+  PRIMARY KEY (scope, tenant_id, name),
+  CHECK ((scope = 'site') = (tenant_id = ''))
+);
 
 -- One row: every write of layered_settings adds one to rev in its transaction,
 -- so a process that did not make the write (the CLI, a standby server) is seen

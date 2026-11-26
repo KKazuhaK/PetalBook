@@ -398,7 +398,7 @@ func TestScopeTestSeesTenantTables(t *testing.T) {
 		{`SELECT 1 FROM spaces WHERE id = ?`, true},
 		{`UPDATE space_measure SET size_at = 1`, true},
 		{`INSERT INTO space_measure(space_id) VALUES (1)`, true},
-		{`SELECT 1 FROM site_settings`, false},
+		{`SELECT 1 FROM site_records`, false},
 	} {
 		if got := touchesSrc(t, "_ = `"+c.src+"`"); got != c.want {
 			t.Errorf("%s: touches = %v", c.src, got)
@@ -411,7 +411,7 @@ func TestScopeTestSeesTenantTables(t *testing.T) {
 		{`lockRow(ctx, q, "spaces", id)`, true},
 		{`lockRow(ctx, q, "groups", id)`, true},
 		{`lockRow(ctx, q, "users", id)`, true},
-		{`lockRow(ctx, q, "site_settings", id)`, false},
+		{`lockRow(ctx, q, "site_records", id)`, false},
 		{`other(ctx, q, "spaces", id)`, false},
 	} {
 		if got := touchesSrc(t, c.call); got != c.want {
