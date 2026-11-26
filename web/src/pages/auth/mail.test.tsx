@@ -110,6 +110,61 @@ describe('registration', () => {
     expect(window.location.hash).toBe('')
   })
 
+  it('organisation creation: the choice appears only when the site allows it, the slug follows the name, and the link makes the organisation', async () => {
+    await open('/register', { mail: true, registration: true })
+    await settle(() => input('input[autocomplete="username"]') !== null, 'the form')
+    expect(document.querySelector('[role="radiogroup"]')).toBeNull()
+    expect(text()).not.toContain(tm.register.createOrg)
+    admin('PUT', '/admin/settings/features.tenancy', { value: true })
+    admin('PUT', '/admin/settings/features.orgCreation', { value: true })
+    await m!.qc.invalidateQueries()
+    await settle(() => document.querySelector('[role="radiogroup"]') !== null, 'the choice')
+    await click(document.querySelectorAll('[role="radio"]')[1])
+    await settle(() => input('input[autocomplete="organization"]') !== null, 'the organisation fields')
+    await type(input('input[autocomplete="organization"]'), 'Acme Notes Ltd')
+    const slug = document.querySelectorAll<HTMLInputElement>('input[autocapitalize="none"]')[0]
+    expect(slug.value).toBe('acme-notes-ltd')
+    await type(input('input[autocomplete="username"]'), 'tang')
+    await type(input('input[autocomplete="email"]'), 'tang@example.test')
+    const pw = [...document.querySelectorAll<HTMLInputElement>('input[type="password"]')]
+    await type(pw[0], 'a-long-password')
+    await type(pw[1], 'a-long-password')
+    await submit()
+    await settle(() => text().includes(tm.register.sentTitle), 'the confirmation notice')
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/register' && r.method === 'POST')!.body!)).toMatchObject({
+      org: { name: 'Acme Notes Ltd', slug: 'acme-notes-ltd' },
+    })
+    expect(outbox('register_org')).toHaveLength(1)
+  })
+
+  it('a registration that makes an organisation says so when its link is followed', async () => {
+    m = await mount(routes, {
+      entries: (server) => {
+        admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, server)
+        admin('PUT', '/admin/settings/features.tenancy', { value: true }, server)
+        admin('PUT', '/admin/settings/features.orgCreation', { value: true }, server)
+        const sent = server.handle(
+          'POST',
+          '/api/register',
+          JSON.stringify({
+            username: 'bee',
+            name: 'Bee',
+            email: 'bee@example.test',
+            password: 'a-long-password',
+            org: { name: 'Acme', slug: 'acme' },
+          }),
+          'application/json',
+        )
+        expect(sent.status).toBe(202)
+        window.location.hash = '#' + tokenOf(server.mail.outbox.find((x) => x.kind === 'register_org')!.link)
+        return ['/register/confirm']
+      },
+      server: { mode: 'accounts' },
+    })
+    await settle(() => text().includes(tm.confirm.orgReady('Acme')), 'the welcome')
+    expect(text()).toContain(tm.confirm.orgBody('Acme', 'acme'))
+  })
+
   it('a link that is not valid says so and offers the registration page', async () => {
     await open('/register/confirm', { mail: true, registration: true, hash: '#nope' })
     await settle(() => text().includes(tm.confirm.invalid), 'the answer')

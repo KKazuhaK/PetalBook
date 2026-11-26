@@ -210,13 +210,20 @@ func TestTenantsTable(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := st.CreateTenant(ctx, store.Tenant{ID: "TX", Slug: "t-0", Name: "dup", Created: now, Updated: now}); !store.IsUnique(err) {
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "TX", Slug: "t-0", Name: "dup", Created: now, Updated: now}); !store.IsUnique(err) || !store.TenantSlugClash(err) {
 			t.Fatalf("a taken slug: %v", err)
+		}
+		// A taken id is a unique violation, but not of the slug.
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T000000002", Slug: "fresh", Name: "dup id", Created: now, Updated: now}); !store.IsUnique(err) || store.TenantSlugClash(err) {
+			t.Fatalf("a taken id: %v", err)
+		}
+		if n, err := store.CountSelfTenantsSince(ctx, st.Q(), now.Add(-time.Hour)); err != nil || n != 0 {
+			t.Fatalf("no tenant was self-made: %d %v", n, err)
 		}
 		var names []string
 		after := ""
 		for {
-			page, next, err := store.ListTenants(ctx, st.Q(), st.Dialect(), "", after, 2)
+			page, next, err := store.ListTenants(ctx, st.Q(), st.Dialect(), "", "", after, 2)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -231,7 +238,7 @@ func TestTenantsTable(t *testing.T) {
 		if fmt.Sprint(names) != "[Default alpha Beta Zed]" {
 			t.Fatalf("the default first, then by name: %v", names)
 		}
-		if l, _, _ := store.ListTenants(ctx, st.Q(), st.Dialect(), "ALPH", "", 10); len(l) != 1 || l[0].Name != "alpha" {
+		if l, _, _ := store.ListTenants(ctx, st.Q(), st.Dialect(), "ALPH", "", "", 10); len(l) != 1 || l[0].Name != "alpha" {
 			t.Fatalf("%v", l)
 		}
 		// Disabling is in memory at once.

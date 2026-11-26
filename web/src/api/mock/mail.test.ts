@@ -42,7 +42,7 @@ describe('the mock mail', () => {
       status: { ok: false, checked: null },
     })
     expect(w.req('GET', '/auth/providers').body).toMatchObject({ register: false, forgot: false })
-    expect(w.req('GET', '/register').body).toEqual({ open: false })
+    expect(w.req('GET', '/register').body).toEqual({ open: false, orgCreation: { open: false } })
     expect(w.req('POST', '/password/forgot', { login: 'admin' }).body.error).toBe('password_reset_off')
     expect(w.req('PUT', '/admin/settings/features.registration', { value: true }, w.root).body.error).toBe(
       'mail_not_configured',
@@ -204,5 +204,46 @@ describe('the mock mail', () => {
     expect(w.req('POST', `/users/${id}/password-reset`, {}, joined.cookie).status).toBe(403)
     w.req('PUT', '/admin/mail', { enabled: false }, w.root)
     expect(w.req('POST', `/users/${id}/password-reset`, {}, w.root).body.error).toBe('mail_not_configured')
+  })
+
+  it('organisations people create: off until the site allows it; the caps answer 202 and send the refusal', () => {
+    const w = world()
+    w.enable()
+    const reg = (slug: string, username: string, org = true) =>
+      w.req('POST', '/register', {
+        username,
+        name: 'Tang',
+        email: `${username}@example.test`,
+        password: 'a-long-password',
+        ...(org ? { org: { name: 'Acme', slug } } : {}),
+      })
+    expect(reg('acme', 'userone').body.error).toBe('registration_closed')
+    expect(w.req('PUT', '/admin/settings/features.orgCreation', { value: true }, w.root).body.error).toBe(
+      'needs_tenancy',
+    )
+    w.req('PUT', '/admin/settings/features.tenancy', { value: true }, w.root)
+    expect(w.req('PUT', '/admin/settings/features.orgCreation', { value: true }, w.root).status).toBe(200)
+    expect(w.req('GET', '/register').body).toMatchObject({ open: false, orgCreation: { open: true } })
+    expect(w.req('GET', '/auth/providers').body).toMatchObject({ register: false, orgCreation: true })
+    expect(reg('Bad Slug', 'userone').body.error).toBe('invalid')
+    const first = reg('acme', 'userone')
+    expect(first.status).toBe(202)
+    expect(reg('acme', 'usertwo').body.error).toBe('slug_taken')
+    // The slug is taken before the link is followed: a number is added, and the answer says so.
+    w.req('POST', '/admin/tenants', { slug: 'acme', name: 'Acme by admin' }, w.root)
+    const made = w.req('POST', '/register/confirm', {
+      token: tokenOf(w.server.mail.outbox.find((m) => m.kind === 'register_org')!.link),
+    })
+    expect(made.status).toBe(201)
+    expect(made.body.tenant).toEqual({ slug: 'acme-2', name: 'Acme', renamed: true })
+    expect(made.body.user).toMatchObject({ role: 'admin', siteAdmin: false, tenant: { slug: 'acme-2' } })
+    const self = w.req('GET', '/admin/tenants?origin=self', undefined, w.root).body.items
+    expect(self).toHaveLength(1)
+    expect(self[0]).toMatchObject({ slug: 'acme-2', origin: 'self', createdBy: made.body.user.id })
+    // A person may make none: the answer is 202, nothing is held, and the message says none was made.
+    w.req('PUT', '/admin/settings/orgCreation.perPerson', { value: 0 }, w.root)
+    expect(reg('other', 'userthree').status).toBe(202)
+    expect(w.server.mail.outbox.filter((m) => m.kind === 'register_org_refused')).toHaveLength(1)
+    expect(reg('other', 'userfour').status).toBe(202)
   })
 })

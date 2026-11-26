@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // DefaultTenantID is the tenant made with the database (and the one rows of
@@ -120,10 +122,60 @@ type Tenant struct {
 	Disabled bool
 	Created  time.Time
 	Updated  time.Time
+	// Origin is how the tenant came to be: OriginDefault (made with the
+	// database), OriginAdmin (a site administrator made it; the zero value is
+	// this) or OriginSelf (a person registered it). CreatedBy is that person's
+	// id ("" for the others); it is not a foreign key and outlives them.
+	Origin    string
+	CreatedBy string
 }
+
+// The origins of a tenant.
+const (
+	OriginDefault = "default"
+	OriginAdmin   = "admin"
+	OriginSelf    = "self"
+)
 
 // IsDefault reports whether this is the default tenant.
 func (t Tenant) IsDefault() bool { return t.ID == DefaultTenantID }
+
+// TenantSlugRE is what a tenant's slug is: 2 to 32 characters of a-z, 0-9 and
+// -, starting with a letter or a digit. A site administrator's and a person's
+// organisation follow the same rule.
+var TenantSlugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,31}$`)
+
+// reservedSlugs are addresses no tenant may take, whoever makes it: names that
+// would pass for the site's own (admin, support, official), and the first
+// segment of a route of the web app or the API.
+var reservedSlugs = map[string]bool{
+	"admin": true, "administrator": true, "api": true, "www": true, "app": true, "mail": true, "support": true,
+	"help": true, "security": true, "status": true, "billing": true, "root": true, "system": true,
+	"petalbook": true, "official": true, "staff": true, "team": true, "login": true, "signin": true,
+	"register": true, "settings": true, "setup": true, "invite": true, "forgot": true, "oauth": true,
+	"mcp": true, "notifications": true, "verify-email": true, "reset-password": true,
+}
+
+// SlugReserved says whether a slug may not be a tenant's.
+func SlugReserved(slug string) bool { return reservedSlugs[slug] }
+
+// TenantSlugClash says whether err is the unique violation of the tenants'
+// slug (tenants_slug_key on PostgreSQL, "tenants.slug" on SQLite), not of
+// another unique column.
+func TenantSlugClash(err error) bool {
+	on, ok := UniqueOn(err)
+	return ok && (on == "tenants_slug_key" || on == "tenants.slug")
+}
+
+// CleanTenantName trims a tenant's name and checks it: 1 to 80 characters, no
+// control characters.
+func CleanTenantName(in string) (string, bool) {
+	n := strings.TrimSpace(in)
+	if n == "" || utf8.RuneCountInString(n) > 80 || strings.ContainsFunc(n, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", false
+	}
+	return n, true
+}
 
 // MaxTenants is how many tenants a server may have.
 const MaxTenants = 1000
@@ -136,12 +188,12 @@ func (*ErrTenantNotEmpty) Error() string { return "the tenant is not empty" }
 // ErrTenantLimit is the refusal of the 1,001st tenant.
 var ErrTenantLimit = errors.New("too many tenants")
 
-const tenantCols = `id, slug, name, disabled, created, updated`
+const tenantCols = `id, slug, name, disabled, created, updated, origin, created_by`
 
 func scanTenant(sc interface{ Scan(...any) error }) (*Tenant, error) {
 	var t Tenant
 	var disabled, created, updated int64
-	if err := sc.Scan(&t.ID, &t.Slug, &t.Name, &disabled, &created, &updated); err != nil {
+	if err := sc.Scan(&t.ID, &t.Slug, &t.Name, &disabled, &created, &updated, &t.Origin, &t.CreatedBy); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -168,11 +220,11 @@ func CountTenants(ctx context.Context, q Q) (n int, err error) {
 	return
 }
 
-// ListTenants returns one page: the default tenant first, then by name (bytewise
+// ListTenants returns one page (of the tenants of one origin when origin is not empty): the default tenant first, then by name (bytewise
 // on the folded name) and id. The cursor is the position "after" the last item,
 // given as the id of that tenant; an unknown id starts at the beginning. One
 // query per page.
-func ListTenants(ctx context.Context, q Q, d Dialect, query, after string, limit int) (out []Tenant, next string, err error) {
+func ListTenants(ctx context.Context, q Q, d Dialect, query, origin, after string, limit int) (out []Tenant, next string, err error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -182,6 +234,10 @@ func ListTenants(ctx context.Context, q Q, d Dialect, query, after string, limit
 		pat := "%" + likeEscape(FoldName(query)) + "%"
 		where = append(where, `(name_key LIKE ? ESCAPE '\' OR slug LIKE ? ESCAPE '\')`)
 		args = append(args, pat, pat)
+	}
+	if origin != "" {
+		where = append(where, `origin = ?`)
+		args = append(args, origin)
 	}
 	if after != "" {
 		// The sort key is (default first, name key, id); it is the same row's
@@ -330,22 +386,46 @@ func (s *Store) TenantCount() int {
 // change a tenant call it, and a second server process would call it on a timer.
 func (s *Store) TenantStateReload(ctx context.Context) error { return s.loadTenantState(ctx) }
 
+// InsertTenant adds a tenant in a transaction, refusing the 1,001st
+// (ErrTenantLimit); a taken slug is a unique violation. The caller calls
+// TenantStateReload after the commit.
+func InsertTenant(ctx context.Context, q Q, t Tenant) error {
+	n, err := CountTenants(ctx, q)
+	if err != nil {
+		return err
+	}
+	if n >= MaxTenants {
+		return ErrTenantLimit
+	}
+	if t.Origin == "" {
+		t.Origin = OriginAdmin
+	}
+	_, err = q.Exec(ctx, `INSERT INTO tenants(`+tenantCols+`, name_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Slug, t.Name, b2i(t.Disabled), ms(t.Created), ms(t.Updated), t.Origin, t.CreatedBy, FoldName(t.Name))
+	return err
+}
+
+// CountTenantsCreatedBy is how many organisations a person registered themselves that still exist (the
+// partial index on created_by).
+func CountTenantsCreatedBy(ctx context.Context, q Q, userID string) (n int, err error) {
+	if userID == "" {
+		return 0, nil
+	}
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM tenants WHERE created_by = ? AND origin = 'self'`, userID).Scan(&n)
+	return
+}
+
+// CountSelfTenantsSince is how many organisations people made themselves since
+// a moment (the hour's cap of orgCreation.perHour).
+func CountSelfTenantsSince(ctx context.Context, q Q, since time.Time) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM tenants WHERE origin = 'self' AND created >= ?`, ms(since)).Scan(&n)
+	return
+}
+
 // CreateTenant adds a tenant, refusing the 1,001st (ErrTenantLimit). A taken
 // slug is a unique violation.
 func (s *Store) CreateTenant(ctx context.Context, t Tenant) error {
-	err := s.Tx(ctx, func(q Q) error {
-		n, err := CountTenants(ctx, q)
-		if err != nil {
-			return err
-		}
-		if n >= MaxTenants {
-			return ErrTenantLimit
-		}
-		_, err = q.Exec(ctx, `INSERT INTO tenants(`+tenantCols+`, name_key) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			t.ID, t.Slug, t.Name, b2i(t.Disabled), ms(t.Created), ms(t.Updated), FoldName(t.Name))
-		return err
-	})
-	if err != nil {
+	if err := s.Tx(ctx, func(q Q) error { return InsertTenant(ctx, q, t) }); err != nil {
 		return err
 	}
 	return s.loadTenantState(ctx)

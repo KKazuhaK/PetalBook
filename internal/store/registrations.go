@@ -23,9 +23,14 @@ type Registration struct {
 	Terms   string
 	Created time.Time
 	Expires time.Time
+	// OrgName and OrgSlug are set when the registration makes an organisation
+	// (OrgSlug <> ""); the slug is held, unique, until the row ends. TenantID is
+	// then the default tenant, which keeps the foreign key.
+	OrgName string
+	OrgSlug string
 }
 
-const registrationCols = `id, tenant_id, username, name, email, password_hash, token_hash, terms, created, expires`
+const registrationCols = `id, tenant_id, username, name, email, password_hash, token_hash, terms, created, expires, org_name, org_slug`
 
 // InsertRegistration holds a username for a registration. A pending
 // registration of the same username that has expired is removed first; one
@@ -34,9 +39,34 @@ func InsertRegistration(ctx context.Context, q Q, r Registration, now time.Time)
 	if _, err := q.Exec(ctx, `DELETE FROM registrations WHERE username = ? AND expires <= ?`, r.Username, ms(now)); err != nil {
 		return err
 	}
-	_, err := q.Exec(ctx, `INSERT INTO registrations(`+registrationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.TenantID, r.Username, r.Name, r.Email, r.PasswordHash, r.TokenHash, r.Terms, ms(r.Created), ms(r.Expires))
+	if r.OrgSlug != "" {
+		if _, err := q.Exec(ctx, `DELETE FROM registrations WHERE org_slug = ? AND expires <= ?`, r.OrgSlug, ms(now)); err != nil {
+			return err
+		}
+	}
+	_, err := q.Exec(ctx, `INSERT INTO registrations(`+registrationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.TenantID, r.Username, r.Name, r.Email, r.PasswordHash, r.TokenHash, r.Terms, ms(r.Created), ms(r.Expires), r.OrgName, r.OrgSlug)
 	return err
+}
+
+// PendingOrgSlug reports whether a live registration holds the organisation slug.
+func PendingOrgSlug(ctx context.Context, q Q, slug string, now time.Time) (bool, error) {
+	var one int
+	err := q.QueryRow(ctx, `SELECT 1 FROM registrations WHERE org_slug = ? AND expires > ?`, slug, ms(now)).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// DeleteOrgRegistrations cancels every pending registration that makes an
+// organisation (organisation creation was switched off).
+func DeleteOrgRegistrations(ctx context.Context, q Q) (int64, error) {
+	res, err := q.Exec(ctx, `DELETE FROM registrations WHERE org_slug <> ''`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // PendingUsername reports whether a live registration holds the username.
@@ -49,9 +79,16 @@ func PendingUsername(ctx context.Context, q Q, username string, now time.Time) (
 	return err == nil, err
 }
 
-// CountPendingRegistrations is how many live registrations a tenant has.
+// CountPendingRegistrations is how many live registrations a tenant has (those
+// that join it; the ones that make an organisation are CountPendingOrgRegistrations).
 func CountPendingRegistrations(ctx context.Context, q Q, tenant string, now time.Time) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM registrations WHERE tenant_id = ? AND expires > ?`, tenant, ms(now)).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM registrations WHERE tenant_id = ? AND org_slug = '' AND expires > ?`, tenant, ms(now)).Scan(&n)
+	return
+}
+
+// CountPendingOrgRegistrations is how many live registrations make an organisation.
+func CountPendingOrgRegistrations(ctx context.Context, q Q, now time.Time) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM registrations WHERE org_slug <> '' AND expires > ?`, ms(now)).Scan(&n)
 	return
 }
 
@@ -60,7 +97,7 @@ func FindRegistration(ctx context.Context, q Q, tokenHash string, now time.Time)
 	var r Registration
 	var created, expires int64
 	err := q.QueryRow(ctx, `SELECT `+registrationCols+` FROM registrations WHERE token_hash = ? AND expires > ?`, tokenHash, ms(now)).
-		Scan(&r.ID, &r.TenantID, &r.Username, &r.Name, &r.Email, &r.PasswordHash, &r.TokenHash, &r.Terms, &created, &expires)
+		Scan(&r.ID, &r.TenantID, &r.Username, &r.Name, &r.Email, &r.PasswordHash, &r.TokenHash, &r.Terms, &created, &expires, &r.OrgName, &r.OrgSlug)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -79,9 +116,9 @@ func DeleteRegistration(ctx context.Context, q Q, id string) (bool, error) {
 	return n == 1, nil
 }
 
-// DeleteRegistrationsOf cancels every pending registration of a tenant.
+// DeleteRegistrationsOf cancels every pending registration that joins a tenant.
 func DeleteRegistrationsOf(ctx context.Context, q Q, tenant string) (int64, error) {
-	res, err := q.Exec(ctx, `DELETE FROM registrations WHERE tenant_id = ?`, tenant)
+	res, err := q.Exec(ctx, `DELETE FROM registrations WHERE tenant_id = ? AND org_slug = ''`, tenant)
 	if err != nil {
 		return 0, err
 	}

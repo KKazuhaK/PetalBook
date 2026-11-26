@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
@@ -20,7 +18,7 @@ import (
 // Tenants (milestone 3.3, docs/api.md "Tenants, registration and mail"): the
 // switch that allows more than the default tenant, and the tenants themselves.
 
-var tenantSlugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,31}$`)
+var tenantSlugRE = store.TenantSlugRE
 
 type tenantRefResp struct {
 	ID   string `json:"id"`
@@ -39,10 +37,14 @@ type tenantResp struct {
 	} `json:"registration"`
 	Quota map[string]*int64 `json:"quota"`
 	// Plan is the plan the tenant has, null for none.
-	Plan    *planRefResp    `json:"plan"`
-	Usage   tenantUsageResp `json:"usage"`
-	Created string          `json:"created"`
-	Updated string          `json:"updated"`
+	Plan *planRefResp `json:"plan"`
+	// Origin is how the tenant came to be: default, admin or self; CreatedBy
+	// the id of the person who made a self one ("" otherwise).
+	Origin    string          `json:"origin"`
+	CreatedBy string          `json:"createdBy"`
+	Usage     tenantUsageResp `json:"usage"`
+	Created   string          `json:"created"`
+	Updated   string          `json:"updated"`
 }
 
 // quotaOf is the tenant's totals in force, from its quota.* settings: read only
@@ -56,7 +58,7 @@ func (s *server) quotaOf(ctx context.Context, tenant string) map[string]*int64 {
 // lookup of its own, or one query for a page: see usageOf) and plans the
 // request's plan index (nil reads it).
 func (s *server) toTenant(ctx context.Context, t store.Tenant, u store.Usage, plans planIndex) (r tenantResp, err error) {
-	r = tenantResp{ID: t.ID, Slug: t.Slug, Name: t.Name, Default: t.IsDefault(), Disabled: t.Disabled, Quota: s.quotaOf(ctx, t.ID),
+	r = tenantResp{ID: t.ID, Slug: t.Slug, Name: t.Name, Default: t.IsDefault(), Disabled: t.Disabled, Quota: s.quotaOf(ctx, t.ID), Origin: t.Origin, CreatedBy: t.CreatedBy,
 		Usage: toTenantUsage(u), Created: rfc3339(t.Created), Updated: rfc3339(t.Updated)}
 	if r.Plan, err = s.planRef(ctx, t.ID, plans); err != nil {
 		return r, err
@@ -97,7 +99,13 @@ func (s *server) adminListTenants(c *call) {
 		return
 	}
 	q := c.r.URL.Query()
-	rows, next, err := store.ListTenants(c.r.Context(), s.opt.Store.Q(), s.opt.Store.Dialect(), strings.TrimSpace(q.Get("q")), q.Get("cursor"), limit)
+	switch q.Get("origin") {
+	case "", store.OriginDefault, store.OriginAdmin, store.OriginSelf:
+	default:
+		writeError(c.w, http.StatusBadRequest, "invalid", "Origin is default, admin or self.")
+		return
+	}
+	rows, next, err := store.ListTenants(c.r.Context(), s.opt.Store.Q(), s.opt.Store.Dialect(), strings.TrimSpace(q.Get("q")), q.Get("origin"), q.Get("cursor"), limit)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -168,13 +176,7 @@ func (s *server) adminGetTenant(c *call) {
 	s.fail(c.w, err)
 }
 
-func cleanTenantName(in string) (string, bool) {
-	n := strings.TrimSpace(in)
-	if n == "" || utf8.RuneCountInString(n) > 80 || strings.ContainsFunc(n, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return "", false
-	}
-	return n, true
-}
+func cleanTenantName(in string) (string, bool) { return store.CleanTenantName(in) }
 
 func (s *server) adminCreateTenant(c *call) {
 	var req struct {
@@ -195,6 +197,10 @@ func (s *server) adminCreateTenant(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit; name is 1 to 80 characters.")
 		return
 	}
+	if store.SlugReserved(req.Slug) {
+		writeError(c.w, http.StatusConflict, "slug_reserved", "That organization address is reserved.")
+		return
+	}
 	// The first administrator's details are checked as the invite checks them,
 	// before the tenant is made, so a bad one makes nothing. Each may be "": the
 	// person fills it in when they accept (a username they must).
@@ -207,14 +213,14 @@ func (s *server) adminCreateTenant(c *call) {
 		}
 	}
 	now := time.Now().UTC()
-	t := store.Tenant{ID: page.NewID(now), Slug: req.Slug, Name: name, Created: now, Updated: now}
+	t := store.Tenant{ID: page.NewID(now), Slug: req.Slug, Name: name, Origin: store.OriginAdmin, CreatedBy: c.user().ID, Created: now, Updated: now}
 	err = s.opt.Store.CreateTenant(ctx, t)
 	switch {
 	case errors.Is(err, store.ErrTenantLimit):
 		writeError(c.w, http.StatusConflict, "tenant_limit", "A server has at most "+strconv.Itoa(store.MaxTenants)+" tenants.")
 		return
 	case store.IsUnique(err):
-		if on, _ := store.UniqueOn(err); strings.Contains(on, "slug") {
+		if store.TenantSlugClash(err) {
 			writeError(c.w, http.StatusConflict, "exists", "That slug is taken.")
 			return
 		}
@@ -225,7 +231,7 @@ func (s *server) adminCreateTenant(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	s.audit(c, auth.AuditEvent{Kind: "tenant_created", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "slug": t.Slug}})
+	s.audit(c, auth.AuditEvent{Kind: "tenant_created", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "slug": t.Slug, "origin": store.OriginAdmin}})
 	resp, err := s.toTenant(ctx, t, store.Usage{}, nil)
 	if err != nil {
 		s.fail(c.w, err)

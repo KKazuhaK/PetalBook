@@ -34,6 +34,7 @@ var featureNames = map[string]string{
 	settings.FeaturePasskeys:        "passkeys",
 	settings.MailOwnSender:          "own mail sender",
 	settings.AccountsMultipleEmails: "multiple email addresses",
+	settings.FeatureOrgCreation:     "organizations people create",
 }
 
 // featureOffError is the refusal of a feature the tenant does not have: 403

@@ -2,9 +2,9 @@
 // "Password reset"): the mail settings, registration, the verification and reset links. THE MOCK NEVER SENDS: a
 // message goes into `outbox`, which tests and the dev page read; nothing leaves the process.
 
-import { HttpError, isRecord } from './store.ts'
+import { HttpError, isRecord, RESERVED_SLUGS } from './store.ts'
 import type { MockResponse } from './server.ts'
-import type { MailSecurity, MailSettings, RegisterInfo, User } from '../types.ts'
+import type { MailSecurity, MailSettings, RegisteredOrg, RegisterInfo, User } from '../types.ts'
 
 export interface OutboxMessage {
   to: string
@@ -12,6 +12,8 @@ export interface OutboxMessage {
     | 'verify'
     | 'register'
     | 'register_exists'
+    | 'register_org'
+    | 'register_org_refused'
     | 'reset'
     | 'reset_sso'
     | 'email_changed'
@@ -53,10 +55,25 @@ export interface MailBookOptions {
   checkCaptcha: (ctx: 'forgot' | 'register', key: string, sent: unknown) => void
   noteCaptchaFailure: (ctx: 'forgot' | 'register', key: string) => void
   // Makes the account and returns the cookie of its session.
-  makeAccount: (p: { username: string; name: string; email: string; passwordHash: string; terms: string }) => {
+  // With `org`, the account is the administrator of an organisation made with it (the slug gets a number when it was
+  // taken since).
+  makeAccount: (p: {
+    username: string
+    name: string
+    email: string
+    passwordHash: string
+    terms: string
+    org?: { name: string; slug: string }
+  }) => {
     user: User
     cookie: string
+    org?: RegisteredOrg
   }
+  // The site's rules for organisations people create: open (the switch, tenancy and mail), how many a person may make,
+  // the hour's cap for the server (null: none), and whether the slug is taken by a tenant.
+  orgRules: () => { open: boolean; perPerson: number; perHour: number | null }
+  orgSlugTaken: (slug: string) => boolean
+  tenantCount: () => number
   setPassword: (id: string, hash: string) => void
   endSessions: (id: string) => void
   ssoOnlyInEffect: () => boolean
@@ -76,6 +93,8 @@ interface Pending {
   passwordHash: string
   terms: string
   expires: number
+  // Set when the registration makes an organisation.
+  org?: { name: string; slug: string }
 }
 interface Token {
   kind: 'verify' | 'reset'
@@ -115,6 +134,7 @@ export function createMailBook(o: MailBookOptions) {
   const tokens = new Map<string, Token>()
   const caps = new Map<string, number[]>() // address -> times of the last hour
   const regTimes: number[] = []
+  const orgTimes: number[] = []
   const stamp = () => new Date(o.now()).toISOString().replace(/\.\d+Z$/, 'Z')
   const ready = () => mail.enabled && o.publicUrl !== null
 
@@ -149,8 +169,9 @@ export function createMailBook(o: MailBookOptions) {
     return t && t.kind === kind && !t.used && t.expires > o.now() ? { hash: h, t } : null
   }
   const open = () => ready() && o.rules().open
+  const orgOpen = () => ready() && o.orgRules().open
   const cancelClosed = () => {
-    if (!open()) pending.clear()
+    for (const [h, p] of pending) if (p.org ? !orgOpen() : !open()) pending.delete(h)
   }
   const canUsePassword = (u: MailUser) => u.passwordHash !== undefined && !(o.ssoOnlyInEffect() && u.role !== 'admin')
   const resetLink = (u: MailUser): string => link('/reset-password', newToken('reset', u.id, u.email, HOUR))
@@ -246,20 +267,36 @@ export function createMailBook(o: MailBookOptions) {
 
   const registerInfo = (): RegisterInfo => {
     const r = o.rules()
-    return open()
+    const orgCreation = { open: orgOpen() }
+    return open() || orgCreation.open
       ? {
-          open: true,
+          open: open(),
+          orgCreation,
           tenant: { slug: 'default', name: 'Default' },
           domains: r.domains,
           termsUrl: r.termsUrl,
           privacyUrl: r.privacyUrl,
           password: { minLength: 8 },
         }
-      : { open: false }
+      : { open: false, orgCreation }
+  }
+
+  // An organisation's name and slug, checked as the server checks them; the slug must be free.
+  const cleanOrg = (raw: unknown): { name: string; slug: string } => {
+    const b = isRecord(raw) ? raw : {}
+    const name = typeof b.name === 'string' ? b.name.trim() : ''
+    const slug = typeof b.slug === 'string' ? b.slug : ''
+    if (!name || name.length > 80 || !/^[a-z0-9][a-z0-9-]{1,31}$/.test(slug))
+      bad('slug is 2 to 32 characters of a-z, 0-9 and -; name is 1 to 80 characters')
+    if (RESERVED_SLUGS.has(slug)) err(409, 'slug_reserved', '这个组织地址是保留的')
+    if (o.orgSlugTaken(slug) || [...pending.values()].some((p) => p.org?.slug === slug && p.expires > o.now()))
+      err(409, 'slug_taken', '这个组织地址已被占用')
+    return { name, slug }
   }
 
   const register = (body: Record<string, unknown>): MockResponse => {
-    if (!open()) err(403, 'registration_closed', '这里不开放注册')
+    const wantsOrg = body.org !== undefined && body.org !== null
+    if (!(wantsOrg ? orgOpen() : open())) err(403, 'registration_closed', '这里不开放注册')
     try {
       o.checkCaptcha('register', 'ip', body.captcha)
     } catch (e) {
@@ -272,16 +309,31 @@ export function createMailBook(o: MailBookOptions) {
     if (!ADDRESS.test(email) || email.length > 254) bad('邮箱不合法')
     const hashed = o.hash(o.checkPassword(body.password))
     const r = o.rules()
-    if (!domainOk(email, r.domains)) err(400, 'email_domain_not_allowed', '这个邮箱域名不在允许的范围内')
+    // An organisation's founder is held to no tenant's domain list, and the slug is checked before the address is.
+    const org = wantsOrg ? cleanOrg(body.org) : undefined
+    if (!org && !domainOk(email, r.domains)) err(400, 'email_domain_not_allowed', '这个邮箱域名不在允许的范围内')
     const needsTerms = r.termsUrl !== '' || r.privacyUrl !== ''
     if (needsTerms && body.acceptTerms !== true) err(400, 'terms_required', '要同意条款才能注册')
     const live = [...pending.values()].filter((p) => p.expires > o.now())
     if (o.usernameTaken(username) || live.some((p) => p.username === username))
       err(409, 'exists', '这个用户名已经有人用了')
-    regTimes.splice(0, regTimes.length, ...regTimes.filter((t) => o.now() - t < HOUR))
-    if (regTimes.length >= r.perHour || live.length >= 1000)
-      throw new HttpError(429, 'rate_limited', '注册太多了，请稍后再试', { __retryAfter: 600 })
-    regTimes.push(o.now())
+    // The caps of an organisation answer 202 as always; the message says that none was made.
+    let capped = false
+    if (org) {
+      const rules = o.orgRules()
+      orgTimes.splice(0, orgTimes.length, ...orgTimes.filter((t) => o.now() - t < HOUR))
+      capped = rules.perPerson <= 0 || o.tenantCount() >= 1000
+      if (!capped && rules.perHour !== null) {
+        capped = orgTimes.length >= rules.perHour
+        if (!capped) orgTimes.push(o.now())
+      }
+      capped = capped || live.filter((p) => p.org).length >= 1000
+    } else {
+      regTimes.splice(0, regTimes.length, ...regTimes.filter((t) => o.now() - t < HOUR))
+      if (regTimes.length >= r.perHour || live.length >= 1000)
+        throw new HttpError(429, 'rate_limited', '注册太多了，请稍后再试', { __retryAfter: 600 })
+      regTimes.push(o.now())
+    }
     const ok = { status: 202, body: { sent: true } }
     const have = [...o.users()].find(
       (u) => !u.disabled && u.emailVerified && u.email.toLowerCase() === email.toLowerCase(),
@@ -294,6 +346,10 @@ export function createMailBook(o: MailBookOptions) {
       return ok
     }
     if (!take(`to:${email.toLowerCase()}`, 3)) return ok
+    if (capped) {
+      post({ to: email, kind: 'register_org_refused' })
+      return ok
+    }
     const raw = o.random(43)
     pending.set(o.hash(raw), {
       username,
@@ -302,8 +358,9 @@ export function createMailBook(o: MailBookOptions) {
       passwordHash: hashed,
       terms: needsTerms ? JSON.stringify({ at: stamp(), termsUrl: r.termsUrl, privacyUrl: r.privacyUrl }) : '',
       expires: o.now() + 24 * HOUR,
+      ...(org ? { org } : {}),
     })
-    post({ to: email, kind: 'register', link: link('/register/confirm', raw), token: raw })
+    post({ to: email, kind: org ? 'register_org' : 'register', link: link('/register/confirm', raw), token: raw })
     return ok
   }
 
@@ -311,9 +368,10 @@ export function createMailBook(o: MailBookOptions) {
     const h = typeof body.token === 'string' ? o.hash(body.token) : ''
     const p = pending.get(h)
     if (!p || p.expires <= o.now()) return badLink()
-    if (!open()) err(403, 'registration_closed', '这里不开放注册')
+    if (!(p.org ? orgOpen() : open())) err(403, 'registration_closed', '这里不开放注册')
     if (o.ssoOnlyInEffect()) err(403, 'local_login_refused', '这个服务器只允许通过单点登录进入')
     if (o.usernameTaken(p.username)) err(409, 'exists', '这个用户名已经有人用了')
+    if (p.org && o.orgRules().perPerson <= 0) err(403, 'org_limit', '不能再创建组织了')
     pending.delete(h)
     const made = o.makeAccount({
       username: p.username,
@@ -321,9 +379,14 @@ export function createMailBook(o: MailBookOptions) {
       email: p.email,
       passwordHash: p.passwordHash,
       terms: p.terms,
+      ...(p.org ? { org: p.org } : {}),
     })
     o.record('registered', { user: made.user.id, detail: { email: p.email } })
-    return { status: 201, body: { user: made.user }, headers: { 'Set-Cookie': made.cookie } }
+    return {
+      status: 201,
+      body: { user: made.user, ...(made.org ? { tenant: made.org } : {}) },
+      headers: { 'Set-Cookie': made.cookie },
+    }
   }
 
   const requestVerify = (u: MailUser): MockResponse => {
@@ -462,6 +525,7 @@ export function createMailBook(o: MailBookOptions) {
     outbox,
     ready,
     open,
+    orgOpen,
     view,
     put,
     test,

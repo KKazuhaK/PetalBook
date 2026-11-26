@@ -1547,7 +1547,7 @@ function suite(target: Target) {
           expect(mail.enabled).toBe(false)
           expect(mail).toMatchObject({ security: 'starttls', hasPassword: false })
           const anon = browser()
-          expect((await call(anon, 'GET', '/api/register')).json).toEqual({ open: false })
+          expect((await call(anon, 'GET', '/api/register')).json).toEqual({ open: false, orgCreation: { open: false } })
           const pr = (await call(anon, 'GET', '/api/auth/providers')).json
           expect([pr.register, pr.forgot]).toEqual([false, false])
           expect((await call(anon, 'POST', '/api/password/forgot', { login: 'nobody' })).json.error).toBe(
@@ -1577,6 +1577,39 @@ function suite(target: Target) {
             ['POST', '/api/admin/mail/test'],
           ] as const)
             expect((await call(m.browser, method, path, method === 'GET' ? undefined : {})).status, path).toBe(403)
+        })
+
+        it('organisations people create are off by default; switching them on needs tenants and mail; a registration for one is closed meanwhile', async () => {
+          const was = await siteValue(admin, 'features.tenancy')
+          const anon = browser()
+          try {
+            expect((await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: false })).status).toBe(
+              200,
+            )
+            const noTenancy = await call(admin, 'PUT', '/api/admin/settings/features.orgCreation', { value: true })
+            expect([noTenancy.status, noTenancy.json.error]).toEqual([409, 'needs_tenancy'])
+            expect((await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: true })).status).toBe(200)
+            const noMail = await call(admin, 'PUT', '/api/admin/settings/features.orgCreation', { value: true })
+            expect([noMail.status, noMail.json.error]).toEqual([409, 'needs_mail'])
+            expect(await siteValue(admin, 'features.orgCreation')).toBe(false)
+            expect(await siteValue(admin, 'orgCreation.perPerson')).toBe(3)
+            expect(await siteValue(admin, 'orgCreation.perHour')).toBe(null)
+            const closed = await call(anon, 'POST', '/api/register', {
+              username: 'x2',
+              name: 'x',
+              email: 'x@example.test',
+              password: 'a-long-password',
+              org: { name: 'Acme', slug: 'acme-x' },
+            })
+            expect([closed.status, closed.json.error]).toEqual([403, 'registration_closed'])
+            const bad = await call(admin, 'GET', '/api/admin/tenants?origin=bogus')
+            expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+            const list = await call(admin, 'GET', '/api/admin/tenants?origin=default')
+            expect(list.json.items).toHaveLength(1)
+            expect(list.json.items[0]).toMatchObject({ default: true, origin: 'default', createdBy: '' })
+          } finally {
+            await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: was })
+          }
         })
 
         it('the switch gates making tenants; a tenant is made, listed, renamed, disabled and deleted; the default one is kept', async () => {
@@ -8465,6 +8498,7 @@ function suite(target: Target) {
           passkey: true,
           register: false,
           forgot: false,
+          orgCreation: false,
         })
         const made = await call(root, 'POST', '/api/admin/auth/providers', company)
         expect(made.status).toBe(201)
@@ -8486,6 +8520,7 @@ function suite(target: Target) {
           passkey: true,
           register: false,
           forgot: false,
+          orgCreation: false,
         })
         await putSite(root, 'signin.mode', 'sso_redirect')
         expect((await call(b28(), 'GET', '/api/auth/providers')).json).toMatchObject({
