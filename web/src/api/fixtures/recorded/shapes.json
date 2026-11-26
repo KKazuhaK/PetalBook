@@ -4777,6 +4777,7 @@
   "permission": "string"
  },
  "POST /api/invites/accept 201": {
+  "hold": "null",
   "user": {
    "created": "string",
    "disabled": "boolean",
@@ -4785,6 +4786,9 @@
    "id": "string",
    "name": "string",
    "passkeyRequired": "boolean",
+   "permissions": [
+    "string"
+   ],
    "role": "string",
    "siteAdmin": "boolean",
    "tenant": {
@@ -4819,6 +4823,7 @@
   "message": "string"
  },
  "POST /api/login 200": {
+  "hold": "null|string",
   "user": {
    "created": "string",
    "disabled": "boolean",
@@ -4827,6 +4832,9 @@
    "id": "string",
    "name": "string",
    "passkeyRequired": "boolean",
+   "permissions": [
+    "string"
+   ],
    "role": "string",
    "siteAdmin": "boolean",
    "tenant": {
