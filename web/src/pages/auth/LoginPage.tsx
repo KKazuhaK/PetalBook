@@ -418,7 +418,7 @@ function LoginForm({
               {busy ? t.login.submitting : t.login.submit}
             </Button>
           </form>
-          {(providers.forgot || providers.register) && (
+          {(providers.forgot || providers.register || providers.orgCreation) && (
             <div className="flex flex-wrap justify-between gap-x-4 text-sm">
               {providers.forgot && (
                 <Link
@@ -434,6 +434,14 @@ function LoginForm({
                   className="inline-flex min-h-10 items-center text-brand underline underline-offset-4"
                 >
                   {tm.links.register}
+                </Link>
+              )}
+              {providers.orgCreation && (
+                <Link
+                  to="/register?org=1"
+                  className="inline-flex min-h-10 items-center text-brand underline underline-offset-4"
+                >
+                  {tm.links.createOrg}
                 </Link>
               )}
             </div>

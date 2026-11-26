@@ -6591,7 +6591,7 @@ too: the person then picks one when they accept (`POST /api/invites/accept`
 needs it). They are checked as `POST /api/invites` checks them (an ASCII
 address with something on both sides of the `@`, a name of 1 to 100 characters
 with no control characters), before the tenant is made: `400 invalid` for one
-that is not valid, and no tenant is made. `409 exists` for a slug taken;
+that is not valid, and no tenant is made. `409 exists` for a slug taken, `409 slug_reserved` for a reserved one (admin, api, support, petalbook, login and the like);
 `409 tenant_limit` at 1,000 tenants.
 
 ### `PATCH /api/admin/tenants/{tenant}`
@@ -6993,6 +6993,54 @@ which addresses), and a personal space, as for an invite. Refusals:
 address); `403 registration_closed` when registration was closed since (pending
 registrations are not honoured after closing); `409 exists` when the username
 was taken in between by an administrator. `registered` goes to the audit log.
+
+#### Organisations people create themselves
+
+`features.orgCreation` (site level only, default **off**) lets a person make an
+organisation of their own with the registration. Turning it on is refused with
+`409 needs_tenancy` while `features.tenancy` is off, `409 needs_mail` while mail
+is not enabled, and `409 sso_only_with_registration` while `ssoOnly` is stored
+on; turning off tenancy or mail closes it in effect. The other settings, all
+site level (a tenant does not exist yet; creating one takes the site's
+resources): `orgCreation.perPerson` (0 to 100, default 3: how many organisations one account
+created, counted by `createdBy`; it becomes meaningful with signed-in creation in
+3.7, because in 3.6 a registration creates at most one), `orgCreation.perHour`
+(for the whole server, default null: no cap) and `orgCreation.plan` (a plan's
+slug, `""` for none; `400 invalid` for a plan that does not exist).
+
+- `GET /api/register` also has `orgCreation: {"open": true|false}`; `open` is the
+  joining of the tenant, as before. When neither is open the answer is
+  `{"open": false, "orgCreation": {"open": false}}`. `GET /api/auth/providers` has
+  `orgCreation` (the same boolean) next to `register`.
+- `POST /api/register` takes `org: {"name": "Acme", "slug": "acme"}` (`tenant` is
+  then ignored). The switch is checked where registration openness is
+  (`403 registration_closed`); the domain list of a tenant does not apply. The
+  slug follows the administrator's rule (2 to 32 of a-z, 0-9 and -, starting with
+  a letter or digit; the name 1 to 80 characters): `400 invalid`, and
+  `409 slug_taken` when a tenant or a pending registration holds it (slugs are
+  public, so this leaks nothing) and `409 slug_reserved` for a reserved address
+  (admin, api, support, petalbook, login and the like; the administrator's
+  `POST /api/admin/tenants` refuses the same list), before any address is looked at. The caps
+  (`perPerson` 0, the server's 1,000 tenants, `perHour`, 1,000 pending) are
+  checked before anything is written (`perHour` is counted again at confirm, from the
+  organisations made in the last hour: `403 org_limit`); over one the answer is still `202`, no
+  username or slug is held, and the address gets a message that says no
+  organisation was made.
+- `POST /api/register/confirm` makes, **in one transaction**, the tenant
+  (`origin: "self"`, `createdBy` the new person, the plan of `orgCreation.plan`)
+  and the account as its `admin` (never a site administrator) with its personal
+  space. The answer has `tenant: {"slug", "name", "renamed"}`; when the slug was
+  taken in the meantime a number is added and `renamed` is `true`.
+  `403 org_limit` when the person's cap (re-read in the transaction), the hour's
+  cap or the switch no longer allows it; nothing is made and the link still stands.
+  `tenant_created` goes to the audit log with `detail.origin` `self` (`admin` for
+  a site administrator's).
+- `GET /api/admin/tenants` rows have `origin` (`default`, `admin` or `self`) and
+  `createdBy` (a user id; an administrator's own for `admin`), and take
+  `?origin=` (`400 invalid` for another value).
+
+A new tenant, whoever makes it, copies no settings: it follows the site's
+defaults until its administrators say otherwise, and gets no shared space.
 
 ### Secrets
 

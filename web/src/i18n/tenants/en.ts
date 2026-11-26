@@ -157,6 +157,10 @@ export const tenantsEn: TenantsMessages = {
     actions: 'Actions',
     default: 'Default',
     disabled: 'Disabled',
+    originSelf: 'Created by a person',
+    filterLabel: 'Show',
+    filterAll: 'All',
+    filterSelf: (n: number) => `Created by people (${n})`,
     active: 'Active',
     manage: 'Manage',
     close: 'Close',
@@ -259,6 +263,7 @@ export const tenantsEn: TenantsMessages = {
       cache: 'Cache',
       files: 'Files',
       registration: 'Registration',
+      orgCreation: 'Organisations people create',
       legal: 'Legal',
       daily: 'Daily text',
       mail: 'Mail',
@@ -279,6 +284,8 @@ export const tenantsEn: TenantsMessages = {
       setting_until_past: 'The rule ends in the past.',
       setting_above_max: 'The value is above the maximum; raise the maximum first.',
       mail_not_configured: 'Registration verifies addresses by mail, and sending mail is not enabled yet.',
+      needs_mail: 'Organisations people create are confirmed by mail, and sending mail is not enabled yet.',
+      needs_tenancy: 'Organisations people create need the tenants switch; switch it on first.',
       sso_only_with_registration: 'Registration cannot be open while only single sign-on is allowed.',
       conflict: 'This one is set by a command-line flag.',
       invalid: 'That value is not valid.',
@@ -334,6 +341,10 @@ export const tenantsEn: TenantsMessages = {
       'features.tokens': 'API tokens may be made and used',
       'features.mcp': 'MCP and OAuth for MCP clients',
       'features.tenancy': 'Tenants besides the default one may exist',
+      'features.orgCreation': 'People may create organisations of their own',
+      'orgCreation.perPerson': 'Organisations one person may create',
+      'orgCreation.perHour': 'Organisations created in an hour (whole server)',
+      'orgCreation.plan': 'Plan a new organisation starts with',
       'features.passkeys': 'Passkeys may be used to sign in',
       'signin.mode': 'Sign-in page mode',
       'signin.ssoOnly': 'Single sign-on only',
@@ -366,6 +377,14 @@ export const tenantsEn: TenantsMessages = {
         'On by default. Off, nobody of the tenant can make or use API tokens; the tokens are kept and work again when it is on. A tenant may switch it off for itself; the site may force it for one tenant.',
       'features.mcp':
         'On by default. Off, /mcp and the authorization server answer 404 for the tenant; connected apps are kept. A tenant may switch it off for itself; the site may force it for one tenant.',
+      'features.orgCreation':
+        'Off by default. On: the registration page offers "Create my organisation": a person gives a name and an address, confirms their email, and becomes the administrator of a new tenant (never a site administrator). Needs the tenants switch and mail. Site administrators only.',
+      'orgCreation.perPerson':
+        'At most this many organisations one account may create; 0 allows none. It counts the organisations an account created, and matters once signed-in people can create more (milestone 3.7): a registration creates at most one. Site administrators only.',
+      'orgCreation.perHour':
+        'Empty (the default) is no cap. Over it, a request is answered as usual and the message says that no organisation was made.',
+      'orgCreation.plan':
+        'The slug of a plan that every organisation people create starts with; empty is no plan. Rules of the plan apply to it at once.',
       'features.tenancy':
         'Off by default: the server has only the default tenant. Switching it off leaves the tenants that exist as they are; it only stops new ones. Tenants are kept apart by query conditions in one process and one database.',
       'storage.remotes.require':

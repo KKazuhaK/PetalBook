@@ -10,6 +10,7 @@ import { forgetLastAccount } from '@/lib/lastAccount'
 import { ENDED_REASONS } from './types'
 import type {
   RegisterInfo,
+  RegisteredOrg,
   RegisterInput,
   MySettings,
   EffectiveMemberList,
@@ -877,7 +878,10 @@ export const api = {
     request<RegisterInfo>(`/register${tenant ? `?tenant=${enc(tenant)}` : ''}`, { signal }),
   register: (input: RegisterInput) => request<{ sent: boolean }>('/register', { method: 'POST', body: input }),
   registerConfirm: async (token: string) => {
-    const r = await request<{ user: User }>('/register/confirm', { method: 'POST', body: { token } })
+    const r = await request<{ user: User; tenant?: RegisteredOrg }>('/register/confirm', {
+      method: 'POST',
+      body: { token },
+    })
     markSignedIn()
     return r
   },

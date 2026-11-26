@@ -329,7 +329,7 @@ func (s *Service) bindSettings() {
 		// Open registration needs people who can sign in with a password.
 		if open, err := s.RegistrationOpenAnywhere(ctx); err != nil {
 			return nil, err
-		} else if open {
+		} else if open || s.OrgCreation(ctx).Open {
 			return nil, coded(400, "sso_only_with_registration", "Registration is open for a tenant; close it before refusing password sign-in.")
 		}
 		return v, s.needPasswordAdmin(ctx)

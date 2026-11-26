@@ -492,6 +492,7 @@ const GROUP_ORDER = [
   'cache',
   'files',
   'registration',
+  'orgCreation',
   'legal',
   'daily',
   'mail',

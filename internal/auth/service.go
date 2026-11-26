@@ -608,7 +608,28 @@ type CreateParams struct {
 	PasswordHash   string
 	RegistrationID string
 	Terms          string
+	// NewTenant makes the account's tenant in the same transaction, with the
+	// account as its administrator (Role must be admin; SiteAdmin and TenantID
+	// are ignored). CreateUser fills in the tenant it made.
+	NewTenant *NewTenant
 }
+
+// NewTenant is the tenant an account makes with itself (an organisation a
+// person registers). Slug may be given a numeric suffix when it is taken in the
+// meantime; Made is the tenant as it was stored.
+type NewTenant struct {
+	Name, Slug string
+	// PlanSlug is the plan it starts with, "" for none (a plan that does not
+	// exist is none).
+	PlanSlug string
+	// MaxPerPerson is how many the person may have made; the count is read in
+	// the transaction.
+	MaxPerPerson int
+	Made         store.Tenant
+}
+
+// errOrgLimit is the refusal of an organisation over the person's cap.
+var errOrgLimit = coded(403, "org_limit", "No more organisations can be made.")
 
 // IdentityParams is an external identity to attach.
 type IdentityParams struct {
@@ -682,6 +703,21 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	if p.TenantID == "" {
 		p.TenantID, p.SiteAdmin = store.DefaultTenantID, store.IsAdminRole(p.Role)
 	}
+	var planID string
+	if nt := p.NewTenant; nt != nil {
+		if !store.IsAdminRole(p.Role) {
+			return nil, errf(Invalid, "The first account of an organisation is its administrator.")
+		}
+		nt.Made = store.Tenant{ID: s.newID(), Slug: nt.Slug, Name: nt.Name, Origin: store.OriginSelf, Created: s.now().UTC(), Updated: s.now().UTC()}
+		p.TenantID, p.SiteAdmin = nt.Made.ID, false
+		if nt.PlanSlug != "" {
+			if pl, err := store.GetPlanBySlug(ctx, s.st.Q(), nt.PlanSlug); err == nil {
+				planID = pl.ID
+			} else if !errors.Is(err, store.ErrNotFound) {
+				return nil, err
+			}
+		}
+	}
 	u := store.User{Username: username, Name: name, Email: email, EmailVerified: p.EmailVerified && email != "", Role: p.Role, Created: s.now().UTC(),
 		TenantID: p.TenantID, SiteAdmin: store.IsSiteAdminRole(p.Role, p.SiteAdmin)}
 	stg, err := s.cfg.Spaces.Stage("My notes", spaces.IdentityOf(u))
@@ -695,6 +731,9 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		released = nil
 		if attempt > 0 && p.RetryUsername {
 			cand.Username = suffixed(username, attempt)
+		}
+		if p.NewTenant != nil {
+			p.NewTenant.Made.CreatedBy = cand.ID
 		}
 		err = s.st.Tx(ctx, func(q store.Q) error {
 			switch {
@@ -719,6 +758,23 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return err
 				} else if !ok {
 					return errf(NotFound, "That link is not valid, or has expired.")
+				}
+			}
+			// An organisation the account makes: the tenant first (the user row
+			// refers to it), within the cap of the person and of the server.
+			if nt := p.NewTenant; nt != nil {
+				if n, err := store.CountTenantsCreatedBy(ctx, q, cand.ID); err != nil {
+					return err
+				} else if n >= nt.MaxPerPerson {
+					return errOrgLimit
+				}
+				if err := store.InsertTenant(ctx, q, nt.Made); err != nil {
+					return err
+				}
+				if planID != "" {
+					if err := store.SetTenantPlan(ctx, q, nt.Made.ID, planID); err != nil {
+						return err
+					}
 				}
 			}
 			// The tenant must exist, and take new people: an invite of a disabled
@@ -792,6 +848,10 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		}
 		if on, ok := store.UniqueOn(err); ok {
 			switch {
+			case p.NewTenant != nil && store.TenantSlugClash(err) && attempt < 20:
+				// Someone took the slug since it was checked: a number is added.
+				p.NewTenant.Made.Slug = suffixedSlug(p.NewTenant.Slug, attempt)
+				continue
 			case strings.Contains(on, "username"):
 				if p.RetryUsername && attempt < 20 {
 					continue
@@ -810,6 +870,11 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		return nil, err
 	}
 	stg.Commit(u.ID)
+	if p.NewTenant != nil {
+		if err := s.st.TenantStateReload(ctx); err != nil {
+			s.log.Warn("could not reload the tenants", "error", err)
+		}
+	}
 	s.markUsersExist()
 	if released != nil {
 		s.emailReleased(ctx, *released, u)
@@ -822,6 +887,15 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 
 func suffixed(base string, n int) string {
 	suf := "-" + itoa(n+1)
+	if len(base)+len(suf) > 32 {
+		base = base[:32-len(suf)]
+	}
+	return base + suf
+}
+
+// suffixedSlug is slug with -2, -3, ... added (n counts the tries before).
+func suffixedSlug(base string, n int) string {
+	suf := "-" + itoa(n+2)
 	if len(base)+len(suf) > 32 {
 		base = base[:32-len(suf)]
 	}

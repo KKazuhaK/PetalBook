@@ -107,6 +107,17 @@ const (
 	// FeaturePasskeys is whether passkeys may be used to sign in.
 	FeaturePasskeys = "features.passkeys"
 
+	// Organisations people create themselves (docs/design/3-6-c.md, 2): the
+	// switch, how many one person may make, an optional cap per hour for the
+	// whole server, and the plan a new one starts with (a plan's slug, "" for
+	// none). Site level only: the tenant does not exist yet, and making one takes
+	// the server's resources.
+	FeatureOrgCreation   = "features.orgCreation"
+	OrgCreationPerPerson = "orgCreation.perPerson"
+	OrgCreationPerHour   = "orgCreation.perHour"
+	OrgCreationPlan      = "orgCreation.plan"
+	orgCreationWhy       = "a tenant does not exist yet; creating one takes the site's resources"
+
 	// The sign-in policy, the same for every tenant: the sign-in page comes
 	// before any tenant is known.
 	SigninMode           = "signin.mode" // dual, sso_first, sso_redirect or local_only
@@ -212,6 +223,12 @@ func baseDefinitions() []*Def {
 			ServerWide: "whether tenants besides the default one exist is the server's"},
 		{Key: FeaturePasskeys, Kind: Bool, Layers: []Layer{Site}, Default: true, Lower: Lower{Mode: Allow},
 			ServerWide: signinWhy},
+
+		// Organisations people create themselves: off until the site allows it.
+		{Key: FeatureOrgCreation, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: orgCreationWhy},
+		{Key: OrgCreationPerPerson, Kind: Limit, Layers: []Layer{Site}, Default: int64(3), Min: 0, Max: 100, Lower: Lower{Mode: Allow}, ServerWide: orgCreationWhy},
+		{Key: OrgCreationPerHour, Kind: Limit, Layers: []Layer{Site}, Default: nil, Min: 1, Max: 100000, Nullable: true, Lower: Lower{Mode: Allow}, ServerWide: orgCreationWhy},
+		{Key: OrgCreationPlan, Kind: Text, Layers: []Layer{Site}, Default: "", Lower: Lower{Mode: Allow}, ServerWide: orgCreationWhy},
 
 		// The sign-in policy.
 		{Key: SigninMode, Kind: Choice, Layers: []Layer{Site}, Default: "dual", Choices: []string{"dual", "sso_first", "sso_redirect", "local_only"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},

@@ -115,6 +115,11 @@ func (s *Service) SSOOnlyStored(ctx context.Context) bool { return s.sec(ctx).Lo
 // CancelClosedRegistrations deletes the pending registrations of every tenant
 // whose registration is not open (closing it cancels them).
 func (s *Service) CancelClosedRegistrations(ctx context.Context) error {
+	if !s.OrgCreation(ctx).Open {
+		if _, err := store.DeleteOrgRegistrations(ctx, s.st.Q()); err != nil {
+			return err
+		}
+	}
 	ids, err := store.TenantsWithRegistrations(ctx, s.st.Q())
 	if err != nil {
 		return err
@@ -177,6 +182,10 @@ type RegisterParams struct {
 	Captcha     *CaptchaAnswer
 	Lang        string
 	IP          string
+	// Org asks for an organisation of the person's own, with the person its
+	// administrator, instead of a place in TenantID's tenant (which is then the
+	// default tenant and is not looked at).
+	Org *OrgParams
 }
 
 func closedErr() *Error { return coded(403, "registration_closed", "Registration is not open.") }
@@ -188,12 +197,21 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	if err := s.allow(ctx, p.IP); err != nil {
 		return err
 	}
-	// 2. open for the tenant
+	// 2. open for the tenant, or the site lets people make their own
+	org := p.Org != nil
+	if org {
+		p.TenantID = store.DefaultTenantID
+	}
 	rules, err := s.Registration(ctx, p.TenantID)
 	if err != nil {
 		return err
 	}
-	if !rules.Open {
+	var orules OrgRules
+	if org {
+		if orules = s.OrgCreation(ctx); !orules.Open {
+			return closedErr()
+		}
+	} else if !rules.Open {
 		return closedErr()
 	}
 	// 3. the captcha
@@ -223,8 +241,17 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	if err := CheckPassword(p.Password); err != nil {
 		return err
 	}
-	// 5. the domain
-	if len(rules.Domains) > 0 && !domainAllowed(email, rules.Domains) {
+	// 5. the domain (a joining person's; an organisation's founder is held to
+	// no tenant's list, only to the hook of (d)), and the organisation's slug
+	var orgName, orgSlug string
+	if org {
+		if orgName, orgSlug, err = s.cleanOrg(ctx, *p.Org); err != nil {
+			return err
+		}
+		if err := s.orgCreationBlocked(ctx, email); err != nil {
+			return err
+		}
+	} else if len(rules.Domains) > 0 && !domainAllowed(email, rules.Domains) {
 		return coded(400, "email_domain_not_allowed", "Registration is open to some email domains only.")
 	}
 	// 6. the terms
@@ -249,13 +276,27 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	}
 	// 8. the tenant's hour and its pending registrations. Every request counts,
 	// whether or not the address already has an account, so the answer is the same.
-	if wait, ok := s.regCaps.TakeAll(ratelimit.Cost{Key: "reg:" + p.TenantID, Limit: rules.PerHour}); !ok {
-		return retryAfter(wait)
-	}
-	if n, err := store.CountPendingRegistrations(ctx, s.st.Q(), p.TenantID, s.now()); err != nil {
-		return err
-	} else if n >= maxPending {
-		return retryAfter(time.Hour)
+	// An organisation's caps are checked before anything is written; over one,
+	// the answer is the same 202 and the message says that none was made.
+	capped := false
+	if org {
+		capped = s.orgCapped(orules)
+		if !capped {
+			if n, err := store.CountPendingOrgRegistrations(ctx, s.st.Q(), s.now()); err != nil {
+				return err
+			} else if n >= maxPending {
+				capped = true
+			}
+		}
+	} else {
+		if wait, ok := s.regCaps.TakeAll(ratelimit.Cost{Key: "reg:" + p.TenantID, Limit: rules.PerHour}); !ok {
+			return retryAfter(wait)
+		}
+		if n, err := store.CountPendingRegistrations(ctx, s.st.Q(), p.TenantID, s.now()); err != nil {
+			return err
+		} else if n >= maxPending {
+			return retryAfter(time.Hour)
+		}
 	}
 	// The password is hashed in every case: the work does not tell.
 	hash, err := s.hasher.hash(ctx, p.Password)
@@ -274,6 +315,18 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	if _, ok := s.mailSlot(email, p.IP); !ok {
 		return nil
 	}
+	if capped {
+		// Nothing is held: not the username, not the slug.
+		if exists != nil {
+			return s.mailExisting(ctx, *exists, lang, p.IP)
+		}
+		if !decoy {
+			if err := s.sendMail(mail.KindRegisterOrgRefused, lang, email, mail.Vars{Org: orgName}); err != nil {
+				s.log.Warn("could not queue a message", "reason", err.Error())
+			}
+		}
+		return nil
+	}
 	var terms string
 	if rules.TermsURL != "" || rules.PrivacyURL != "" {
 		b, _ := json.Marshal(map[string]string{"at": rfc3339(s.now()), "termsUrl": rules.TermsURL, "privacyUrl": rules.PrivacyURL})
@@ -282,7 +335,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	tok := randomToken()
 	now := s.now().UTC()
 	r := store.Registration{TenantID: p.TenantID, Username: username, Name: name, Email: email, PasswordHash: hash, TokenHash: hashToken(tok),
-		Terms: terms, Created: now, Expires: now.Add(registrationTTL)}
+		Terms: terms, Created: now, Expires: now.Add(registrationTTL), OrgName: orgName, OrgSlug: orgSlug}
 	for attempt := 0; ; attempt++ {
 		r.ID = s.newID()
 		err = s.st.Tx(ctx, func(q store.Q) error { return store.InsertRegistration(ctx, q, r, now) })
@@ -290,6 +343,9 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 			break
 		}
 		if on, ok := store.UniqueOn(err); ok {
+			if strings.Contains(on, "org_slug") {
+				return errSlugTaken()
+			}
 			if strings.Contains(on, "username") {
 				return errf(Exists, "That username is taken.")
 			}
@@ -305,7 +361,11 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	if decoy {
 		return nil
 	}
-	if err := s.sendMail(mail.KindRegister, lang, email, mail.Vars{Username: username, Link: s.link("/register/confirm", tok), Hours: 24}); err != nil {
+	kind := mail.KindRegister
+	if org {
+		kind = mail.KindRegisterOrg
+	}
+	if err := s.sendMail(kind, lang, email, mail.Vars{Username: username, Org: orgName, Link: s.link("/register/confirm", tok), Hours: 24}); err != nil {
 		s.log.Warn("could not queue a registration message", "reason", err.Error())
 	}
 	return nil
@@ -420,47 +480,91 @@ func (s *Service) mailExisting(ctx context.Context, u store.User, lang, ip strin
 	return nil
 }
 
+// Registered is what a followed registration link made: the account and its
+// session, and the organisation when it made one (Slug was taken in the
+// meantime when Renamed).
+type Registered struct {
+	User    *store.User
+	Token   string
+	Org     *store.Tenant
+	Renamed bool
+}
+
 // RegisterConfirm makes the account a registration link is for, and signs it in.
-func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*store.User, string, error) {
+// A registration that asked for an organisation makes the tenant with it, in
+// one transaction, and the person is its administrator.
+func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*Registered, error) {
 	if err := s.gateToken(ctx, ip); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if !validToken(token) {
-		return nil, "", errBadLink()
+		return nil, errBadLink()
 	}
 	reg, err := store.FindRegistration(ctx, s.st.Q(), hashToken(token), s.now())
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, "", errBadLink()
+		return nil, errBadLink()
 	} else if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if !ctEqual(reg.TokenHash, hashToken(token)) {
-		return nil, "", errBadLink()
+		return nil, errBadLink()
 	}
 	s.refundIP(ip)
-	rules, err := s.Registration(ctx, reg.TenantID)
-	if err != nil {
-		return nil, "", err
-	}
-	if !rules.Open {
-		return nil, "", closedErr()
+	org := reg.OrgSlug != ""
+	var orules OrgRules
+	if org {
+		if orules = s.OrgCreation(ctx); !orules.Open {
+			return nil, closedErr()
+		}
+		// The hour's cap again, now that the person has the link: the requests
+		// that were answered before it was lowered, or all at once, are counted.
+		if orules.PerHour > 0 {
+			n, err := store.CountSelfTenantsSince(ctx, s.st.Q(), s.now().Add(-time.Hour))
+			if err != nil {
+				return nil, err
+			}
+			if n >= orules.PerHour {
+				return nil, errOrgLimit
+			}
+		}
+	} else if rules, err := s.Registration(ctx, reg.TenantID); err != nil {
+		return nil, err
+	} else if !rules.Open {
+		return nil, closedErr()
 	}
 	st := s.sec(ctx)
 	if s.ssoOnlyInEffect(st) {
-		return nil, "", errLocalRefused()
+		return nil, errLocalRefused()
 	}
-	u, err := s.CreateUser(ctx, CreateParams{Username: reg.Username, Name: reg.Name, Email: reg.Email, EmailVerified: true, TakeUnverified: true, Role: "member",
-		PasswordHash: reg.PasswordHash, TenantID: reg.TenantID, RegistrationID: reg.ID, Terms: reg.Terms})
+	p := CreateParams{Username: reg.Username, Name: reg.Name, Email: reg.Email, EmailVerified: true, TakeUnverified: true, Role: "member",
+		PasswordHash: reg.PasswordHash, TenantID: reg.TenantID, RegistrationID: reg.ID, Terms: reg.Terms}
+	if org {
+		p.Role = "admin"
+		p.NewTenant = &NewTenant{Name: reg.OrgName, Slug: reg.OrgSlug, PlanSlug: orules.PlanSlug, MaxPerPerson: orules.PerPerson}
+	}
+	u, err := s.CreateUser(ctx, p)
 	if err != nil {
-		return nil, "", err
+		var ae *Error
+		if errors.Is(err, store.ErrTenantLimit) {
+			return nil, coded(409, "tenant_limit", "A server has at most %d tenants.", store.MaxTenants)
+		} else if org && errors.As(err, &ae) && ae.Code == "org_limit" {
+			return nil, ae
+		}
+		return nil, err
 	}
 	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u), "registration")
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
+	res := &Registered{User: u, Token: tok}
 	s.Audit(AuditEvent{Kind: "registered", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"email": reg.Email}})
+	if org {
+		t := p.NewTenant.Made
+		res.Org, res.Renamed = &t, t.Slug != reg.OrgSlug
+		s.Audit(AuditEvent{Kind: "tenant_created", Actor: u.ID, Tenant: t.ID, IP: ip, Detail: map[string]any{"tenant": t.ID, "slug": t.Slug, "origin": store.OriginSelf}})
+	}
 	s.Audit(AuditEvent{Kind: "login", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
-	return u, tok, nil
+	return res, nil
 }
 
 // --- email verification ----------------------------------------------------------

@@ -1,7 +1,12 @@
 import type { MailMessages } from '../mailTypes.ts'
 
 export const mailEn: MailMessages = {
-  links: { register: 'Create an account', forgot: 'Forgot your password?', backToLogin: 'Back to sign in' },
+  links: {
+    register: 'Create an account',
+    createOrg: 'Create an organisation',
+    forgot: 'Forgot your password?',
+    backToLogin: 'Back to sign in',
+  },
   register: {
     title: 'Register',
     intro: (tenant: string) =>
@@ -33,6 +38,22 @@ export const mailEn: MailMessages = {
     sentBody: (email: string) =>
       `If all went well, a confirmation message is on its way to ${email}. Follow the link in it to make the account; it works for 24 hours. If nothing comes, look in your spam folder or try again later.`,
     sentAgain: 'Start over',
+    // The choice between joining and making an organisation, and the organisation's own fields.
+    choiceLabel: 'What do you want to do?',
+    join: (tenant: string) => `Join ${tenant}`,
+    createOrg: 'Create my organisation',
+    orgIntro:
+      'Create an organisation of your own and an account that administers it. We send a confirmation message to your address; both are made when you follow the link in it.',
+    orgName: 'Organisation name',
+    orgSlug: 'Organisation address',
+    orgSlugHelp: 'Letters, digits and dashes, 2 to 32 characters. People use it to find your sign-in page.',
+    orgSlugTaken: 'That organisation address is taken',
+    orgSlugReserved: 'That organisation address is reserved',
+    orgSlugInvalid: 'Use 2 to 32 letters, digits or dashes, starting with a letter or digit',
+    orgNameRequired: 'Give the organisation a name',
+    orgSubmit: 'Create organisation',
+    orgDialogTitle: 'Create an organisation',
+    orgNone: 'Nothing here can make an organisation right now.',
   },
   confirm: {
     title: 'Confirm your registration',
@@ -44,6 +65,13 @@ export const mailEn: MailMessages = {
     noToken: 'There is no token in the address. Open the link from the message itself.',
     retry: 'Try again',
     toRegister: 'Back to registration',
+    orgReady: (name: string) => `${name} is ready`,
+    orgBody: (name: string, slug: string) =>
+      `Your organisation “${name}” and your account are made, and you are its administrator. Its address is ${slug}.`,
+    orgRenamed: (slug: string) =>
+      `The address you asked for was taken a moment ago, so this organisation's address is ${slug}. You can change it later.`,
+    orgContinue: 'Continue',
+    orgLimit: 'No more organisations can be made, so nothing was made.',
   },
   verify: {
     title: 'Confirm your email',

@@ -29,7 +29,7 @@ func (s *server) failSetting(c *call, err error) {
 	switch se.Code {
 	case settings.CodeNotFound:
 		status = http.StatusNotFound
-	case settings.CodeConflict, settings.CodeLocked, settings.CodeRestricted, "mail_not_configured", "sso_only_with_registration":
+	case settings.CodeConflict, settings.CodeLocked, settings.CodeRestricted, "mail_not_configured", "sso_only_with_registration", "needs_tenancy", "needs_mail":
 		status = http.StatusConflict
 	}
 	writeError(c.w, status, se.Code, se.Msg)
@@ -156,6 +156,20 @@ func (s *server) readChange(c *call, tenantLayer bool) (settings.Change, bool) {
 // Registration needs mail (the next part of 3.3), so until it exists nothing
 // opens; the check for ssoOnly joins here with it.
 func (s *server) beforeOpening(ctx context.Context, key string, ch settings.Change, site bool) error {
+	switch key {
+	case settings.FeatureOrgCreation:
+		return s.beforeOrgCreation(ctx, ch)
+	case settings.OrgCreationPlan:
+		// A plan that does not exist is refused, as a tenant's plan is.
+		if slug, _ := ch.Value.(string); ch.HasValue && slug != "" {
+			if _, err := store.GetPlanBySlug(ctx, s.opt.Store.Q(), slug); errors.Is(err, store.ErrNotFound) {
+				return &settings.Error{Code: settings.CodeInvalid, Msg: "There is no plan with that slug."}
+			} else if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if key != settings.RegistrationOpen {
 		return nil
 	}
@@ -183,10 +197,31 @@ func (s *server) beforeOpening(ctx context.Context, key string, ch settings.Chan
 	return nil
 }
 
+// beforeOrgCreation is the check of a value that turns organisation creation
+// on: it needs tenants (features.tenancy) and mail, which the registration
+// that makes one is confirmed by.
+func (s *server) beforeOrgCreation(ctx context.Context, ch settings.Change) error {
+	if !(ch.HasValue && ch.Value == true) {
+		return nil
+	}
+	if on, err := s.settings.Get(ctx, "", settings.FeatureTenancy); err != nil {
+		return err
+	} else if b, _ := on.Value.(bool); !b {
+		return &settings.Error{Code: "needs_tenancy", Msg: "Organizations people create need the multiple tenants feature; switch it on first."}
+	}
+	if !s.registrationReady() {
+		return &settings.Error{Code: "needs_mail", Msg: "Organizations people create are confirmed by mail, and mail is not enabled."}
+	}
+	if s.auth.SSOOnlyStored(ctx) {
+		return &settings.Error{Code: "sso_only_with_registration", Msg: "Password sign-in is refused (ssoOnly), so nobody could finish registering; switch ssoOnly off first."}
+	}
+	return nil
+}
+
 // closedRegistration cancels the pending registrations of tenants that are not
 // open now, after a change that may have closed one.
 func (s *server) closedRegistration(ctx context.Context, key string) {
-	if key != settings.RegistrationOpen {
+	if key != settings.RegistrationOpen && key != settings.FeatureOrgCreation && key != settings.FeatureTenancy {
 		return
 	}
 	if err := s.auth.CancelClosedRegistrations(ctx); err != nil {

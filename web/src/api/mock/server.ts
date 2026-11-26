@@ -199,6 +199,8 @@ const LOCAL_USER: User = {
 }
 
 interface UserRec extends Omit<User, 'passkeyRequired' | 'passkeys' | 'sso'> {
+  // The organisation this person made when they registered (they are its administrator, never the site's).
+  ownTenant?: { id: string; slug: string; name: string }
   passwordHash?: string
   // Set for this person alone; the role's requirement is in the security settings.
   passkeyRequired: boolean
@@ -507,7 +509,7 @@ export function createMockServer(options: MockOptions = {}) {
     disabled: u.disabled,
     passkeyRequired: book.requiredOf(u),
     siteAdmin: isSiteAdmin(u),
-    tenant: { id: DEFAULT_TENANT, slug: 'default', name: 'Default' },
+    tenant: u.ownTenant ?? { id: DEFAULT_TENANT, slug: 'default', name: 'Default' },
     created: u.created,
     ...(u.remoteExempt ? { remoteExempt: true } : {}),
   })
@@ -1086,13 +1088,25 @@ export function createMockServer(options: MockOptions = {}) {
     checkCaptcha,
     noteCaptchaFailure,
     makeAccount: (p) => {
-      const u = addUser({ username: p.username, name: p.name, role: 'member' }, false)
+      const u = addUser({ username: p.username, name: p.name, role: p.org ? 'admin' : 'member' }, false)
       u.passwordHash = p.passwordHash
       u.email = p.email
       u.emailVerified = true
+      let org: { slug: string; name: string; renamed: boolean } | undefined
+      if (p.org) {
+        // The tenant and the account together: the person administers it, and is never a site administrator.
+        const made = tenantBook.makeSelf(p.org.name, p.org.slug, u.id)
+        u.siteAdmin = false
+        u.ownTenant = { id: made.id, slug: made.slug, name: made.name }
+        org = { slug: made.slug, name: made.name, renamed: made.renamed }
+        book.record('tenant_created', { user: u.id, detail: { tenant: made.id, slug: made.slug, origin: 'self' } })
+      }
       book.record('login', { user: u.id, username: u.username, detail: { method: 'password', created: true } })
-      return { user: publicUser(u), cookie: startSession(u, { method: 'registration' }) }
+      return { user: publicUser(u), cookie: startSession(u, { method: 'registration' }), ...(org ? { org } : {}) }
     },
+    orgRules: () => tenantBook.orgRules(),
+    orgSlugTaken: (slug) => tenantBook.slugTaken(slug),
+    tenantCount: () => tenantBook.tenantCount(),
     setPassword: (id, hash) => {
       const u = users.get(id)
       if (u) u.passwordHash = hash
@@ -4679,6 +4693,7 @@ export function createMockServer(options: MockOptions = {}) {
           passkey: book.passkeyOn(),
           register: mailBook.open(),
           forgot: mailBook.ready(),
+          orgCreation: mailBook.orgOpen(),
         },
       }
     }
