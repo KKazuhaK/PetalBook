@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/spaces"
 )
 
 // The optional audit categories that write rows (internal/auditlog): page and
@@ -19,24 +21,58 @@ import (
 // an hour for each person and thing.
 const maxActivityAudit = 100000
 
-// activityOn says whether the caller's tenant has the kind's category on.
-func (s *server) activityOn(c *call, kind string) bool {
-	return s.auth != nil && c.p != nil && s.auth.AuditWanted(c.tenant(), kind)
+// activityWanted says whether opening something in the space is recorded, and
+// in which tenant: a personal space never is (its owner's reading is not the
+// tenant administrators' business), nor is an administrator's view (it has its
+// own core row), and for any other the tenant is the space's own, whoever reads
+// it: the owner of the content decides what is recorded about it. While the
+// category is off it costs one read of the settings' cached snapshot.
+func (s *server) activityWanted(info *spaces.Info, own, kind string) (string, bool) {
+	if s.auth == nil || info == nil || info.Personal || info.Viewing {
+		return "", false
+	}
+	tenant := info.TenantID
+	if tenant == "" {
+		tenant = own
+	}
+	return tenant, s.auth.AuditWanted(tenant, kind)
 }
 
-// activity records that the caller opened or downloaded something in the space
-// they have open, at most once an hour for each person, kind and thing. A
-// personal space is never recorded (its owner's reading is not the tenant
-// administrators' business), and an administrator's view has its own core row.
-func (s *server) activity(c *call, kind, what string, detail map[string]any) {
-	if c.sp == nil || c.sp.Info.Personal || c.sp.Info.Viewing || !s.activityOn(c, kind) {
+// writeActivity notes that p opened or downloaded what (field: val) names in
+// the space, at most once an hour for each person, kind and thing, and writes
+// the row. Callers have asked activityWanted first, so the details are built
+// only here.
+func (s *server) writeActivity(ctx context.Context, p *auth.Principal, info *spaces.Info, tenant, ip, kind, field, val string) {
+	if !s.activities.first(p.User.ID+"\x00"+info.ID+"\x00"+kind+"\x00"+field+":"+val, s.now()) {
 		return
 	}
-	if !s.activities.first(c.p.User.ID+"\x00"+c.sp.Info.ID+"\x00"+kind+"\x00"+what, s.now()) {
+	s.auth.AuditIn(ctx, auth.AuditEvent{Kind: kind, Actor: p.User.ID, User: p.User.ID, Tenant: tenant, IP: ip,
+		Detail: map[string]any{field: val, "space": info.ID}})
+}
+
+// activity records that the caller opened or downloaded something (a page, or
+// a file by its path) in the space they have open. Call it once the thing is
+// found, never before: an id that names nothing is not a read.
+func (s *server) activity(c *call, kind, field, val string) {
+	if c.p == nil || c.sp == nil {
 		return
 	}
-	detail["space"] = c.sp.Info.ID
-	s.audit(c, auth.AuditEvent{Kind: kind, Actor: c.p.User.ID, User: c.p.User.ID, Tenant: c.tenant(), Detail: detail})
+	if tenant, ok := s.activityWanted(&c.sp.Info, c.tenant(), kind); ok {
+		s.writeActivity(c.r.Context(), c.p, &c.sp.Info, tenant, s.auth.ClientAddr(c.r), kind, field, val)
+	}
+}
+
+// activity is the same for a tool of the MCP endpoint, so that both paths
+// record the same.
+func (c *mcpCall) activity(info *spaces.Info, kind, field, val string) {
+	s := c.s
+	if tenant, ok := s.activityWanted(info, c.tenant(), kind); ok {
+		ip := ""
+		if r := mcpRequestFrom(c.ctx); r != nil {
+			ip = s.auth.ClientAddr(r)
+		}
+		s.writeActivity(c.ctx, c.p, info, tenant, ip, kind, field, val)
+	}
 }
 
 // apiCalls starts the record of a request made with a token (or through MCP) if

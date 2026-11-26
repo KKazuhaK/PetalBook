@@ -142,10 +142,10 @@ func (s *server) getFile(c *call) {
 	ct, inline := inlineTypes[strings.ToLower(path.Ext(name))]
 	disposition := "inline"
 	if inline {
-		s.activity(c, "file_read", "path:"+rel, map[string]any{"path": rel})
+		s.activity(c, "file_read", "path", rel)
 	} else {
 		ct, disposition = "application/octet-stream", "attachment"
-		s.activity(c, "file_downloaded", "path:"+rel, map[string]any{"path": rel})
+		s.activity(c, "file_downloaded", "path", rel)
 	}
 	h.Set("Content-Type", ct)
 	// filename* carries any name safely (RFC 6266); no quoted form to escape.

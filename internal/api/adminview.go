@@ -111,44 +111,61 @@ func (v *viewTable) firstOpen(who, space, what string, now time.Time) bool {
 }
 
 // onceAnHour is a bounded table of when each key was last noted: what is
-// audited at most once an hour. At its cap the keys older than an hour are
-// dropped, and if none are, all of them (a burst of new keys then gets a row
-// each again, which is the safe side for an audit).
+// audited at most once an hour. It keeps two generations of keys, the current
+// and the previous one, and a key is known if either holds it within the hour.
+// The generations rotate every hour (the previous one is dropped), and early
+// when the current one reaches its cap, so a burst of new keys costs a map
+// insert each, never a scan. Each generation holds at most half the cap, so the table never
+// holds more than the cap. An early rotation forgets the keys older than the
+// last half cap, which may then get a row again: the safe side for an audit.
 type onceAnHour struct {
 	mu   sync.Mutex
-	max  int
-	seen map[string]time.Time
+	max  int // the cap of one generation
+	gen  time.Time
+	cur  map[string]time.Time
+	prev map[string]time.Time
 }
 
 func newOnceAnHour(limit int) *onceAnHour {
-	return &onceAnHour{max: limit, seen: map[string]time.Time{}}
+	return &onceAnHour{max: max(limit/2, 1), cur: map[string]time.Time{}}
 }
 
 // first says whether key has not been noted in the last hour, and notes it.
 func (o *onceAnHour) first(key string, now time.Time) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if t, ok := o.seen[key]; ok && now.Sub(t) < time.Hour {
+	if o.gen.IsZero() {
+		o.gen = now
+	}
+	if age := now.Sub(o.gen); age >= time.Hour {
+		o.rotate(now, age >= 2*time.Hour)
+	}
+	if t, ok := o.cur[key]; ok && now.Sub(t) < time.Hour {
 		return false
 	}
-	if len(o.seen) >= o.max {
-		for k, t := range o.seen {
-			if now.Sub(t) >= time.Hour {
-				delete(o.seen, k)
-			}
-		}
-		if len(o.seen) >= o.max {
-			o.seen = map[string]time.Time{}
-		}
+	if t, ok := o.prev[key]; ok && now.Sub(t) < time.Hour {
+		return false
 	}
-	o.seen[key] = now
+	if len(o.cur) >= o.max {
+		o.rotate(now, false)
+	}
+	o.cur[key] = now
 	return true
+}
+
+// rotate makes the current generation the previous one (empty: nothing in it
+// is within the hour any more) and starts a new one.
+func (o *onceAnHour) rotate(now time.Time, drop bool) {
+	o.prev, o.cur, o.gen = o.cur, make(map[string]time.Time, 16), now
+	if drop {
+		o.prev = nil
+	}
 }
 
 func (o *onceAnHour) len() int {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return len(o.seen)
+	return len(o.cur) + len(o.prev)
 }
 
 // viewing says whether the caller's session has a view of the space open.

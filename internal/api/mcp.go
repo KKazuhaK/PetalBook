@@ -49,9 +49,20 @@ Start with spaces_list: it says which spaces you may use, what you may do in eac
 
 // mcpIdentity is who a request to /mcp is from, kept in the request's context
 // for the tools (the SDK hands the context of the HTTP request on).
-type mcpIdentity struct{ p *auth.Principal }
+type mcpIdentity struct {
+	p *auth.Principal
+	r *http.Request // for the caller's address in an audit row
+}
 
 type mcpIdentityKey struct{}
+
+// mcpRequestFrom is the HTTP request a tool call came in.
+func mcpRequestFrom(ctx context.Context) *http.Request {
+	if id, ok := ctx.Value(mcpIdentityKey{}).(*mcpIdentity); ok {
+		return id.r
+	}
+	return nil
+}
 
 func mcpIdentityFrom(ctx context.Context) *auth.Principal {
 	if id, ok := ctx.Value(mcpIdentityKey{}).(*mcpIdentity); ok {
@@ -163,7 +174,7 @@ func (s *server) serveMCP(w http.ResponseWriter, r *http.Request, sdk http.Handl
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	r.ContentLength = int64(len(raw))
-	ctx := context.WithValue(r.Context(), mcpIdentityKey{}, &mcpIdentity{p})
+	ctx := context.WithValue(r.Context(), mcpIdentityKey{}, &mcpIdentity{p, r})
 	w.Header().Set("Cache-Control", "no-store")
 	sdk.ServeHTTP(w, r.WithContext(ctx))
 }

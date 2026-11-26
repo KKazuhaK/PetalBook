@@ -40,11 +40,33 @@ type AuditEvent struct {
 
 type auditLog struct {
 	ch      chan store.AuditRow
-	dropped atomic.Int64
-	// droppedOptional counts the dropped rows (dropped includes them) that were
-	// of an optional category.
-	droppedOptional atomic.Int64
-	flushMu         sync.Mutex
+	dropped drops
+	flushMu sync.Mutex
+}
+
+// drops counts the rows dropped since the last "dropped" row, and how many of
+// them were of an optional category, in one word: the high half is all of them,
+// the low half the optional ones, so a reader never sees one without the other.
+type drops struct{ n atomic.Uint64 }
+
+func (d *drops) add(optional bool) {
+	if optional {
+		d.n.Add(1<<32 | 1)
+		return
+	}
+	d.n.Add(1 << 32)
+}
+
+// load returns the counts: all dropped, and of those the optional ones.
+func (d *drops) load() (total, optional uint64) {
+	v := d.n.Load()
+	return v >> 32, v & (1<<32 - 1)
+}
+
+// take returns the counts and resets them.
+func (d *drops) take() (total, optional uint64) {
+	v := d.n.Swap(0)
+	return v >> 32, v & (1<<32 - 1)
 }
 
 func newAuditLog() *auditLog { return &auditLog{ch: make(chan store.AuditRow, auditQueueSize)} }
@@ -66,8 +88,7 @@ func (s *Service) Audit(ev AuditEvent) {
 		optional = true
 	}
 	if optional && len(s.audit.ch) >= auditOptionalLimit {
-		s.audit.dropped.Add(1)
-		s.audit.droppedOptional.Add(1)
+		s.audit.dropped.add(true)
 		return
 	}
 	row, ok := s.audit.row(ev, s.now())
@@ -77,10 +98,7 @@ func (s *Service) Audit(ev AuditEvent) {
 	select {
 	case s.audit.ch <- row:
 	default:
-		s.audit.dropped.Add(1)
-		if optional {
-			s.audit.droppedOptional.Add(1)
-		}
+		s.audit.dropped.add(optional)
 	}
 }
 
@@ -161,9 +179,9 @@ func (s *Service) FlushAudit(ctx context.Context) {
 				break drain
 			}
 		}
-		if n := a.dropped.Swap(0); n > 0 {
+		if n, o := a.dropped.take(); n > 0 {
 			d := map[string]any{"count": n}
-			if o := a.droppedOptional.Swap(0); o > 0 {
+			if o > 0 {
 				d["optional"] = o
 			}
 			if r, ok := a.row(AuditEvent{Kind: "dropped", Detail: d}, s.now()); ok {
