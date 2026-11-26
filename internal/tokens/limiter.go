@@ -15,7 +15,7 @@ import (
 // token is never refused), unless Overflow is set: then new clients share the
 // table's overflow bucket (OAuth registrations, which make rows). Either way
 // its failures are counted in the table's overflow sketch, which blocks it at
-// Max like a client with an entry.
+// Max like a client with an entry (for one to two windows).
 type Limiter struct {
 	Max      int           // failures allowed per Window; default 10
 	Window   time.Duration // default 1 minute

@@ -392,7 +392,11 @@ func TestAFullTableOfLocksStillLocksANewName(t *testing.T) {
 		if _, locked := f.LockedFor("someone", window); locked || f.Count("someone", window) != 0 {
 			t.Fatalf("mode %d: another new name is held back", mode)
 		}
-		c.t = c.t.Add(lock)
+		c.t = c.t.Add(lock - time.Second)
+		if _, locked := f.LockedFor("victim", window); !locked {
+			t.Fatalf("mode %d: the lock ended early", mode)
+		}
+		c.t = c.t.Add(lock + time.Second) // the sketch holds a key one to two windows
 		if _, locked := f.LockedFor("victim", window); locked {
 			t.Fatalf("mode %d: the lock did not end", mode)
 		}
@@ -454,7 +458,7 @@ func TestAFullOpenWindowStillCountsANewKey(t *testing.T) {
 	if _, ok, _ := w.Take("other", 1, 3); !ok {
 		t.Fatal("another new key was refused")
 	}
-	c.t = c.t.Add(time.Minute)
+	c.t = c.t.Add(2 * time.Minute) // the sketch counts a key one to two windows
 	if _, ok, _ := w.Take("new", 1, 3); !ok {
 		t.Fatal("the window did not end")
 	}
@@ -505,5 +509,120 @@ func TestTablesAreSafeForConcurrentUse(t *testing.T) {
 	}
 	if f.Len() > 3 || w.Len() > 3 || b.Len() > 3 {
 		t.Fatal("a bound was passed")
+	}
+}
+
+// Round 2: a steady stream of one-off failures from distinct keys, sent while
+// the table is full, must not pile up in the overflow sketch until it holds
+// back keys it has never seen. The sketch is made small (64 cells a row) so a
+// few thousand failures do what millions would do to the real one: 256
+// failures a window are four a cell, eight over the two windows it keeps,
+// far below the cap of 30, for as long as the stream lasts.
+func TestSustainedOneOffFailuresDoNotHoldBackNewKeys(t *testing.T) {
+	c := newClock()
+	window, lock := 15*time.Minute, 15*time.Minute
+	const max, perWindow, windows = 30, 256, 16
+	f := NewLockout(3, c.now)
+	f.skWidth = 64
+	fillWithLocks(f, window, 100*window) // locks that outlast the stream
+	for range max {                      // a name locked in the sketch: LockedFor reads it
+		f.Fail("victim", max, window, lock)
+	}
+	for i := range windows * perWindow {
+		c.t = c.t.Add(window / perWindow)
+		if k := "bot" + strconv.Itoa(i); i%2 == 0 {
+			f.Fail(k, max, window, lock) // a wrong password of a new name
+		} else {
+			f.Reserve(k, max, window) // an address's attempt that failed: never refunded
+		}
+	}
+	held := 0
+	for i := range 100 {
+		k := "fresh" + strconv.Itoa(i)
+		_, locked := f.LockedFor(k, window)
+		_, blocked := f.Blocked(k, max, window)
+		_, ok, _ := f.Reserve(k, max, window)
+		if locked || blocked || !ok {
+			held++
+		}
+		f.Refund(k)
+	}
+	if held > 0 {
+		t.Fatalf("%d of 100 keys never seen are held back by others' one-off failures", held)
+	}
+}
+
+// A key with no entry is never held back later than an entry would be: its
+// failures still count after the sketch rolls to a new window, and a lock
+// longer than the window holds it for at least the lock.
+func TestASketchedKeyCountsAcrossTheRollAndKeepsItsLock(t *testing.T) {
+	c := newClock()
+	window, lock := 15*time.Minute, 45*time.Minute
+	const max = 3
+	f := NewLockout(3, c.now)
+	fillWithLocks(f, 10*window, 10*window)
+	f.Fail("victim", max, window, 0) // makes the sketch, its window starting now
+	c.t = c.t.Add(window - time.Second)
+	f.Fail("victim", max, window, 0)
+	c.t = c.t.Add(2 * time.Second) // the sketch has rolled; the key's own window has not ended
+	if r := f.Fail("victim", max, window, lock); !r.AtCap || !r.Locked || r.Wait != lock {
+		t.Fatalf("the failures before the roll were forgotten: %+v", r)
+	}
+	c.t = c.t.Add(lock - time.Second)
+	if _, locked := f.LockedFor("victim", window); !locked {
+		t.Fatal("the lock ended before its time")
+	}
+	if _, ok, _ := f.Reserve("victim", max, window); ok {
+		t.Fatal("a locked name may try")
+	}
+	c.t = c.t.Add(2 * lock)
+	if _, locked := f.LockedFor("victim", window); locked {
+		t.Fatal("the lock never ended")
+	}
+}
+
+// Once two windows pass with nothing counted, the sketch is idle: keys are
+// not looked up in it, and a new key that finds room gets an entry.
+func TestAnIdleSketchIsNotConsulted(t *testing.T) {
+	c := newClock()
+	window := 15 * time.Minute
+	const max = 5
+	f := NewLockout(3, c.now)
+	fillWithLocks(f, window, window)
+	f.Fail("victim", max, window, window)
+	f.Fail("victim", max, window, window)
+	c.t = c.t.Add(window)
+	if f.sk.quiet(c.t, window) || f.Count("victim", window) != 2 {
+		t.Fatalf("the sketch forgot within a window: count %d", f.Count("victim", window))
+	}
+	c.t = c.t.Add(window)
+	if !f.sk.quiet(c.t, window) {
+		t.Fatal("a sketch idle for two windows is still consulted")
+	}
+	if r := f.Fail("victim", max, window, window); r.Full || r.N != 1 {
+		t.Fatalf("a key with room was not given an entry: %+v", r)
+	}
+}
+
+// Refund gives back only what the key's own Reserve counted: when its entry
+// was forgotten in between, the sketch must not lose another key's failures.
+// A sketch of one cell a row puts every key on the same cells.
+func TestRefundAfterEvictionTakesNothingFromOthers(t *testing.T) {
+	c := newClock()
+	window, lock := 15*time.Minute, 15*time.Minute
+	const max = 10
+	f := NewLockout(3, c.now)
+	f.skWidth = 1
+	f.Fail("l0", 1, window, lock)
+	f.Fail("l1", 1, window, lock)
+	f.Reserve("a", max, window)  // a free entry of one
+	f.Reserve("b", max, window)  // forgets a to make room
+	f.Fail("b", 1, window, lock) // the table is now all locks
+	for range 3 {
+		f.Fail("victim", max, window, lock)
+	}
+	f.Refund("a") // a's attempt turned out well
+	if n := f.Count("victim", window); n < 3 {
+		t.Fatalf("a refund of a forgotten entry took the victim's failures: %d", n)
 	}
 }

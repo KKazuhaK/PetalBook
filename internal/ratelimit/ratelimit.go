@@ -54,15 +54,23 @@
 //
 // A key that passes without an entry is still counted against its own limit.
 // A Window (Open, Overflow) and a Lockout count such keys in a fixed-size
-// count-min sketch (sketch.go): 4 rows of 8,192 cells, a keyed hash with a
-// seed of the table's own, windowed like the entries, 384 KiB made the first
-// time the table is full. A Lockout locks such a key there at its cap, and
-// LockedFor, Blocked, Count, Reserve and LockIfAtCap read it for keys with no
-// entry. A collision can only count a key high, so it may be held back early,
-// never late; nobody can aim collisions at a chosen key without the seed.
-// Without this, a table filled with locks let one known name be guessed
-// without limit. A Bucket (Open) has no sketch: it guards no secret (the
-// starts of single sign-on).
+// count-min sketch (sketch.go): 4 rows of 65,536 uint16 cells, a keyed hash
+// with a seed of the table's own, in two halves, the current window and the
+// one before: when a window ends the older half is zeroed and reused, so a
+// cell holds at most two windows of traffic, however long an attack lasts.
+// 1 MiB, made the first time the table is full; when neither half has been
+// used the sketch is idle and keys are not looked up in it. A key's count is
+// never below its failures of the last window, so it is held back at its cap
+// no later than an entry would be (a collision or the older half can only
+// hold it earlier or longer: one to two windows). A Lockout "locks" a key
+// there by topping its count up to the cap for at least the lock (the
+// sketch's windows are at least the longest lock); there is no lock state
+// that another key could share. LockedFor, Blocked, Count, Reserve and
+// LockIfAtCap read it for keys with no entry, and a free entry forgotten to
+// make room hands its failures to it. Nobody can aim collisions at a chosen
+// key without the seed. Without this, a table filled with locks let one known
+// name be guessed without limit. A Bucket (Open) has no sketch: it guards no
+// secret (the starts of single sign-on).
 //
 // A Lockout never refuses a new key's attempt below its own count, whatever
 // its mode: Reserve and Blocked let it try (a correct sign-in gets through),

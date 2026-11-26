@@ -20,17 +20,18 @@ const (
 // Window counts what each key spends in a fixed window that starts at the
 // key's first spending. Safe for concurrent use.
 type Window struct {
-	mu     sync.Mutex
-	m      map[string]*entry
-	age    list // every entry, oldest start first: the first to end
-	free   list // entries below their cap, oldest start first
-	max    int
-	window time.Duration
-	policy Policy
-	full   Full
-	spill  budget
-	sk     *sketch // what keys with no entry spent (Open, Overflow); nil until first full
-	now    Clock
+	mu      sync.Mutex
+	m       map[string]*entry
+	age     list // every entry, oldest start first: the first to end
+	free    list // entries below their cap, oldest start first
+	max     int
+	window  time.Duration
+	policy  Policy
+	full    Full
+	spill   budget
+	sk      *sketch // what keys with no entry spent (Open, Overflow); nil until first full
+	skWidth int     // cells a sketch row; 0 is sketchWidth (tests make it small)
+	now     Clock
 }
 
 // NewWindow makes a table of at most maxKeys keys with windows of the given
@@ -95,10 +96,10 @@ func (w *Window) Take(key string, n, limit int) (wait time.Duration, ok, first b
 // first, then (Overflow) the shared bucket.
 func (w *Window) takeSketch(key string, n, limit int, now time.Time) (time.Duration, bool, bool) {
 	if w.sk == nil {
-		w.sk = newSketch(now)
+		w.sk = newSketch(now, w.skWidth)
 	}
 	if w.sk.count(key, now, w.window)+n > limit {
-		return w.window, false, false
+		return w.sk.wait(now, w.window), false, false
 	}
 	if w.full == Overflow {
 		if d, ok := w.spill.take(float64(n), now); !ok {
