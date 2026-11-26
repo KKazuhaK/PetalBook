@@ -91,12 +91,28 @@ func (r *Repo) runner() Runner {
 func (r *Repo) run(ctx context.Context, c Cmd) (string, error) {
 	c.Dir = r.opt.Dir
 	c.AllowUnsafe = r.opt.AllowUnsafe
+	if sub, _ := subcommand(c.Args); lockingWrites[sub] {
+		var cancel context.CancelFunc
+		ctx, cancel = notCancelled(ctx)
+		defer cancel()
+	}
 	out, errOut, err := r.runner().Run(ctx, c)
 	if err != nil {
 		sub, _ := subcommand(c.Args)
 		return "", &GitError{Sub: sub, Stderr: errOut, Err: err}
 	}
 	return out, nil
+}
+
+// notCancelled is ctx without its cancellation but with its deadline, if it
+// has one.
+func notCancelled(ctx context.Context) (context.Context, context.CancelFunc) {
+	d, ok := ctx.Deadline()
+	ctx = context.WithoutCancel(ctx)
+	if !ok {
+		return ctx, func() {}
+	}
+	return context.WithDeadline(ctx, d)
 }
 
 // git runs a command that does not touch the network and returns its output
