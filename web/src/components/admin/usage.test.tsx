@@ -6,7 +6,17 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { tt } from '@/i18n/tenants'
 import { tu } from '@/i18n/usage'
-import { adminRequests, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  click,
+  installDomShims,
+  makePerson,
+  mount,
+  settle,
+  type,
+  type Mounted,
+  openTenantPage,
+} from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // The administration's Usage page, the limits on a user, and the usage of a tenant, against the mock server.
@@ -274,8 +284,7 @@ describe('limits on a user, and the usage of a tenant', () => {
       admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
       sized(server, 'amy', 100)
     })
-    await settle(() => button(`${tt.list.manage}: Default`) !== null, 'the list')
-    await click(button(`${tt.list.manage}: Default`))
+    await openTenantPage(`${tt.list.open}: Default`, tt.detail.tabs.plan)
     await settle(() => document.querySelector('[data-slot="tenant-usage-block"]') !== null, 'the usage block')
     const block = document.querySelector<HTMLElement>('[data-slot="tenant-usage-block"]')!
     expect(block.querySelector('[data-slot="tenant-numbers"] [data-quota="people"]')!.textContent).toContain('2')

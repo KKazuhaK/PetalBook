@@ -47,6 +47,7 @@ import type {
   Tenancy,
   Tenant,
   TenantList,
+  TenantOverview,
   TenantOrigin,
   TenantSetting,
   TenantSettingWritten,
@@ -245,6 +246,8 @@ export const adminApi = {
     return request<TenantList>(`/admin/tenants${qs ? `?${qs}` : ''}`, { signal })
   },
   tenant: (id: string, signal?: AbortSignal) => request<Tenant>(`/admin/tenants/${enc(id)}`, { signal }),
+  tenantOverview: (id: string, signal?: AbortSignal) =>
+    request<TenantOverview>(`/admin/tenants/${enc(id)}/overview`, { signal }),
   createTenant: (input: { slug: string; name: string; admin?: { username: string; name?: string; email?: string } }) =>
     request<CreatedTenant>('/admin/tenants', { method: 'POST', body: input }),
   updateTenant: (id: string, input: { name?: string; slug?: string; disabled?: boolean }) =>
@@ -629,6 +632,25 @@ export function useTenants(enabled = true, fresh = false, origin?: TenantOrigin)
       } while (cursor)
       return out
     },
+  })
+}
+// One tenant (its name, for a banner or a heading); under keys.tenants, so a rename reads it again.
+export function useTenant(id: string | null) {
+  return useQuery({
+    queryKey: [...keys.tenants, 'one', id],
+    queryFn: ({ signal }) => adminApi.tenant(id!, signal),
+    enabled: id !== null,
+    staleTime: 15_000,
+  })
+}
+
+// A tenant's page: the tenant and its numbers in one call. Anything that changes the tenant reads it again (it sits
+// under keys.tenants).
+export function useTenantOverview(id: string) {
+  return useQuery({
+    queryKey: [...keys.tenants, 'overview', id],
+    queryFn: ({ signal }) => adminApi.tenantOverview(id, signal),
+    staleTime: 10_000,
   })
 }
 export function useCreateTenant() {

@@ -4,7 +4,16 @@ import { Route, Routes } from 'react-router'
 import type { MockServer } from '@/api/mock/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tt } from '@/i18n/tenants'
-import { adminRequests, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  click,
+  installDomShims,
+  mount,
+  settle,
+  type,
+  type Mounted,
+  openTenantPage,
+} from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // The plans page (list, make, edit a plan's rules, the cap a limit must have), the plan of a tenant with the
@@ -136,8 +145,7 @@ describe('the plan of a tenant', () => {
       admin('POST', '/api/admin/plans', { slug: 'team', name: 'Team', rules: {} })
       admin('PUT', '/api/admin/tenants/0000000000/settings/quota.people', { siteRule: { value: 7 } })
     })
-    await settle(() => button(`${tt.list.manage}: Default`) !== null, 'the list')
-    await click(button(`${tt.list.manage}: Default`))
+    await openTenantPage(`${tt.list.open}: Default`, tt.detail.tabs.plan)
     await settle(
       () => document.querySelector('[data-slot="tenant-plan"] option[value="team"]') !== null,
       'the plan block',
@@ -174,8 +182,7 @@ describe('the plan change confirmation while the rules load', () => {
       (server) => adminRequests(server)('POST', '/api/admin/plans', { slug: 'team', name: 'Team', rules: {} }),
       (method, url) => (method === 'GET' && url.startsWith('/api/admin/tenants/0000000000/settings') ? 400 : 0),
     )
-    await settle(() => button(`${tt.list.manage}: Default`) !== null, 'the list')
-    await click(button(`${tt.list.manage}: Default`))
+    await openTenantPage(`${tt.list.open}: Default`, tt.detail.tabs.plan)
     await settle(
       () => document.querySelector('[data-slot="tenant-plan"] option[value="team"]') !== null,
       'the plan block',

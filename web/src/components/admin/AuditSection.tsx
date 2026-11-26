@@ -2,7 +2,6 @@ import { useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type R
 import { useSearchParams } from 'react-router'
 import { Download, RefreshCw, SlidersHorizontal, X } from 'lucide-react'
 import { adminApi, auditQuery, useAuditKinds, useAuditLog, useTenants } from '@/api/admin'
-import { useSession } from '@/api/hooks'
 import type { AuditCapacity, AuditCategory, AuditFilters, AuditItem } from '@/api/types'
 import { ErrorState } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -13,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
-import { acrossSite } from '@/lib/access'
+import { useAcrossSite } from './TenantScope'
 import { useFeature } from '@/lib/features'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
@@ -252,8 +251,7 @@ function Chips({
 // The fields under the categories: laid out in a row that wraps on a wide screen, stacked in the phone's popover.
 function Fields({ filters, set }: { filters: AuditFilters; set: (p: Partial<AuditFilters>) => void }) {
   const kinds = useAuditKinds()
-  const user = useSession().data?.user
-  const site = acrossSite(user)
+  const site = useAcrossSite()
   const tenants = useTenants(site).data ?? []
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()

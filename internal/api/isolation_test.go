@@ -333,6 +333,7 @@ var isolationRoutes = map[string]isoEntry{
 	"GET /api/admin/tenants/{tenant}":                   {kind: isoParam},
 	"PATCH /api/admin/tenants/{tenant}":                 {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"name": "taken over"} }},
 	"GET /api/admin/tenants/{tenant}/settings":          {kind: isoParam},
+	"GET /api/admin/tenants/{tenant}/overview":          {kind: isoParam},
 	"GET /api/admin/tenants/{tenant}/secrets":           {kind: isoParam},
 	"PUT /api/admin/tenants/{tenant}/secrets/{name}":    {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"tenant": f.tenB, "name": "mail.password"} }, body: func(f *tenFx, id string) any { return map[string]any{"value": "evil"} }},
 	"DELETE /api/admin/tenants/{tenant}/secrets/{name}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"tenant": f.tenB, "name": "mail.password"} }},

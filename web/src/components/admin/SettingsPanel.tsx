@@ -2,8 +2,8 @@ import { useId, useRef, useState, type ReactNode } from 'react'
 import { Save } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { useSession } from '@/api/hooks'
-import { acrossSite } from '@/lib/access'
-import { usePutSetting, useSiteSettings, useTenancy, useTenants, useTenantSettings } from '@/api/admin'
+import { useAcrossSite, useScope } from './TenantScope'
+import { usePutSetting, useSiteSettings, useTenancy, useTenant, useTenants, useTenantSettings } from '@/api/admin'
 import type { SettingLower, SiteSetting, TenantSetting } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
@@ -584,7 +584,7 @@ function SiteLayer() {
   )
 }
 
-function TenantLayer({ tenant, name, isSite }: { tenant: string; name: string; isSite: boolean }) {
+export function TenantLayer({ tenant, name, isSite }: { tenant: string; name: string; isSite: boolean }) {
   const q = useTenantSettings(tenant)
   if (q.isPending) return <PageFallback />
   if (q.isError) return <ErrorState message={ts.loadFailed} onRetry={() => void q.refetch()} />
@@ -612,14 +612,20 @@ function TenantLayer({ tenant, name, isSite }: { tenant: string; name: string; i
 // or restricted marked on each setting.
 export function SettingsPanel() {
   const me = useSession().data?.user
-  const isSite = acrossSite(me)
+  const isSite = useAcrossSite()
   const tenancy = useTenancy(isSite)
   const tenants = useTenants(isSite && !!tenancy.data && (tenancy.data.enabled || tenancy.data.tenants > 1))
   const [picked, setPicked] = useState('')
-  const own = me?.tenant
+  // In a tenant's scope the tenant is that one, whoever the person is.
+  const scope = useScope()
+  const own = scope ? undefined : me?.tenant
+  const scoped = useTenant(scope)
   const list = tenants.data ?? []
-  const tenantId = isSite ? picked || own?.id || '' : (own?.id ?? '')
-  const tenantName = list.find((x) => x.id === tenantId)?.name ?? (tenantId === own?.id ? own?.name : '') ?? ''
+  const tenantId = scope ?? (isSite ? picked || own?.id || '' : (own?.id ?? ''))
+  const tenantName =
+    (scope
+      ? scoped.data?.name
+      : (list.find((x) => x.id === tenantId)?.name ?? (tenantId === own?.id ? own?.name : ''))) ?? ''
   return (
     <div className="grid gap-8">
       <p className="rounded-lg border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">{ts.help}</p>

@@ -515,3 +515,35 @@ func tenantOrDefault(id string) string {
 	}
 	return id
 }
+
+// TenantAdmin is an administrator of a tenant as its overview lists them.
+type TenantAdmin struct {
+	ID, Username, Name string
+	SiteAdmin          bool
+	Disabled           bool
+}
+
+// TenantAdmins returns a tenant's administrators, the oldest first, at most
+// limit of them, and how many there are. Both read the partial index
+// users_admins, so a tenant of millions of people costs no more than one of
+// ten.
+func TenantAdmins(ctx context.Context, q Q, tenant string, limit int) (out []TenantAdmin, total int, err error) {
+	if err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE tenant_id = ? AND role = 'admin' AND deleted_at IS NULL`, tenant).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := q.Query(ctx, `SELECT id, username, name, site_admin, disabled FROM users WHERE tenant_id = ? AND role = 'admin' AND deleted_at IS NULL ORDER BY created, id LIMIT ?`, tenant, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a TenantAdmin
+		var site, dis int64
+		if err = rows.Scan(&a.ID, &a.Username, &a.Name, &site, &dis); err != nil {
+			return nil, 0, err
+		}
+		a.SiteAdmin, a.Disabled = site != 0, dis != 0
+		out = append(out, a)
+	}
+	return out, total, rows.Err()
+}

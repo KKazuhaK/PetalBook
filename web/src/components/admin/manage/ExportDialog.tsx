@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { adminPath } from '@/lib/urls'
+import { useAdminPaths } from '../TenantScope'
 import { tg } from '@/i18n/manage'
 import { daysLeft, manageError, useIsSite, tapTarget, fitScreen } from './shared'
 
@@ -29,6 +29,7 @@ export function ExportDialog({
 }) {
   const site = useIsSite()
   const make = useCreateExport()
+  const { path: adminPath } = useAdminPaths()
   const [history, setHistory] = useState(false)
   const [error, setError] = useState('')
   const [made, setMade] = useState<ExportRec | null>(null)

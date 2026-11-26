@@ -218,6 +218,7 @@ export function mockApi(): Plugin {
           req.headers['content-type'],
           req.headers.cookie,
           new Uint8Array(body),
+          typeof req.headers['petalbook-scope'] === 'string' ? req.headers['petalbook-scope'] : null,
         )
         res.statusCode = out.status
         for (const [k, v] of Object.entries(out.headers ?? {})) res.setHeader(k, v)

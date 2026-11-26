@@ -6572,6 +6572,19 @@ from the stored measurements.
 A site administrator, or an administrator of that tenant (another tenant's
 answers `404 not_found`). `{tenant}` is the id.
 
+### `GET /api/admin/tenants/{tenant}/overview`
+
+The tenant's page in one call; who may read `GET …/tenants/{tenant}` may read it
+(another tenant's answers `404 not_found`). `{"tenant": Tenant, "createdByName":
+"…", "groups": n, "admins": [{"id", "username", "name", "siteAdmin",
+"disabled"}], "adminCount": n, "featuresOff": ["features.tokens", …],
+"recentAdminActivity": [{"id", "at", "kind", "category", "capacity", "actor",
+"username"}]}`. The counts of people, spaces, pages and bytes are the stored
+`tenant.usage`; `admins` are the oldest 10 (read through `users_admins`),
+`recentAdminActivity` the newest 10 audit rows, which only those who hold
+`tenant.audit.read` get (`[]` for the rest). No scan of the tenant's people,
+spaces or pages.
+
 ### `POST /api/admin/tenants`
 
 Site administrators; `403 feature_off` while `features.tenancy` is `false`.

@@ -7,7 +7,17 @@ import { keys } from '@/api/hooks'
 import { tc } from '@/i18n/console'
 import { t } from '@/i18n'
 import { tt } from '@/i18n/tenants'
-import { adminRequests, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  click,
+  installDomShims,
+  makePerson,
+  mount,
+  settle,
+  type,
+  type Mounted,
+  openTenantPage,
+} from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // The administration's Tenants and Settings pages, the administrator kind on a user, and the pages
@@ -81,10 +91,10 @@ describe('the Tenants page', () => {
     // The default tenant is first and cannot be disabled or deleted.
     const items = [...document.querySelectorAll('[data-slot="tenant-list"] li')]
     expect(items[0].textContent).toContain(tt.list.default)
-    await click(button(`${tt.list.manage}: Default`))
-    await settle(() => items[0].querySelector('form') !== null, "the default tenant's details")
-    expect(button(tt.list.disable, items[0])).toBeNull()
-    expect(button(tt.list.delete, items[0])).toBeNull()
+    await openTenantPage(`${tt.list.open}: Default`, tt.detail.tabs.danger)
+    await settle(() => document.querySelector('main form') !== null, "the default tenant's details")
+    expect(button(tt.list.disable)).toBeNull()
+    expect(button(tt.list.delete)).toBeNull()
   })
 
   it('renames, disables and deletes a tenant, and says a slug is taken', async () => {
@@ -95,11 +105,9 @@ describe('the Tenants page', () => {
       admin('POST', '/api/admin/tenants', { slug: 'zed', name: 'Zed' })
     })
     await settle(() => document.querySelectorAll('[data-slot="tenant-list"] li').length === 3, 'the tenants')
-    await click(button(`${tt.list.manage}: Acme`))
+    await openTenantPage(`${tt.list.open}: Acme`, tt.detail.tabs.danger)
     await settle(() => button(tt.list.disable) !== null, 'the details')
-    const li = [...document.querySelectorAll('[data-slot="tenant-list"] li')].find((x) =>
-      x.textContent!.includes('Acme'),
-    )!
+    const li = document.querySelector<HTMLElement>('main')!
     // A slug that is taken.
     const slug = li.querySelectorAll<HTMLInputElement>('form input')[1]
     await type(slug, 'zed')

@@ -516,6 +516,10 @@ export interface TenantBookOptions {
   // What the requirement of a remote now asks of spaces (answered with a write of storage.remotes.*).
   remotesAffected: () => { inGrace: number; overdue: number; exempt: number }
   isSiteAdmin: (id: string) => boolean
+  // The tenant a caller reaches: null is every one (a site administrator in the site's scope).
+  reachTenant: (id: string) => string | null
+  // What the overview adds to the tenant: people, groups and the audit, which the book does not hold.
+  overview: (t: Tenant, me: string) => Record<string, unknown>
   // Mail is enabled (registration needs it), ssoOnly is stored on, and a change of features.registration happened.
   mailReady: () => boolean
   ssoOnlyStored: () => boolean
@@ -717,7 +721,8 @@ export function createTenantBook(o: TenantBookOptions) {
   const anyOpen = () => [...tenants.keys()].some((id) => effectiveOf(id, DEFS[0]).effective === true)
   const visible = (me: string, id: string): Tenant => {
     const t = tenants.get(id)
-    if (!t || (!o.isSiteAdmin(me) && id !== DEFAULT_TENANT)) throw new HttpError(404, 'not_found', 'no such tenant')
+    const reach = o.reachTenant(me)
+    if (!t || (reach !== null && id !== reach)) throw new HttpError(404, 'not_found', 'no such tenant')
     return t
   }
   const defOf = (key: string, layer: 'site' | 'tenant'): Def => {
@@ -1233,6 +1238,15 @@ export function createTenantBook(o: TenantBookOptions) {
         siteRules.delete(t.id)
         o.onQuotaChanged()
         return j({ plan: planRef(t.id), cleared })
+      }
+      const ov = /^\/admin\/tenants\/([^/]+)\/overview$/.exec(path)
+      if (ov && method === 'GET') {
+        const t = visible(me, decodeURIComponent(ov[1]))
+        const off = Object.entries(features(t.id))
+          .filter(([, on]) => on === false)
+          .map(([k]) => k)
+          .sort()
+        return j({ ...o.overview(tenantOut(t), me), featuresOff: off })
       }
       const one = /^\/admin\/tenants\/([^/]+)$/.exec(path)
       if (one) {

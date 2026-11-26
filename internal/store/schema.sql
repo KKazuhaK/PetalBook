@@ -99,6 +99,9 @@ CREATE INDEX users_live ON users(tenant_id, created, id) WHERE deleted_at IS NUL
 -- The administration's list of people (3.10) pages by keyset over one of these
 -- for each sort; the *_all ones serve an administrator of the whole server.
 CREATE INDEX users_live_all ON users(created, id) WHERE deleted_at IS NULL;
+-- The administrators of one tenant, for its overview: a tenant's few
+-- administrators are read without walking its people.
+CREATE INDEX users_admins ON users(tenant_id, created, id) WHERE role = 'admin' AND deleted_at IS NULL;
 CREATE INDEX users_live_name ON users(tenant_id, name_key, id) WHERE deleted_at IS NULL;
 CREATE INDEX users_live_name_all ON users(name_key, id) WHERE deleted_at IS NULL;
 CREATE INDEX users_live_active ON users(tenant_id, last_active DESC, id) WHERE deleted_at IS NULL;

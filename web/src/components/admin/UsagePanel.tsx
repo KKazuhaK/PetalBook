@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { useAdminUsage, useTenants } from '@/api/admin'
-import { useSession } from '@/api/hooks'
-import { acrossSite } from '@/lib/access'
+import { useAcrossSite } from './TenantScope'
 import type { PersonUsage, Tenant, TenantQuotaKey } from '@/api/types'
 import { ErrorState, PageFallback } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -21,8 +20,7 @@ import { OwnLimits } from './OwnLimits'
 // Usage, for administrators: what each tenant uses (a site administrator sees them all) and what each person uses, the
 // most disk first. A tenant's row narrows the people to it. Every number is a stored measurement: nothing here measures.
 export function UsagePanel() {
-  const session = useSession()
-  const site = acrossSite(session.data?.user)
+  const site = useAcrossSite()
   const [tenant, setTenant] = useState('')
   const [overOnly, setOverOnly] = useState(false)
   const tenants = useTenants(site)

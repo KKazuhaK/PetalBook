@@ -6,11 +6,12 @@ import { can } from '@/lib/access'
 import { Logo } from '@/components/brand/Logo'
 import { topBarButton, topBarFrame } from '@/components/layout/topBarStyles'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
-import { spaceUrls, type AdminSection, adminPath } from '@/lib/urls'
+import { spaceUrls, type AdminSection } from '@/lib/urls'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import type { NavSection } from './adminNav'
 import { VersionBadge } from './VersionBadge'
+import { useAdminPaths, useScope } from './TenantScope'
 
 // A row of the rail. Collapsed, a row is a 40 px square centred in the rail, so the icon is on the rail's centre line and
 // the highlight is a square round it; open, it is a full-width row.
@@ -37,10 +38,13 @@ function startCollapsed(): boolean {
 export function AdminLayout({
   sections,
   active,
+  banner,
   children,
 }: {
   sections: NavSection[]
   active: AdminSection | null
+  // The bar that says the console is in a tenant's scope (ScopeBanner): above everything, and the top bar sits under it.
+  banner?: ReactNode
   children: ReactNode
 }) {
   const [collapsed, setCollapsed] = useState(startCollapsed)
@@ -48,7 +52,8 @@ export function AdminLayout({
   const { id, spaces } = useActiveSpace()
   const space = spaces.find((s) => s.id === id)
   // Only the administrators of the whole server may read the build (it is in the server's status).
-  const site = can(useSession().data?.user, 'site.status.read')
+  const scope = useScope()
+  const site = can(useSession().data?.user, 'site.status.read') && scope === null
   const toggle = () =>
     setCollapsed((c) => {
       try {
@@ -62,76 +67,86 @@ export function AdminLayout({
   const current = sections.find((s) => s.key === active)
 
   return (
-    <div className="flex min-h-dvh w-full min-w-0 bg-background" data-slot="admin-layout">
-      <aside
-        aria-label={tc.nav}
-        data-collapsed={collapsed || undefined}
-        className={`sticky top-0 hidden h-dvh shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground transition-[width] duration-200 md:flex ${collapsed ? 'w-16' : 'w-[232px]'}`}
-      >
-        <Nav
-          sections={sections}
-          active={active}
-          back={back}
-          spaceName={space?.name}
-          collapsed={collapsed}
-          Title="p"
-          footer={
-            <>
-              <VersionBadge site={site} collapsed={collapsed} />
-              <button
-                type="button"
-                onClick={toggle}
-                aria-label={collapsed ? tc.expand : tc.collapse}
-                aria-expanded={!collapsed}
-                className={`${RAIL_ITEM} ${collapsed ? RAIL_ICON_ONLY : 'w-full gap-2 px-3'} text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground`}
-              >
-                {collapsed ? (
-                  <PanelLeftOpen className="size-4 shrink-0" aria-hidden="true" />
-                ) : (
-                  <>
-                    <PanelLeftClose className="size-4 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{tc.collapse}</span>
-                  </>
-                )}
-              </button>
-            </>
-          }
-        />
-      </aside>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className={`${topBarFrame} md:hidden`}>
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            aria-label={tc.menu}
-            aria-haspopup="dialog"
-            className={topBarButton}
-          >
-            <Menu className="size-5" aria-hidden="true" />
-          </button>
-          <p className="min-w-0 flex-1 truncate text-sm font-medium">{current?.label ?? tc.title}</p>
-        </header>
-        <main className="mx-auto w-full max-w-6xl min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">{children}</main>
-      </div>
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent
-          side="left"
-          showCloseButton
-          className="flex w-[min(20rem,calc(100vw-3rem))] flex-col gap-0 bg-sidebar p-0 text-sidebar-foreground md:hidden"
+    <div
+      className="flex min-h-dvh w-full min-w-0 flex-col bg-background [--banner-h:0px] data-[banner]:[--banner-h:calc(3rem+env(safe-area-inset-top,0px))]"
+      data-slot="admin-layout"
+      data-banner={banner ? '' : undefined}
+    >
+      {banner}
+      <div className="flex min-w-0 flex-1">
+        <aside
+          aria-label={tc.nav}
+          data-collapsed={collapsed || undefined}
+          className={`sticky top-(--banner-h) hidden h-[calc(100dvh-var(--banner-h))] shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground transition-[width] duration-200 md:flex ${collapsed ? 'w-16' : 'w-[232px]'}`}
         >
-          <SheetTitle className="sr-only">{tc.nav}</SheetTitle>
           <Nav
             sections={sections}
             active={active}
             back={back}
             spaceName={space?.name}
-            collapsed={false}
+            collapsed={collapsed}
             Title="p"
-            footer={<VersionBadge site={site} collapsed={false} />}
-            onNavigate={() => setOpen(false)}
+            footer={
+              <>
+                <VersionBadge site={site} collapsed={collapsed} />
+                <button
+                  type="button"
+                  onClick={toggle}
+                  aria-label={collapsed ? tc.expand : tc.collapse}
+                  aria-expanded={!collapsed}
+                  className={`${RAIL_ITEM} ${collapsed ? RAIL_ICON_ONLY : 'w-full gap-2 px-3'} text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground`}
+                >
+                  {collapsed ? (
+                    <PanelLeftOpen className="size-4 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <>
+                      <PanelLeftClose className="size-4 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{tc.collapse}</span>
+                    </>
+                  )}
+                </button>
+              </>
+            }
           />
-        </SheetContent>
-      </Sheet>
+        </aside>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header
+            className={`${topBarFrame} md:hidden`}
+            style={banner ? { top: 'var(--banner-h)', paddingTop: 0, height: '3.5rem' } : undefined}
+          >
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              aria-label={tc.menu}
+              aria-haspopup="dialog"
+              className={topBarButton}
+            >
+              <Menu className="size-5" aria-hidden="true" />
+            </button>
+            <p className="min-w-0 flex-1 truncate text-sm font-medium">{current?.label ?? tc.title}</p>
+          </header>
+          <main className="mx-auto w-full max-w-6xl min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">{children}</main>
+        </div>
+        <Sheet open={open} onOpenChange={setOpen}>
+          <SheetContent
+            side="left"
+            showCloseButton
+            className="flex w-[min(20rem,calc(100vw-3rem))] flex-col gap-0 bg-sidebar p-0 text-sidebar-foreground md:hidden"
+          >
+            <SheetTitle className="sr-only">{tc.nav}</SheetTitle>
+            <Nav
+              sections={sections}
+              active={active}
+              back={back}
+              spaceName={space?.name}
+              collapsed={false}
+              Title="p"
+              footer={<VersionBadge site={site} collapsed={false} />}
+              onNavigate={() => setOpen(false)}
+            />
+          </SheetContent>
+        </Sheet>
+      </div>
     </div>
   )
 }
@@ -156,6 +171,7 @@ function Nav({
   // The heading of the page: the sidebar's own, the drawer's is a copy and is none.
   Title?: 'h1' | 'p'
 }) {
+  const { path } = useAdminPaths()
   const backText = spaceName ? tc.back(spaceName) : tc.backFallback
   return (
     <>
@@ -186,7 +202,7 @@ function Nav({
             return (
               <li key={key}>
                 <Link
-                  to={adminPath(key)}
+                  to={path(key)}
                   onClick={onNavigate}
                   aria-current={on ? 'page' : undefined}
                   title={collapsed ? label : undefined}

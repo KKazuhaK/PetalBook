@@ -23,10 +23,10 @@ import { BulkBar } from '@/components/admin/manage/BulkBar'
 import { BulkDialog } from '@/components/admin/manage/BulkDialog'
 import { DeletePersonDialog } from '@/components/admin/manage/DeletePersonDialog'
 import { absoluteTime } from '@/lib/time'
-import { adminPath, adminUserPath } from '@/lib/urls'
+import { useAcrossSite, useAdminPaths } from '../TenantScope'
 import { useCursorPages } from '@/lib/useCursorPages'
 import { useDebounced } from '@/lib/useDebounced'
-import { acrossSite, adminKindOf, isAdminAccount } from '@/lib/access'
+import { adminKindOf, isAdminAccount } from '@/lib/access'
 import { useTablePrefs } from '@/lib/tablePrefs'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
@@ -43,6 +43,7 @@ const isSort = (v: string): v is UserSort => (SORTS as readonly string[]).includ
 // Everyone the administrator may see, a page at a time: the server searches, filters, sorts and cuts the page, and the
 // table keeps which columns, how wide and how many to a page in this browser.
 export function UsersList() {
+  const { path: adminPath, userPath: adminUserPath } = useAdminPaths()
   const me = useSession().data?.user
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -72,7 +73,7 @@ export function UsersList() {
   const list = useUsersPage({ ...params, cursor: pages.cursor || undefined })
   const rows = list.data?.users ?? []
   const next = list.data?.next ?? ''
-  const site = acrossSite(me)
+  const site = useAcrossSite()
 
   const columns = useMemo<Column<User>[]>(
     () => [
@@ -183,7 +184,7 @@ export function UsersList() {
         cell: (u) => <time dateTime={u.created}>{absoluteTime(u.created)}</time>,
       },
     ],
-    [me?.id],
+    [me?.id, adminUserPath],
   )
   // The tenant is the same for everyone in a single-tenant server: a column of one value is left to those who ask.
   const shownColumns = useMemo(() => (site ? columns : columns.filter((c) => c.id !== 'tenant')), [columns, site])

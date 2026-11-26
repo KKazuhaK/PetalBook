@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { formatBytes } from '@/lib/bytes'
 import { absoluteTime } from '@/lib/time'
-import { adminUserPath } from '@/lib/urls'
+import { useAdminPaths } from '../TenantScope'
 import { useCursorPages } from '@/lib/useCursorPages'
 import { useDebounced } from '@/lib/useDebounced'
 import { useTablePrefs } from '@/lib/tablePrefs'
@@ -50,6 +50,7 @@ function paramsOf(filter: Filter): Partial<PeopleParams> {
 // Every person and what they hold, a page at a time, in the order asked for (a click on a header). The numbers are
 // stored measurements; the person's own page has the rest.
 export function PeopleSection() {
+  const { userPath: adminUserPath } = useAdminPaths()
   const prefs = useTablePrefs('storage-people')
   const [text, setText] = useState('')
   const q = useDebounced(text.trim(), 300)

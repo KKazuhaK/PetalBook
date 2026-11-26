@@ -6,6 +6,7 @@ import { featureName } from '@/i18n/featureNames'
 import { formatBytes } from '@/lib/bytes'
 import { noteNetworkOk } from '@/lib/offline/status'
 import { forgetLastAccount } from '@/lib/lastAccount'
+import { scopeHeaderFor } from '@/lib/adminScope'
 
 import { ENDED_REASONS } from './types'
 import type {
@@ -390,6 +391,8 @@ export async function request<T>(
       credentials: 'same-origin',
       headers: {
         Accept: 'application/json',
+        // The console in a tenant's scope names it on every administration call (the one place that does).
+        ...scopeHeaderFor(path),
         ...(payload === undefined ? {} : { 'Content-Type': blob ? 'application/octet-stream' : 'application/json' }),
       },
       body: payload,

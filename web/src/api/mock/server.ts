@@ -499,6 +499,14 @@ export function createMockServer(options: MockOptions = {}) {
 
   // An administrator is one of the whole server unless a site administrator said otherwise (3.3).
   const isSiteAdmin = (u: UserRec | undefined) => u?.role === 'admin' && u.siteAdmin !== false
+  // The acting scope of the request being answered (the header PetalBook-Scope: tenant:<id>, docs/design/3-6-c.md
+  // section 5): a site administrator in a tenant's scope acts as that tenant's administrator, so as a caller they are
+  // not one of the site (accounts that are site administrators are still asked with isSiteAdmin).
+  let acting: string | null = null
+  const callerIsSite = (u: UserRec | undefined) => acting === null && isSiteAdmin(u)
+  const tenantOfUser = (u: UserRec | undefined): string => u?.ownTenant?.id ?? DEFAULT_TENANT
+  // What a caller reaches of tenants: null is all of them (a site administrator in the whole site's scope).
+  const reachTenant = (u: UserRec | undefined): string | null => acting ?? (callerIsSite(u) ? null : tenantOfUser(u))
   const publicUser = (u: UserRec): User => ({
     id: u.id,
     username: u.username,
@@ -1675,7 +1683,7 @@ export function createMockServer(options: MockOptions = {}) {
   // --- users and invites ---
   // One page of the list of people (docs/api.md, "GET /api/users"): the cursor is the sort, the order and the id the page ended with.
   const USER_SORTS = ['created', 'name', 'lastActive']
-  const listUsers = (url: URL): { users: User[]; next: string } => {
+  const listUsers = (url: URL, me: UserRec): { users: User[]; next: string } => {
     const q = url.searchParams
     const pick = (name: string, values: string[]) => {
       const v = q.get(name) ?? ''
@@ -1701,7 +1709,9 @@ export function createMockServer(options: MockOptions = {}) {
     const activeDays = num('activeDays', 0, 36500)
     const needle = (q.get('q') ?? '').trim().toLowerCase()
     const day = 86_400_000
+    const reach = reachTenant(me)
     let list = [...users.values()].filter((u) => {
+      if (reach !== null && tenantOfUser(u) !== reach) return false
       if (
         needle !== '' &&
         !u.username.toLowerCase().includes(needle) &&
@@ -1761,12 +1771,12 @@ export function createMockServer(options: MockOptions = {}) {
     if (body.remoteExempt !== undefined && typeof body.remoteExempt !== 'boolean')
       throw new HttpError(400, 'invalid', 'remoteExempt 要是布尔值')
     // The requirement of a remote is the site's: only a site administrator exempts anyone from it.
-    if (body.remoteExempt !== undefined && !isSiteAdmin(me))
+    if (body.remoteExempt !== undefined && !callerIsSite(me))
       throw new HttpError(403, 'forbidden', '只有全站管理员能免除远端要求')
     if (body.email !== undefined && (typeof body.email !== 'string' || body.email.length > 254))
       throw new HttpError(400, 'invalid', '邮箱不合法')
     // A refused quota changes nothing: it is checked before the rest is applied.
-    const applyQuota = body.quota === undefined ? null : quotaBook.patch(u.id, body.quota, isSiteAdmin(me))
+    const applyQuota = body.quota === undefined ? null : quotaBook.patch(u.id, body.quota, callerIsSite(me))
     const role = (body.role as Role | undefined) ?? u.role
     const disabled = (body.disabled as boolean | undefined) ?? u.disabled
     if (disabled && !u.disabled && u.id === me.id) throw new HttpError(409, 'conflict', '不能停用自己')
@@ -1787,7 +1797,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (body.emailMode !== undefined && body.emailMode !== 'verify' && body.emailMode !== 'mark')
       throw new HttpError(400, 'invalid', 'EmailMode is verify or mark.')
     // A site administrator is an administrator of the whole server (3.3): only one may make or end another.
-    if ((body.siteAdmin !== undefined || isSiteAdmin(u)) && !isSiteAdmin(me))
+    if ((body.siteAdmin !== undefined || isSiteAdmin(u)) && !callerIsSite(me))
       throw new HttpError(403, 'forbidden', '只有全站管理员可以改全站管理员')
     if (body.siteAdmin === true && role !== 'admin') throw new HttpError(400, 'invalid', '全站管理员必须是管理员')
     const wasSite = isSiteAdmin(u)
@@ -2282,7 +2292,39 @@ export function createMockServer(options: MockOptions = {}) {
       const a = storageBody().affected
       return { inGrace: a.inGrace, overdue: a.overdue, exempt: a.exempt }
     },
-    isSiteAdmin: (id) => isSiteAdmin(users.get(id)),
+    isSiteAdmin: (id) => callerIsSite(users.get(id)),
+    reachTenant: (id) => reachTenant(users.get(id)),
+    overview: (t, me) => {
+      const hideSite = !callerIsSite(users.get(me))
+      const mine = (id: string | null | undefined) => !!id && tenantOfUser(users.get(id)) === t.id
+      const admins = [...users.values()].filter((u) => u.role === 'admin' && tenantOfUser(u) === t.id)
+      return {
+        tenant: t,
+        createdByName: users.get(t.createdBy)?.username ?? '',
+        groups: t.id === DEFAULT_TENANT ? groupBook.groups.size : 0,
+        admins: admins.slice(0, 10).map((u) => ({
+          id: u.id,
+          username: u.username,
+          name: u.name,
+          siteAdmin: isSiteAdmin(u),
+          disabled: u.disabled,
+        })),
+        adminCount: admins.length,
+        recentAdminActivity: book
+          .auditList(new URLSearchParams(), hideSite, null, 200)
+          .items.filter((a) => mine(a.actor) || mine(a.user))
+          .slice(0, 10)
+          .map((a) => ({
+            id: a.id,
+            at: a.at,
+            kind: a.kind,
+            category: a.category,
+            capacity: a.capacity ?? null,
+            actor: a.actor ?? null,
+            username: a.username ?? '',
+          })),
+      }
+    },
     mailReady: () => mailBook.ready(),
     ssoOnlyStored: () => book.security.login.ssoOnly,
     onRegistrationChanged: () => mailBook.cancelClosed(),
@@ -3523,7 +3565,7 @@ export function createMockServer(options: MockOptions = {}) {
   ): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
     // The audited view belongs to features.adminView, which a site administrator is not bound by.
-    if (/^\/admin\/spaces\/[^/]+\/view$/.test(path) && !isSiteAdmin(me)) featureGate('features.adminView')
+    if (/^\/admin\/spaces\/[^/]+\/view$/.test(path) && !callerIsSite(me)) featureGate('features.adminView')
     const managed = manage.route(me, token, method, path, url, body)
     if (managed) return managed
     if (path === '/admin/spaces' && method === 'GET') return manage.listSpaces(me, token, url)
@@ -3546,7 +3588,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/admin/storage' && method === 'GET') {
       const body = storageBody()
       // A tenant administrator is not told the exemptions, which are the site's.
-      if (!isSiteAdmin(me)) delete (body.affected as { exempt?: number }).exempt
+      if (!callerIsSite(me)) delete (body.affected as { exempt?: number }).exempt
       return j({ ...body, summary: manage.summary(me) })
     }
     // PUT /admin/storage is gone: the policy is the storage.* and cache.* settings.
@@ -3556,7 +3598,7 @@ export function createMockServer(options: MockOptions = {}) {
       const id = decodeURIComponent(one[1])
       const s = adminSpaceOf(id)
       // A personal space is never reachable by a tenant administrator: it answers as one that does not exist.
-      if (s.personal && !isSiteAdmin(me)) throw new HttpError(404, 'not_found', 'no such space')
+      if (s.personal && !callerIsSite(me)) throw new HttpError(404, 'not_found', 'no such space')
       switch (one[2]) {
         case 'size':
           if (method !== 'POST') break
@@ -4508,6 +4550,22 @@ export function createMockServer(options: MockOptions = {}) {
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
+  // The header PetalBook-Scope: tenant:<id> of a request, as the server reads it (internal/api/scope.go): only an
+  // administration endpoint takes it; a tenant that is not the caller's to read is told not to exist; the answer is
+  // the tenant to act in.
+  const enterScope = (header: string | null, target: string, cookie: string | null | undefined): string | null => {
+    if (header === null) return null
+    const path = new URL(target, 'http://mock.local').pathname.replace(/^\/api/, '')
+    if (!/^\/(admin|users|invites)(\/|$)/.test(path))
+      throw new HttpError(400, 'invalid', 'PetalBook-Scope is for administration endpoints only.')
+    const id = /^tenant:(.+)$/.exec(header)?.[1]
+    if (!id || id.trim() !== id) throw new HttpError(400, 'invalid', 'PetalBook-Scope is tenant:<id>.')
+    const me = contextOf(cookie).user
+    if (!me || me.role !== 'admin') throw new HttpError(401, 'unauthenticated', '请先登录')
+    if (!tenantBook.exists(id) || !(isSiteAdmin(me) || tenantOfUser(me) === id))
+      throw new HttpError(404, 'not_found', 'No such tenant.')
+    return id
+  }
   const route = (method: string, url: URL, body: Record<string, unknown>, ctx: Ctx, raw?: Uint8Array): MockResponse => {
     const path = url.pathname.replace(/^\/api/, '')
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
@@ -4761,7 +4819,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/admin/mail' || path === '/admin/mail/test') {
       accountsOnly()
       const me = requireAdmin(ctx)
-      if (!isSiteAdmin(me)) throw new HttpError(403, 'forbidden', '只有全站管理员能改发信设置')
+      if (!callerIsSite(me)) throw new HttpError(403, 'forbidden', '只有全站管理员能改发信设置')
       if (path === '/admin/mail' && method === 'GET') return j(mailBook.view())
       if (path === '/admin/mail' && method === 'PUT') {
         const r = mailBook.put(body)
@@ -4821,7 +4879,7 @@ export function createMockServer(options: MockOptions = {}) {
       const me = requireAdmin(ctx)
       const target = users.get(decodeURIComponent(tempPassword[1]))
       if (!target) throw new HttpError(404, 'not_found', '没有这个用户')
-      if (isSiteAdmin(target) && !isSiteAdmin(me))
+      if (isSiteAdmin(target) && !callerIsSite(me))
         throw new HttpError(403, 'forbidden', '只有全站管理员可以改全站管理员')
       target.passwordHash = hashOf(checkPassword(body.password, '密码'))
       temporary.add(target.id)
@@ -4924,7 +4982,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/users' || path.startsWith('/users/') || path === '/invites' || path.startsWith('/invites/')) {
       accountsOnly()
       const me = requireAdmin(ctx)
-      if (path === '/users' && method === 'GET') return j(listUsers(url))
+      if (path === '/users' && method === 'GET') return j(listUsers(url, me))
       const user = /^\/users\/([^/]+)$/.exec(path)
       if (user && method === 'GET') {
         const u = users.get(decodeURIComponent(user[1]))
@@ -4940,7 +4998,7 @@ export function createMockServer(options: MockOptions = {}) {
         if (kind === 'memberships' && method === 'GET' && sub === undefined) {
           const mine = [...spaces.values()]
             .filter((x) => x.members.has(target.id))
-            .filter((x) => isSiteAdmin(me) || !x.personal)
+            .filter((x) => callerIsSite(me) || !x.personal)
             .sort((a, b) => compareCodePoints(a.name, b.name))
           return j({
             spaces: mine.map((x) => ({
@@ -4953,7 +5011,7 @@ export function createMockServer(options: MockOptions = {}) {
           })
         }
         // The sessions and the connected accounts are for the administrators of the whole server: others are told the person is no one.
-        if (!isSiteAdmin(me)) throw new HttpError(404, 'not_found', '没有这个用户')
+        if (!callerIsSite(me)) throw new HttpError(404, 'not_found', '没有这个用户')
         if (kind === 'sessions') {
           const mine = [...sessions].filter(([, uid]) => uid === target.id).map(([token]) => token)
           const hashOf = (token: string) => sha256Hex(new TextEncoder().encode(token))
@@ -5094,7 +5152,7 @@ export function createMockServer(options: MockOptions = {}) {
       if (id === '' || forge.has(id) || !(id === 'github' || id === 'git')) {
         accountsOnly()
         const me = requireAdmin(ctx)
-        if (!isSiteAdmin(me))
+        if (!callerIsSite(me))
           throw new HttpError(403, 'forbidden', 'only an administrator of the whole server may do that')
         return routeAdminForge(id, method, path, body)
       }
@@ -5108,7 +5166,7 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       // The server's GitHub App is the whole server's: a tenant's administrator is refused, as on the server.
       const me = requireAdmin(ctx)
-      if (!isSiteAdmin(me))
+      if (!callerIsSite(me))
         throw new HttpError(403, 'forbidden', 'only an administrator of the whole server may do that')
       return routeAdminGitHub(me, method, path, url, body)
     }
@@ -5120,7 +5178,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/admin/usage' && method === 'GET') {
       accountsOnly()
       const me = requireAdmin(ctx)
-      return j(quotaBook.list(url, isSiteAdmin(me) ? '' : DEFAULT_TENANT))
+      return j(quotaBook.list(url, reachTenant(me) ?? ''))
     }
 
     // --- administration (administrators only; accounts mode) ---
@@ -5250,7 +5308,7 @@ export function createMockServer(options: MockOptions = {}) {
       if (path === '/admin/security' && method === 'GET') return j(book.view())
       if (path === '/admin/security' && method === 'PUT') return j(book.putCredentials(body, me.id))
       // A tenant's administrator does not see the kinds that are the server's own.
-      const hideSite = !isSiteAdmin(me)
+      const hideSite = !callerIsSite(me)
       if (path === '/admin/audit' && method === 'GET') {
         const raw = url.searchParams.get('limit')
         const limit = raw === null ? 50 : /^\d+$/.test(raw) ? Number(raw) : NaN
@@ -5562,9 +5620,13 @@ export function createMockServer(options: MockOptions = {}) {
       contentType?: string | null,
       cookie?: string | null,
       raw?: Uint8Array,
+      // The header PetalBook-Scope, when the request has one.
+      scope?: string | null,
     ): MockResponse {
       counter++
+      acting = null
       try {
+        acting = enterScope(scope ?? null, target, cookie)
         sweepAll()
         const upload =
           method.toUpperCase() === 'POST' && /^\/api\/spaces\/[^/?]+\/(pages\/[^/?]+\/assets|import)(\?|$)/.test(target)
@@ -5603,6 +5665,8 @@ export function createMockServer(options: MockOptions = {}) {
           }
         }
         throw e
+      } finally {
+        acting = null
       }
     },
     // Test helpers.
