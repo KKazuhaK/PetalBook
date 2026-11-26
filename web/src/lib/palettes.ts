@@ -29,12 +29,10 @@ export interface Tones {
   // The stronger of the two, for hover on a surface.
   surface2: string
   border: string
-  ring: string
   fg: string
   mutedFg: string
-  primary: string
-  onPrimary: string
-  // The petal colour: accents, the caret, small highlights.
+  // The petal colour, and the theme colour of the controls: primary buttons, switches and checkboxes
+  // when on, progress bars, links, selected rows, the focus ring. `--primary` and `--ring` are this.
   brand: string
   onBrand: string
   destructive: string
@@ -58,7 +56,7 @@ export interface Palette {
 // Background, text and accent for a swatch of the palette in a mode.
 export function swatchOf(p: Palette, mode: 'light' | 'dark'): [string, string, string] {
   const tones = p[mode]
-  if (tones) return [tones.bg, tones.fg, tones.primary]
+  if (tones) return [tones.bg, tones.fg, tones.brand]
   return p.swatch?.[mode] ?? ['#ffffff', '#000000', '#888888']
 }
 
@@ -79,11 +77,8 @@ export const palettes: Palette[] = [
       surface: '#e6e9ef',
       surface2: '#dce0e8', // crust
       border: '#ccd0da', // surface0
-      ring: '#7c7f93', // overlay2
       fg: '#4c4f69', // text
       mutedFg: '#5c5f77', // subtext1 (derived: subtext0 is under 4.5:1 on the muted surfaces)
-      primary: '#8839ef', // mauve
-      onPrimary: '#ffffff',
       brand: '#d20f39', // red, the closest to a petal that reads on Latte
       onBrand: '#ffffff',
       destructive: '#d20f39',
@@ -99,11 +94,8 @@ export const palettes: Palette[] = [
       surface: '#313244',
       surface2: '#45475a', // surface1
       border: '#45475a',
-      ring: '#7f849c', // overlay1
       fg: '#cdd6f4', // text
       mutedFg: '#bac2de', // subtext1
-      primary: '#cba6f7', // mauve
-      onPrimary: '#11111b', // crust
       brand: '#f5c2e7', // pink
       onBrand: '#11111b',
       destructive: '#f38ba8', // red
@@ -125,11 +117,8 @@ export const palettes: Palette[] = [
       surface: '#e5e9f0',
       surface2: '#d8dee9', // nord4
       border: '#d8dee9',
-      ring: '#81a1c1', // nord9
       fg: '#2e3440', // nord0
       mutedFg: '#4c566a', // nord3
-      primary: '#4c6f99', // derived: nord10 darkened toward nord0 for 4.5:1 under white text
-      onPrimary: '#eceff4',
       brand: '#a8505a', // derived: nord11 darkened
       onBrand: '#eceff4',
       destructive: '#a8505a',
@@ -145,11 +134,8 @@ export const palettes: Palette[] = [
       surface: '#3b4252',
       surface2: '#434c5e', // nord2
       border: '#4c566a', // nord3
-      ring: '#81a1c1', // nord9
       fg: '#eceff4', // nord6
       mutedFg: '#bcc5d4', // derived: nord4 toward nord0
-      primary: '#88c0d0', // nord8
-      onPrimary: '#2e3440',
       brand: '#c8a8c2', // derived: nord15 lightened
       onBrand: '#2e3440',
       destructive: '#e08e95', // derived: nord11 lightened
@@ -170,11 +156,8 @@ export const palettes: Palette[] = [
       surface: '#eee8d5',
       surface2: '#e4ddc6', // derived: base2 a step darker
       border: '#e0d9c1', // derived
-      ring: '#93a1a1', // base1
       fg: '#073642', // base02 (derived choice: base00 is 4.1:1 on base3)
       mutedFg: '#4f656c', // derived: base01 darkened
-      primary: '#1f6fa8', // derived: blue darkened for 4.5:1 under base3 text
-      onPrimary: '#fdf6e3',
       brand: '#c4313f', // derived: between red and magenta, darkened
       onBrand: '#fdf6e3',
       destructive: '#c02a28', // derived: red darkened
@@ -190,11 +173,8 @@ export const palettes: Palette[] = [
       surface: '#073642',
       surface2: '#0c3e4b', // derived
       border: '#1a4b58', // derived
-      ring: '#586e75', // base01
       fg: '#eee8d5', // base2
       mutedFg: '#93a1a1', // base1
-      primary: '#268bd2', // blue
-      onPrimary: '#001f27', // derived
       brand: '#e86a9d', // derived: magenta lightened
       onBrand: '#001f27',
       destructive: '#f26a64', // derived: red lightened
@@ -215,11 +195,8 @@ export const palettes: Palette[] = [
       surface: '#f2e5bc',
       surface2: '#ebdbb2', // bg1
       border: '#d5c4a1', // bg2
-      ring: '#a89984', // bg4
       fg: '#3c3836', // fg1
       mutedFg: '#665c54', // fg3
-      primary: '#076678', // blue (faded)
-      onPrimary: '#fbf1c7',
       brand: '#9d0006', // red (faded)
       onBrand: '#fbf1c7',
       destructive: '#9d0006',
@@ -235,11 +212,8 @@ export const palettes: Palette[] = [
       surface: '#32302f', // bg0_s
       surface2: '#3c3836', // bg1
       border: '#504945', // bg2
-      ring: '#7c6f64', // bg4
       fg: '#ebdbb2', // fg1
       mutedFg: '#bdae93', // fg3
-      primary: '#83a598', // blue
-      onPrimary: '#1d2021',
       brand: '#fd5a44', // derived: red lightened
       onBrand: '#1d2021',
       destructive: '#fd5a44', // derived: red lightened
@@ -260,11 +234,8 @@ export const palettes: Palette[] = [
       surface: '#f4ede8', // highlight low
       surface2: '#dfdad9', // highlight med
       border: '#dfdad9',
-      ring: '#9893a5', // muted
       fg: '#575279', // text
       mutedFg: '#625d7e', // derived: subtle darkened for 4.5:1 on the surfaces
-      primary: '#286983', // pine
-      onPrimary: '#faf4ed',
       brand: '#a1566c', // derived: love darkened
       onBrand: '#faf4ed',
       destructive: '#a1566c', // derived: love darkened
@@ -280,11 +251,8 @@ export const palettes: Palette[] = [
       surface: '#21202e', // highlight low
       surface2: '#26233a', // overlay
       border: '#403d52',
-      ring: '#6e6a86', // muted
       fg: '#e0def4', // text
       mutedFg: '#908caa', // subtle
-      primary: '#c4a7e7', // iris
-      onPrimary: '#191724',
       brand: '#ebbcba', // rose
       onBrand: '#191724',
       destructive: '#eb6f92', // love
@@ -307,8 +275,8 @@ export function varsOf(t: Tones): Record<string, string> {
     'card-foreground': t.fg,
     popover: t.card,
     'popover-foreground': t.fg,
-    primary: t.primary,
-    'primary-foreground': t.onPrimary,
+    primary: t.brand,
+    'primary-foreground': t.onBrand,
     secondary: t.surface,
     'secondary-foreground': t.fg,
     muted: t.surface,
@@ -318,7 +286,7 @@ export function varsOf(t: Tones): Record<string, string> {
     destructive: t.destructive,
     border: t.border,
     input: t.border,
-    ring: t.ring,
+    ring: t.brand,
     'chart-1': t.charts[0],
     'chart-2': t.charts[1],
     'chart-3': t.charts[2],
@@ -335,7 +303,7 @@ export function varsOf(t: Tones): Record<string, string> {
     'sidebar-accent': t.surface2,
     'sidebar-accent-foreground': t.fg,
     'sidebar-border': t.border,
-    'sidebar-ring': t.ring,
+    'sidebar-ring': t.brand,
   }
 }
 
