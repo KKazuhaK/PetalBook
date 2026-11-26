@@ -39,9 +39,13 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  sheet = false,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  // A form too tall for a small screen: it scrolls inside the screen, and on a phone it is a sheet that rises from the
+  // bottom edge (clear of the home indicator) instead of a box in the middle.
+  sheet?: boolean
 }) {
   return (
     <DialogPortal>
@@ -50,8 +54,11 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           'fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+          sheet &&
+            'max-h-[calc(100dvh-1rem)] overflow-y-auto overscroll-contain max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:max-h-[calc(100dvh-2rem)] max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-b-none max-sm:data-open:slide-in-from-bottom-8 max-sm:data-open:zoom-in-100 max-sm:data-closed:slide-out-to-bottom-8 max-sm:data-closed:zoom-out-100 max-sm:**:data-[slot=dialog-footer]:pb-[calc(1rem+env(safe-area-inset-bottom))]',
           className,
         )}
+        data-sheet={sheet ? '' : undefined}
         {...props}
       >
         {children}

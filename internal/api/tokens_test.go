@@ -370,7 +370,7 @@ func TestAnAdministratorsTokenHasNoWayIntoOtherSpaces(t *testing.T) {
 		admin.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "") // the session still can
 		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 404, "not_found")
 		// An administrator's token is no administrator's.
-		for _, p := range []string{"/api/admin/status", "/api/users", "/api/admin/access", "/api/admin/tokens", "/api/invites"} {
+		for _, p := range []string{"/api/admin/status", "/api/users", "/api/admin/settings", "/api/admin/tokens", "/api/invites"} {
 			b.do("GET", p, nil).want(t, 403, "token_scope")
 		}
 	})
@@ -636,17 +636,19 @@ func TestAccessSwitchesAndTheTokenList(t *testing.T) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
 		// Both on by default; oauth is only read.
-		r := admin.do("GET", "/api/admin/access", nil).want(t, 200, "")
-		if r.body["tokens"] != true || r.body["mcp"] != true || r.body["oauth"] != false {
-			t.Fatal(r.raw)
+		if admin.siteValue("features.tokens") != true || admin.siteValue("features.mcp") != true {
+			t.Fatal("tokens and mcp are on by default")
+		}
+		if admin.do("GET", "/.well-known/oauth-authorization-server", nil).code == 200 {
+			t.Fatal("there is no authorization server unless it was asked for")
 		}
 		_, secret := mkToken(t, tm.owner, "read", nil, tm.sid)
 		b := a.bearer(secret, "")
 		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
 		// Off: every token says so, nothing is deleted, the app still works.
-		r = admin.do("PUT", "/api/admin/access", map[string]any{"tokens": false}).want(t, 200, "")
-		if r.body["tokens"] != false || r.body["mcp"] != true {
-			t.Fatal(r.raw)
+		admin.switchFeature("features.tokens", false).want(t, 200, "")
+		if admin.siteValue("features.tokens") != false || admin.siteValue("features.mcp") != true {
+			t.Fatal("only tokens are off")
 		}
 		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 403, "tokens_off")
 		// The switch is the tenant's, known once the token's owner is: rubbish is rubbish.
@@ -655,16 +657,17 @@ func TestAccessSwitchesAndTheTokenList(t *testing.T) {
 		if got := tm.owner.do("GET", "/api/account/tokens", nil).want(t, 200, "").body["tokens"].([]any); len(got) != 1 {
 			t.Fatal(got)
 		}
-		admin.do("PUT", "/api/admin/access", map[string]any{"tokens": true, "mcp": false}).want(t, 200, "")
+		admin.switchFeature("features.tokens", true).want(t, 200, "")
+		admin.switchFeature("features.mcp", false).want(t, 200, "")
 		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
-		if r = admin.do("GET", "/api/admin/access", nil).want(t, 200, ""); r.body["mcp"] != false || r.body["tokens"] != true {
-			t.Fatal(r.raw)
+		if admin.siteValue("features.mcp") != false || admin.siteValue("features.tokens") != true {
+			t.Fatal("only mcp is off")
 		}
 		// Only administrators.
-		tm.owner.do("GET", "/api/admin/access", nil).want(t, 403, "forbidden")
-		tm.owner.do("PUT", "/api/admin/access", map[string]any{"tokens": false}).want(t, 403, "forbidden")
+		tm.owner.do("GET", "/api/admin/settings", nil).want(t, 403, "forbidden")
+		tm.owner.switchFeature("features.tokens", false).want(t, 403, "forbidden")
 		tm.owner.do("GET", "/api/admin/tokens", nil).want(t, 403, "forbidden")
-		admin.do("PUT", "/api/admin/access", "{").want(t, 400, "invalid")
+		admin.do("PUT", "/api/admin/settings/features.tokens", "{").want(t, 400, "invalid")
 	})
 }
 

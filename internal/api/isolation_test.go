@@ -50,7 +50,7 @@ func newTenFx(t *testing.T, a *acc) *tenFx {
 	ctx := context.Background()
 	f := &tenFx{a: a}
 	f.root = a.setup("root", pw)
-	f.root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 200, "")
+	f.root.putSetting("features.tenancy", true).want(t, 200, "")
 
 	// Tenant B, with its first administrator through the invite the creation gives.
 	r := f.root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme", "admin": map[string]any{"username": "adm-b"}}).want(t, 201, "")

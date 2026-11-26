@@ -26,18 +26,18 @@ func TestTenancyIsOffUntilASiteAdministratorSwitchesItOn(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
-		r := root.do("GET", "/api/admin/tenancy", nil).want(t, 200, "")
-		if r.body["enabled"] != false || r.body["tenants"] != float64(1) {
-			t.Fatal(r.raw)
+		count := func() any { return root.do("GET", "/api/admin/tenants?limit=1", nil).want(t, 200, "").body["count"] }
+		if root.siteValue("features.tenancy") != false || count() != float64(1) {
+			t.Fatal("tenancy is off with one tenant to begin with")
 		}
 		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme"}).want(t, 409, "tenants_off")
-		root.do("PUT", "/api/admin/tenancy", map[string]any{}).want(t, 400, "invalid")
-		root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 200, "")
+		root.do("PUT", "/api/admin/settings/features.tenancy", map[string]any{}).want(t, 400, "invalid")
+		root.putSetting("features.tenancy", true).want(t, 200, "")
 		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme"}).want(t, 201, "")
 		// Switching off leaves the tenants as they are and stops new ones.
-		r = root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": false}).want(t, 200, "")
-		if r.body["enabled"] != false || r.body["tenants"] != float64(2) {
-			t.Fatal(r.raw)
+		root.putSetting("features.tenancy", false).want(t, 200, "")
+		if root.siteValue("features.tenancy") != false || count() != float64(2) {
+			t.Fatal("switching off leaves the two tenants")
 		}
 		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "more", "name": "More"}).want(t, 409, "tenants_off")
 		// Tenant administrators and members have no say in it.
@@ -46,8 +46,8 @@ func TestTenancyIsOffUntilASiteAdministratorSwitchesItOn(t *testing.T) {
 			t.Fatal(err)
 		}
 		adm.do("POST", "/api/login", map[string]any{"username": "tadmin", "password": pw}).want(t, 200, "")
-		adm.do("GET", "/api/admin/tenancy", nil).want(t, 403, "forbidden")
-		adm.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 403, "forbidden")
+		adm.do("GET", "/api/admin/settings", nil).want(t, 403, "forbidden")
+		adm.putSetting("features.tenancy", true).want(t, 403, "forbidden")
 		adm.do("GET", "/api/admin/tenants", nil).want(t, 403, "forbidden")
 	})
 }
@@ -56,7 +56,7 @@ func TestTenantCrudAndItsErrors(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
-		root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 200, "")
+		root.putSetting("features.tenancy", true).want(t, 200, "")
 		for _, bad := range []map[string]any{{"slug": "A", "name": "x"}, {"slug": "-a", "name": "x"}, {"slug": "a", "name": "x"}, {"slug": "ok", "name": " "},
 			{"slug": "ok", "name": strings.Repeat("n", 81)}, {"slug": "ok", "name": "x", "admin": map[string]any{"username": "A B"}}} {
 			root.do("POST", "/api/admin/tenants", bad).want(t, 400, "invalid")
@@ -141,7 +141,7 @@ func TestTenantLimitOf1000(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
-		root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 200, "")
+		root.putSetting("features.tenancy", true).want(t, 200, "")
 		for i := 1; i < store.MaxTenants; i++ {
 			if _, err := a.st.Q().Exec(context.Background(), `INSERT INTO tenants(id, slug, name, name_key, created, updated) VALUES (?, ?, ?, ?, 0, 0)`,
 				fmt.Sprintf("X%09d", i), fmt.Sprintf("x-%d", i), "x", "x"); err != nil {
@@ -200,10 +200,10 @@ func TestTenantAdministratorsSeeAndChangeOnlyTheirTenant(t *testing.T) {
 		// A site administrator makes one, and a member cannot be one.
 		f.root.do("PATCH", "/api/users/"+f.userA, map[string]any{"siteAdmin": true}).want(t, 400, "invalid")
 		f.root.do("PATCH", "/api/users/"+f.userB, map[string]any{"siteAdmin": true}).want(t, 200, "")
-		f.memB.do("GET", "/api/admin/tenancy", nil).want(t, 200, "")
+		f.memB.do("GET", "/api/admin/settings", nil).want(t, 200, "")
 		// Demoting loses the flag too; the last site administrator stays.
 		f.root.do("PATCH", "/api/users/"+f.userB, map[string]any{"role": "member"}).want(t, 200, "")
-		f.memB.do("GET", "/api/admin/tenancy", nil).want(t, 403, "forbidden")
+		f.memB.do("GET", "/api/admin/settings", nil).want(t, 403, "forbidden")
 		f.root.do("PATCH", "/api/users/"+mustUserID(t, a, "root"), map[string]any{"role": "member"}).want(t, 409, "conflict")
 		f.root.do("PATCH", "/api/users/"+mustUserID(t, a, "root"), map[string]any{"siteAdmin": false}).want(t, 409, "conflict")
 		assertNoCrossTenantMemberships(t, a)
@@ -384,7 +384,7 @@ func TestTenantAdminsSeeTheirAuditRowsWithoutTheServersOwn(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		f := newTenFx(t, a)
-		f.root.do("PUT", "/api/admin/security", map[string]any{"limits": map[string]any{"perMinute": 100000}}).want(t, 200, "")
+		f.root.putSetting("signin.perMinute", 100000).want(t, 200, "")
 		a.auth.FlushAudit(context.Background())
 		kinds := func(c *client) map[string]int {
 			out := map[string]int{}

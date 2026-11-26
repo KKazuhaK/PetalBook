@@ -173,12 +173,12 @@ func TestTheStorageHostsDecideWhichHostsAProviderMayBeOn(t *testing.T) {
 	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		admin := a.setup("root", pw)
-		admin.do("PUT", "/api/admin/storage", map[string]any{"hosts": map[string]any{"allowed": []string{"git.example.test"}}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.hosts", map[string]any{"value": []string{"git.example.test"}}).want(t, 200, "")
 		r := admin.do("POST", "/api/admin/connections", fgBody(kind, f, nil))
 		if r.code < 400 || f.Count("GET", "/api/") != 0 {
 			t.Fatalf("a host that is not allowed was accepted or asked: %d %s", r.code, r.raw)
 		}
-		admin.do("PUT", "/api/admin/storage", map[string]any{"hosts": map[string]any{"allowed": []string{"*"}}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.hosts", map[string]any{"value": []string{"*"}}).want(t, 200, "")
 		admin.do("POST", "/api/admin/connections", fgBody(kind, f, nil)).want(t, 201, "")
 	})
 }

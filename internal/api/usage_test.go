@@ -471,7 +471,7 @@ func TestCreatingATenantPrefillsTheAdministratorsInvite(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
-		root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 200, "")
+		root.putSetting("features.tenancy", true).want(t, 200, "")
 		r := root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme",
 			"admin": map[string]any{"username": " Wu ", "name": "Wu Wei", "email": "wu@acme.example"}}).want(t, 201, "")
 		inv := r.body["invite"].(map[string]any)
@@ -527,7 +527,7 @@ func TestATenantWithABadAdministratorIsNotMade(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
-		root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 200, "")
+		root.putSetting("features.tenancy", true).want(t, 200, "")
 		count := func() int {
 			return len(root.do("GET", "/api/admin/tenants", nil).want(t, 200, "").body["items"].([]any))
 		}
@@ -552,7 +552,7 @@ func TestATenantsAdministratorMayPickTheUsernameAtAccept(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
-		root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 200, "")
+		root.putSetting("features.tenancy", true).want(t, 200, "")
 		r := root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme",
 			"admin": map[string]any{"email": "wu@acme.example"}}).want(t, 201, "")
 		inv := r.body["invite"].(map[string]any)

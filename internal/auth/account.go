@@ -853,9 +853,11 @@ type PublicInfo struct {
 	Passkey   bool
 }
 
-// PublicInfo describes the sign-in page. It asks the database nothing.
-func (s *Service) PublicInfo() PublicInfo {
-	st := s.secPtr.Load()
+// PublicInfo describes the sign-in page. It asks the database nothing: the
+// sign-in policy is read through the settings' cache, so a change made by an
+// administrator shows on the page at once.
+func (s *Service) PublicInfo(ctx context.Context) PublicInfo {
+	st := s.sec(ctx)
 	info := PublicInfo{Providers: s.provs.publicList(), Mode: s.effectiveMode(st)}
 	info.Local, info.SSO = info.Mode != ModeSSORedirect, info.Mode != ModeLocalOnly
 	info.Passkey = s.passkeysOn(st)

@@ -3,7 +3,10 @@
 // what it keeps true is what the web app reads: the contract of these endpoints.
 
 import type {
+  ClearedRule,
   CreatedInvite,
+  Plan,
+  PlanRule,
   SettingLower,
   SettingRule,
   SiteSetting,
@@ -453,7 +456,7 @@ export interface TenantBookOptions {
     change: (name: string, value: string | null) => void
   }
   // What the requirement of a remote now asks of spaces (answered with a write of storage.remotes.*).
-  remotesAffected: () => { InGrace: number; Overdue: number; Exempt: number }
+  remotesAffected: () => { inGrace: number; overdue: number; exempt: number }
   isSiteAdmin: (id: string) => boolean
   // Mail is enabled (registration needs it), ssoOnly is stored on, and a change of features.registration happened.
   mailReady: () => boolean
@@ -505,6 +508,7 @@ export function createTenantBook(o: TenantBookOptions) {
     disabled: false,
     registration: { open: false },
     quota: { people: null, spaces: null, bytes: null, pages: null },
+    plan: null,
     usage: ZERO,
     created: stamp,
     updated: stamp,
@@ -512,6 +516,9 @@ export function createTenantBook(o: TenantBookOptions) {
   const siteRows = new Map<string, { value?: unknown; lower?: SettingLower }>()
   const tenantRows = new Map<string, Map<string, TenantRow>>()
   const siteRules = new Map<string, Map<string, SiteRule>>()
+  // The plans (a bundle of rules each) and the plan every tenant has.
+  const plans = new Map<string, { slug: string; name: string; description: string; rules: Record<string, PlanRule> }>()
+  const tenantPlan = new Map<string, string>()
   let seq = 1
 
   const siteValue = (d: Def): unknown =>
@@ -546,10 +553,13 @@ export function createTenantBook(o: TenantBookOptions) {
   }
   const tenantView = (tenant: string, d: Def): TenantSetting => {
     const row = d.layers.includes('tenant') ? tenantRows.get(tenant)?.get(d.key) : undefined
-    const rule = siteRules.get(tenant)?.get(d.key)
+    const manual = siteRules.get(tenant)?.get(d.key)
+    const pr = plans.get(tenantPlan.get(tenant) ?? '')?.rules[d.key]
+    const planRule: SiteRule | undefined = pr && { value: pr.value, lower: pr.lower ?? undefined }
     const sl = siteLower(d)
-    // The rule counts while its window holds, unless the site's lock over everyone beats it.
-    const active = !!rule && windowHolds(rule)
+    // The rule in effect is the first whose window holds, manual then plan; the site's lock over everyone beats it.
+    const rule = manual && windowHolds(manual) ? manual : planRule
+    const active = !!rule
     const ruleOn = active && sl.mode !== 'lock'
     const base = ruleOn && rule.value !== undefined && rule.value !== null ? rule.value : siteValue(d)
     const above = ruleOn && rule.lower ? rule.lower : sl
@@ -558,21 +568,27 @@ export function createTenantBook(o: TenantBookOptions) {
     const inEffect = !has || allows(above, d, own)
     // A restriction bounds the value in effect too, as on the server.
     const v = nearest(above, d, has && inEffect ? own : base)
-    const rules: SettingRule[] = rule
-      ? [
-          {
-            source: 'manual',
-            value: rule.value ?? null,
-            lower: rule.lower ?? null,
-            ...(rule.from ? { from: rule.from } : {}),
-            ...(rule.until ? { until: rule.until } : {}),
-            inEffect: ruleOn,
-          },
-        ]
-      : []
+    const rules: SettingRule[] = []
+    if (manual)
+      rules.push({
+        source: 'manual',
+        value: manual.value ?? null,
+        lower: manual.lower ?? null,
+        ...(manual.from ? { from: manual.from } : {}),
+        ...(manual.until ? { until: manual.until } : {}),
+        inEffect: ruleOn && rule === manual,
+      })
+    if (planRule)
+      rules.push({
+        source: 'plan',
+        value: planRule.value ?? null,
+        lower: planRule.lower ?? null,
+        inEffect: ruleOn && rule === planRule,
+        ...(rule === manual ? { underlying: true } : {}),
+      })
     const now = Date.parse(o.now())
-    const next = rule
-      ? [rule.from, rule.until].filter((x): x is string => !!x && Date.parse(x) > now).sort()[0]
+    const next = manual
+      ? [manual.from, manual.until].filter((x): x is string => !!x && Date.parse(x) > now).sort()[0]
       : undefined
     return {
       key: d.key,
@@ -584,7 +600,7 @@ export function createTenantBook(o: TenantBookOptions) {
         value: own ?? null,
         lower: row?.lower ?? null,
         inEffect,
-        siteLocked: active && rule.lower?.mode === 'lock',
+        siteLocked: ruleOn && rule.lower?.mode === 'lock',
         ...(rules.length ? { rules } : {}),
         ...(next ? { next } : {}),
       },
@@ -593,6 +609,10 @@ export function createTenantBook(o: TenantBookOptions) {
   }
   const effectiveOf = (tenant: string, d: Def) => tenantView(tenant, d)
 
+  const planRef = (tenant: string): Tenant['plan'] => {
+    const p = plans.get(tenantPlan.get(tenant) ?? '')
+    return p ? { slug: p.slug, name: p.name } : null
+  }
   // A tenant's totals are its quota.* settings in effect.
   const quotaOf = (id: string): Tenant['quota'] => {
     const out = { people: null, spaces: null, bytes: null, pages: null } as Tenant['quota']
@@ -608,6 +628,7 @@ export function createTenantBook(o: TenantBookOptions) {
   const tenantOut = (t: Tenant): Tenant => ({
     ...t,
     quota: quotaOf(t.id),
+    plan: planRef(t.id),
     usage: t.id === DEFAULT_TENANT ? o.usageOf(t.id) : ZERO,
     registration: { open: o.mailReady() && effectiveOf(t.id, DEFS[0]).effective === true },
   })
@@ -640,7 +661,7 @@ export function createTenantBook(o: TenantBookOptions) {
     key: string,
     body: Record<string, unknown>,
     actor: string,
-  ): SiteSetting & { affected?: number; remotes?: { InGrace: number; Overdue: number; Exempt: number } } => {
+  ): SiteSetting & { affected?: number; remotes?: { inGrace: number; overdue: number; exempt: number } } => {
     const d = defOf(key, 'site')
     for (const k of Object.keys(body)) if (k !== 'value' && k !== 'lower') bad(`unknown field ${k}`)
     if (!('value' in body) && !('lower' in body)) bad('give value, lower or both')
@@ -821,6 +842,101 @@ export function createTenantBook(o: TenantBookOptions) {
     }
   }
 
+  // A plan's rule is checked as a rule for one tenant; a limit the tenant also sets must cap (restrict or lock).
+  const checkPlanRule = (key: string, raw: unknown): PlanRule => {
+    const d = DEFS.find((x) => x.key === key)
+    if (!d || !(d.layers.includes('tenant') || d.forTenant)) return bad(`no setting ${key} has a rule for a tenant`)
+    const r = raw as { value?: unknown; lower?: unknown } | null
+    if (!r || typeof r !== 'object') return bad(`${key}: give a rule`)
+    for (const k of Object.keys(r)) if (k !== 'value' && k !== 'lower') bad(`unknown field ${k}`)
+    const out: PlanRule = {}
+    if (r.lower !== undefined && r.lower !== null) out.lower = checkLower(d, r.lower)
+    if (r.value !== undefined && r.value !== null) out.value = d.kind === 'doc' ? r.value : checkValue(d, r.value)
+    if (out.value === undefined && out.lower === undefined) bad(`${key}: give a value, a lock or a restriction`)
+    if (
+      out.value !== undefined &&
+      d.kind === 'limit' &&
+      d.layers.includes('tenant') &&
+      (!out.lower || out.lower.mode === 'allow')
+    )
+      throw new HttpError(
+        400,
+        'setting_rule_needs_max',
+        `A plan or billing rule for ${key} must set a maximum or a lock.`,
+      )
+    if (
+      out.value !== undefined &&
+      out.lower?.mode === 'restrict' &&
+      d.kind === 'limit' &&
+      !allows(out.lower, d, out.value)
+    )
+      throw aboveMax()
+    return out
+  }
+  const planOut = (p: { slug: string; name: string; description: string; rules: Record<string, PlanRule> }): Plan => ({
+    slug: p.slug,
+    name: p.name,
+    description: p.description,
+    rules: p.rules,
+    tenants: [...tenantPlan.values()].filter((x) => x === p.slug).length,
+  })
+  const planFields = (body: Record<string, unknown>, creating: boolean) => {
+    const out: { name?: string; description?: string } = {}
+    if ('name' in body || creating) {
+      const n = typeof body.name === 'string' ? body.name.trim() : ''
+      if (!n || n.length > 80) bad('a plan has a name of 1 to 80 characters')
+      out.name = n
+    }
+    if ('description' in body) {
+      const d = typeof body.description === 'string' ? body.description.trim() : ''
+      if (typeof body.description !== 'string' || [...d].length > 500) bad('a description is at most 500 characters')
+      out.description = d
+    }
+    return out
+  }
+  const planRoute = (method: string, path: string, body: Record<string, unknown>): MockResponse | undefined => {
+    const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
+    if (path === '/admin/plans' && method === 'GET') return j({ plans: [...plans.values()].map(planOut) })
+    if (path === '/admin/plans' && method === 'POST') {
+      const f = planFields(body, true)
+      const slug = typeof body.slug === 'string' ? body.slug : ''
+      if (!SLUG.test(slug)) bad('a plan has a slug of 2 to 32 characters')
+      if (plans.size >= 100) throw new HttpError(409, 'plan_limit', 'There are at most 100 plans.')
+      if (plans.has(slug)) throw new HttpError(409, 'exists', 'That slug is taken.')
+      const rules: Record<string, PlanRule> = {}
+      for (const [k, v] of Object.entries((body.rules ?? {}) as Record<string, unknown>))
+        if (v !== null) rules[k] = checkPlanRule(k, v)
+      const p = { slug, name: f.name!, description: f.description ?? '', rules }
+      plans.set(p.slug, p)
+      return j(planOut(p), 201)
+    }
+    const one = /^\/admin\/plans\/([^/]+)$/.exec(path)
+    if (!one) return undefined
+    const p = plans.get(decodeURIComponent(one[1]))
+    if (!p) throw new HttpError(404, 'not_found', 'No such plan.')
+    if (method === 'GET') return j(planOut(p))
+    if (method === 'PATCH') {
+      const f = planFields(body, false)
+      const next = { ...p.rules }
+      for (const [k, v] of Object.entries((body.rules ?? {}) as Record<string, unknown>)) {
+        if (v === null) delete next[k]
+        else next[k] = checkPlanRule(k, v)
+      }
+      Object.assign(p, f, { rules: next })
+      o.onQuotaChanged()
+      const affected = [...tenantPlan.entries()].filter(([, s]) => s === p.slug).map(([id]) => id)
+      return j({ ...planOut(p), affected })
+    }
+    if (method === 'DELETE') {
+      const n = planOut(p).tenants
+      if (n > 0)
+        throw new HttpError(409, 'plan_in_use', 'Tenants use this plan; give them another first.', { tenants: n })
+      plans.delete(p.slug)
+      return { status: 204 }
+    }
+    return undefined
+  }
+
   const page = (all: Tenant[], cursor: string, limit: number) => {
     const from = cursor ? all.findIndex((x) => x.id === cursor) + 1 : 0
     const items = all.slice(from, from + limit)
@@ -932,6 +1048,7 @@ export function createTenantBook(o: TenantBookOptions) {
             disabled: false,
             registration: { open: false },
             quota: { people: null, spaces: null, bytes: null, pages: null },
+            plan: null,
             usage: ZERO,
             created: stampNow,
             updated: stampNow,
@@ -958,6 +1075,32 @@ export function createTenantBook(o: TenantBookOptions) {
           }
           return j(out, 201)
         }
+      }
+      if (path === '/admin/plans' || path.startsWith('/admin/plans/')) {
+        needSite()
+        return planRoute(method, path, body)
+      }
+      const tplan = /^\/admin\/tenants\/([^/]+)\/plan$/.exec(path)
+      if (tplan && method === 'PUT') {
+        needSite()
+        const t = visible(me, decodeURIComponent(tplan[1]))
+        const slug = body.plan
+        if (slug !== null && (typeof slug !== 'string' || !plans.has(slug))) bad(`there is no plan ${String(slug)}`)
+        if (slug === null) tenantPlan.delete(t.id)
+        else tenantPlan.set(t.id, slug as string)
+        // Every manual rule of the tenant goes, dated or not.
+        const cleared: ClearedRule[] = [...(siteRules.get(t.id) ?? new Map<string, SiteRule>()).entries()].map(
+          ([key, r]) => ({
+            key,
+            value: r.value ?? null,
+            lower: r.lower ?? null,
+            ...(r.from ? { from: r.from } : {}),
+            ...(r.until ? { until: r.until } : {}),
+          }),
+        )
+        siteRules.delete(t.id)
+        o.onQuotaChanged()
+        return j({ plan: planRef(t.id), cleared })
       }
       const one = /^\/admin\/tenants\/([^/]+)$/.exec(path)
       if (one) {
@@ -1002,6 +1145,7 @@ export function createTenantBook(o: TenantBookOptions) {
           tenantSecrets.delete(id)
           tenantRows.delete(id)
           siteRules.delete(id)
+          tenantPlan.delete(id)
           o.onTenantDeleted?.(id)
           return { status: 204 }
         }

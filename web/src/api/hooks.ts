@@ -94,6 +94,7 @@ export const keys = {
   adminStorage: ['admin', 'storage'] as const,
   adminStatus: ['admin', 'status'] as const,
   tenantCount: ['admin', 'tenant-count'] as const,
+  plans: ['admin', 'plans'] as const,
   secrets: (tenant: string) => ['admin', 'secrets', tenant] as const,
   adminMail: ['admin', 'mail'] as const,
   tenants: ['admin', 'tenants'] as const,

@@ -378,17 +378,17 @@ func TestAnSSOOnlyAccountIsToldToSignInWithTheProviderNotGivenALink(t *testing.T
 			t.Fatal("a reset token was made for an account without a password")
 		}
 		// With ssoOnly in effect, an account with a password that is refused gets the same.
-		root.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"ssoOnly": true}}).want(t, 200, "")
+		root.putSetting("signin.ssoOnly", true).want(t, 200, "")
 		forgot(a.newClient("203.0.113.2"), "pw").want(t, 202, "")
 		m = srv.Wait(2)[1]
 		if m.To != "pw@example.test" || len(m.Tokens()) != 0 || !strings.Contains(m.Text, "Home IdP") {
 			t.Fatalf("%+v", m)
 		}
 		// A link made before ssoOnly came on cannot add a password either.
-		root.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"ssoOnly": false}}).want(t, 200, "")
+		root.putSetting("signin.ssoOnly", false).want(t, 200, "")
 		forgot(a.newClient("203.0.113.3"), "pw").want(t, 202, "")
 		tok := srv.Wait(3)[2].Token(t)
-		root.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"ssoOnly": true}}).want(t, 200, "")
+		root.putSetting("signin.ssoOnly", true).want(t, 200, "")
 		a.newClient("").do("POST", "/api/password/reset", map[string]any{"token": tok, "password": "a brand new password"}).want(t, 404, "not_found")
 	})
 }
@@ -399,7 +399,10 @@ func TestAResetForgivesTheFailuresAndLocksOfTheUsername(t *testing.T) {
 		srv := fakeMail(t)
 		root := a.setup("root", pw)
 		enableMail(t, root, srv)
-		root.do("PUT", "/api/admin/security", map[string]any{"lockout": map[string]any{"enabled": true, "minutes": 15, "scope": "account"}, "limits": map[string]any{"maxFailures": 3}}).want(t, 200, "")
+		root.putSetting("signin.lockout.enabled", true).want(t, 200, "")
+		root.putSetting("signin.lockout.minutes", 15).want(t, 200, "")
+		root.putSetting("signin.lockout.scope", "account").want(t, 200, "")
+		root.putSetting("signin.maxFailures", 3).want(t, 200, "")
 		verifiedUser(t, a, "tang", "tang@example.test")
 		for i := 0; i < 3; i++ {
 			a.newClient("198.51.100.5").do("POST", "/api/login", map[string]any{"username": "tang", "password": "wrong one"})
@@ -419,12 +422,11 @@ func TestForgotHasItsOwnCaptchaContext(t *testing.T) {
 		root := a.setup("root", pw)
 		enableMail(t, root, srv)
 		verifiedUser(t, a, "tang", "tang@example.test")
-		sec := root.do("GET", "/api/admin/security", nil).want(t, 200, "")
-		ctxs := sec.body["captcha"].(map[string]any)["contexts"].(map[string]any)
+		ctxs := root.siteValue("captcha.contexts").(map[string]any)
 		if ctxs["forgot"] == nil || ctxs["register"] == nil {
-			t.Fatal(sec.raw)
+			t.Fatal(jsonText(ctxs))
 		}
-		root.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"contexts": map[string]any{"forgot": map[string]any{"on": true, "when": "always"}}}}).want(t, 200, "")
+		root.putSetting("captcha.contexts", map[string]any{"forgot": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
 		anon := a.newClient("")
 		forgot(anon, "tang").want(t, 400, "captcha_failed")
 		if c := anon.do("GET", "/api/captcha?ctx=forgot", nil).want(t, 200, ""); c.body["required"] != true {
@@ -446,7 +448,8 @@ func TestForgotAndResetWrongTokensCountAsFailuresOfTheAddress(t *testing.T) {
 		srv := fakeMail(t)
 		root := a.setup("root", pw)
 		enableMail(t, root, srv)
-		root.do("PUT", "/api/admin/security", map[string]any{"limits": map[string]any{"maxFailures": 3, "perMinute": 100}}).want(t, 200, "")
+		root.putSetting("signin.maxFailures", 3).want(t, 200, "")
+		root.putSetting("signin.perMinute", 100).want(t, 200, "")
 		anon := a.newClient("198.51.100.9")
 		for i := 0; i < 3; i++ {
 			anon.do("POST", "/api/email/confirm", map[string]any{"token": "wrong"}).want(t, 404, "not_found")

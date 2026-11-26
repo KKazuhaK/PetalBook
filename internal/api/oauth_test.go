@@ -696,12 +696,14 @@ func TestMachineAccessSwitchTurnsOAuthOff(t *testing.T) {
 		anon := a.newClient("")
 		b := a.bearer(g.access, "")
 		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
-		if got := admin.do("GET", "/api/admin/access", nil).want(t, 200, "").body; got["oauth"] != true || got["mcp"] != true || got["tokens"] != true {
-			t.Fatal(got)
+		// The authorization server is there while its discovery document is.
+		oauth := func() bool { return admin.do("GET", "/.well-known/oauth-authorization-server", nil).code == 200 }
+		if !oauth() || admin.siteValue("features.mcp") != true || admin.siteValue("features.tokens") != true {
+			t.Fatal("OAuth, MCP and tokens are on")
 		}
-		admin.do("PUT", "/api/admin/access", map[string]any{"mcp": false}).want(t, 200, "")
-		if got := admin.do("GET", "/api/admin/access", nil).want(t, 200, "").body; got["oauth"] != false || got["mcp"] != false || got["tokens"] != true {
-			t.Fatal(got)
+		admin.switchFeature("features.mcp", false).want(t, 200, "")
+		if oauth() || admin.siteValue("features.mcp") != false || admin.siteValue("features.tokens") != true {
+			t.Fatal("MCP off takes the authorization server with it, and tokens stay on")
 		}
 		// Everything of the authorization server is 404, in the OAuth shape.
 		for _, path := range []string{"/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"} {
@@ -725,7 +727,7 @@ func TestMachineAccessSwitchTurnsOAuthOff(t *testing.T) {
 			t.Fatal(l)
 		}
 		// Back on: the grant works as before.
-		admin.do("PUT", "/api/admin/access", map[string]any{"mcp": true}).want(t, 200, "")
+		admin.switchFeature("features.mcp", true).want(t, 200, "")
 		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		refreshWith(t, a, g.cid, g.refresh).want(t, 200, "")
 		tm.owner.do("DELETE", "/api/account/grants/"+l[0].(map[string]any)["id"].(string), nil).want(t, 204, "")
@@ -745,8 +747,8 @@ func TestNoAuthorizationServerWithoutIt(t *testing.T) {
 		admin.do("GET", "/api/account/grants", nil).want(t, 404, "not_found")
 		admin.do("GET", "/api/admin/grants", nil).want(t, 404, "not_found")
 		admin.do("GET", "/api/oauth/consent?req=x", nil).want(t, 404, "not_found")
-		if got := admin.do("GET", "/api/admin/access", nil).want(t, 200, "").body; got["mcp"] != true {
-			t.Fatal(got)
+		if admin.siteValue("features.mcp") != true {
+			t.Fatal("MCP is on")
 		}
 	})
 }

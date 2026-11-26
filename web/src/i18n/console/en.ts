@@ -59,6 +59,7 @@ export const consoleEn: ConsoleMessages = {
     spaces: { all: 'All spaces', deleted: 'Deleted' },
     storage: { manage: 'Storage management', usage: 'Usage', rules: 'Rules', connections: 'Connections' },
     security: { signin: 'Sign-in', providers: 'Providers', access: 'Machine access' },
+    tenants: { tenants: 'Tenants', plans: 'Plans' },
     status: { status: 'Status' },
   },
   table: {

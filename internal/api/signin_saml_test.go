@@ -371,7 +371,7 @@ func TestSAMLEndpoints(t *testing.T) {
 			}
 		}
 		// A per-address allowance for the ACS.
-		admin.putSecurity(t, map[string]any{"limits": map[string]any{"perMinute": 2}})
+		admin.putSetting("signin.perMinute", 2).want(t, 200, "")
 		d := a.newClient("203.0.113.99")
 		d.postACS(samlSlug, []byte("x"), "", nil)
 		d.postACS(samlSlug, []byte("x"), "", nil)

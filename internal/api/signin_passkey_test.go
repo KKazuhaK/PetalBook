@@ -317,14 +317,14 @@ func TestPasskeysAreRequiredByRoleAndByPerson(t *testing.T) {
 		admin := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
 		tid := mustUserID(t, a, "tang")
-		admin.putSecurity(t, map[string]any{"passkeys": map[string]any{"requireRoles": []string{"member"}}})
+		admin.putSetting("signin.passkeyRoles", []string{"member"}).want(t, 200, "")
 		u := admin.do("PATCH", "/api/users/"+tid, map[string]any{"email": "t@example.test"}).want(t, 200, "").user()
 		if u["passkeyRequired"] != true {
 			t.Fatalf("%v", u)
 		}
 		sec := admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
 		pk := sec.body["passkeys"].(map[string]any)
-		if pk["required"] != float64(1) || pk["requiredWithout"] != float64(1) || pk["available"] != true || pk["enabled"] != true {
+		if pk["required"] != float64(1) || pk["requiredWithout"] != float64(1) || pk["available"] != true || admin.siteValue("features.passkeys") != true {
 			t.Fatal(sec.raw)
 		}
 
@@ -385,7 +385,7 @@ func TestPasskeysAreRequiredByRoleAndByPerson(t *testing.T) {
 		// Per person; lifting the role's requirement leaves it.
 		pat := a.addUser("pat", pw, "admin")
 		_ = pat
-		admin.putSecurity(t, map[string]any{"passkeys": map[string]any{"requireRoles": []string{}}})
+		admin.putSetting("signin.passkeyRoles", []string{}).want(t, 200, "")
 		h := a.newClient("")
 		h.do("POST", "/api/login", good("tang")).want(t, 200, "")
 		if h.do("GET", "/api/session", nil).body["hold"] != nil {
@@ -401,16 +401,16 @@ func TestPasskeysAreRequiredByRoleAndByPerson(t *testing.T) {
 			t.Fatal("a person required alone was not held")
 		}
 		// Switching passkeys off is refused while someone must use one.
-		admin.do("PUT", "/api/admin/security", map[string]any{"passkeys": map[string]any{"enabled": false}}).want(t, 400, "passkey_requirement_unsatisfiable")
+		admin.putSetting("features.passkeys", false).want(t, 400, "passkey_requirement_unsatisfiable")
 		admin.do("PATCH", "/api/users/"+tid, map[string]any{"passkeyRequired": false}).want(t, 200, "")
-		admin.putSecurity(t, map[string]any{"passkeys": map[string]any{"enabled": false}})
+		admin.putSetting("features.passkeys", false).want(t, 200, "")
 		if p := a.newClient("").do("GET", "/api/auth/providers", nil).body["passkey"]; p != false {
 			t.Fatalf("passkey %v", p)
 		}
 		a.newClient("").do("POST", "/api/auth/passkey/begin", map[string]any{}).want(t, 404, "not_found")
 		admin.do("PATCH", "/api/users/"+tid, map[string]any{"passkeyRequired": true}).want(t, 400, "passkey_unavailable")
-		admin.do("PUT", "/api/admin/security", map[string]any{"passkeys": map[string]any{"requireRoles": []string{"admin"}}}).want(t, 400, "passkey_requirement_unsatisfiable")
-		admin.do("PUT", "/api/admin/security", map[string]any{"passkeys": map[string]any{"requireRoles": []string{"nobody"}}}).want(t, 400, "invalid")
+		admin.putSetting("signin.passkeyRoles", []string{"admin"}).want(t, 400, "passkey_requirement_unsatisfiable")
+		admin.putSetting("signin.passkeyRoles", []string{"nobody"}).want(t, 400, "invalid")
 	})
 }
 
@@ -430,7 +430,7 @@ func TestPasskeysNeedAPublicURLTheyCanWorkWith(t *testing.T) {
 				}
 				a.newClient("").do("POST", "/api/auth/passkey/begin", map[string]any{}).want(t, 404, "not_found")
 				admin.do("POST", "/api/account/passkeys/begin", map[string]any{}).want(t, 404, "not_found")
-				admin.do("PUT", "/api/admin/security", map[string]any{"passkeys": map[string]any{"requireRoles": []string{"member"}}}).want(t, 400, "passkey_unavailable")
+				admin.putSetting("signin.passkeyRoles", []string{"member"}).want(t, 400, "passkey_unavailable")
 				sec := admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
 				if sec.body["passkeys"].(map[string]any)["available"] != false {
 					t.Fatal(sec.raw)

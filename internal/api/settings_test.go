@@ -132,17 +132,17 @@ func TestDailyTextSwitchesAreTheSameRecordAsTheLayeredSettings(t *testing.T) {
 			t.Fatal("a space may have its own source by default")
 		}
 		// 2.3's PUT /api/admin/daily is the site's value of the setting.
-		f.root.do("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"own": false}}).want(t, 200, "")
+		f.root.do("PUT", "/api/admin/settings/daily.own", map[string]any{"value": false}).want(t, 200, "")
 		if v := settingOf(t, f.root.do("GET", "/api/admin/settings", nil).want(t, 200, ""), "daily.own")["site"].(map[string]any)["value"]; v != false {
 			t.Fatalf("%v", v)
 		}
 		if own(f.admA, f.spaceA)["inEffect"] != false || own(f.admB, f.spaceB)["inEffect"] != false {
 			t.Fatal("the switch is not in effect for every tenant")
 		}
-		// And the layered API writes the same record back.
+		// And back on.
 		f.root.do("PUT", "/api/admin/settings/daily.own", map[string]any{"value": true}).want(t, 200, "")
-		if f.root.do("GET", "/api/admin/daily", nil).want(t, 200, "").body["allow"].(map[string]any)["own"] != true {
-			t.Fatal("/api/admin/daily does not say what the settings do")
+		if f.root.siteValue("daily.own") != true {
+			t.Fatal("the site's value is not back on")
 		}
 		// A tenant may switch it off for its own spaces; the other tenant is not touched.
 		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/daily.own", map[string]any{"value": false}).want(t, 200, "")
@@ -191,7 +191,7 @@ func TestTheDailyDefaultComesBetweenTheSpaceAndTheSite(t *testing.T) {
 			return map[string]any{"kind": "space", "space": space, "source": map[string]any{"en": map[string]any{"folder": "Q"}}}
 		}
 		// The site's default is A's space; a tenant names a space of its own tenant only.
-		f.root.do("PUT", "/api/admin/daily", map[string]any{"default": def(f.spaceA)}).want(t, 200, "")
+		f.root.do("PUT", "/api/admin/settings/daily.default", map[string]any{"value": def(f.spaceA)}).want(t, 200, "")
 		tpath := "/api/admin/tenants/" + f.tenB + "/settings/daily.default"
 		f.admB.do("PUT", tpath, map[string]any{"value": def(f.spaceA)}).want(t, 400, "invalid")
 		f.admB.do("PUT", tpath, map[string]any{"value": map[string]any{"kind": "list"}}).want(t, 400, "invalid")
@@ -221,7 +221,7 @@ func TestTheDailyDefaultComesBetweenTheSpaceAndTheSite(t *testing.T) {
 func TestSettingsRoutesDoNotExistInSingleUserMode(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	for _, p := range []string{"/api/settings", "/api/admin/settings", "/api/admin/tenancy", "/api/admin/tenants", "/api/admin/tenants/x/settings"} {
+	for _, p := range []string{"/api/settings", "/api/admin/settings", "/api/admin/tenants", "/api/admin/tenants/x/settings"} {
 		if code, r, raw := f.do("GET", p, "{}"); code != 404 || r["error"] != "not_found" {
 			t.Errorf("%s: %d %s", p, code, raw)
 		}

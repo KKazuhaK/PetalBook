@@ -87,7 +87,11 @@ import type {
   AdminGrantList,
   AdminTokenList,
   AdminGitHub,
+  ClearedRule,
   CursorPage,
+  Plan,
+  PlanRef,
+  PlanWrite,
   GitHubInstallation,
   GitHubManifestStart,
   PutAdminGitHubInput,
@@ -252,6 +256,18 @@ export const adminApi = {
       method: 'DELETE',
     }),
   // --- layered settings (3.3) ---
+  plans: (signal?: AbortSignal) => request<{ plans: Plan[] }>('/admin/plans', { signal }),
+  createPlan: (input: PlanWrite & { slug: string; name: string }) =>
+    request<Plan>('/admin/plans', { method: 'POST', body: input }),
+  updatePlan: (slug: string, input: PlanWrite) =>
+    request<Plan & { affected: string[] }>(`/admin/plans/${enc(slug)}`, { method: 'PATCH', body: input }),
+  deletePlan: (slug: string) => request<void>(`/admin/plans/${enc(slug)}`, { method: 'DELETE' }),
+  // Gives a tenant a plan (null: none). Every manual rule of the tenant is cleared, and the answer lists them.
+  putTenantPlan: (tenant: string, plan: string | null) =>
+    request<{ plan: PlanRef | null; cleared: ClearedRule[] }>(`/admin/tenants/${enc(tenant)}/plan`, {
+      method: 'PUT',
+      body: { plan },
+    }),
   siteSettings: (signal?: AbortSignal) => request<{ settings: SiteSetting[] }>('/admin/settings', { signal }),
   putSiteSetting: (key: string, input: { value?: unknown; lower?: SettingLower | null }) =>
     request<SiteSetting>(`/admin/settings/${enc(key)}`, { method: 'PUT', body: input }),
@@ -630,6 +646,52 @@ export function useDeleteTenant() {
         qc.invalidateQueries({ queryKey: keys.tenants }),
         qc.invalidateQueries({ queryKey: keys.tenantCount }),
       ]),
+  })
+}
+// --- plans ---
+
+export function usePlans(enabled = true) {
+  return useQuery({
+    queryKey: keys.plans,
+    queryFn: ({ signal }) => adminApi.plans(signal).then((r) => r.plans),
+    enabled,
+    staleTime: 10_000,
+  })
+}
+// A plan's rules are the lowest source of every tenant that has it: the tenants' rules and the plan list are read again.
+function plansChanged(qc: QueryClient) {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: keys.plans }),
+    qc.invalidateQueries({ queryKey: ['admin', 'settings'] }),
+    qc.invalidateQueries({ queryKey: keys.tenants }),
+  ])
+}
+export function useCreatePlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: Parameters<typeof adminApi.createPlan>[0]) => adminApi.createPlan(input),
+    onSuccess: () => plansChanged(qc),
+  })
+}
+export function useUpdatePlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ slug, ...input }: { slug: string } & PlanWrite) => adminApi.updatePlan(slug, input),
+    onSuccess: () => plansChanged(qc),
+  })
+}
+export function useDeletePlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (slug: string) => adminApi.deletePlan(slug),
+    onSuccess: () => plansChanged(qc),
+  })
+}
+export function usePutTenantPlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tenant, plan }: { tenant: string; plan: string | null }) => adminApi.putTenantPlan(tenant, plan),
+    onSuccess: () => plansChanged(qc),
   })
 }
 export function useSiteSettings(enabled = true) {

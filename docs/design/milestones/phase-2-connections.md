@@ -549,8 +549,9 @@ Settled:
 - **Settings and providers are cached in memory**: read once at start-up, and
   re-read at once when an administrator changes them, rebuilding only the
   provider that changed; changes made from the command line
-  (`petalbook security reset`) take effect within 5 minutes at the latest (the
-  revision number is checked every 5 minutes, not on every request).
+  (`petalbook security reset`) take effect within 60 seconds at the latest (the
+  settings' revision, `settings_rev`, is checked at most once every 60 seconds,
+  on a request, not on every request).
   `GET /api/auth/providers` does not query the database. OIDC discovery
   documents and SAML metadata are stored in the database and also kept in
   memory, and are not fetched at sign-in; metadata configured by address is
@@ -686,11 +687,11 @@ done with the defaults in brackets. What was settled during implementation:
   `sign_in_providers` (secrets encrypted with `secret.Box`, discovery documents
   and metadata in the `cache` column), `passkeys` (credential JSON, `rp_id`,
   `synced`) and `audit_log`; `users` gains `email_verified` and
-  `passkey_required`, and `sessions` gains `held`. The security settings are one
-  row in `site_settings` with the key `security`, whose `updated` is the
-  revision number: after a command-line change, the running service reads it at
-  the latest after `CacheTTL` (5 minutes), and each request only compares the
-  time in memory, with no database query. The migration-count test was changed
+  `passkey_required`, and `sessions` gains `held`. The security settings are
+  layered settings of the site (the settings fold moved them out of one row):
+  after a command-line change, the running service reads the settings' revision
+  at the latest after `settings.RevCheck` (60 seconds), and each request only
+  compares the time in memory, with no database query. The migration-count test was changed
   to count files.
 - **Old flags**: at the first start, `--oidc-*` creates a provider with slug
   `sso` (`legacyCallback` on, enabled, `autoCreate` following the flag) and

@@ -388,7 +388,11 @@ func (m *Manager) hostPolicy() gitstore.Policy {
 }
 
 // Affected is how many spaces the policy asks something of.
-type Affected struct{ InGrace, Overdue, Exempt int }
+type Affected struct {
+	InGrace int `json:"inGrace"`
+	Overdue int `json:"overdue"`
+	Exempt  int `json:"exempt"`
+}
 
 func deref(p *string) string {
 	if p == nil {

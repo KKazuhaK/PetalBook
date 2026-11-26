@@ -107,9 +107,9 @@ func TestTheAttachmentRepositoryThroughTheAPI(t *testing.T) {
 		if ss["assetCacheBytes"].(float64) <= 0 || ss["assetsBudget"] != float64(5<<30) {
 			t.Fatal(stat.raw)
 		}
-		cfg := admin.do("PUT", "/api/admin/storage", map[string]any{"cache": map[string]any{"assetsBytes": 64 << 20}}).want(t, 200, "")
-		if cfg.body["cache"].(map[string]any)["assetsBytes"] != float64(64<<20) || cfg.body["assets"] != nil {
-			t.Fatal(cfg.raw)
+		admin.putSetting("cache.assetsBytes", 64<<20).want(t, 200, "")
+		if admin.siteValue("cache.assetsBytes") != float64(64<<20) {
+			t.Fatal("the budget of the asset cache was not kept")
 		}
 	})
 }

@@ -27,22 +27,48 @@ type planRefResp struct {
 	Name string `json:"name"`
 }
 
-// planRef is the plan a tenant has, nil for none.
-func (s *server) planRef(ctx context.Context, tenant string) (*planRefResp, error) {
-	ref, ok := s.opt.Store.TenantRefOf(tenant)
-	if !ok || ref.PlanID == "" {
-		return nil, nil
-	}
+// planIndex is every plan by id, read once for a request.
+type planIndex map[string]planRefResp
+
+// planIndexOf reads the plans, one query.
+func (s *server) planIndexOf(ctx context.Context) (planIndex, error) {
 	all, err := store.ListPlans(ctx, s.opt.Store.Q())
 	if err != nil {
 		return nil, err
 	}
+	return indexPlans(all), nil
+}
+
+func indexPlans(all []store.Plan) planIndex {
+	idx := make(planIndex, len(all))
 	for _, p := range all {
-		if p.ID == ref.PlanID {
-			return &planRefResp{p.Slug, p.Name}, nil
+		idx[p.ID] = planRefResp{p.Slug, p.Name}
+	}
+	return idx
+}
+
+// refOf is the plan with that id, nil for none.
+func (idx planIndex) refOf(id string) *planRefResp {
+	if r, ok := idx[id]; ok {
+		return &r
+	}
+	return nil
+}
+
+// planRef is the plan a tenant has, nil for none. idx is the plans of the
+// request (planIndexOf); nil reads them here, for a request about one tenant.
+func (s *server) planRef(ctx context.Context, tenant string, idx planIndex) (*planRefResp, error) {
+	ref, ok := s.opt.Store.TenantRefOf(tenant)
+	if !ok || ref.PlanID == "" {
+		return nil, nil
+	}
+	if idx == nil {
+		var err error
+		if idx, err = s.planIndexOf(ctx); err != nil {
+			return nil, err
 		}
 	}
-	return nil, nil
+	return idx.refOf(ref.PlanID), nil
 }
 
 // evaluateQuotas looks again at the totals of tenants whose limits moved, so an
@@ -329,7 +355,7 @@ func (s *server) adminPutTenantPlan(c *call) {
 		}
 		plan = p
 	}
-	before, err := s.planRef(ctx, t.ID)
+	before, err := s.planRef(ctx, t.ID, nil)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -356,7 +382,7 @@ func (s *server) adminPutTenantPlan(c *call) {
 	}
 	s.audit(c, auth.AuditEvent{Kind: "tenant_plan_changed", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "from": from, "to": to, "cleared": cleared}})
 	s.evaluateQuotas(ctx, []string{t.ID})
-	ref, err := s.planRef(ctx, t.ID)
+	ref, err := s.planRef(ctx, t.ID, nil)
 	if err != nil {
 		s.fail(c.w, err)
 		return

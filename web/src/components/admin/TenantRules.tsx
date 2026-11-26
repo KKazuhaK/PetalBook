@@ -1,24 +1,12 @@
-import { useState, type FormEvent } from 'react'
-import { CalendarClock, Pencil, Save, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { CalendarClock, Pencil } from 'lucide-react'
 import { usePutSetting, useTenantSettings } from '@/api/admin'
 import type { RuleWrite, SettingLower, SettingRule, Tenant, TenantSetting } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { DataTable, RowAction, type Column } from '@/components/ui/data-table'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { NativeSelect } from '@/components/ui/native-select'
-import { Switch } from '@/components/ui/switch'
-import { SettingsRow, SettingsRows } from '@/components/settings/SettingsParts'
-import { RuleEditor, settingError } from './SettingsPanel'
+import { RuleDialog, inBytes, nameOf } from './RuleDialog'
+import { settingError } from './SettingsPanel'
 import { formatBytes } from '@/lib/bytes'
 import { absoluteTime } from '@/lib/time'
 import { useTablePrefs } from '@/lib/tablePrefs'
@@ -26,11 +14,6 @@ import { tt } from '@/i18n/tenants'
 import { tu } from '@/i18n/usage'
 
 const tx = tt.rules
-const GB = 1024 ** 3
-
-// A key counted in bytes is typed in GB; the API counts bytes.
-const inBytes = (key: string) => /bytes$/i.test(key)
-
 type Source = 'site' | 'tenant' | SettingRule['source']
 
 // What the tenant's setting is made of right now: the rule in effect, the one under it, a manual rule that waits.
@@ -40,8 +23,6 @@ interface Made {
   underlying?: SettingRule
   waiting?: SettingRule
 }
-
-const nameOf = (key: string) => tt.settings.names[key] ?? key
 
 function made(s: TenantSetting, now = Date.now()): Made {
   const rules = s.tenant?.rules ?? []
@@ -61,7 +42,7 @@ export function showValue(s: Pick<TenantSetting, 'key' | 'kind'>, value: unknown
 }
 
 // "from 1 Dec to 1 Jan", "until 1 Jan", "from 1 Dec"; empty for no window.
-function windowText(from?: string | null, until?: string | null): string {
+export function windowText(from?: string | null, until?: string | null): string {
   if (from && until) return tx.window.both(absoluteTime(from), absoluteTime(until))
   if (from) return tx.window.from(absoluteTime(from))
   if (until) return tx.window.until(absoluteTime(until))
@@ -77,7 +58,7 @@ const SOURCE_VARIANT: Record<Source, 'default' | 'secondary' | 'outline'> = {
 }
 
 // What a rule says besides its value: a lock, or a restriction.
-function lowerText(s: Pick<TenantSetting, 'key' | 'kind'>, l: SettingLower | null): string {
+export function lowerText(s: Pick<TenantSetting, 'key' | 'kind'>, l: SettingLower | null): string {
   if (!l || l.mode === 'allow') return ''
   if (l.mode === 'lock') return tx.locked
   if (l.max !== undefined) return tx.atMost(showValue(s, l.max))
@@ -252,7 +233,7 @@ export function TenantRulesBlock({ tenant }: { tenant: Tenant }) {
         />
       </div>
       {editing && (
-        <RuleDialog
+        <TenantRuleDialog
           tenant={tenant}
           s={editing}
           onClose={() => setEditing(null)}
@@ -266,17 +247,8 @@ export function TenantRulesBlock({ tenant }: { tenant: Tenant }) {
   )
 }
 
-const toLocal = (iso?: string | null) => {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
-}
-const fromLocal = (v: string) => (v ? new Date(v).toISOString().replace('.000Z', 'Z') : undefined)
-
-// The manual rule of one setting: a value, what it lets the tenant do (a lock or a restriction), and the window it
-// counts in.
-function RuleDialog({
+// The manual rule of one setting of the tenant, with a window.
+function TenantRuleDialog({
   tenant,
   s,
   onClose,
@@ -288,172 +260,26 @@ function RuleDialog({
   onSaved: (warning?: { keys: string[] }) => void
 }) {
   const put = usePutSetting()
-  const manual = s.tenant?.rules?.find((r) => r.source === 'manual')
-  // What the form starts with: the manual rule's value, else the value in effect.
-  const start = manual ? manual.value : s.effective
-  const [giveValue, setGiveValue] = useState(manual ? manual.value != null : true)
-  const [flag, setFlag] = useState(start === true)
-  const [choice, setChoice] = useState(typeof start === 'string' ? start : (s.choices?.[0] ?? ''))
-  const [text, setText] = useState(
-    typeof start === 'number'
-      ? inBytes(s.key)
-        ? String(Math.round((start / GB) * 100) / 100)
-        : String(start)
-      : typeof start === 'string' && s.kind === 'text'
-        ? start
-        : '',
-  )
-  const [lower, setLower] = useState<SettingLower>(manual?.lower ?? { mode: 'allow' })
-  const [from, setFrom] = useState(toLocal(manual?.from))
-  const [until, setUntil] = useState(toLocal(manual?.until))
   const [error, setError] = useState('')
-
-  const value = (): unknown => {
-    if (s.kind === 'boolean') return flag
-    if (s.kind === 'choice') return choice
-    if (s.kind === 'text') return text
-    const n = Number(text.trim())
-    const ok = /^\d+(\.\d{1,2})?$/.test(text.trim()) && Number.isFinite(n)
-    if (!ok || (!inBytes(s.key) && !Number.isInteger(n))) return undefined
-    return inBytes(s.key) ? Math.round(n * GB) : n
-  }
-  const send = (siteRule: RuleWrite | null) =>
+  const manual = s.tenant?.rules?.find((r) => r.source === 'manual')
+  const send = (siteRule: RuleWrite | null) => {
+    setError('')
     put.mutate(
       { tenant: tenant.id, key: s.key, siteRule },
-      {
-        onSuccess: (r) => onSaved(r.warning),
-        onError: (e) => setError(settingError(e)),
-      },
+      { onSuccess: (r) => onSaved(r.warning), onError: (e) => setError(settingError(e)) },
     )
-  const submit = (e: FormEvent) => {
-    e.preventDefault()
-    setError('')
-    const rule: RuleWrite = {}
-    if (giveValue) {
-      const v = value()
-      if (v === undefined) return setError(tx.invalidValue)
-      rule.value = v
-    }
-    if (lower.mode !== 'allow') rule.lower = lower
-    if (rule.value === undefined && rule.lower === undefined) return setError(tx.needsOne)
-    if (from && until && new Date(until) <= new Date(from)) return setError(tx.untilBeforeFrom)
-    if (from) rule.from = fromLocal(from)
-    if (until) rule.until = fromLocal(until)
-    send(rule)
   }
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
-        <form
-          onSubmit={submit}
-          className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4"
-          noValidate
-          data-slot="rule-form"
-        >
-          <DialogHeader>
-            <DialogTitle className="text-base">{nameOf(s.key)}</DialogTitle>
-            <DialogDescription className="font-mono">{s.key}</DialogDescription>
-          </DialogHeader>
-          <FormMessage>{error}</FormMessage>
-          <SettingsRows>
-            <SettingsRow title={tx.valueLabel} controlId="rule-value">
-              <div className="grid gap-2">
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={giveValue} onChange={(e) => setGiveValue(e.target.checked)} />
-                  {tx.giveValue}
-                </label>
-                {giveValue && s.kind === 'boolean' && (
-                  <Switch id="rule-value" checked={flag} onCheckedChange={setFlag} aria-label={tx.valueLabel} />
-                )}
-                {giveValue && s.kind === 'limit' && (
-                  <Input
-                    id="rule-value"
-                    value={text}
-                    inputMode="decimal"
-                    placeholder={inBytes(s.key) ? tx.gb : ''}
-                    aria-label={tx.valueLabel}
-                    onChange={(e) => setText(e.target.value)}
-                  />
-                )}
-                {giveValue && s.kind === 'text' && (
-                  <Input
-                    id="rule-value"
-                    value={text}
-                    aria-label={tx.valueLabel}
-                    onChange={(e) => setText(e.target.value)}
-                  />
-                )}
-                {giveValue && s.kind === 'choice' && (
-                  <NativeSelect
-                    id="rule-value"
-                    className="h-10 w-full lg:h-8"
-                    aria-label={tx.valueLabel}
-                    value={choice}
-                    onChange={(e) => setChoice(e.target.value)}
-                  >
-                    {(s.choices ?? []).map((c) => (
-                      <option key={c} value={c}>
-                        {tt.settings.choices[s.key]?.[c] ?? c}
-                      </option>
-                    ))}
-                  </NativeSelect>
-                )}
-              </div>
-            </SettingsRow>
-            <SettingsRow title={tx.lowerLabel} help={tx.lowerHelp} controlId="rule-lower">
-              <RuleEditor
-                kind={s.kind}
-                lower={lower}
-                disabled={false}
-                label={tx.lowerLabel}
-                choices={s.choices}
-                words={tt.settings.choices[s.key]}
-                onChange={setLower}
-              />
-            </SettingsRow>
-            <SettingsRow title={tx.fromLabel} help={tx.windowHelp} controlId="rule-from">
-              <Input
-                id="rule-from"
-                type="datetime-local"
-                className="w-full min-w-0"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-              />
-            </SettingsRow>
-            <SettingsRow title={tx.untilLabel} controlId="rule-until">
-              <Input
-                id="rule-until"
-                type="datetime-local"
-                className="w-full min-w-0"
-                value={until}
-                onChange={(e) => setUntil(e.target.value)}
-              />
-            </SettingsRow>
-          </SettingsRows>
-          {(from || until) && <p className="text-xs text-muted-foreground">{tx.replaceNote}</p>}
-          <DialogFooter className="max-sm:flex-col-reverse">
-            {manual && (
-              <Button
-                type="button"
-                variant="outline"
-                className="sm:mr-auto"
-                disabled={put.isPending}
-                onClick={() => send(null)}
-              >
-                <Trash2 aria-hidden="true" />
-                {tx.remove}
-              </Button>
-            )}
-            <Button type="button" variant="outline" onClick={onClose}>
-              {tt.list.cancel}
-            </Button>
-            <Button type="submit" disabled={put.isPending}>
-              <Save aria-hidden="true" />
-              {put.isPending ? tx.saving : tx.save}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <RuleDialog
+      setting={s}
+      rule={manual ?? null}
+      start={s.effective}
+      windows
+      pending={put.isPending}
+      error={error}
+      onRemove={manual ? () => send(null) : undefined}
+      onSubmit={send}
+      onClose={onClose}
+    />
   )
 }

@@ -285,7 +285,7 @@ func TestFlagsBecomeTheProviderSsoWithoutLockingAnyoneOut(t *testing.T) {
 		}
 		sec := admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
 		lg := sec.body["login"].(map[string]any)
-		if lg["mode"] != "dual" || lg["ssoOnly"] != false || lg["effectiveMode"] != "dual" || len(sec.body["notices"].([]any)) != 0 {
+		if admin.siteValue("signin.mode") != "dual" || admin.siteValue("signin.ssoOnly") != false || lg["effectiveMode"] != "dual" || len(sec.body["notices"].([]any)) != 0 {
 			t.Fatal(sec.raw)
 		}
 		// Passwords still work, the old endpoints serve the provider, and its identities work.

@@ -33,7 +33,7 @@ func TestImageCaptchaIsCheckedBeforeTheHashAndUsedOnce(t *testing.T) {
 		if r := c.do("GET", "/api/captcha?ctx=login", nil).want(t, 200, ""); r.body["required"] != false || len(r.body) != 1 {
 			t.Fatal(r.raw)
 		}
-		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": true, "when": "always"}}}})
+		admin.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
 		body, answer := c.challenge(t, "login", "kazuha")
 		if body["required"] != true || body["provider"] != "image" || body["siteKey"] != "" || !strings.HasPrefix(body["image"].(string), "data:image/png;base64,") || answer == "" {
 			t.Fatal(body)
@@ -78,7 +78,7 @@ func TestCaptchaAfterFailuresByAddressAndUsername(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": true, "failures": 2}}}})
+		admin.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": true, "failures": 2}}).want(t, 200, "")
 		required := func(c *client, account string) bool {
 			return c.do("GET", "/api/captcha?ctx=login&account="+account, nil).want(t, 200, "").body["required"] == true
 		}
@@ -176,17 +176,23 @@ func TestThirdPartyCaptcha(t *testing.T) {
 	eachAccounts(t, o, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		on := map[string]any{"login": map[string]any{"on": true, "when": "always"}}
-		// Saving: the site key and the secret are both needed, in the same request as the provider.
-		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"provider": "turnstile", "contexts": on}}).want(t, 400, "captcha_site_key_required")
-		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"provider": "turnstile", "siteKey": "1x00", "contexts": on}}).want(t, 400, "captcha_secret_required")
-		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"provider": "bogus"}}).want(t, 400, "invalid")
+		// The keys belong to a provider, so it is chosen first (while no context is on, nothing needs the
+		// keys); a context cannot be turned on until the provider has both. The keys are written on their
+		// own (PUT /api/admin/security), the provider and the contexts are settings.
+		admin.putSetting("captcha.provider", "bogus").want(t, 400, "invalid")
+		admin.putSetting("captcha.provider", "turnstile").want(t, 200, "")
+		admin.putSetting("captcha.contexts", on).want(t, 400, "captcha_site_key_required")
+		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"siteKey": "1x00"}}).want(t, 200, "")
+		admin.putSetting("captcha.contexts", on).want(t, 400, "captcha_secret_required")
 		// Nothing was stored by the refusals.
-		if g := admin.do("GET", "/api/admin/security", nil).want(t, 200, ""); g.body["captcha"].(map[string]any)["provider"] != "image" {
-			t.Fatal(g.raw)
+		if admin.siteValue("captcha.contexts").(map[string]any)["login"].(map[string]any)["on"] != false {
+			t.Fatal("a refused context was stored")
 		}
-		r := admin.putSecurity(t, map[string]any{"captcha": map[string]any{"provider": "turnstile", "siteKey": "1x00", "secret": "s3cret-value", "contexts": on}})
+		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"secret": "s3cret-value"}}).want(t, 200, "")
+		admin.putSetting("captcha.contexts", on).want(t, 200, "")
+		r := admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
 		cp := r.body["captcha"].(map[string]any)
-		if cp["provider"] != "turnstile" || cp["siteKey"] != "1x00" || cp["hasSecret"] != true || strings.Contains(r.raw, "s3cret-value") || strings.Contains(r.raw, "secretEnc") {
+		if admin.siteValue("captcha.provider") != "turnstile" || cp["siteKey"] != "1x00" || cp["hasSecret"] != true || strings.Contains(r.raw, "s3cret-value") || strings.Contains(r.raw, "secretEnc") {
 			t.Fatal(r.raw)
 		}
 		// The web app's page policy follows the provider in force (webui.WithCaptcha).
@@ -224,19 +230,22 @@ func TestThirdPartyCaptcha(t *testing.T) {
 		// Another provider needs keys of its own, and a stored one does not carry over: while a
 		// context is on there is no moment without, so the provider cannot change.
 		admin.do("PUT", "/api/admin/settings/captcha.provider", map[string]any{"value": "hcaptcha"}).want(t, 400, "captcha_site_key_required")
-		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": false}}}})
+		admin.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": false}}).want(t, 200, "")
 		admin.do("PUT", "/api/admin/settings/captcha.provider", map[string]any{"value": "hcaptcha"}).want(t, 200, "")
 		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"siteKey": "k"}}).want(t, 200, "")
 		admin.do("PUT", "/api/admin/settings/captcha.contexts", map[string]any{"value": on}).want(t, 400, "captcha_secret_required")
-		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"siteKey": "k2", "secret": "other-secret", "contexts": on}})
+		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"secret": "other-secret"}}).want(t, 200, "")
+		admin.putSetting("captcha.contexts", on).want(t, 200, "")
+		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"siteKey": "k2", "secret": "other-secret"}}).want(t, 200, "")
 		// Replacing and clearing the secret.
 		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"secret": ""}}).want(t, 400, "captcha_secret_required") // it is in use
-		g := admin.putSecurity(t, map[string]any{"captcha": map[string]any{"secret": "", "contexts": map[string]any{"login": map[string]any{"on": false}}}})
+		admin.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": false}}).want(t, 200, "")
+		g := admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"secret": ""}}).want(t, 200, "")
 		if g.body["captcha"].(map[string]any)["hasSecret"] != false {
 			t.Fatal(g.raw)
 		}
-		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"contexts": on}}).want(t, 400, "captcha_secret_required")
-		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"provider": "image"}})
+		admin.putSetting("captcha.contexts", on).want(t, 400, "captcha_secret_required")
+		admin.putSetting("captcha.provider", "image").want(t, 200, "")
 		if got := a.auth.CaptchaProvider(context.Background()); got != "" {
 			t.Fatalf("CaptchaProvider with the image %q", got)
 		}
@@ -253,7 +262,7 @@ func TestThirdPartyCaptcha(t *testing.T) {
 	// A third-party provider needs --public-url: its host is what answers are checked against.
 	eachAccounts(t, accOpts{mod: func(c *auth.Config) { c.PublicURL = "" }}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"provider": "recaptcha", "siteKey": "k", "secret": "s"}}).want(t, 400, "captcha_needs_public_url")
+		admin.putSetting("captcha.provider", "recaptcha").want(t, 400, "captcha_needs_public_url")
 	})
 }
 

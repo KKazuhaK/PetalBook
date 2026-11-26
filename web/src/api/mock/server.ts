@@ -2110,7 +2110,7 @@ export function createMockServer(options: MockOptions = {}) {
     siteSecrets,
     remotesAffected: () => {
       const a = storageBody().affected
-      return { InGrace: a.inGrace, Overdue: a.overdue, Exempt: a.exempt }
+      return { inGrace: a.inGrace, overdue: a.overdue, exempt: a.exempt }
     },
     isSiteAdmin: (id) => isSiteAdmin(users.get(id)),
     mailReady: () => mailBook.ready(),
@@ -4960,7 +4960,12 @@ export function createMockServer(options: MockOptions = {}) {
       requireUser(ctx)
       return { status: 200, body: { settings: tenantBook.mine(DEFAULT_TENANT) } }
     }
-    if (path.startsWith('/admin/tenan') || path.startsWith('/admin/settings') || path.startsWith('/admin/secrets')) {
+    if (
+      path.startsWith('/admin/tenan') ||
+      path.startsWith('/admin/plans') ||
+      path.startsWith('/admin/settings') ||
+      path.startsWith('/admin/secrets')
+    ) {
       accountsOnly()
       const me = requireAdmin(ctx)
       const r = tenantBook.route(me.id, method, path, url, body)

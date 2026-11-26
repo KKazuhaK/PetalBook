@@ -457,19 +457,19 @@ func TestMCPFollowsTheSwitchesAndTheAccount(t *testing.T) {
 		g.tool("spaces_list", nil).ok(t)
 		// The switch of MCP (features.mcp): /mcp is not there for either kind of
 		// credential. It is the tenant's, so it is known once the caller is.
-		admin.do("PUT", "/api/admin/access", map[string]any{"mcp": false}).want(t, 200, "")
+		admin.switchFeature("features.mcp", false).want(t, 200, "")
 		for _, c := range []*client{e.w, g} {
 			c.tool("spaces_list", nil).http(t, 404, "not_found")
 		}
 		a.newClient("").tool("spaces_list", nil).http(t, 401, "unauthenticated")
 		e.w.do("GET", spacePath(e.sid)+"/tree", nil).want(t, 200, "") // the API is still there
-		admin.do("PUT", "/api/admin/access", map[string]any{"mcp": true}).want(t, 200, "")
+		admin.switchFeature("features.mcp", true).want(t, 200, "")
 		e.w.tool("spaces_list", nil).ok(t)
 		// The switch of tokens: API tokens are refused, a grant is not.
-		admin.do("PUT", "/api/admin/access", map[string]any{"tokens": false}).want(t, 200, "")
+		admin.switchFeature("features.tokens", false).want(t, 200, "")
 		e.w.tool("spaces_list", nil).http(t, 403, "tokens_off")
 		g.tool("spaces_list", nil).ok(t)
-		admin.do("PUT", "/api/admin/access", map[string]any{"tokens": true}).want(t, 200, "")
+		admin.switchFeature("features.tokens", true).want(t, 200, "")
 		// A token revoked, an account disabled.
 		list := e.tm.owner.do("GET", "/api/account/tokens", nil).want(t, 200, "").body["tokens"].([]any)
 		admin.do("PATCH", "/api/users/"+e.tm.ownerID, map[string]any{"disabled": true}).want(t, 200, "")

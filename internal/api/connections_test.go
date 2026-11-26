@@ -556,7 +556,7 @@ func TestAHeldSessionCannotUseGitHub(t *testing.T) {
 		admin, member := ghSetup(t, a)
 		start := member.do("POST", "/api/connections/github/authorization/start", map[string]any{}).want(t, 200, "")
 		back, _ := url.Parse(a.fake.Authorize(start.body["url"].(string), "tang-gh"))
-		admin.putSecurity(t, map[string]any{"passkeys": map[string]any{"requireRoles": []string{"member"}}})
+		admin.putSetting("signin.passkeyRoles", []string{"member"}).want(t, 200, "")
 
 		held := a.newClient("")
 		held.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")

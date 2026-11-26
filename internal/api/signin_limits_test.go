@@ -14,7 +14,7 @@ func TestFailureCapByUsernameDoesNotBlockTheRightPassword(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.putSecurity(t, map[string]any{"limits": map[string]any{"maxFailures": 3}})
+		admin.putSetting("signin.maxFailures", 3).want(t, 200, "")
 		try := func(i int, body map[string]any) result {
 			return a.newClient(fmt.Sprintf("203.0.113.%d", i)).do("POST", "/api/login", body)
 		}
@@ -42,7 +42,7 @@ func TestFailureCapByAddressIsCheckedBeforeThePassword(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.putSecurity(t, map[string]any{"limits": map[string]any{"maxFailures": 3}})
+		admin.putSetting("signin.maxFailures", 3).want(t, 200, "")
 		c := a.newClient("203.0.113.50")
 		for i := range 3 {
 			c.do("POST", "/api/login", bad(fmt.Sprintf("nobody%d", i))).want(t, 401, "")
@@ -74,7 +74,7 @@ func TestRequestsPerMinuteAreSharedAndAudited(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.putSecurity(t, map[string]any{"limits": map[string]any{"perMinute": 3}})
+		admin.putSetting("signin.perMinute", 3).want(t, 200, "")
 		c := a.newClient("203.0.113.70")
 		c.do("POST", "/api/login", good("kazuha")).want(t, 200, "")
 		c.do("GET", "/api/captcha?ctx=login", nil).want(t, 200, "")
@@ -100,7 +100,7 @@ func TestRequestsPerMinuteAreSharedAndAudited(t *testing.T) {
 			t.Fatalf("%d rows", n)
 		}
 		// A change applies at once.
-		admin.putSecurity(t, map[string]any{"limits": map[string]any{"perMinute": 1}})
+		admin.putSetting("signin.perMinute", 1).want(t, 200, "")
 		d := a.newClient("203.0.113.72")
 		d.do("GET", "/api/captcha?ctx=login", nil).want(t, 200, "")
 		d.do("GET", "/api/captcha?ctx=login", nil).want(t, 429, "rate_limited")
@@ -215,10 +215,11 @@ func TestLockoutScopes(t *testing.T) {
 			eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 				admin := a.setup("kazuha", pw)
 				a.addUser("tang", pw, "member")
-				admin.putSecurity(t, map[string]any{
-					"limits":  map[string]any{"maxFailures": 3, "windowMinutes": 5},
-					"lockout": map[string]any{"enabled": true, "minutes": 30, "scope": scope},
-				})
+				admin.putSetting("signin.maxFailures", 3).want(t, 200, "")
+				admin.putSetting("signin.windowMinutes", 5).want(t, 200, "")
+				admin.putSetting("signin.lockout.enabled", true).want(t, 200, "")
+				admin.putSetting("signin.lockout.minutes", 30).want(t, 200, "")
+				admin.putSetting("signin.lockout.scope", scope).want(t, 200, "")
 				c := a.newClient("203.0.113.80")
 				c.do("POST", "/api/login", bad("kazuha")).want(t, 401, "")
 				c.do("POST", "/api/login", bad("kazuha")).want(t, 401, "")
@@ -305,10 +306,8 @@ func TestMadeUpFailuresDoNotFloodTheAuditLog(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.putSecurity(t, map[string]any{
-			"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": true, "when": "always"}}},
-			"limits":  map[string]any{"perMinute": 100},
-		})
+		admin.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
+		admin.putSetting("signin.perMinute", 100).want(t, 200, "")
 		c := a.newClient("203.0.113.100")
 		for range 5 {
 			c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw, "captcha": map[string]any{"id": "made-up", "answer": "1"}}).want(t, 400, "captcha_failed")
@@ -338,11 +337,12 @@ func TestMadeUpFailuresDoNotFloodTheAuditLog(t *testing.T) {
 		}
 
 		// A locked address: each refusal is login_failed rate_limited, once a minute.
-		admin.putSecurity(t, map[string]any{
-			"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": false}}},
-			"limits":  map[string]any{"maxFailures": 2, "windowMinutes": 5},
-			"lockout": map[string]any{"enabled": true, "minutes": 30, "scope": "ip"},
-		})
+		admin.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": false}}).want(t, 200, "")
+		admin.putSetting("signin.maxFailures", 2).want(t, 200, "")
+		admin.putSetting("signin.windowMinutes", 5).want(t, 200, "")
+		admin.putSetting("signin.lockout.enabled", true).want(t, 200, "")
+		admin.putSetting("signin.lockout.minutes", 30).want(t, 200, "")
+		admin.putSetting("signin.lockout.scope", "ip").want(t, 200, "")
 		l := a.newClient("203.0.113.102")
 		l.do("POST", "/api/login", bad("kazuha")).want(t, 401, "")
 		l.do("POST", "/api/login", bad("kazuha")).want(t, 429, "rate_limited")
