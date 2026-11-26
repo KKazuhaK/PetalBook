@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"petalbook.app/server/internal/limits"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -96,16 +97,21 @@ func (o Own) Encode() string {
 	return string(b)
 }
 
-// ParseTenant reads a tenant's totals (the tenants.quota column).
-func ParseTenant(raw string) Tenant {
-	var m struct {
-		People, Spaces, Bytes, Pages *int64
+// Sheets gives a tenant's limits sheet (internal/limits): the tenant's totals
+// are its values of other.people and storage.quota.*.
+type Sheets interface {
+	Sheet(tenant string) *limits.Sheet
+}
+
+// TenantFrom reads a tenant's totals from its sheet: one map read for each.
+func TenantFrom(sh *limits.Sheet) Tenant {
+	get := func(key string) *int64 {
+		if n, ok := sh.Limit(key); ok {
+			return &n
+		}
+		return nil
 	}
-	var in map[string]*int64
-	if raw != "" && json.Unmarshal([]byte(raw), &in) == nil {
-		m.People, m.Spaces, m.Bytes, m.Pages = in["people"], in["spaces"], in["bytes"], in["pages"]
-	}
-	return Tenant{m.People, m.Spaces, m.Bytes, m.Pages}
+	return Tenant{People: get("other.people"), Spaces: get("storage.quota.spaces"), Bytes: get("storage.quota.bytes"), Pages: get("storage.quota.pages")}
 }
 
 // Audit records that a quota was crossed: the tenant, the person it is about
@@ -118,6 +124,8 @@ type Service struct {
 	set   *settings.Service
 	audit Audit
 	log   *slog.Logger
+	// sheets are the tenants' totals; nil (single-user mode): none.
+	sheets Sheets
 
 	// evalMu is one evaluation at a time, so two measurements of one person do
 	// not both report the same crossing.
@@ -130,6 +138,17 @@ func New(st *store.Store, set *settings.Service, audit Audit, log *slog.Logger) 
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Service{st: st, set: set, audit: audit, log: log}
+}
+
+// UseSheets makes the tenants' totals the values of their limits sheets.
+func (s *Service) UseSheets(sh Sheets) { s.sheets = sh }
+
+// Totals is what a tenant may use in all, from memory.
+func (s *Service) Totals(tenant string) Tenant {
+	if s == nil || s.sheets == nil {
+		return Tenant{}
+	}
+	return TenantFrom(s.sheets.Sheet(tenant))
 }
 
 func asInt(v any) (int64, bool) {
@@ -214,11 +233,7 @@ func (s *Service) SpaceLimits(ctx context.Context, u store.User) (spaces.SpaceLi
 	if l.Spaces != nil {
 		out.Person = *l.Spaces
 	}
-	t, err := store.GetTenant(ctx, q, u.TenantID)
-	if err != nil {
-		return out, err
-	}
-	if tl := ParseTenant(t.Quota); tl.Spaces != nil {
+	if tl := s.Totals(u.TenantID); tl.Spaces != nil {
 		out.Tenant = *tl.Spaces
 	}
 	return out, nil
@@ -383,15 +398,11 @@ func (s *Service) person(ctx context.Context, id string) error {
 
 func (s *Service) tenant(ctx context.Context, id string) error {
 	q := s.st.Q()
-	t, err := store.GetTenant(ctx, q, id)
-	if err != nil {
-		return err
-	}
 	u, err := store.GetUsage(ctx, q, store.UsageTenant, id)
 	if err != nil {
 		return err
 	}
-	l := ParseTenant(t.Quota)
+	l := s.Totals(id)
 	return s.settle(ctx, u, OverTenant(u, l), Person{}, l, true)
 }
 
@@ -440,15 +451,11 @@ func (s *Service) EvaluateScope(ctx context.Context, sc store.Scope) error {
 		if !sc.All() && sc.Tenant() != id {
 			continue
 		}
-		t, err := store.GetTenant(ctx, q, id)
-		if err != nil {
-			continue
-		}
 		u, err := store.GetUsage(ctx, q, store.UsageTenant, id)
 		if err != nil {
 			return err
 		}
-		l := ParseTenant(t.Quota)
+		l := s.Totals(id)
 		if err := s.settle(ctx, u, OverTenant(u, l), Person{}, l, true); err != nil {
 			return err
 		}

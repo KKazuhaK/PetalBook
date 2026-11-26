@@ -38,7 +38,7 @@ func TestACapabilityThatIsOffRefusesTheTenantNotTheSite(t *testing.T) {
 			t.Fatal("accounts mode has no limits sheet")
 		}
 		off := map[string]*limits.Change{"data.adminView": {Value: json.RawMessage("false")}}
-		if err := sheet.SetManual(ctx, store.DefaultTenantID, "root", off); err != nil {
+		if _, err := sheet.SetManual(ctx, store.DefaultTenantID, "root", off); err != nil {
 			t.Fatal(err)
 		}
 		r := adm.do("POST", "/api/admin/spaces/"+sp+"/view", view).want(t, 403, "capability_off")
@@ -52,7 +52,7 @@ func TestACapabilityThatIsOffRefusesTheTenantNotTheSite(t *testing.T) {
 		root.do("POST", "/api/admin/spaces/"+sp+"/view", view).want(t, 200, "")
 
 		off["data.adminView"] = nil // remove the override: back to the site's default (on)
-		if err := sheet.SetManual(ctx, store.DefaultTenantID, "root", off); err != nil {
+		if _, err := sheet.SetManual(ctx, store.DefaultTenantID, "root", off); err != nil {
 			t.Fatal(err)
 		}
 		adm.do("POST", "/api/admin/spaces/"+sp+"/view", view).want(t, 200, "")

@@ -118,10 +118,8 @@ type Tenant struct {
 	Slug     string
 	Name     string
 	Disabled bool
-	// Quota is the tenant's totals as JSON ("{}" for none).
-	Quota   string
-	Created time.Time
-	Updated time.Time
+	Created  time.Time
+	Updated  time.Time
 }
 
 // IsDefault reports whether this is the default tenant.
@@ -138,12 +136,12 @@ func (*ErrTenantNotEmpty) Error() string { return "the tenant is not empty" }
 // ErrTenantLimit is the refusal of the 1,001st tenant.
 var ErrTenantLimit = errors.New("too many tenants")
 
-const tenantCols = `id, slug, name, disabled, quota, created, updated`
+const tenantCols = `id, slug, name, disabled, created, updated`
 
 func scanTenant(sc interface{ Scan(...any) error }) (*Tenant, error) {
 	var t Tenant
 	var disabled, created, updated int64
-	if err := sc.Scan(&t.ID, &t.Slug, &t.Name, &disabled, &t.Quota, &created, &updated); err != nil {
+	if err := sc.Scan(&t.ID, &t.Slug, &t.Name, &disabled, &created, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -342,11 +340,8 @@ func (s *Store) CreateTenant(ctx context.Context, t Tenant) error {
 		if n >= MaxTenants {
 			return ErrTenantLimit
 		}
-		if t.Quota == "" {
-			t.Quota = "{}"
-		}
-		_, err = q.Exec(ctx, `INSERT INTO tenants(`+tenantCols+`, name_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			t.ID, t.Slug, t.Name, b2i(t.Disabled), t.Quota, ms(t.Created), ms(t.Updated), FoldName(t.Name))
+		_, err = q.Exec(ctx, `INSERT INTO tenants(`+tenantCols+`, name_key) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			t.ID, t.Slug, t.Name, b2i(t.Disabled), ms(t.Created), ms(t.Updated), FoldName(t.Name))
 		return err
 	})
 	if err != nil {
@@ -355,10 +350,10 @@ func (s *Store) CreateTenant(ctx context.Context, t Tenant) error {
 	return s.loadTenantState(ctx)
 }
 
-// UpdateTenant writes a tenant's name, slug, disabled state and quota.
+// UpdateTenant writes a tenant's name, slug, and disabled state (the totals are the limits sheet's).
 func (s *Store) UpdateTenant(ctx context.Context, t Tenant) error {
-	res, err := s.Q().Exec(ctx, `UPDATE tenants SET slug = ?, name = ?, name_key = ?, disabled = ?, quota = ?, updated = ? WHERE id = ?`,
-		t.Slug, t.Name, FoldName(t.Name), b2i(t.Disabled), t.Quota, ms(t.Updated), t.ID)
+	res, err := s.Q().Exec(ctx, `UPDATE tenants SET slug = ?, name = ?, name_key = ?, disabled = ?, updated = ? WHERE id = ?`,
+		t.Slug, t.Name, FoldName(t.Name), b2i(t.Disabled), ms(t.Updated), t.ID)
 	if err := oneRow(res, err); err != nil {
 		return err
 	}

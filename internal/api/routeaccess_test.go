@@ -62,6 +62,20 @@ func init() {
 var routeAccessAdded = map[string][4]string{
 	"GET /api/admin/permissions":              {"ok", "ok", "403 forbidden", "403 token_scope"},
 	"POST /api/admin/spaces/{space}/takeover": {"ok", "ok", "403 forbidden", "403 token_scope"},
+
+	// 3.6 part 4: the limits sheet. Reading is the tenant's administrators' too.
+	"GET /api/admin/capabilities":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"PUT /api/admin/capabilities":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/tenants/{tenant}/capabilities": {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"PUT /api/admin/tenants/{tenant}/capabilities": {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/tenants/{tenant}/limits":       {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"PUT /api/admin/tenants/{tenant}/limits":       {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"PUT /api/admin/tenants/{tenant}/plan":         {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/plans":                         {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/plans":                        {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/plans/{slug}":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"PATCH /api/admin/plans/{slug}":                {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"DELETE /api/admin/plans/{slug}":               {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 }
 
 type routeAccessFx struct {
