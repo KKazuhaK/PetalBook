@@ -961,7 +961,14 @@ clear a rule, whatever its cache said; the `site_locked` column of the tenant's
 row is no longer written (v0: it goes with the next schema change). Strongest
 first: the site's lock over everyone > the site's rule for the tenant > the
 tenant's value > the site's value for the tenant > the site's value > the
-space's owner. The API's `siteLock` is the short form of a locking rule.
+space's owner. A restriction bounds the value in effect, not only the tenant's
+own: a value in effect it forbids (the site's, or the site's for the tenant)
+becomes the nearest allowed one (`Lower.Nearest`: a limit's `max`, a boolean's
+`false`, a choice's next stricter allowed choice, else the strictest allowed),
+so "at most 10 spaces" is at most 10 whatever the site's value. The API's
+`siteLock` is the short form of a locking rule; without a value it locks the
+value in effect then, so locking never changes what the tenant sees. Removing
+a rule deletes its row.
 
 This replaces the limits sheet's capabilities for settings: nothing in
 `internal/settings` reads `internal/limits`. The next part folds the sheet in:

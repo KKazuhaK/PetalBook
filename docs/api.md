@@ -6655,7 +6655,12 @@ site-only setting that must be the same for every tenant says why in
                "site": {"value": true, "lower": {"mode": "allow"}},
                "tenant": {"value": true, "lower": null, "inEffect": false, "siteLocked": true,
                           "siteRule": {"value": false, "lower": {"mode": "lock"}, "inEffect": true}},
-               "effective": false}]}
+               "effective": false},
+              {"key": "quota.spacesPerPerson", "kind": "limit", "layers": ["site", "tenant", "person"],
+               "site": {"value": 20, "lower": {"mode": "allow"}},
+               "tenant": {"value": 15, "lower": null, "inEffect": false, "siteLocked": false,
+                          "siteRule": {"value": null, "lower": {"mode": "restrict", "max": 10}, "inEffect": true}},
+               "effective": 10}]}
 ```
 
 `tenant.value` and `tenant.lower` are the tenant's own. `tenant.siteRule` is the
@@ -6671,12 +6676,21 @@ Acme. `siteLocked` says the rule is a lock. Strongest first: the site's lock
 over everyone > the site's rule for the tenant > the tenant's value > the site's
 value for the tenant > the site's value.
 
+A restriction bounds `effective`, not only what the tenant may store: when the
+value in effect would be one the restriction the tenant's layer is held to
+forbids (the site's `lower`, or the rule's), it is the nearest one allowed. For
+a limit that is `max` (also in place of `null`, no limit); for a boolean,
+`false`; for a choice, the next stricter allowed choice (`choices` are loosest
+first), or the strictest allowed when every allowed one is looser. Above, the
+site's 20 for a tenant held to `max: 10` is 10, and the tenant's own 15 is kept,
+not in effect.
+
 `PUT` takes `{"value": …, "lower": {…}}` for the tenant's own layer; `value:
 null` follows the site. A site administrator may also give `"siteRule":
 {"value": …, "lower": {…}}` (either or both; `null` removes the rule), or its
-short form `"siteLock": true` (the rule becomes a lock of `value`, or of the
-rule's own value, or of the site's) or `"siteLock": false` (the rule is
-removed). The tenant's own value stays as it was beside the rule. A tenant
+short form `"siteLock": true` (the rule becomes a lock of `value`, or without
+one of `effective` as it is then, so locking never changes what the tenant
+sees) or `"siteLock": false` (the rule is removed). The tenant's own value stays as it was beside the rule. A tenant
 administrator giving either gets `409 setting_locked`, and so does its write
 while the site's rule for the tenant is a lock. `409 setting_locked` when the
 rule the tenant's layer is held to locks (a site administrator is refused too:

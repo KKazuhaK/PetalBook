@@ -1,6 +1,7 @@
 package settings_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -166,7 +167,8 @@ func TestTheSitesRuleForOneTenantIsTheCapability(t *testing.T) {
 			t.Fatal(err)
 		}
 		e, _ = s.Get(ctx, ten, k)
-		if e.Value != int64(20) || e.Tenant.Value != int64(15) || e.Tenant.InEffect || e.Above.Mode != settings.Restrict {
+		// "At most 10" bounds what the tenant gets: not the site's 20.
+		if e.Value != int64(10) || e.Tenant.Value != int64(15) || e.Tenant.InEffect || e.Above.Mode != settings.Restrict {
 			t.Fatalf("over the tenant's max: %+v %+v", e, e.Tenant)
 		}
 		if c := code(s.SetTenant(ctx, ten, k, settings.Change{HasValue: true, Value: int64(11)})); c != settings.CodeRestricted {
@@ -185,6 +187,117 @@ func TestTheSitesRuleForOneTenantIsTheCapability(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// Locking a setting for a tenant without a value locks what the tenant sees
+// at that moment: its own value, the value of the site's rule, or the value in
+// effect under the rule's restriction. It never changes what the tenant sees.
+func TestLockingForOneTenantKeepsWhatItSees(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s := setupTwo(t, st)
+		lock := settings.Change{Site: true, HasSiteLock: true, SiteLock: true}
+		check := func(name, tenant, key string, want any) {
+			t.Helper()
+			e, err := s.Get(ctx, tenant, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if e.Value != want || !e.Tenant.SiteLocked || e.LockedBy != settings.Site {
+				t.Errorf("%s: %v (locked %v by %q), want %v", name, e.Value, e.Tenant.SiteLocked, e.LockedBy, want)
+			}
+		}
+		do := func(tenant, key string, ch settings.Change) {
+			t.Helper()
+			if err := s.SetTenant(ctx, tenant, key, ch); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		do(ten, settings.StorageAssets, settings.Change{HasValue: true, Value: "space"})
+		do(ten, settings.StorageAssets, lock)
+		check("the tenant's own value", ten, settings.StorageAssets, "space")
+
+		do(ten2, settings.StorageAssets, settings.Change{Site: true, HasSiteRule: true, SiteRule: siteRule("space", "")})
+		do(ten2, settings.StorageAssets, lock)
+		check("the site's value for the tenant", ten2, settings.StorageAssets, "space")
+
+		k := settings.QuotaSpacesPerPerson
+		max := settings.Change{Site: true, HasSiteRule: true, SiteRule: &settings.Rule{Lower: &settings.Lower{Mode: settings.Restrict, Max: ptr(int64(10))}}}
+		do(ten, k, max)
+		do(ten, k, settings.Change{HasValue: true, Value: int64(8)})
+		do(ten, k, lock)
+		check("the tenant's value under the rule's restriction", ten, k, int64(8))
+
+		do(ten2, k, max)
+		do(ten2, k, lock)
+		check("nothing of the tenant's, under the rule's restriction", ten2, k, int64(10))
+	})
+}
+
+// A restriction bounds the value in effect, not only the tenant's own: a
+// value outside it gives way to the nearest one it allows (a limit its max, a
+// boolean false, a choice the next stricter allowed one). For the site's
+// lower over every tenant and for the site's rule for one.
+func TestARestrictionBoundsTheValueInEffect(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s := setupTwo(t, st)
+		for key, l := range map[string]settings.Lower{
+			settings.QuotaSpacesPerPerson: {Mode: settings.Restrict, Max: ptr(int64(5))},
+			settings.QuotaBytesPerPerson:  {Mode: settings.Restrict, Max: ptr(int64(1 << 30))},
+			settings.OfflineCopies:        {Mode: settings.Restrict, Options: []any{false}},
+			settings.StorageAssets:        {Mode: settings.Restrict, Options: []any{"space"}},
+		} {
+			if _, err := s.SetSite(ctx, key, settings.Change{HasLower: true, Lower: &l}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for key, want := range map[string]any{
+			settings.QuotaSpacesPerPerson: int64(5),       // the site's 20
+			settings.QuotaBytesPerPerson:  int64(1 << 30), // the site's no limit
+			settings.OfflineCopies:        false,          // the site's true
+			settings.StorageAssets:        "space",        // the site's repository
+		} {
+			if e, _ := s.Get(ctx, ten2, key); e.Value != want {
+				t.Errorf("the site's restriction, %s: %v, want %v", key, e.Value, want)
+			}
+		}
+		// The site's own value is not held to what it lets tenants do.
+		if e, _ := s.Get(ctx, "", settings.QuotaSpacesPerPerson); e.Value != int64(20) {
+			t.Errorf("the site's own: %v", e.Value)
+		}
+		// The site's rule for one tenant, looser than the site's, bounds that tenant alone.
+		if err := s.SetTenant(ctx, ten, settings.QuotaSpacesPerPerson, settings.Change{Site: true, HasSiteRule: true,
+			SiteRule: &settings.Rule{Value: int64(30), Lower: &settings.Lower{Mode: settings.Restrict, Max: ptr(int64(12))}}}); err != nil {
+			t.Fatal(err)
+		}
+		if e, _ := s.Get(ctx, ten, settings.QuotaSpacesPerPerson); e.Value != int64(12) {
+			t.Errorf("the rule for one tenant: %v, want 12", e.Value)
+		}
+	})
+}
+
+// Removing the site's rule for a tenant removes its row.
+func TestRemovingTheSitesRuleDeletesItsRow(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s := setup(t, st)
+		for _, remove := range []settings.Change{
+			{Site: true, HasSiteRule: true},
+			{Site: true, HasSiteLock: true, SiteLock: false},
+		} {
+			if err := s.SetTenant(ctx, ten, settings.OfflineCopies, settings.Change{Site: true, HasSiteRule: true, SiteRule: siteRule(false, settings.Lock)}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SetTenant(ctx, ten, settings.OfflineCopies, remove); err != nil {
+				t.Fatal(err)
+			}
+			if r, err := store.GetLayered(ctx, st.Q(), string(settings.Site), ten, settings.OfflineCopies); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("%+v: the row is %+v (%v)", remove, r, err)
+			}
+			if e, _ := s.Get(ctx, ten, settings.OfflineCopies); e.Value != true || e.Tenant.SiteRule != nil {
+				t.Fatalf("%+v: %+v", remove, e.Tenant)
+			}
+		}
+	})
+}
 
 // A site-only key set for one tenant is the site's: the tenant's
 // administrators cannot write it and it takes no rule of the tenant's. A

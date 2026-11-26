@@ -260,6 +260,46 @@ func (l Lower) Allows(d *Def, v any) bool {
 	return true
 }
 
+// Nearest is v when the Lower allows it, else the value it allows nearest to
+// v: what a restriction makes of a value in effect it forbids (the site's
+// value, or the site's value for the tenant), so "at most 10" means at most
+// 10 whatever the layers above hold. By kind:
+//
+//   - a limit: the max (also for null, no limit);
+//   - a boolean: false, the only value a boolean may be restricted to;
+//   - a choice: the next stricter allowed choice (Choices are loosest first),
+//     or, when every allowed one is looser, the strictest allowed.
+//
+// A lock or allow, and a kind that cannot be restricted, leave v as it is.
+func (l Lower) Nearest(d *Def, v any) any {
+	if l.Mode != Restrict || l.Allows(d, v) {
+		return v
+	}
+	switch d.Kind {
+	case Limit:
+		if l.Max != nil {
+			return *l.Max
+		}
+	case Bool:
+		return false
+	case Choice:
+		opts := optStrings(l.Options)
+		s, _ := v.(string)
+		at := slices.Index(d.Choices, s)
+		for i := at + 1; i < len(d.Choices); i++ {
+			if slices.Contains(opts, d.Choices[i]) {
+				return d.Choices[i]
+			}
+		}
+		for i := min(at, len(d.Choices)) - 1; i >= 0; i-- {
+			if slices.Contains(opts, d.Choices[i]) {
+				return d.Choices[i]
+			}
+		}
+	}
+	return v
+}
+
 func optStrings(o []any) []string {
 	out := make([]string, 0, len(o))
 	for _, x := range o {

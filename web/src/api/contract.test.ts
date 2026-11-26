@@ -1565,7 +1565,8 @@ function suite(target: Target) {
             const tight = await site('registration.perHour', { lower: { mode: 'restrict', max: 10 } })
             expect(tight.json.affected).toBeGreaterThanOrEqual(1)
             const v = await view()
-            expect([v.tenant.value, v.tenant.inEffect]).toEqual([30, false])
+            // The value in effect is held to the restriction too: the site's 50 is 10 for the tenant.
+            expect([v.tenant.value, v.tenant.inEffect, v.effective]).toEqual([30, false, 10])
             // Loosened again: it counts again.
             await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })
             expect((await view()).tenant.inEffect).toBe(true)
@@ -1617,6 +1618,14 @@ function suite(target: Target) {
             expect(
               (await call(admin, 'PUT', '/api/admin/settings/storage.assets', { siteLock: true })).json.error,
             ).toBe('invalid')
+            // Forcing with no value forces what the tenant has: nothing it sees changes.
+            expect((await mine({ siteLock: true })).status).toBe(200)
+            const kept = await view()
+            expect([kept.effective, kept.tenant.siteLocked, kept.tenant.siteRule?.value]).toEqual([
+              'space',
+              true,
+              'space',
+            ])
             // Locked for this tenant: its value beats the site's default.
             expect((await mine({ value: 'repository', siteLock: true })).status).toBe(200)
             expect((await call(admin, 'PUT', '/api/admin/settings/storage.assets', { value: 'space' })).status).toBe(

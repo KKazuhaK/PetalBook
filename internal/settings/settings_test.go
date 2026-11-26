@@ -122,14 +122,15 @@ func TestRestrictLimit(t *testing.T) {
 				t.Fatalf("%v: %v", bad, err)
 			}
 		}
-		// The site tightens to 10: the tenant's 20 is kept, not in effect, and counted.
+		// The site tightens to 10: the tenant's 20 is kept, not in effect, and
+		// counted; the site's 50 is held to that max for the tenant.
 		ten10 := int64(10)
 		n, err := s.SetSite(ctx, settings.RegistrationPerHour, settings.Change{HasLower: true, Lower: &settings.Lower{Mode: settings.Restrict, Max: &ten10}})
 		if err != nil || n != 1 {
 			t.Fatalf("%d %v", n, err)
 		}
 		e, _ := s.Get(ctx, ten, settings.RegistrationPerHour)
-		if e.Tenant.InEffect || e.Tenant.Value != int64(20) || e.Value != int64(50) {
+		if e.Tenant.InEffect || e.Tenant.Value != int64(20) || e.Value != int64(10) {
 			t.Fatalf("%+v %+v", e, e.Tenant)
 		}
 		// The tenant's own rule for lower layers must be at least as strict.

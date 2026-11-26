@@ -87,13 +87,14 @@ func TestTenantSettingsHonourTheSitesLocksAndRestrictions(t *testing.T) {
 		if r.body["effective"] != float64(30) || r.body["tenant"].(map[string]any)["value"] != float64(30) {
 			t.Fatal(r.raw)
 		}
-		// The site tightens: the value is kept, not in effect, and the answer counts the tenants.
+		// The site tightens: the value is kept, not in effect, and the answer counts the tenants; the tenant gets the
+		// site's 50 held to the new max.
 		r = f.root.do("PUT", "/api/admin/settings/registration.perHour", map[string]any{"lower": map[string]any{"mode": "restrict", "max": 10}}).want(t, 200, "")
 		if r.body["affected"] != float64(1) {
 			t.Fatal(r.raw)
 		}
 		s = settingOf(t, f.admB.do("GET", "/api/admin/tenants/"+f.tenB+"/settings", nil).want(t, 200, ""), "registration.perHour")
-		if tv := s["tenant"].(map[string]any); tv["inEffect"] != false || tv["value"] != float64(30) || s["effective"] != float64(50) {
+		if tv := s["tenant"].(map[string]any); tv["inEffect"] != false || tv["value"] != float64(30) || s["effective"] != float64(10) {
 			t.Fatal(s)
 		}
 		// The tenant's rule for what is below it must be as strict.

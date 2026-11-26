@@ -337,7 +337,8 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
       {
         tenant,
         key: s.key,
-        ...(dirtyValue ? { value: follow ? null : value } : {}),
+        // Forcing always names the value it forces (what the row shows), so a lock never changes what the tenant gets.
+        ...(dirtyValue || (canForce && siteLock && dirtySiteLock) ? { value: follow ? null : value } : {}),
         ...(dirtyLower ? { lower } : {}),
         // While locked for the tenant, a new value is the locked one: it goes with siteLock.
         ...(dirtySiteLock || (canForce && siteLock && dirtyValue) ? { siteLock } : {}),

@@ -272,6 +272,29 @@ describe('the Settings page', () => {
       'the badge',
     )
   })
+
+  it("forces the tenant's saved value as it is: forcing alone names the value and changes nothing the tenant gets", async () => {
+    await open('settings')
+    await settle(
+      () => document.querySelectorAll('[data-slot="setting-row"][data-key="storage.assets"]').length === 2,
+      'both layers',
+    )
+    const name = tt.settings.names['storage.assets']
+    const row = () => document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="storage.assets"]')[1]
+    const puts = () =>
+      m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/tenants/0000000000/settings/storage.assets')
+    await click(switchOf(`${name}: ${tt.settings.follow}`))
+    await type(row().querySelector<HTMLSelectElement>(`select[aria-label="${name}"]`)!, 'space')
+    await click(button(tt.settings.save, row()))
+    await settle(() => puts().length === 1, 'the value saved')
+    await click(switchOf(`${name}: ${tt.settings.siteLock}`))
+    await click(button(tt.settings.save, row()))
+    await settle(() => puts().length === 2, 'forced')
+    expect(JSON.parse(puts()[1].body!)).toEqual({ value: 'space', siteLock: true })
+    const got = await fetch('/api/admin/tenants/0000000000/settings').then((r) => r.json())
+    const s = (got.settings as { key: string; effective: unknown }[]).find((x) => x.key === 'storage.assets')!
+    expect(s.effective).toBe('space')
+  })
 })
 
 describe('administrators and tenants in the Users page and the navigation', () => {

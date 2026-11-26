@@ -173,6 +173,27 @@ const allows = (l: SettingLower, d: Def, v: unknown): boolean =>
           : d.kind === 'limit'
             ? typeof v === 'number' && l.max !== undefined && v <= l.max
             : false
+// The server's Lower.Nearest: a value in effect that a restriction forbids becomes the nearest one it allows (a limit
+// its max, a boolean false, a choice the next stricter allowed one, else the strictest allowed; choices are loosest
+// first).
+const nearest = (l: SettingLower, d: Def, v: unknown): unknown => {
+  if (l.mode !== 'restrict' || allows(l, d, v)) return v
+  if (d.kind === 'limit') return l.max ?? v
+  if (d.kind === 'boolean') return false
+  if (d.kind === 'choice') {
+    const cs = d.choices ?? []
+    const opts = l.options ?? []
+    const at = cs.indexOf(v as string)
+    const stricter = cs.slice(at + 1).find((c) => opts.includes(c))
+    if (stricter !== undefined) return stricter
+    const looser = cs
+      .slice(0, Math.max(at, 0))
+      .reverse()
+      .find((c) => opts.includes(c))
+    if (looser !== undefined) return looser
+  }
+  return v
+}
 const tightens = (l: SettingLower, d: Def, above: SettingLower): boolean => {
   if (above.mode === 'allow') return true
   if (above.mode === 'lock') return l.mode === 'lock'
@@ -279,7 +300,8 @@ export function createTenantBook(o: TenantBookOptions) {
     const own = row?.value
     const has = own !== undefined && own !== null
     const inEffect = !has || allows(above, d, own)
-    const v = has && inEffect ? own : base
+    // A restriction bounds the value in effect too, as on the server.
+    const v = nearest(above, d, has && inEffect ? own : base)
     return {
       key: d.key,
       kind: d.kind,
@@ -410,7 +432,8 @@ export function createTenantBook(o: TenantBookOptions) {
     if ('siteLock' in body) {
       hasRule = true
       if (body.siteLock === true) {
-        rule = { lower: { mode: 'lock' }, value: cur?.value }
+        // Without a value, the value in effect now: locking never changes what the tenant sees.
+        rule = { lower: { mode: 'lock' }, value: effectiveOf(tenant, d).effective }
         if (hasValue) {
           rule.value = value
           hasValue = false

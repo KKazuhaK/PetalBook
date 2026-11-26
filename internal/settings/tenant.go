@@ -17,7 +17,10 @@ import (
 //
 // Strongest first: the site's lock over everyone > the site's rule for the
 // tenant (a lock forces its value, a restriction bounds the tenant's) > the
-// tenant's value > the site's value for the tenant > the site's value.
+// tenant's value > the site's value for the tenant > the site's value. The
+// value in effect is then held to the restriction the tenant's layer meets
+// (Lower.Nearest), so "at most 10" for a tenant is at most 10 whatever the
+// site's value is.
 //
 // The site's rule for a tenant is where a plan, a bill or a time window will
 // come from: siteRuleOf is the one place that picks the rule in effect from the
@@ -150,6 +153,9 @@ func tenantEffective(d *Def, site SiteView, rule *Rule, tv *TenantView) *Effecti
 			e.Value, e.Source = tv.Value, Tenant
 		}
 	}
+	// A restriction bounds the value in effect too: the site's value (or its
+	// value for the tenant) outside it gives way to the nearest it allows.
+	e.Value = e.Above.Nearest(d, e.Value)
 	e.Below = e.Above
 	if tv.Lower != nil && e.Above.Mode != Lock {
 		e.Below = e.Above.Combine(d, *tv.Lower)
@@ -201,17 +207,16 @@ func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) 
 			return bad("%s has no tenant layer: give the rule for the tenant as siteRule", key)
 		}
 	}
-	// siteLock is the short form of a rule: true locks the value given (or the
-	// rule's own value, or the site's), false removes the rule. Without a tenant
-	// layer a value is the site's value for the tenant.
+	// siteLock is the short form of a rule: true locks the value given, or
+	// without one the value in effect now (the tenant's own, the rule's, or
+	// the site's as a restriction bounds it), so a lock never changes what the
+	// tenant sees; false removes the rule. Without a tenant layer a value is the
+	// site's value for the tenant.
 	if ch.HasSiteLock {
 		ch.HasSiteRule = true
 		ch.SiteRule = nil
 		if ch.SiteLock {
-			r := &Rule{Lower: &Lower{Mode: Lock}}
-			if cur != nil {
-				r.Value = cur.Value
-			}
+			r := &Rule{Lower: &Lower{Mode: Lock}, Value: eff.Value}
 			if ch.HasValue {
 				r.Value, ch.HasValue, ch.Value = ch.Value, false, nil
 			}
@@ -315,6 +320,10 @@ func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) 
 			}
 		}
 		if ruleRow != nil {
+			if ruleRow.Value == "" && ruleRow.Lower == "" {
+				// No rule: no row, as for a tenant the site never had one for.
+				return store.DeleteLayered(ctx, q, string(Site), tenant, key)
+			}
 			return store.PutLayered(ctx, q, *ruleRow)
 		}
 		return nil
