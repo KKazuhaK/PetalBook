@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react'
+import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { ArrowLeft, ArrowRight, Copy, PenLine, Plus, RotateCcw, Save, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
@@ -79,6 +80,8 @@ export function ViewBar({
   onEnd,
   onRevert,
 }: Props) {
+  const fadeRef = useRef<HTMLDivElement>(null)
+  useScrollFade(fadeRef)
   const save = useSaveViews(scope)
   const [dialog, setDialog] = useState<null | { kind: 'create' } | { kind: 'rename'; view: SavedView }>(null)
   const [removing, setRemoving] = useState<SavedView | null>(null)
@@ -175,7 +178,8 @@ export function ViewBar({
           role="tablist"
           aria-label={t.views.label}
           aria-busy={busy || undefined}
-          className="flex min-w-0 max-w-full items-center gap-1 overflow-x-auto"
+          ref={fadeRef}
+          className={`${scrollFadeClass} flex min-w-0 max-w-full items-center gap-1`}
         >
           {views.map((v) => {
             const on = v.id === active?.id
@@ -353,7 +357,15 @@ function IconButton({
   children: React.ReactNode
 }) {
   return (
-    <Button variant="ghost" size="icon-sm" aria-label={label} title={label} disabled={disabled} onClick={onClick}>
+    <Button
+      variant="ghost"
+      size="icon-lg"
+      className="size-9 pointer-coarse:size-10"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+    >
       {children}
     </Button>
   )

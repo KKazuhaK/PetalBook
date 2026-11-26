@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // signIn runs a sign-in at a GitHub provider as the fake user and returns where it ended.

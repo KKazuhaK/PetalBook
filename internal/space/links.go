@@ -7,9 +7,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/links"
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/links"
+	"petalbook.app/server/internal/page"
 )
 
 // BacklinksPageSize is how many pages one request of backlinks lists.

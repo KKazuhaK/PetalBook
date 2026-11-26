@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // A person's client reads what a new space of theirs gets: the default, what the owner may ask for, and whether a lock leaves no choice.

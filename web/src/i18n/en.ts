@@ -193,6 +193,8 @@ export const en: Messages = {
     createFailed: 'Could not create the page',
     untitledHint: 'Untitled',
     blankPage: 'Blank page',
+    taskDone: 'done: ',
+    taskTodo: 'to do: ',
   },
   folder: {
     dialogTitle: 'New folder',

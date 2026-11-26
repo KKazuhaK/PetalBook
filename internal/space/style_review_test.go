@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/page"
 )
 
 // --- what an icon and a colour may be ------------------------------------------

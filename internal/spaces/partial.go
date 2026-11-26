@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/store"
 )
 
 // markCache records, in the state database, what an opened space's clone is:

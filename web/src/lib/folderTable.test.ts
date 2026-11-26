@@ -2,16 +2,22 @@ import { describe, expect, it } from 'vitest'
 import type { PageSummary } from '@/api/types'
 import { arrangeRows, filterCount, filterParams, fromHeaderSort, noFilters, rowKey, toHeaderSort } from './folderTable'
 
-const page = (id: string, label: string): PageSummary => ({
+const page = (id: string, label: string, updated = ''): PageSummary => ({
   id,
   path: `${label}.md`,
   folder: '',
   label,
   untitled: false,
-  updated: '',
+  updated,
   source: [],
 })
-const folder = (name: string) => ({ path: name, name, direct: 1, total: 1 })
+const folder = (name: string, updated?: string) => ({
+  path: name,
+  name,
+  direct: 1,
+  total: 1,
+  ...(updated ? { updated } : {}),
+})
 const keys = (rows: ReturnType<typeof arrangeRows>) => rows.map(rowKey)
 
 describe('the rows of the folder table', () => {
@@ -26,6 +32,43 @@ describe('the rows of the folder table', () => {
     const desc = [page('2', 'Cherry'), page('1', 'Banana')]
     expect(keys(arrangeRows(folders, desc, true, '-title'))).toEqual(['f:Zoo', 'p:2', 'p:1', 'f:Apple'])
     expect(keys(arrangeRows(folders, pages, true, '-updated'))).toEqual(['p:1', 'p:2', 'f:Apple', 'f:Zoo'])
+  })
+})
+
+describe('folders under a sort by date', () => {
+  const day = (d: number) => `2026-11-${String(d).padStart(2, '0')}T08:00:00Z`
+  const folders = [folder('Old', day(1)), folder('New', day(20)), folder('Empty'), folder('Mid', day(10))]
+  it('come first ordered by their updated, the newest first under the default order, empty ones last', () => {
+    const pages = [page('1', 'P', day(15))]
+    expect(keys(arrangeRows(folders, pages, false, ''))).toEqual(['f:New', 'f:Mid', 'f:Old', 'f:Empty', 'p:1'])
+    expect(keys(arrangeRows(folders, pages, false, '-updated'))).toEqual(['f:New', 'f:Mid', 'f:Old', 'f:Empty', 'p:1'])
+    expect(keys(arrangeRows(folders, pages, false, 'updated'))).toEqual(['f:Old', 'f:Mid', 'f:New', 'f:Empty', 'p:1'])
+  })
+  it('are mixed in among the pages by the same value when folders are not first', () => {
+    const desc = [page('1', 'A', day(25)), page('2', 'B', day(15)), page('3', 'C', day(5))]
+    expect(keys(arrangeRows(folders, desc, true, '-updated'))).toEqual([
+      'p:1',
+      'f:New',
+      'p:2',
+      'f:Mid',
+      'p:3',
+      'f:Old',
+      'f:Empty',
+    ])
+    const asc = [...desc].reverse()
+    expect(keys(arrangeRows(folders, asc, true, 'updated'))).toEqual([
+      'f:Old',
+      'p:3',
+      'f:Mid',
+      'p:2',
+      'f:New',
+      'p:1',
+      'f:Empty',
+    ])
+  })
+  it('keep the name order under other sorts, and title sorts by name', () => {
+    expect(keys(arrangeRows(folders, [], false, 'created'))).toEqual(['f:Empty', 'f:Mid', 'f:New', 'f:Old'])
+    expect(keys(arrangeRows(folders, [], false, 'title'))).toEqual(['f:Empty', 'f:Mid', 'f:New', 'f:Old'])
   })
 })
 

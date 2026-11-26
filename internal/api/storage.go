@@ -13,8 +13,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 type storageResp struct {

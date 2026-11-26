@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/spaces"
 )
 
 // A person's own preferences (docs/api.md, "Preferences"): the columns and

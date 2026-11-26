@@ -4,10 +4,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // A versioned delete that also names the file rev is refused once the file has

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/store"
 )
 
 // Viewing a space (docs/api.md, "Viewing a space"). An administrator who is not

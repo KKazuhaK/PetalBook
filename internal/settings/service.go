@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // SiteBinding lets a setting's site value live somewhere else than

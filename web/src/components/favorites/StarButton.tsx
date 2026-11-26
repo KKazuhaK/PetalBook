@@ -23,7 +23,16 @@ export function useToggleFavorite(ref: FavoriteRef | null) {
 }
 
 // The star in the top bar of a page, and by a saved view: pressed when it is a favourite.
-export function StarButton({ target, labels }: { target: FavoriteRef; labels: { add: string; remove: string } }) {
+// `className` gives it another size or look where it stands (the editor's top bar makes it a 40 px bordered button).
+export function StarButton({
+  target,
+  labels,
+  className,
+}: {
+  target: FavoriteRef
+  labels: { add: string; remove: string }
+  className?: string
+}) {
   const allowed = useCanFavorite()
   const { on, toggle, busy } = useToggleFavorite(allowed ? target : null)
   if (!allowed) return null
@@ -32,6 +41,7 @@ export function StarButton({ target, labels }: { target: FavoriteRef; labels: { 
     <Button
       variant="ghost"
       size="icon-sm"
+      className={className}
       aria-label={label}
       title={label}
       aria-pressed={on}

@@ -9,9 +9,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/mail"
-	"github.com/KKazuhaK/PetalBook/internal/settings"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/mail"
+	"petalbook.app/server/internal/settings"
+	"petalbook.app/server/internal/store"
 )
 
 // Registration, email verification and password reset (docs/api.md,

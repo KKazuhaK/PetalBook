@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // The excerpt of a page is not in the table the index scans: it is read, for

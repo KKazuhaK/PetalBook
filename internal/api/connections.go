@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/store"
 )
 
 // The connection endpoints (docs/api.md, "Connections", "The GitHub provider"

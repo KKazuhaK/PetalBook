@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 type memberResp struct {

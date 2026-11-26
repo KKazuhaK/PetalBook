@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // Codes of the errors of a connection (docs/api.md, "Connections", "Error

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/spaces"
 )
 
 func (f *fixture) folders() string {
@@ -20,6 +20,34 @@ func (f *fixture) folders() string {
 		out = append(out, it.(map[string]any)["path"].(string))
 	}
 	return strings.Join(out, "|")
+}
+
+// The tree carries each folder's updated: the newest page in it or below it,
+// in the format a page's own updated has, and none for an empty folder.
+func TestTreeFolderUpdated(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.create("a", map[string]any{"title": "one"}, "x\n")
+	deep := f.create("a/b/c", map[string]any{"title": "two"}, "y\n")
+	f.do("POST", base+"/folders", map[string]any{"path": "empty"})
+	_, l, _ := f.do("GET", base+"/pages?folder=a/b/c", nil) // the summaries' format
+	p := l["items"].([]any)[0].(map[string]any)
+	if p["id"] != deep["id"] {
+		t.Fatalf("%v", p)
+	}
+	updated := map[string]any{}
+	for _, it := range func() []any { _, r, _ := f.do("GET", base+"/tree", nil); return r["folders"].([]any) }() {
+		m := it.(map[string]any)
+		updated[m["path"].(string)] = m["updated"]
+	}
+	for _, path := range []string{"", "a", "a/b", "a/b/c"} {
+		if updated[path] != p["updated"] {
+			t.Fatalf("%q: %v, the newest page has %v (%v)", path, updated[path], p["updated"], updated)
+		}
+	}
+	if u, ok := updated["empty"]; !ok || u != nil {
+		t.Fatalf("an empty folder has no updated: %v", updated)
+	}
 }
 
 func TestFolderMoveAndDelete(t *testing.T) {

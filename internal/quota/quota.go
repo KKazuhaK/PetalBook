@@ -18,9 +18,9 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/KKazuhaK/PetalBook/internal/settings"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/settings"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 // The quotas, as the API names them.

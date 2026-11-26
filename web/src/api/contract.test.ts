@@ -1139,7 +1139,11 @@ function suite(target: Target) {
           expect(note.json.folder).toBe('收件箱')
           expect('title' in note.json.meta).toBe(false)
           const tree = (await call(m.browser, 'GET', `${base}/tree`)).json.folders as { path: string; pages: number }[]
-          expect(tree.find((f) => f.path === '收件箱')).toEqual({ path: '收件箱', pages: 1 })
+          expect(tree.find((f) => f.path === '收件箱')).toEqual({
+            path: '收件箱',
+            pages: 1,
+            updated: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/),
+          })
           await call(m.browser, 'PATCH', base, { inbox: '别处' })
           const after = await call(m.browser, 'GET', `${base}/pages/${note.json.id}`)
           expect(after.json.folder).toBe('收件箱')

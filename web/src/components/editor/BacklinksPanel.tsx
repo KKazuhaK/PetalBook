@@ -5,6 +5,7 @@ import { useBacklinks, useUrls } from '@/api/hooks'
 import { ErrorState } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { t } from '@/i18n'
+import { ExcerptText } from '@/components/files/ExcerptText'
 
 // The pages that link to this one, on the right of the page: the page's name, the paragraph the link is in, and
 // twenty at a time. It is its own chunk and asks for nothing until it is opened.
@@ -51,14 +52,14 @@ export default function BacklinksPanel({
           data-testid="backlinks-backdrop"
           aria-hidden="true"
           onClick={onClose}
-          className="fixed inset-0 top-12 z-30 bg-black/30"
+          className="fixed inset-0 top-(--topbar-h) z-30 bg-black/30"
         />
       )}
       <aside
         ref={ref}
         tabIndex={-1}
         aria-label={t.pageLinks.backlinks}
-        className="fixed top-12 right-0 bottom-0 z-30 flex w-80 max-w-[calc(100%-3rem)] flex-col border-l bg-background shadow-lg outline-none lg:shadow-none"
+        className="fixed top-(--topbar-h) right-0 bottom-0 z-30 flex w-80 max-w-[calc(100%-3rem)] flex-col border-l bg-background shadow-lg outline-none lg:shadow-none"
       >
         <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
           <h2 className="flex-1 text-sm font-medium">{t.pageLinks.backlinks}</h2>
@@ -102,7 +103,7 @@ export default function BacklinksPanel({
                       <span className="truncate">{b.untitled ? b.title || t.editor.untitled : b.title}</span>
                     </Link>
                     <p className="mt-0.5 line-clamp-4 text-xs text-muted-foreground">
-                      {b.excerpt || t.pageLinks.backlinksNoExcerpt}
+                      {b.excerpt ? <ExcerptText text={b.excerpt} /> : t.pageLinks.backlinksNoExcerpt}
                     </p>
                   </li>
                 ))}

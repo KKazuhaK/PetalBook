@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"petalbook.app/server/internal/auth"
 )
 
 // challenge asks for a captcha and returns the answer the test may use.

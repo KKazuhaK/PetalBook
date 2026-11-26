@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 func settingOf(t *testing.T, r result, key string) map[string]any {

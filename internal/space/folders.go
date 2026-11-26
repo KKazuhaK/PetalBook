@@ -11,8 +11,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/page"
 )
 
 // folderKey is a folder path as a file system that ignores case and Unicode

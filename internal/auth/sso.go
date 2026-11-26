@@ -22,7 +22,7 @@ import (
 	crewjamsaml "github.com/crewjam/saml"
 	"golang.org/x/oauth2"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // OIDCConfig is the OpenID Connect provider of the command line (--oidc-*).

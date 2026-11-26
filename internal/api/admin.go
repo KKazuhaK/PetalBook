@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // The administration of the whole server (administrators only, accounts mode).

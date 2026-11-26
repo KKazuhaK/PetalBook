@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/githubapp"
-	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
+	"petalbook.app/server/internal/githubapp"
+	"petalbook.app/server/internal/githubapp/githubapptest"
 )
 
 var ctx = context.Background()

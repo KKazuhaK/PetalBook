@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ApiError } from '@/api/client'
+import cases from '../../../../internal/page/testdata/excerpts.json'
 import type { Page } from '@/api/types'
 import { t } from '@/i18n'
 import { DEFAULT_CONFIG } from './store'
 import { configure } from './manager'
 import { noteOpened } from './index'
+import { excerptOf } from './reader'
 import { isOffline } from './status'
 import { make, network, S, type Net } from './testkit'
 import { syncSpace } from './sync'
@@ -124,11 +126,13 @@ describe('reading without the server', () => {
       await make('Tang', 'b', 'x', { tags: ['甲'] })
       await S().createFolder('Empty')
     })
+    const when = expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/)
+    // Each folder's updated is the newest page in it or below it; the empty folder has none.
     expect((await S().tree()).folders).toEqual([
-      { path: '', pages: 0 },
+      { path: '', pages: 0, updated: when },
       { path: 'Empty', pages: 0 },
-      { path: 'Tang', pages: 1 },
-      { path: 'Tang/Li', pages: 1 },
+      { path: 'Tang', pages: 1, updated: when },
+      { path: 'Tang/Li', pages: 1, updated: when },
     ])
     expect((await S().tags()).tags).toEqual([
       { tag: '甲', pages: 2 },
@@ -137,6 +141,26 @@ describe('reading without the server', () => {
     // Without what the server gave (an older copy), the catalogue is counted.
     await s.setTree(undefined as never)
     expect((await S().tree()).folders.map((f) => f.path)).toEqual(['', 'Tang', 'Tang/Li'])
+  })
+
+  it("moves a folder's updated offline when a page is edited, although the saved tree is not read again", async () => {
+    net.restore()
+    let clock = Date.UTC(2026, 10, 1, 8)
+    net = network({ now: () => clock })
+    const page = await make('Tang/Li/Deep', 'a', 'x\n')
+    await make('Other', 'b', 'x\n')
+    const s = await offlineWith('catalog', async () => {})
+    const at = async () => Object.fromEntries((await S().tree()).folders.map((f) => [f.path, f.updated ?? '']))
+    const before = await at()
+    expect(before['Tang']).toBe('2026-11-01T08:00:00Z')
+    net.up()
+    clock += 3_600_000
+    await S().savePage(page.id, { baseRev: page.rev, meta: page.meta, body: 'y\n' })
+    await syncSpace(s) // the page changed; the tree's stamp did not
+    net.down()
+    const after = await at()
+    for (const f of ['', 'Tang', 'Tang/Li', 'Tang/Li/Deep']) expect(after[f]).toBe('2026-11-01T09:00:00Z')
+    expect(after['Other']).toBe('2026-11-01T08:00:00Z')
   })
 
   it('does not answer what needs more than the catalogue and the text: properties, bodies, boards, history', async () => {
@@ -230,5 +254,18 @@ describe('a page that is opened', () => {
     await s.setConfig({ ...DEFAULT_CONFIG, mode: 'text', recent: false })
     await noteOpened('default', p)
     expect(await s.opened()).toEqual([])
+  })
+})
+
+describe('excerptOf', () => {
+  // The cases the server's excerpt builder is tested with (internal/page/testdata/excerpts.json).
+  it.each(cases)('matches the server: $name', ({ body, excerpt }) => {
+    expect(excerptOf(body)).toBe(excerpt)
+  })
+
+  it('counts the marker inside the 400 characters', () => {
+    const ex = excerptOf('- [x] ' + '花'.repeat(600))
+    expect(Array.from(ex)).toHaveLength(400)
+    expect(ex.startsWith('[x] 花')).toBe(true)
   })
 })

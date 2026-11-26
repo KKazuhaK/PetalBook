@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/space"
 )
 
 // The problems of the spaces a person writes in, for the notification centre.

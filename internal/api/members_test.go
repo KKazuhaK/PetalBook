@@ -9,9 +9,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/store"
 )
 
 // team is a shared space with one person in each role and one outsider.

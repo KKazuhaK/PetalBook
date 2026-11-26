@@ -1,4 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
+import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
+import { topBarButton, topBarTextButton } from '@/components/layout/topBarStyles'
 import { Link, useSearchParams } from 'react-router'
 import { ArrowLeft } from 'lucide-react'
 import { useMarkAllNotificationsRead, useNotificationList } from '@/api/hooks'
@@ -19,6 +21,8 @@ const isFilter = (v: string | null): v is Filter => FILTERS.includes(v as Filter
 // The full page of notifications: filters by kind, and the history, a cursor page at a time. On a phone it is where the
 // bell goes; on a desktop it is behind "see all" in the popover.
 export default function NotificationsPage() {
+  const fadeRef = useRef<HTMLDivElement>(null)
+  useScrollFade(fadeRef)
   useDocumentTitle(tn.title)
   const [params, setParams] = useSearchParams()
   const raw = params.get('show')
@@ -45,8 +49,7 @@ export default function NotificationsPage() {
         actions={
           <Button
             variant="ghost"
-            size="sm"
-            className="h-10"
+            className={topBarTextButton}
             disabled={unread === 0 || markAll.isPending}
             onClick={() => markAll.mutate(kind || undefined)}
           >
@@ -54,20 +57,17 @@ export default function NotificationsPage() {
           </Button>
         }
       >
-        <Link
-          to="/"
-          aria-label={tn.back}
-          className="-ml-1 inline-flex size-10 items-center justify-center rounded-lg outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 md:hidden"
-        >
+        <Link to="/" aria-label={tn.back} className={`${topBarButton} md:hidden`}>
           <ArrowLeft className="size-5" />
         </Link>
         <h1 className="truncate text-base font-semibold">{tn.title}</h1>
       </TopBar>
       <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-4">
         <div
+          ref={fadeRef}
           role="group"
           aria-label={tn.filterLabel}
-          className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none]"
+          className={`${scrollFadeClass} -mx-4 mb-4 flex gap-2 px-4 pb-1`}
         >
           {FILTERS.map((f) => (
             <button

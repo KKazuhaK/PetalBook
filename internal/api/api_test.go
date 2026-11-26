@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/drafts"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/drafts"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 type fixture struct {
@@ -341,7 +341,12 @@ func TestMoveAndDeletePage(t *testing.T) {
 		t.Fatalf("%d %s", code, raw)
 	}
 	_, tree, _ := f.do("GET", base+"/tree", nil)
-	if fmt.Sprint(tree["folders"]) != "[map[pages:0 path:] map[pages:0 path:随笔] map[pages:1 path:随笔/2026]]" {
+	var shownTree []string
+	for _, it := range tree["folders"].([]any) {
+		m := it.(map[string]any)
+		shownTree = append(shownTree, fmt.Sprintf("%v:%v", m["path"], m["pages"]))
+	}
+	if fmt.Sprint(shownTree) != "[:0 随笔:0 随笔/2026:1]" {
 		t.Fatalf("%v", tree)
 	}
 	for _, folder := range []string{"../x", "/abs", ".git", "a//b"} {
@@ -387,10 +392,15 @@ func TestFoldersTreeAndTags(t *testing.T) {
 	f.create("随笔", map[string]any{"title": "b", "tags": []string{"栀子"}}, "")
 	f.create("随笔", map[string]any{"title": "c", "tags": []string{"栀子", "黄昏"}}, "")
 	_, tree, raw := f.do("GET", base+"/tree", nil)
-	if raw != `{"folders":[{"path":"","pages":1},{"path":"随笔","pages":2},{"path":"随笔/2027","pages":0}]}`+"\n" {
+	var shown []string
+	for _, it := range tree["folders"].([]any) {
+		m := it.(map[string]any)
+		_, has := m["updated"]
+		shown = append(shown, fmt.Sprintf("%v:%v:%v", m["path"], m["pages"], has))
+	}
+	if fmt.Sprint(shown) != "[:1:true 随笔:2:true 随笔/2027:0:false]" {
 		t.Fatalf("%s", raw)
 	}
-	_ = tree
 	_, _, raw = f.do("GET", base+"/tags", nil)
 	if raw != `{"tags":[{"tag":"栀子","pages":3},{"tag":"玉兰","pages":1},{"tag":"黄昏","pages":1}]}`+"\n" {
 		t.Fatalf("%s", raw)

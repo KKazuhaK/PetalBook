@@ -20,10 +20,10 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/sentence"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/sentence"
 )
 
 // Defaults for the committer: a commit after a few quiet seconds, or ten

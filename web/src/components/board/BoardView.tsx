@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type RefObject } from 'react'
+import { scrollFadeTouchClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { Link } from 'react-router'
 import { MoveRight } from 'lucide-react'
 import { toast } from 'sonner'
@@ -22,6 +23,7 @@ import {
 import { hasValue, showValue } from '@/lib/pageTypes'
 import { t } from '@/i18n'
 import { tb } from '@/i18n/boards'
+import { ExcerptText } from '@/components/files/ExcerptText'
 
 // The board of a folder or a tag: a column per value of one property, the pages as cards in them. Every column is
 // asked for on its own, twenty cards at a time, by the filter that picks its pages (the value, "none of the options",
@@ -81,6 +83,7 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
     [options, groups.data],
   )
   const scroller = useRef<HTMLDivElement>(null)
+  useScrollFade(scroller)
   const shown = cardFieldsOf(type, cardFields, group)
 
   const patch = usePatchProps()
@@ -141,7 +144,7 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
       {groups.isError && <p className="text-xs text-destructive">{tb.board.groupsFailed}</p>}
       <div
         ref={scroller}
-        className="flex items-start gap-3 overflow-x-auto pb-3"
+        className={`${scrollFadeTouchClass} flex items-start gap-3 pb-3`}
         role="group"
         aria-label={tb.board.label}
       >
@@ -435,14 +438,18 @@ function Card({
             <div className="font-medium leading-snug break-words">{line}</div>
             {row.excerpt && (
               <div className="mt-1 line-clamp-2 text-xs leading-relaxed break-words text-muted-foreground">
-                {row.excerpt}
+                <ExcerptText text={row.excerpt} />
               </div>
             )}
           </>
         ) : (
           // Without a title the start of the text stands in for it.
           <div className="line-clamp-2 leading-snug break-words">
-            {row.excerpt || <span className="text-muted-foreground">{tb.board.untitled}</span>}
+            {row.excerpt ? (
+              <ExcerptText text={row.excerpt} />
+            ) : (
+              <span className="text-muted-foreground">{tb.board.untitled}</span>
+            )}
           </div>
         )}
       </Link>

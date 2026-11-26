@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { scrollFadeTouchClass, useScrollFade } from '@/components/ui/scroll-fade'
 import {
   ArrowDown,
   ArrowUp,
@@ -84,6 +85,7 @@ export interface DataTableProps<T> {
   actions?: (row: T) => ReactNode
   rowAttrs?: (row: T) => Record<string, string>
   // More classes for a row (a row is `group/row`, so a cell can show something only while the pointer is on it).
+  // The sticky last column has an opaque background (rows scroll under it); it paints the row's tint, --row-tint, over it.
   rowClass?: (row: T) => string
   footer?: ReactNode
   // The columns shown when the person has set none themselves (a saved view's choice, say): ids to hide.
@@ -116,6 +118,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
   // The box the table scrolls in: its width decides which columns fit.
   const box = useRef<HTMLDivElement>(null)
+  useScrollFade(box)
   const [boxW, setBoxW] = useState(0)
   useLayoutEffect(() => {
     const el = box.current
@@ -251,7 +254,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
       {selection && selection.selected.size > 0 && bulk}
       <div
         ref={box}
-        className={`overflow-x-auto rounded-lg border transition-opacity duration-150 ${fetching ? 'opacity-60' : ''}`}
+        className={`${scrollFadeTouchClass} rounded-lg border transition-opacity duration-150 ${fetching ? 'opacity-60' : ''}`}
         aria-busy={fetching || loading || undefined}
       >
         <table
@@ -328,7 +331,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
               ))}
               <th
                 scope="col"
-                className="sticky right-0 z-10 bg-background px-1 py-1 text-right shadow-[-1px_0_0_var(--color-border)]"
+                className="sticky right-0 z-10 bg-background bg-[linear-gradient(color-mix(in_oklab,var(--color-muted)_40%,transparent),color-mix(in_oklab,var(--color-muted)_40%,transparent))] px-1 py-1 text-right shadow-[-1px_0_0_var(--color-border)]"
               >
                 <span className="sr-only">{tc.table.actions}</span>
                 <TableSettings
@@ -384,7 +387,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     {...rowAttrs?.(row)}
                     data-row={rid}
                     aria-selected={selected?.has(rid) || undefined}
-                    className={`group/row ${ROW_HEIGHT[prefs.density]} transition-colors hover:bg-muted/40 ${selected?.has(rid) ? 'bg-primary/5' : ''} ${rowClass?.(row) ?? ''}`}
+                    className={`group/row ${ROW_HEIGHT[prefs.density]} transition-colors hover:bg-muted/40 hover:[--row-tint:color-mix(in_oklab,var(--color-muted)_40%,transparent)] ${selected?.has(rid) ? 'bg-primary/5 [--row-tint:color-mix(in_oklab,var(--color-primary)_5%,transparent)]' : ''} ${rowClass?.(row) ?? ''}`}
                   >
                     {selection && (
                       <td className="px-0">
@@ -420,7 +423,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                         </td>
                       ),
                     )}
-                    <td className="sticky right-0 bg-background px-1 text-right shadow-[-1px_0_0_var(--color-border)]">
+                    <td className="sticky right-0 bg-background bg-[linear-gradient(var(--row-tint,transparent),var(--row-tint,transparent))] px-1 text-right shadow-[-1px_0_0_var(--color-border)]">
                       <div className="flex items-center justify-end gap-1">{actions?.(row)}</div>
                     </td>
                   </tr>

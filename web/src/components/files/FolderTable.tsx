@@ -12,6 +12,7 @@ import { fromHeaderSort, rowKey, toHeaderSort, type TableRow } from '@/lib/folde
 import { useFolderStyle, usePageStyle } from '@/lib/icons/useStyles'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import { useDropTarget } from './useDropTarget'
+import { ExcerptText } from './ExcerptText'
 import { MoreButton } from './FileContextMenu'
 import { ENTRY_ATTR } from './FileContextMenu'
 import { useFileOps } from './FileOps'
@@ -126,7 +127,11 @@ function TitleCell({ row, state, mobile = false }: { row: TableRow; state: Entry
         >
           {name}
         </span>
-        {!mobile && sub && <span className="block truncate text-xs text-muted-foreground">{sub}</span>}
+        {!mobile && sub && (
+          <span className="block truncate text-xs text-muted-foreground">
+            <ExcerptText text={sub} />
+          </span>
+        )}
       </span>
     </Link>
   )
@@ -178,7 +183,7 @@ export function FolderTable(props: FolderTableProps) {
       weight: 1,
       priority: 2,
       sortKey: 'updated',
-      cell: (r) => (r.kind === 'page' ? dateCell(r.page.updated) : null),
+      cell: (r) => dateCell(r.kind === 'page' ? r.page.updated : r.folder.updated),
     },
     {
       id: 'tags',
@@ -316,7 +321,14 @@ export function PhoneRows({
                 ))}
               </>
             ) : (
-              <span>{t.ftable.pages(r.folder.total)}</span>
+              <>
+                <span>{t.ftable.pages(r.folder.total)}</span>
+                {r.folder.updated && (
+                  <time dateTime={r.folder.updated} title={absoluteTime(r.folder.updated)}>
+                    {relativeTime(r.folder.updated)}
+                  </time>
+                )}
+              </>
             )
           return (
             <li key={rowKey(r)} {...{ [ENTRY_ATTR]: rowKey(r) }} className="group/row flex items-center gap-1 py-1.5">

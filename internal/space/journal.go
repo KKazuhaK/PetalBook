@@ -17,8 +17,8 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/page"
 )
 
 // A journal record says what the server is about to do to a file (or did),

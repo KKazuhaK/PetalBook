@@ -168,9 +168,10 @@ describe('the bell', () => {
     expect(bell()).toBeNull()
   })
 
-  it('is 40 px: the tap area the owner asked for', async () => {
+  it('is 40 px to touch (the tap area the owner asked for) and 36 px for a mouse (a little smaller, also asked)', async () => {
     await open(() => ['/'])
-    expect(bell()!.className).toContain('size-10')
+    expect(bell()!.className).toContain('pointer-coarse:size-10')
+    expect(bell()!.className).toMatch(/(^| )size-9( |$)/)
   })
 })
 

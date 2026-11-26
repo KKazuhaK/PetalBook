@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // measure asks for a measurement of a space now (what the background sizer does

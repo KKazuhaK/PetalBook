@@ -29,7 +29,7 @@ import (
 	crewjamsaml "github.com/crewjam/saml"
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // Kinds of sign-in provider.

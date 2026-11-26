@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/githubapp"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/githubapp"
+	"petalbook.app/server/internal/store"
 )
 
 // RequiredPermissions are what the App needs, and the level of each.

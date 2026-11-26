@@ -19,6 +19,7 @@ import { endDrag, startDrag } from './dnd'
 import { ENTRY_ATTR, MoreButton } from './FileContextMenu'
 import { useFileOps } from './FileOps'
 import { useDropTarget } from './useDropTarget'
+import { ExcerptText } from './ExcerptText'
 
 export interface Picked {
   shift: boolean
@@ -310,7 +311,7 @@ export function PageCard({ page, urls, state }: { page: PageSummary; urls: Space
                 : {}),
             }}
           >
-            {page.excerpt}
+            <ExcerptText text={page.excerpt} />
           </div>
         ) : (
           empty && <div className="text-sm text-muted-foreground">{t.list.untitledHint}</div>
@@ -357,7 +358,17 @@ export function FolderCard({ folder, urls, state }: { folder: FolderEntry; urls:
         />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[0.95rem] font-medium">{folder.name}</span>
-          <span className="block truncate text-xs text-muted-foreground">{t.manage.folderPages(folder.total)}</span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {t.manage.folderPages(folder.total)}
+            {folder.updated && (
+              <>
+                {' · '}
+                <time dateTime={folder.updated} title={absoluteTime(folder.updated)}>
+                  {relativeTime(folder.updated)}
+                </time>
+              </>
+            )}
+          </span>
         </span>
       </Link>
       <MoreButton label={folder.name} className="absolute top-2.5 right-1.5 bg-card/80" />

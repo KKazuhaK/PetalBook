@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import {
   ArrowUpDown,
@@ -15,6 +15,9 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
@@ -37,6 +40,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState, Spinner } from '@/components/common'
 import { QuickCaptureFab, useQuickCapture } from '@/components/layout/QuickCapture'
+import { topBarButton, topBarGroup, topBarGroupItem, topBarRoom } from '@/components/layout/topBarStyles'
 import { TopBar } from '@/components/layout/TopBar'
 import { ViewBar } from '@/components/views/ViewBar'
 import { useWorkingCopy } from '@/components/views/useWorkingCopy'
@@ -156,6 +160,7 @@ function ViewSwitch({
   board,
   read,
   disabled,
+  sort,
 }: {
   mode: ListViewMode
   onChange: (m: ListViewMode) => void
@@ -163,7 +168,11 @@ function ViewSwitch({
   board: boolean
   read: boolean
   disabled?: boolean
+  // The sort choices, for the menu of a bar too narrow for the sort button (which is then hidden).
+  sort?: { value: string; onChange: (v: string) => void; choices: (readonly [string, string])[] }
 }) {
+  const trigger = useRef<HTMLButtonElement>(null)
+  const [room, setRoom] = useState(Infinity)
   const item = (m: ListViewMode, label: string, Icon: typeof ListIcon) => (
     <button
       key={m}
@@ -173,7 +182,7 @@ function ViewSwitch({
       title={label}
       disabled={disabled}
       onClick={() => onChange(m)}
-      className={`flex size-7 disabled:opacity-60 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+      className={topBarGroupItem(mode === m)}
     >
       <Icon className="size-4" />
     </button>
@@ -196,16 +205,17 @@ function ViewSwitch({
         role="group"
         aria-label={t.view.label}
         aria-busy={disabled || undefined}
-        className="hidden items-center rounded-lg border p-0.5 @[30rem]/topbar:flex"
+        className={`hidden ${topBarGroup} @[30rem]/topbar:flex`}
       >
         {modes.map(([m, label, Icon]) => item(m, label, Icon))}
       </div>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={(open) => open && setRoom(topBarRoom(trigger.current))}>
         <DropdownMenuTrigger
+          ref={trigger}
           disabled={disabled}
           aria-label={t.view.label}
           title={t.view.label}
-          className="flex size-8 items-center justify-center rounded-lg border outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-60 data-popup-open:bg-muted @[30rem]/topbar:hidden"
+          className={`${topBarButton} @[30rem]/topbar:hidden`}
         >
           <Current className="size-4" />
         </DropdownMenuTrigger>
@@ -218,6 +228,24 @@ function ViewSwitch({
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
+          {sort && room < 26 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>{t.list.sort}</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={sort.value || 'default'}
+                  onValueChange={(v) => sort.onChange(v === 'default' ? '' : v)}
+                >
+                  {sort.choices.map(([v, label]) => (
+                    <DropdownMenuRadioItem key={v} value={v || 'default'}>
+                      {label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </>
@@ -377,6 +405,17 @@ function Listing({ source }: { source: ListSource }) {
   const isFolder = source.kind === 'folder'
   const filesTable = isFolder && mode === 'list' && !mobile
   const filesPhone = isFolder && mode === 'list' && mobile
+  // The sort select and, in a narrow bar, the same choices in the view menu. Search defaults to relevance; everything
+  // else to newest first; a view can sort by a property, which the plain choices do not name.
+  const sortValue = isSearch ? state.sort : normSort(state.sort) === '-updated' ? '' : state.sort
+  const onSort = (v: string) => setSort(isSearch ? v : v || '-updated')
+  const sortChoices: (readonly [string, string])[] = [
+    ['', isSearch ? t.list.sorts.relevance : t.list.sorts['-updated']],
+    ...SORTS.filter((k) => isSearch || k !== '-updated').map((k) => [k, t.list.sorts[k]] as const),
+    ...(state.sort !== '' && !SORTS.includes(state.sort as SortKey)
+      ? [[state.sort, t.views.customSort(state.sort.replace(/^-?(prop:)?/, ''))] as const]
+      : []),
+  ]
   const extra = isFolder ? filterParams(tableFilters) : {}
   const filtered = filterCount(tableFilters) > 0
 
@@ -502,15 +541,17 @@ function Listing({ source }: { source: ListSource }) {
             <>
               {/* On a phone the sort choice shrinks to an icon (the select is still what opens), leaving the room to the breadcrumbs. */}
               {/* In a table the headers of the columns sort. */}
+              {/* As wide as its longest choice (a select sizes itself so when its width is auto), so no choice is cut. */}
               {!isTable && !filesPhone && (
-                <div className="relative w-28 max-sm:w-8 max-sm:[&>div>svg]:hidden">
+                <div className="relative max-sm:size-9 max-sm:pointer-coarse:size-10 max-sm:shrink-0 max-sm:rounded-lg max-sm:border max-sm:[&>div>svg]:hidden @max-[26rem]/topbar:hidden">
                   <ArrowUpDown className="pointer-events-none absolute top-1/2 left-1/2 size-4 -translate-x-1/2 -translate-y-1/2 text-muted-foreground sm:hidden" />
                   <NativeSelect
-                    className="h-7 text-[0.8rem] max-sm:h-8 max-sm:opacity-0"
+                    wrapperClassName="w-auto max-sm:size-full"
+                    className="h-9 pointer-coarse:h-10 w-auto text-[0.8rem] pointer-coarse:text-base! max-sm:size-full max-sm:opacity-0"
                     aria-label={t.list.sort}
                     disabled={busy}
-                    value={isSearch ? state.sort : normSort(state.sort) === '-updated' ? '' : state.sort}
-                    onChange={(e) => setSort(isSearch ? e.target.value : e.target.value || '-updated')}
+                    value={sortValue}
+                    onChange={(e) => onSort(e.target.value)}
                   >
                     {/* Search defaults to relevance; everything else to newest first. */}
                     <option value="">{isSearch ? t.list.sorts.relevance : t.list.sorts['-updated']}</option>
@@ -533,12 +574,14 @@ function Listing({ source }: { source: ListSource }) {
                 board={boardOk || typesPending}
                 read={readOk}
                 disabled={busy}
+                sort={
+                  !isTable && !filesPhone ? { value: sortValue, onChange: onSort, choices: sortChoices } : undefined
+                }
               />
               {write && source.kind === 'folder' && ops && (
                 <Button
-                  variant="outline"
-                  size="icon-sm"
-                  className="max-sm:hidden"
+                  variant="ghost"
+                  className={`${topBarButton} max-sm:hidden`}
                   onClick={() => ops.newFolder(source.folder)}
                   title={t.manage.newFolder}
                   aria-label={t.manage.newFolder}
@@ -547,7 +590,13 @@ function Listing({ source }: { source: ListSource }) {
                 </Button>
               )}
               {write && (
-                <Button size="sm" onClick={newPage} disabled={creating} aria-label={t.list.newPage}>
+                <Button
+                  size="lg"
+                  onClick={newPage}
+                  disabled={creating}
+                  aria-label={t.list.newPage}
+                  className="h-9 pointer-coarse:h-10 max-sm:w-9 max-sm:pointer-coarse:w-10 max-sm:px-0"
+                >
                   {creating ? <Spinner /> : <FilePlus2 />}
                   <span className="max-sm:hidden">{creating ? t.list.creating : t.list.newPage}</span>
                 </Button>
@@ -579,22 +628,39 @@ function Listing({ source }: { source: ListSource }) {
         <div
           className={`mx-auto w-full flex-1 px-2 py-4 max-md:pb-20 sm:px-4 ${mode === 'cards' ? 'max-w-7xl' : isTable || filesTable || mode === 'board' ? 'max-w-[96rem]' : 'max-w-3xl'}`}
         >
-          {scope && !viewsPending && (
-            <ViewBar
-              scope={scope}
-              views={saved}
-              rev={working.list?.rev ?? ''}
-              active={active}
-              working={state}
-              modified={modified && mine}
-              write={write && working.list !== null}
-              busy={busy}
-              onPick={working.pick}
-              onBegin={working.begin}
-              onEnd={working.end}
-              onRevert={working.revert}
-            />
-          )}
+          {/* The view tabs (or just the button for a new view) and the Sort and filter button share one row, which
+              wraps when there is no room, so a phone does not spend a row on a lone "+". */}
+          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 empty:hidden [&>[data-slot=filter-bar]]:mb-0 [&>[data-slot=view-bar]]:mb-0">
+            {scope && !viewsPending && (
+              <ViewBar
+                scope={scope}
+                views={saved}
+                rev={working.list?.rev ?? ''}
+                active={active}
+                working={state}
+                modified={modified && mine}
+                write={write && working.list !== null}
+                busy={busy}
+                onPick={working.pick}
+                onBegin={working.begin}
+                onEnd={working.end}
+                onRevert={working.revert}
+              />
+            )}
+            {isFolder && (mode === 'list' || mode === 'cards') && !viewsPending && (
+              <FilterBar
+                filters={tableFilters}
+                onChange={setTableFilters}
+                type={type}
+                sort={state.sort}
+                onSort={setSort}
+                sortDisabled={busy}
+                mobile={mobile}
+                headerSort={filesTable}
+                folders={filesTable ? { mixed, onToggle: () => setMixed(!mixed) } : undefined}
+              />
+            )}
+          </div>
           {views.isError && <p className="mb-2 text-xs text-muted-foreground">{t.views.loadFailed}</p>}
           {scope && !viewsPending && (typeName !== '' || source.kind === 'tag' || filters.length > 0) && (
             <Suspense fallback={null}>
@@ -607,19 +673,6 @@ function Listing({ source }: { source: ListSource }) {
                 disabled={busy}
               />
             </Suspense>
-          )}
-          {isFolder && (mode === 'list' || mode === 'cards') && !viewsPending && (
-            <FilterBar
-              filters={tableFilters}
-              onChange={setTableFilters}
-              type={type}
-              sort={state.sort}
-              onSort={setSort}
-              sortDisabled={busy}
-              mobile={mobile}
-              headerSort={filesTable}
-              folders={filesTable ? { mixed, onToggle: () => setMixed(!mixed) } : undefined}
-            />
           )}
           {!filesTable &&
             !filesPhone &&

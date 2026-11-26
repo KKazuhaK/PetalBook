@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 func checkKinds(t *testing.T, s *Space) map[string]int {

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/forge/forgetest"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/forge/forgetest"
+	"petalbook.app/server/internal/store"
 )
 
 // Milestone 3.8 through the API: GitLab and Gitea (and so Forgejo and

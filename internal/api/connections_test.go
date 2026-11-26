@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/githubapp/githubapptest"
+	"petalbook.app/server/internal/store"
 )
 
 var ghOpts = accOpts{github: true}

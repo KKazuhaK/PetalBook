@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/mail/mailtest"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/mail/mailtest"
 )
 
 func TestMailIsOffUntilAnAdministratorEnablesIt(t *testing.T) {

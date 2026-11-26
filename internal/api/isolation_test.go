@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/store"
 )
 
 // The isolation fixture of milestone 3.3: two tenants holding the same shapes

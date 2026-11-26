@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // What a site administrator sees of a person's sign-ins and may end (milestone

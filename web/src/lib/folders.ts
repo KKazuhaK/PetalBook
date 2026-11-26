@@ -117,6 +117,8 @@ export interface FolderEntry {
   // Pages directly in it, and in it plus everything below.
   direct: number
   total: number
+  // The newest page in it or anywhere below it (the server works it out); absent for an empty folder.
+  updated?: string
 }
 
 export interface FolderIndex {
@@ -128,7 +130,7 @@ export interface FolderIndex {
 // One pass over the tree endpoint's list, so a listing of hundreds of folders
 // does no repeated searching: the direct children of every folder, and the
 // page counts of each one with its subfolders. Missing parents are tolerated.
-export function buildFolderIndex(folders: { path: string; pages: number }[]): FolderIndex {
+export function buildFolderIndex(folders: { path: string; pages: number; updated?: string }[]): FolderIndex {
   const byPath = new Map<string, FolderEntry>()
   const children = new Map<string, FolderEntry[]>()
   const ensure = (path: string): FolderEntry => {
@@ -146,7 +148,11 @@ export function buildFolderIndex(folders: { path: string; pages: number }[]): Fo
     return e
   }
   ensure('')
-  for (const f of folders) ensure(f.path).direct = f.pages
+  for (const f of folders) {
+    const e = ensure(f.path)
+    e.direct = f.pages
+    if (f.updated) e.updated = f.updated
+  }
   for (const e of byPath.values()) {
     e.total = e.direct
   }

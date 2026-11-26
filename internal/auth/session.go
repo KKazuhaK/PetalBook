@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // Authenticate resolves a session cookie value to its user. It answers from

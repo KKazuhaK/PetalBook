@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // crashed is what a test's step hook panics with to stop a change where a

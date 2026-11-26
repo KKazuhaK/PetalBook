@@ -49,7 +49,11 @@ const markupChars = "*_`[]<>!~\\#|&"
 // markers, tables and HTML tags. It is not a Markdown parser; it only has to
 // make a readable excerpt and something sensible to index. Lines are joined
 // with "\n" and a blank line marks a paragraph break.
-func PlainText(body string) string {
+func PlainText(body string) string { return plainText(body, false) }
+
+// plainText is PlainText; with tasks, a task item keeps its state as a
+// "[x] " or "[ ] " at the start of its line (the excerpt shows it).
+func plainText(body string, tasks bool) string {
 	var out []string
 	inFence := false
 	var fenceChar byte
@@ -69,7 +73,7 @@ func PlainText(body string) string {
 			out = append(out, collapseSpaces(t))
 			continue
 		}
-		l := plainLine(t)
+		l := plainLine(t, tasks)
 		if l == skipLine {
 			continue
 		}
@@ -114,7 +118,7 @@ func collapseSpaces(s string) string {
 // either, such as the separator row of a table.
 const skipLine = "\x00skip"
 
-func plainLine(t string) string {
+func plainLine(t string, tasks bool) string {
 	if t == "" || reHR.MatchString(t) || reSetext.MatchString(t) {
 		return ""
 	}
@@ -128,7 +132,16 @@ func plainLine(t string) string {
 	t = reHeading.ReplaceAllString(t, "")
 	t = reHeadClose.ReplaceAllString(t, "")
 	t = reList.ReplaceAllString(t, "")
-	t = reTask.ReplaceAllString(t, "")
+	mark := ""
+	if m := reTask.FindString(t); m != "" {
+		if tasks {
+			mark = "[ ] "
+			if m[1] != ' ' {
+				mark = "[x] "
+			}
+		}
+		t = t[len(m):]
+	}
 	t = reFootDef.ReplaceAllString(t, "")
 	if strings.HasPrefix(t, "|") {
 		t = strings.ReplaceAll(strings.Trim(t, "|"), "|", " ")
@@ -156,7 +169,11 @@ func plainLine(t string) string {
 			t = html.UnescapeString(t)
 		}
 	}
-	return collapseSpaces(t)
+	t = collapseSpaces(t)
+	if t == "" {
+		return ""
+	}
+	return mark + t
 }
 
 // stripEmphasis drops *, ** and ~~ markers, and _ markers where they open or
@@ -190,8 +207,9 @@ func wordRune(r rune) bool {
 
 // Excerpt returns the first ExcerptRunes characters of the body as plain text.
 // Line breaks inside the text are kept as single newlines; blank lines are not.
+// A task item keeps "[x] " (done) or "[ ] " (not done) at the start of its line.
 func Excerpt(body string) string {
-	return cutRunes(strings.ReplaceAll(PlainText(body), "\n\n", "\n"), ExcerptRunes, false)
+	return cutRunes(strings.ReplaceAll(plainText(body, true), "\n\n", "\n"), ExcerptRunes, false)
 }
 
 // Label is what a listing shows for a page: the title, or for a page without

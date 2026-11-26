@@ -5,8 +5,8 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/settings"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/settings"
 )
 
 // AssetsPolicy is where the attachments of a new space on a provider go, as the

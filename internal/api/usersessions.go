@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // The person's page of the administration (milestone 3.10): their sessions and

@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/forge"
-	"github.com/KKazuhaK/PetalBook/internal/forge/forgetest"
-	"github.com/KKazuhaK/PetalBook/internal/secret"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/forge"
+	"petalbook.app/server/internal/forge/forgetest"
+	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/store"
 )
 
 var ctx = context.Background()

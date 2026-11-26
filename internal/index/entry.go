@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/KKazuhaK/PetalBook/internal/links"
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/links"
+	"petalbook.app/server/internal/page"
 )
 
 // Entry is what the index keeps about one page file.

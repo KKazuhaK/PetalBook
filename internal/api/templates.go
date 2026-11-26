@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/space"
 )
 
 type templateResp struct {

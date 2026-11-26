@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"petalbook.app/server/internal/gitstore"
 )
 
 // SwitchMessage is the message of the commit that takes assets/ out of the

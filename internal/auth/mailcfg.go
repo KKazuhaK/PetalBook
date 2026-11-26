@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/mail"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/mail"
+	"petalbook.app/server/internal/store"
 )
 
 // Mail settings (docs/api.md, "Mail"): one sender for the whole server, in the

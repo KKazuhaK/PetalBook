@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/store"
 )
 
 // DataDir is where spaces, their caches and the recycle bin live.

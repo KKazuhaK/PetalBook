@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/drafts"
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/drafts"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/space"
 )
 
 // maxQueryTags is the most different tags a listing or a count may ask for:
@@ -416,9 +416,21 @@ func (s *server) getTree(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	type folderResp struct {
+		Path    string `json:"path"`
+		Pages   int    `json:"pages"`
+		Updated string `json:"updated,omitempty"` // the newest page in it or below, as a page's updated; none when empty
+	}
+	out := make([]folderResp, len(folders))
+	for i, f := range folders {
+		out[i] = folderResp{Path: f.Path, Pages: f.Pages}
+		if f.Updated != nil {
+			out[i].Updated = rfc3339(*f.Updated)
+		}
+	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Folders []index.FolderCount `json:"folders"`
-	}{folders})
+		Folders []folderResp `json:"folders"`
+	}{out})
 }
 
 func (s *server) createFolder(c *call) {

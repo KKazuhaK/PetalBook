@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
+	"petalbook.app/server/internal/index"
 )
 
 // localSpace is an ordinary space in a fresh directory, as a new account's

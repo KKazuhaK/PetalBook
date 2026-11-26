@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // Confirmations (docs/api.md, "Confirmations and bulk actions"). A token says

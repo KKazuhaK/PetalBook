@@ -1,4 +1,6 @@
 import { Link, Navigate, useLocation } from 'react-router'
+import { useRef } from 'react'
+import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { useSession } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { adminPath } from '@/lib/urls'
@@ -13,6 +15,8 @@ import { PersonPage } from './users/PersonPage'
 // it is an endpoint only administrators may call. The address is `/admin/<section>/<tab>` or `/admin/user/<id>/<tab>`;
 // the older `/admin/manage`, `/admin/recycle`, `/admin/access` and `/admin/usage` open in their new place.
 export default function AdminRoute() {
+  const fadeRef = useRef<HTMLElement>(null)
+  useScrollFade(fadeRef)
   const { pathname } = useLocation()
   const [first, second, third] = pathname
     .split('/')
@@ -40,7 +44,7 @@ export default function AdminRoute() {
       ) : (
         <div className="min-w-0 space-y-5">
           {tabs.length > 1 && (
-            <nav aria-label={tc.tabsLabel} className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+            <nav ref={fadeRef} aria-label={tc.tabsLabel} className={`${scrollFadeClass} -mx-4 px-4 md:mx-0 md:px-0`}>
               <ul className="flex min-w-max gap-1 border-b">
                 {tabs.map((x) => (
                   <li key={x.key}>

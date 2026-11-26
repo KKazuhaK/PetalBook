@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 func noteItems(t *testing.T, c *client, query string) (items []map[string]any, next string, unread int) {

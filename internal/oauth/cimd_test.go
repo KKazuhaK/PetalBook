@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
+	"petalbook.app/server/internal/dailyfetch"
 )
 
 // A document that could not be fetched is not asked for again for a minute:

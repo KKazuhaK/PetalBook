@@ -3,11 +3,11 @@ package forge_test
 import (
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/connections/conntest"
-	"github.com/KKazuhaK/PetalBook/internal/forge"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/connections/conntest"
+	"petalbook.app/server/internal/forge"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // Both implementations keep the contract of 2.7b's providers: the same checks

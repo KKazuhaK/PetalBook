@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/oauth"
-	"github.com/KKazuhaK/PetalBook/internal/secret"
+	"petalbook.app/server/internal/oauth"
+	"petalbook.app/server/internal/secret"
 )
 
 const (
