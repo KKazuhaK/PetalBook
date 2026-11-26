@@ -148,6 +148,8 @@ type server struct {
 	// that administrators opened (see confirm.go and adminview.go).
 	confirms *confirmStore
 	views    *viewTable
+	// viewsAs are the views as a person that administrators opened (viewas.go).
+	viewsAs *viewAsTable
 	// consoles throttles the record of entering a tenant's scope (scope.go).
 	consoles *onceAnHour
 	// activities keeps the optional audit rows of reads and downloads to one an
@@ -249,7 +251,7 @@ func New(opt Options) *Handler {
 	}
 	s := &server{opt: opt, log: opt.Logger, settings: settings.Of(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1),
-		confirms: newConfirmStore(), views: newViewTable(), consoles: newOnceAnHour(maxConsoleAudit), activities: newOnceAnHour(maxActivityAudit), jobs: newJobRunner(), now: opt.Now}
+		confirms: newConfirmStore(), views: newViewTable(), viewsAs: newViewAsTable(), consoles: newOnceAnHour(maxConsoleAudit), activities: newOnceAnHour(maxActivityAudit), jobs: newJobRunner(), now: opt.Now}
 	if s.now == nil {
 		s.now = time.Now
 	}

@@ -1345,6 +1345,43 @@ function suite(target: Target) {
           // Nothing of theirs shows in their lists, either way.
           expect((await walk({ q: '只有我能看', recursive: true, folder: '' })).length).toBe(0)
         })
+
+        it('a view as a person reads their organisation spaces only, read only, and ends', async () => {
+          const m = await newMember(uniq('va'))
+          const personal = ((await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[])[0]
+          const team = await call(m.browser, 'POST', '/api/spaces', { name: uniq('团队') })
+          expect(team.status).toBe(201)
+          const path = `/api/admin/users/${m.user.id}/view-as`
+          expect((await call(admin, 'POST', path, {})).status).toBe(400)
+          const view = await call(admin, 'POST', path, { reason: 'contract test' })
+          expect(view.status).toBe(200)
+          expect(view.json).toEqual({ id: expect.any(String), until: expect.any(String) })
+          const as = { ...JSON_HEADERS, 'PetalBook-View-As': view.json.id }
+
+          const s = (await call(admin, 'GET', '/api/session', undefined, as)).json
+          expect([s.user.id, s.user.email, s.user.permissions]).toEqual([m.user.id, '', []])
+          expect(s.viewAs).toEqual({
+            id: view.json.id,
+            viewer: { name: expect.any(String) },
+            until: view.json.until,
+            hidden: 1,
+          })
+          const listed = (await call(admin, 'GET', '/api/spaces', undefined, as)).json.spaces as SpaceInfo[]
+          expect(listed.map((x) => [x.id, x.permissions])).toEqual([[team.json.id, ['read']]])
+          const refused = async (method: string, p: string) => {
+            const r = await call(admin, method, p, method === 'GET' ? undefined : {}, as)
+            return [r.status, r.json?.error]
+          }
+          expect(await refused('GET', `/api/spaces/${personal.id}/pages`)).toEqual([404, 'not_found'])
+          expect(await refused('POST', `/api/spaces/${team.json.id}/pages`)).toEqual([403, 'view_as_read_only'])
+          expect(await refused('GET', '/api/notifications')).toEqual([403, 'view_as_read_only'])
+          expect(await refused('GET', '/api/account')).toEqual([403, 'view_as_read_only'])
+          // Another browser of the same administrator has no such view.
+          expect((await call(m.browser, 'GET', '/api/spaces', undefined, as)).json.error).toBe('view_as_ended')
+
+          expect((await call(admin, 'DELETE', path)).status).toBe(204)
+          expect(await refused('GET', '/api/spaces')).toEqual([403, 'view_as_ended'])
+        })
       })
 
       // A space owned by a member, so the contract user (an administrator) is no member of it.

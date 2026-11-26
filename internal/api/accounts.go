@@ -141,6 +141,15 @@ func (s *server) getMeta(c *call) {
 
 func (s *server) getSession(c *call) {
 	c.w.Header().Set("Cache-Control", "no-store")
+	if c.viewAs != nil {
+		out, err := s.viewAsSession(c)
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		writeJSON(c.w, http.StatusOK, out)
+		return
+	}
 	type methods struct {
 		Password bool `json:"password"`
 		OIDC     *struct {

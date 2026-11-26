@@ -130,6 +130,9 @@ type call struct {
 	// scope is the tenant the request acts in and the capacity it acts with
 	// (scope.go); p is narrowed to it when the scope header named a tenant.
 	scope actingScope
+	// viewAs is set on a request made in a view as a person (viewas.go): p is
+	// then the person, and this the view and the administrator's keys.
+	viewAs *viewAsCall
 }
 
 func (c *call) user() store.User { return c.p.User }
@@ -230,6 +233,8 @@ var routeTable = []route{
 	{"POST", "/api/admin/spaces/{space}/enable", needs(authz.TenantSpacesManage).always(), true, false, false, (*server).adminEnableSpace},
 	{"DELETE", "/api/admin/spaces/{space}", needs(authz.TenantSpacesDelete).always(), true, false, false, (*server).adminDeleteSpace},
 	{"GET", "/api/admin/spaces/{space}/deletion", needs(authz.TenantSpacesDelete).always(), true, false, false, (*server).adminSpaceDeletion},
+	{"POST", "/api/admin/users/{id}/view-as", needs(authz.TenantUsersViewAs), true, false, false, (*server).adminStartViewAs},
+	{"DELETE", "/api/admin/users/{id}/view-as", needs(authz.TenantUsersViewAs), true, false, false, (*server).adminEndViewAs},
 	{"POST", "/api/admin/spaces/{space}/view", needs(authz.TenantDataView), true, false, false, (*server).adminOpenView},
 	{"DELETE", "/api/admin/spaces/{space}/view", needs(authz.TenantDataView), true, false, false, (*server).adminEndView},
 	{"GET", "/api/admin/recycle", needs(authz.TenantRecycleRead).always(), true, false, false, (*server).adminListRecycle},
@@ -419,6 +424,8 @@ type RouteInfo struct {
 	MemberOnly   bool
 	AccountsOnly bool
 	Upload       bool // the body is a file, sent as application/octet-stream
+	// Viewable: a view as a person reaches it (viewableRoutes).
+	Viewable bool
 }
 
 // Routes lists every endpoint with its access.
@@ -427,7 +434,7 @@ func Routes() []RouteInfo {
 	for i, r := range routeTable {
 		a := r.access
 		out[i] = RouteInfo{Method: r.method, Pattern: r.pattern, Feature: a.feature, AlwaysOn: a.alwaysOn, Public: a.kind == kindPublic, Space: a.kind == kindSpace, Perm: a.need, OrSelf: a.orSelf,
-			MemberOnly: a.memberOnly, AccountsOnly: r.accountsOnly, Upload: r.upload}
+			MemberOnly: a.memberOnly, AccountsOnly: r.accountsOnly, Upload: r.upload, Viewable: viewableRoutes[r.method+" "+r.pattern]}
 		if a.kind == kindKey {
 			out[i].Key = a.key.Name()
 			out[i].SiteAdmin = a.key.Scope() == authz.ScopeSite
@@ -447,7 +454,15 @@ func (s *server) handle(rt route) http.HandlerFunc {
 	if rt.access.feature == "" && !rt.access.alwaysOn {
 		panic("api: route " + rt.method + " " + rt.pattern + " does not say which feature it belongs to (on) or that it belongs to none (always)")
 	}
+	viewable := viewableRoutes[rt.method+" "+rt.pattern]
 	return func(w http.ResponseWriter, r *http.Request) {
+		// A view as a person reads, through the viewable routes only; every
+		// other route refuses it before anything else (viewas.go).
+		viewing := viewAsRequested(r)
+		if viewing && !viewable {
+			writeError(w, http.StatusForbidden, "view_as_read_only", "A view as a person is read only.")
+			return
+		}
 		if rt.accountsOnly && s.single {
 			writeError(w, http.StatusNotFound, "not_found", "No such endpoint.")
 			return
@@ -458,6 +473,10 @@ func (s *server) handle(rt route) http.HandlerFunc {
 		}
 		c := &call{w: w, r: r}
 		if secret, ok := bearerToken(r); ok {
+			if viewing {
+				writeError(w, http.StatusForbidden, "token_scope", "A view as a person is for a browser session, not a token.")
+				return
+			}
 			// A request with a token is judged by the token alone: never by a
 			// cookie sent with it, and never falling back to one.
 			viaOAuth := s.oauth != nil && oauth.LooksLikeAccessToken(secret)
@@ -512,6 +531,9 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				return
 			}
 			writeError(w, http.StatusForbidden, "passkey_required", "Register a passkey to continue.")
+			return
+		}
+		if viewing && (c.p != nil || rt.access.kind != kindPublic) && !s.enterViewAs(c) {
 			return
 		}
 		if !s.enterScope(c, rt) {
@@ -639,6 +661,11 @@ func (s *server) openSpace(c *call, rt route) bool {
 		h.Release()
 		c.sp = nil
 		writeError(w, http.StatusForbidden, "takeover_required", "Only a member of the space may do that; an administrator takes the space over first.")
+		return false
+	}
+	if c.viewAs != nil && !s.openViewAsSpace(c, h) {
+		h.Release()
+		c.sp = nil
 		return false
 	}
 	if h.Info.ViaAdmin {

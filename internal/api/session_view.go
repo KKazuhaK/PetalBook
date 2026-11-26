@@ -38,7 +38,7 @@ func holdName(held bool, by string) *string {
 // not apply). They come from the cache entry the next request reads, so a
 // sign-in adds no query. It answers the error itself and reports false.
 func (s *server) signedIn(c *call, u store.User, held bool, by string) (sessionUser, *string, bool) {
-	_, access, err := s.auth.CachedSubject(c.r.Context(), u.ID)
+	_, access, err := s.auth.CachedAccess(c.r.Context(), u.ID)
 	if err != nil {
 		s.fail(c.w, err)
 		return sessionUser{}, nil, false

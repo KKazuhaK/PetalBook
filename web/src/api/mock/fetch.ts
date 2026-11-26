@@ -30,7 +30,16 @@ export function mockFetch(
     const headers = new Headers(init?.headers)
     const cookie =
       headers.get('cookie') ?? (hooks.jar === false ? null : [...cookies].map(([k, v]) => `${k}=${v}`).join('; '))
-    const r = server.handle(method, url, body, headers.get('content-type'), cookie, raw, headers.get('petalbook-scope'))
+    const r = server.handle(
+      method,
+      url,
+      body,
+      headers.get('content-type'),
+      cookie,
+      raw,
+      headers.get('petalbook-scope'),
+      headers.get('petalbook-view-as'),
+    )
     const out = new Headers({ 'Content-Type': 'application/json', ...r.headers })
     if (hooks.jar !== false && r.headers?.['Set-Cookie']) {
       const [pair, ...attrs] = r.headers['Set-Cookie'].split(';').map((x) => x.trim())

@@ -45,6 +45,8 @@ export const apiErrorsEn: ApiErrorTexts = {
   owner_not_allowed: 'That owner cannot be used.',
   user_not_found: 'There is no such user, or the user is disabled. Check the username.',
   user_disabled: 'That user is disabled and cannot own a space.',
+  view_as_read_only: 'Viewing as someone is read only.',
+  view_as_ended: 'This view has ended.',
   heir_required: 'This person still owns spaces. Name who takes them over first.',
   quota_exceeded: (p) =>
     p.quota === 'spaces' && p.limit

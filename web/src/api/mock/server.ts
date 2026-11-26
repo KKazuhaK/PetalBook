@@ -277,6 +277,15 @@ interface MemberRec {
   // Order of joining: the first owner is the one who joined first.
   joined: number
 }
+// The routes a view as a person reaches (internal/api/viewas.go, viewableRoutes): GETs of the person's organisation's
+// spaces, never their account, notifications, preferences, favourites, drafts or the administration.
+const VIEWABLE = [
+  /^\/(meta|session|settings|spaces)$/,
+  /^\/spaces\/[^/]+\/(pages|pages\/groups|views|tree|tags|types|appearance)$/,
+  /^\/spaces\/[^/]+\/pages\/[^/]+(\/(backlinks|links|history|versions\/[^/]+))?$/,
+  /^\/spaces\/[^/]+\/files\/.+$/,
+]
+
 interface SpaceRec {
   id: string
   name: string
@@ -503,6 +512,17 @@ export function createMockServer(options: MockOptions = {}) {
   // section 5): a site administrator in a tenant's scope acts as that tenant's administrator, so as a caller they are
   // not one of the site (accounts that are site administrators are still asked with isSiteAdmin).
   let acting: string | null = null
+  // A view as a person (docs/api.md, "Viewing as a person"): the views open, by id, and the one the request being
+  // answered is made in (the header PetalBook-View-As), as the server keeps them.
+  interface ViewAsRec {
+    id: string
+    session: string
+    viewer: string
+    target: string
+    until: number
+  }
+  const viewsAs = new Map<string, ViewAsRec>()
+  let viewingAs: ViewAsRec | null = null
   const callerIsSite = (u: UserRec | undefined) => acting === null && isSiteAdmin(u)
   const tenantOfUser = (u: UserRec | undefined): string => u?.ownTenant?.id ?? DEFAULT_TENANT
   // What a caller reaches of tenants: null is all of them (a site administrator in the whole site's scope).
@@ -547,11 +567,14 @@ export function createMockServer(options: MockOptions = {}) {
       viaGroups: via,
       // An administrator who is not a member may do everything.
       // An administrator who is not a member manages the space and, without a view, does not read it (docs/api.md, "Viewing a space").
-      permissions: role
-        ? [...ROLE_PERMISSIONS[role]]
-        : accounts
-          ? (['members', 'manage'] as Permission[])
-          : [...ROLE_PERMISSIONS.owner],
+      // A view as a person reads, and nothing else.
+      permissions: viewingAs
+        ? (['read'] as Permission[])
+        : role
+          ? [...ROLE_PERMISSIONS[role]]
+          : accounts
+            ? (['members', 'manage'] as Permission[])
+            : [...ROLE_PERMISSIONS.owner],
       personal: s.personal,
       sync: s.remote ? s.remote.state : 'local',
       inbox: s.inbox,
@@ -862,6 +885,8 @@ export function createMockServer(options: MockOptions = {}) {
   }
   const contextOf = (cookie: string | null | undefined): Ctx => {
     const cookies = parseCookies(cookie)
+    // In a view as a person the request is the person's, with no session of their own.
+    if (viewingAs) return { user: users.get(viewingAs.target) ?? null, token: null, cookies }
     if (!accounts) return { user: users.get('local') ?? null, token: null, cookies }
     const token = cookies[SESSION_COOKIE] ?? null
     const uid = token ? sessions.get(token) : undefined
@@ -891,7 +916,7 @@ export function createMockServer(options: MockOptions = {}) {
   const callerSpaces = (u: UserRec | null): SpaceRec[] => {
     if (!u) return []
     return [...spaces.values()]
-      .filter((s) => groupBook.has(s, u.id))
+      .filter((s) => groupBook.has(s, u.id) && !(viewingAs && s.personal))
       .sort((a, b) => Number(b.personal) - Number(a.personal) || compareCodePoints(a.name, b.name))
   }
 
@@ -2119,6 +2144,8 @@ export function createMockServer(options: MockOptions = {}) {
   ): SpaceRec => {
     const s = spaces.get(id)
     if (!s || (!groupBook.has(s, u.id) && u.role !== 'admin')) throw new HttpError(404, 'not_found', '没有这个空间')
+    // A view as a person: the person's spaces that are not personal, read only.
+    if (viewingAs && (!groupBook.has(s, u.id) || s.personal)) throw new HttpError(404, 'not_found', '没有这个空间')
     if (s.disabled) throw new HttpError(403, 'space_disabled', 'this space has been disabled by an administrator')
     // The one person of a single-user server owns what is there.
     const member = groupBook.has(s, u.id) || !accounts
@@ -4266,7 +4293,11 @@ export function createMockServer(options: MockOptions = {}) {
       const id = decodeURIComponent(one[1])
       switch (one[3]) {
         case undefined:
-          if (method === 'GET') return { status: 200, body: st.getPage(u.id, id) }
+          if (method === 'GET') {
+            const got = st.getPage(u.id, id)
+            // A view as a person never reads the person's draft.
+            return { status: 200, body: viewingAs ? { ...got, draft: undefined } : got }
+          }
           if (method === 'PUT') {
             const had = st.peek(id)
             checkPageSize(u, body, had ? pageFileSize({ meta: had.meta, body: had.body }) : null)
@@ -4595,6 +4626,20 @@ export function createMockServer(options: MockOptions = {}) {
       throw new HttpError(404, 'not_found', 'No such tenant.')
     return id
   }
+  // The header PetalBook-View-As of a request, as the server reads it (internal/api/viewas.go): only the viewable reads
+  // take it, and only from the session that opened the view, within its hour.
+  const enterViewAs = (method: string, id: string, target: string, cookie: string | null | undefined): ViewAsRec => {
+    const path = new URL(target, 'http://mock.local').pathname.replace(/^\/api/, '')
+    if (method.toUpperCase() !== 'GET' || !VIEWABLE.some((re) => re.test(path)))
+      throw new HttpError(403, 'view_as_read_only', 'A view as a person is read only.')
+    const ctx = contextOf(cookie)
+    const v = viewsAs.get(id)
+    if (!v || v.until <= now() || v.session !== ctx.token || ctx.user?.role !== 'admin') {
+      if (v && v.until <= now()) viewsAs.delete(id)
+      throw new HttpError(403, 'view_as_ended', 'This view as a person has ended.')
+    }
+    return v
+  }
   const route = (method: string, url: URL, body: Record<string, unknown>, ctx: Ctx, raw?: Uint8Array): MockResponse => {
     const path = url.pathname.replace(/^\/api/, '')
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
@@ -4626,6 +4671,66 @@ export function createMockServer(options: MockOptions = {}) {
         maxImport,
         spaces: u ? callerSpaces(u).map((s) => spaceInfo(s, u)) : [],
       })
+    }
+    if (method === 'GET' && path === '/session' && viewingAs && ctx.user) {
+      const v = viewingAs
+      const u = ctx.user
+      const all = [...spaces.values()].filter((s) => groupBook.has(s, u.id)).length
+      return {
+        status: 200,
+        headers: { 'Cache-Control': 'no-store' },
+        body: {
+          mode,
+          user: { ...publicUser(u), email: '', permissions: [] },
+          setup: false,
+          hold: null,
+          token: null,
+          viewAs: {
+            id: v.id,
+            viewer: { name: users.get(v.viewer)?.name ?? '' },
+            until: rfc3339(v.until),
+            hidden: all - callerSpaces(u).length,
+          },
+        },
+      }
+    }
+    // Opening and ending a view as a person.
+    const viewAsPath = /^\/admin\/users\/([^/]+)\/view-as$/.exec(path)
+    if (viewAsPath && accounts && (method === 'POST' || method === 'DELETE')) {
+      const me = requireAdmin(ctx)
+      const target = users.get(decodeURIComponent(viewAsPath[1]))
+      const reach = reachTenant(me)
+      if (!target || (reach !== null && tenantOfUser(target) !== reach))
+        throw new HttpError(404, 'not_found', 'No such user.')
+      if (method === 'DELETE') {
+        for (const [id, v] of viewsAs)
+          if (v.session === ctx.token && v.target === target.id) {
+            viewsAs.delete(id)
+            book.record('view_as_ended', { actor: me.id, user: target.id, detail: { viewAs: id } })
+          }
+        return { status: 204 }
+      }
+      const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
+      if (reason === '' || codePoints(reason) > 500)
+        throw new HttpError(400, 'invalid', 'Reason is from 1 to 500 characters.')
+      if (target.id === me.id) throw new HttpError(400, 'invalid', 'You see the app as yourself already.')
+      if (target.disabled) throw new HttpError(400, 'invalid', "This person's account is disabled.")
+      if (isSiteAdmin(target) && !callerIsSite(me))
+        throw new HttpError(
+          403,
+          'forbidden',
+          'Only a site administrator may view the app as someone who holds site permissions.',
+        )
+      for (const [id, v] of viewsAs) if (v.session === ctx.token) viewsAs.delete(id)
+      const id = `va_${randomString(24)}`
+      const until = now() + 3_600_000
+      viewsAs.set(id, { id, session: ctx.token ?? '', viewer: me.id, target: target.id, until })
+      book.record('view_as_started', {
+        actor: me.id,
+        user: target.id,
+        detail: { viewAs: id, reason, until: rfc3339(until) },
+      })
+      return j({ id, until: rfc3339(until) })
     }
     if (method === 'GET' && path === '/session') {
       const ended = endedReasonOf(ctx)
@@ -5651,10 +5756,14 @@ export function createMockServer(options: MockOptions = {}) {
       raw?: Uint8Array,
       // The header PetalBook-Scope, when the request has one.
       scope?: string | null,
+      // The header PetalBook-View-As, when the request has one.
+      viewAs?: string | null,
     ): MockResponse {
       counter++
       acting = null
+      viewingAs = null
       try {
+        if (viewAs) viewingAs = enterViewAs(method, viewAs, target, cookie)
         acting = enterScope(method, scope ?? null, target, cookie)
         sweepAll()
         const upload =
@@ -5696,6 +5805,7 @@ export function createMockServer(options: MockOptions = {}) {
         throw e
       } finally {
         acting = null
+        viewingAs = null
       }
     },
     // Test helpers.

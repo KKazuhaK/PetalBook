@@ -187,10 +187,9 @@ describe("a person's page", () => {
       tc.person.tabs.usage,
       tc.person.tabs.audit,
     ])
-    // Looking as the person is for 3.6: the button is here and cannot be pressed.
+    // Looking as the person (3.6): the button opens the dialog that asks why.
     const viewAs = button(tc.person.viewAs)
-    expect(viewAs.disabled).toBe(true)
-    expect(viewAs.title).toBe(tc.person.viewAsSoon)
+    expect(viewAs.disabled).toBe(false)
     // The list is the sidebar's item "Users".
     expect(document.querySelector('nav [aria-current="page"]')!.textContent).toBe(tc.sections.users)
     await click([...document.querySelectorAll('a')].find((a) => a.textContent === tc.person.back))

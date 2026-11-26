@@ -716,6 +716,23 @@ export const en: Messages = {
     },
   },
   userMenu: { label: 'Account menu', settings: 'Settings', admin: 'Administration', signOut: 'Sign out' },
+  viewAs: {
+    region: 'Viewing as another person',
+    viewing: (name: string) => `Viewing as ${name}`,
+    readOnly: 'read only',
+    left: (min: number) => (min <= 1 ? 'less than a minute left' : `${min} min left`),
+    exit: 'Exit',
+    exitLabel: 'Exit the view',
+    exitView: 'Exit view',
+    hidden: (n: number) =>
+      n === 1
+        ? '1 space hidden (personal, or outside your organisation)'
+        : `${n} spaces hidden (personal, or outside your organisation)`,
+    endedTitle: 'This view has ended',
+    endedBody:
+      'A view as a person lasts an hour at most, and ends when it is exited, when the server restarts, or when you no longer may view as people.',
+    back: 'Back to the console',
+  },
   roles: { admin: 'Administrator', member: 'Member', owner: 'Owner', editor: 'Editor', viewer: 'Viewer' },
   auth: {
     username: 'Username',

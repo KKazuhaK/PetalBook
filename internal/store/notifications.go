@@ -49,6 +49,10 @@ const (
 	// NotifyEmailReleased: an address the person held unverified moved to the
 	// account that proved it (payload {"email"}).
 	NotifyEmailReleased = "email_released"
+	// NotifyViewedAs: an administrator viewed the app as the person (payload
+	// {"by", "reason", "until"}; ref is the view). Made by nothing while the
+	// owner decides whether the person is told (api.notifyViewedPerson).
+	NotifyViewedAs = "viewed_as"
 )
 
 // NotifyKind is one entry of the registry.
@@ -72,6 +76,7 @@ var NotifyKinds = []NotifyKind{
 	{NotifyAccountChanged, false, "someone else editing the person's account"},
 	{NotifyPasswordSet, false, "an administrator setting a temporary password"},
 	{NotifyEmailReleased, false, "another account proving an address the person held unverified"},
+	{NotifyViewedAs, false, ""},
 }
 
 // KnownNotifyKind says whether the registry has the kind.

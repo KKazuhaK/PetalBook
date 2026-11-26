@@ -182,6 +182,15 @@ func (s *server) viewedWhat(c *call, what string, detail map[string]any) {
 	if c.sp == nil || !c.sp.Info.Viewing {
 		return
 	}
+	if va := c.viewAs; va != nil {
+		// In a view as a person the administrator opened it, as the person.
+		if !s.views.firstOpen(va.v.viewer, c.sp.Info.ID, what+"\x00"+va.v.id, s.now()) {
+			return
+		}
+		detail["space"], detail["viewAs"] = c.sp.Info.ID, va.v.id
+		s.audit(c, auth.AuditEvent{Kind: "page_viewed", Actor: va.v.viewer, User: va.v.target.ID, Tenant: c.sp.Info.TenantID, Detail: detail, Capacity: va.v.capacity})
+		return
+	}
 	if !s.views.firstOpen(c.user().ID, c.sp.Info.ID, what, s.now()) {
 		return
 	}

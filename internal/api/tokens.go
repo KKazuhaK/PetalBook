@@ -132,6 +132,10 @@ func (s *server) visibleSpaces(c *call) ([]spaces.Info, error) {
 	if err != nil {
 		return nil, err
 	}
+	if c.viewAs != nil {
+		l, _ = s.viewAsSpaces(c, l)
+		return l, nil
+	}
 	g := c.p.Grant
 	if g == nil {
 		return l, nil

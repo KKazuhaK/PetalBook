@@ -403,6 +403,8 @@ export const securityEn: SecurityMessages = {
       space_transferred: 'Space transferred',
       space_viewed: 'Space viewed',
       page_viewed: 'Page viewed',
+      view_as_started: 'Viewed as a person',
+      view_as_ended: 'View as a person ended',
       export_created: 'Export made',
       export_deleted: 'Export deleted',
       export_downloaded: 'Export downloaded',

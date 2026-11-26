@@ -5308,6 +5308,7 @@ kinds (a registry in the server's code, `store.NotifyKinds`):
 | `account_changed` | someone else changed the person's name, username or address (`PATCH /api/users/{id}`); nothing is said of what they did themselves; written with the `user_changed` row | `{"fields": ["name", "username", "email", "emailVerified"], "by"}`, never the values |
 | `password_set` | an administrator gave the person a temporary password; written with the `password_set_by_admin` row | `{"by"}` |
 | `email_released` | an address the person held unverified moved to the account that proved it; written with the `email_released` row | `{"email"}` |
+| `viewed_as` | reserved: an administrator viewed the app as the person; made only once the owner decides the person is told (see "Viewing as a person"); it would be written with the `view_as_started` row | `{"by", "reason", "until"}` |
 
 There is no catch-all kind: each event of an account or a space is a kind of its
 own, so the filter (`?kind=`) can tell them apart. Each is written by one helper
@@ -8405,6 +8406,78 @@ Regional or compliance refinements (telling the owner first, a second
 administrator's approval, a longer retention of these rows) are a later item
 (docs/design/milestones/phase-5.md, 5.14).
 
+### Viewing as a person
+
+3.6 (docs/design/3-6-c.md section 6). An administrator sees the app as one
+person sees it, **read only**, in a separate browser tab, for an hour at most,
+and every view is audited. It is a lens over what the administrator could
+already open with an audited view of a space, never a new reach.
+
+Key: `tenant.users.viewAs` (tenant scope, feature `features.adminView`),
+grantable to custom roles on its own. The built-in tenant and site
+administrators hold it. It works in a tenant's acting scope (`PetalBook-Scope`)
+too: the view then keeps that scope.
+
+#### `POST /api/admin/users/{id}/view-as`
+
+`{"reason": "Support ticket 12"}` (1 to 500 characters, required). `200` with
+`{"id": "va_…", "until": "2026-11-26T10:30:00Z"}`.
+
+- Who can be viewed as: a person in the caller's scope (another tenant's person
+  is `404 not_found` for a tenant administrator); never oneself (`400 invalid`);
+  never an account that holds site keys unless the caller holds
+  `site.admins.manage` (`403 forbidden`); not a disabled account or one of a
+  disabled tenant (`400 invalid`). It is opened from a browser session
+  only (`403 token_scope`).
+- The view is kept in memory, bound to the session that opened it. A session
+  has at most one: a new one replaces it. A restart ends it.
+- Audit: `view_as_started` (`data`, core), about the person, with `reason`,
+  `until` and `viewAs` (the id).
+- The person is **not** told. Whether they should be is an open question for
+  the owner (3-6-c.md section 11, question 3); the notification kind
+  `viewed_as` is registered for it and nothing makes it yet.
+
+#### `DELETE /api/admin/users/{id}/view-as`
+
+Ends the session's view of that person. `204`. Audit: `view_as_ended`.
+
+#### Requests in a view
+
+The tab sends `PetalBook-View-As: <id>` on every request. The server then:
+
+- refuses every route that is not **viewable** with `403 view_as_read_only`,
+  before anything else. The viewable routes are `GET` only: `/api/meta`,
+  `/api/session`, `/api/settings`, `/api/spaces`, and in a space the pages,
+  page groups, views, one page, backlinks, links, the tree, tags, types,
+  appearance, files, history and versions. Never the person's account,
+  sessions, tokens, grants, connections, notifications, preferences,
+  favourites, drafts, sync, members, MCP or the administration;
+- refuses a token or an OAuth token (`403 token_scope`);
+- answers `403 view_as_ended` for an unknown or expired id, one opened by
+  another session, or when the caller no longer holds `tenant.users.viewAs` in
+  the person's tenant (the feature switched off, a role changed); the view is
+  then gone;
+- answers as the person, with no permission keys and no session: their spaces
+  that are in the caller's scope, are not personal (of anyone, for anyone) and
+  are not in a disabled tenant, each with `permissions: ["read"]`. Any other
+  space is `404 not_found`;
+- never returns a draft (`GET …/pages/{id}` has no `draft`), and writes nothing
+  in the person's name: no recents, prefs, read markers or last-active time.
+
+`GET /api/session` in a view answers the person's public profile (`email` is
+`""`), `permissions: []`, and
+`viewAs: {"id", "viewer": {"name"}, "until", "hidden": n}`, where `hidden` is
+how many of the person's spaces the view leaves out.
+
+Audit rows written in a view have `actor` the administrator, `user` the person,
+the administrator's `capacity`, and `detail.viewAs`. Opening a page or file
+writes `page_viewed` as in a space view (at most one row an hour for each
+administrator and page).
+
+Cost: a request without the header pays one header lookup; one in a view pays
+one map lookup, one permission check, and the membership read that opening a
+space already does.
+
 ### The size of one file
 
 **`files.maxBytes`**: a layered setting (site, tenant; see "Settings by layer")
@@ -8461,7 +8534,9 @@ of file, images included.
 | `user_deleted`, `user_restored`, `user_purged` | the same for a person | `item`, `user`, `username`, `transfers`, `recycled` (space ids), `reason`, `bulk` |
 | `export_created`, `export_downloaded`, `export_deleted` | an export | `export`, `spaces` |
 | `space_viewed` | an administrator started or extended a view | `space`, `reason`, `until` |
-| `page_viewed` | an administrator opened a page or file in a view (once an hour per page) | `space`, `page` or `path` |
+| `page_viewed` | an administrator opened a page or file in a view (once an hour per page) | `space`, `page` or `path`; `viewAs` in a view as a person |
+| `view_as_started` | an administrator started a view as a person (about the person) | `viewAs`, `reason`, `until` |
+| `view_as_ended` | an administrator ended a view as a person | `viewAs` |
 | `bulk_started`, `bulk_finished` | a bulk job | `job`, `action`, `count`, `failed` |
 | `space_archived`, `space_unarchived` | a space archived or restored from the archive | `space`, `bytes`, `by` (`controller` or a user) |
 | `storage_band_changed` | the pressure band changed | `from`, `to`, `pressure` |
@@ -10047,6 +10122,7 @@ held by the built-in site administrator only: no custom role may hold it.
 | `tenant.spaces.takeover` | tenant | — | Take over a space (become its owner) or transfer it; audited, and its owners are told |
 | `tenant.spaces.delete` | tenant | — | Delete spaces |
 | `tenant.data.view` | tenant | `features.adminView` | Open an audited, read-only view of a space |
+| `tenant.users.viewAs` | tenant | `features.adminView` | View the app as a person sees it: read only, for an hour, audited; never personal spaces, drafts or the person's account |
 | `tenant.data.export` | tenant | — | Export spaces and download the exports |
 | `tenant.storage.read` | tenant | — | Read the storage used by the tenant and its people |
 | `tenant.recycle.read` | tenant | — | List the recycle bin |

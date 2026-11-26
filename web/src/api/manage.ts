@@ -108,6 +108,11 @@ export const manageApi = {
       body: { reason },
     }),
   endView: (space: string) => request<void>(`/admin/spaces/${enc(space)}/view`, { method: 'DELETE' }),
+
+  // --- viewing the app as a person (docs/api.md, "Viewing as a person") ---
+  startViewAs: (user: string, reason: string) =>
+    request<{ id: string; until: string }>(`/admin/users/${enc(user)}/view-as`, { method: 'POST', body: { reason } }),
+  endViewAs: (user: string) => request<void>(`/admin/users/${enc(user)}/view-as`, { method: 'DELETE' }),
 }
 
 // The address a ready export is downloaded from: a plain link, so the browser saves it.

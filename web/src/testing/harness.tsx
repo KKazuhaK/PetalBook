@@ -25,7 +25,14 @@ export interface Mounted {
   root: Root
   server: MockServer
   qc: QueryClient
-  requests: { method: string; url: string; body?: string; signal?: AbortSignal | null; scope?: string | null }[]
+  requests: {
+    method: string
+    url: string
+    body?: string
+    signal?: AbortSignal | null
+    scope?: string | null
+    viewAs?: string | null
+  }[]
   unmount: () => Promise<void>
 }
 
@@ -91,6 +98,7 @@ export async function mount(
       body: typeof init?.body === 'string' ? init.body : undefined,
       signal: init?.signal,
       scope: new Headers(init?.headers).get('petalbook-scope'),
+      viewAs: new Headers(init?.headers).get('petalbook-view-as'),
     })
     const ms = options.delay?.(method, url) ?? 0
     if (ms > 0) await new Promise((r) => setTimeout(r, ms))

@@ -401,6 +401,10 @@ func (s *server) mySettings(c *call) {
 			return
 		}
 		h.Release()
+		if c.viewAs != nil && !s.viewAsShows(c, &h.Info) {
+			writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
+			return
+		}
 	}
 	tenant := c.tenant()
 	ver, err := s.settings.Version(ctx, tenant)

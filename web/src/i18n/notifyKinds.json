@@ -8,5 +8,6 @@
   "space_transferred",
   "account_changed",
   "password_set",
-  "email_released"
+  "email_released",
+  "viewed_as"
 ]

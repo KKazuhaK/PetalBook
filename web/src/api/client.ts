@@ -7,6 +7,7 @@ import { formatBytes } from '@/lib/bytes'
 import { noteNetworkOk } from '@/lib/offline/status'
 import { forgetLastAccount } from '@/lib/lastAccount'
 import { scopeHeaderFor, scopeOfRequest } from '@/lib/adminScope'
+import { viewAsHeaders, viewAsId } from '@/lib/viewAs'
 
 import { ENDED_REASONS } from './types'
 import type {
@@ -323,6 +324,17 @@ export function onUnavailable(fn: UnavailableListener): () => void {
   return () => void unavailableListeners.delete(fn)
 }
 
+// --- a view as a person ended ---------------------------------------------------------
+//
+// In a tab that views the app as a person, `view_as_ended` means the view is over (its hour, a restart, the key lost):
+// the tab says so in place of the app.
+type ViewAsEndedListener = () => void
+const viewAsEndedListeners = new Set<ViewAsEndedListener>()
+export function onViewAsEnded(fn: ViewAsEndedListener): () => void {
+  viewAsEndedListeners.add(fn)
+  return () => void viewAsEndedListeners.delete(fn)
+}
+
 // --- access to a space changed -------------------------------------------------------
 //
 // A request refused because an administrator switched the space off, or because
@@ -394,8 +406,10 @@ export async function request<T>(
       credentials: 'same-origin',
       headers: {
         Accept: 'application/json',
-        // The console in a tenant's scope names it on every administration call (the one place that does).
+        // The console in a tenant's scope names it on every administration call (the one place that does), and a tab
+        // that views the app as a person names its view on every call (lib/viewAs).
         ...scopeHeaderFor(path, scope),
+        ...viewAsHeaders(),
         ...(payload === undefined ? {} : { 'Content-Type': blob ? 'application/octet-stream' : 'application/json' }),
       },
       body: payload,
@@ -404,7 +418,8 @@ export async function request<T>(
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError' && !timedOut(e, signal)) throw e
     // A read that cannot reach the server may be answered by the copy on this device.
-    if (method === 'GET' && offlineHooks.read) {
+    // Never in a view as a person: the copy on this device is the administrator's own.
+    if (method === 'GET' && offlineHooks.read && viewAsId() === null) {
       const local = await offlineHooks.read(knownUser, path).catch((err) => {
         if (err instanceof ApiError) throw err
         return undefined
@@ -458,6 +473,7 @@ export async function request<T>(
     if (res.status === 403 && err.error === 'password_change_required' && !isSignIn)
       holdListeners.forEach((fn) => fn('password'))
     if (err.error === 'unavailable') unavailableListeners.forEach((fn) => fn())
+    if (err.error === 'view_as_ended' && viewAsId() !== null) viewAsEndedListeners.forEach((fn) => fn())
     if (err.error === 'space_disabled' || err.error === 'no_permission' || err.error === 'not_found') {
       const space = /^\/spaces\/([^/]+)/.exec(barePath)?.[1]
       // Only requests inside a space say anything about the space.

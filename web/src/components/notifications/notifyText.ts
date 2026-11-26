@@ -68,6 +68,9 @@ export function describeNotification(n: NotificationItem): Described {
     // Someone proved an address the person held unverified (3.6).
     case 'email_released':
       return { title: p2.emailReleased.title(str(p.email)), body: p2.emailReleased.body, to: settingsPath('profile') }
+    // An administrator viewed the app as the person (made only once the owner decides the person is told).
+    case 'viewed_as':
+      return { title: p2.viewedAs.title(str(p.by)), body: p2.viewedAs.body(str(p.reason)), to: '' }
     // An administrator took over or transferred a space the person owned.
     case 'space_taken_over':
     case 'space_transferred': {
