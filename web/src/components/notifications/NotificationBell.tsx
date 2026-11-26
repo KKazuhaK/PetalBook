@@ -7,6 +7,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { tn } from '@/i18n/notify'
 import { topBarButton } from '@/components/layout/topBarStyles'
 import { NotificationRow } from './NotificationRow'
+import { viewAsId } from '@/lib/viewAs'
 
 // How many of the latest the popover shows; the page has the rest.
 const POPOVER_ITEMS = 5
@@ -27,7 +28,8 @@ function Dot({ count }: { count: number }) {
 // popover with the latest items; on a phone it goes straight to the full page.
 export function NotificationBell() {
   const session = useSession().data
-  const signedIn = !!session?.user
+  // A view as a person has no bell: the person's notifications are their own (lib/viewAs).
+  const signedIn = !!session?.user && viewAsId() === null
   const count = useUnreadCount(signedIn).data ?? 0
   const mobile = useIsMobile()
   const [open, setOpen] = useState(false)

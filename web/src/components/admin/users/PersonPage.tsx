@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { useUserRow } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import { useSession } from '@/api/hooks'
-import { isAdminAccount } from '@/lib/access'
+import { can, isAdminAccount } from '@/lib/access'
 import { useAcrossSite, useAdminPaths } from '../TenantScope'
 import { ErrorState, PageFallback } from '@/components/common'
 import { FormMessage } from '@/components/auth/Field'
@@ -26,6 +26,7 @@ import { PersonSessions } from './PersonSessions'
 import { PersonSpaces } from './PersonSpaces'
 import { PersonUsage } from './PersonUsage'
 import { useUserChange } from './useUserChange'
+import { ViewAsDialog } from './ViewAsDialog'
 
 export const PERSON_TABS = ['profile', 'security', 'sessions', 'spaces', 'usage', 'audit'] as const
 export type PersonTab = (typeof PERSON_TABS)[number]
@@ -44,6 +45,7 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
   const row = useUserRow(id)
   const { change, busy, error, messageRef } = useUserChange()
   const [deleting, setDeleting] = useState(false)
+  const [viewingAs, setViewingAs] = useState(false)
   const u = row.data?.user
   useDocumentTitle(`${u?.name ?? tc.person.back} · ${tc.title} · ${t.appName}`)
 
@@ -100,20 +102,22 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
         }
         actions={
           <>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10"
-              disabled
-              title={tc.person.viewAsSoon}
-              aria-describedby="view-as-note"
-            >
-              <Eye aria-hidden="true" />
-              {tc.person.viewAs}
-            </Button>
-            <span id="view-as-note" className="sr-only">
-              {tc.person.viewAsSoon}
-            </span>
+            {/* Opens the app as this person sees it, read only and audited, in a tab of its own. Not oneself, and
+                only for a holder of the key; the server also refuses an account that holds site permissions to an
+                administrator who may not change those. */}
+            {!self && can(me, 'tenant.users.viewAs') && (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10"
+                disabled={u.disabled}
+                onClick={() => setViewingAs(true)}
+                aria-label={t.fmt.labelled(tc.person.viewAs, u.name)}
+              >
+                <Eye aria-hidden="true" />
+                {tc.person.viewAs}
+              </Button>
+            )}
             {!self && (
               <Button
                 type="button"
@@ -181,6 +185,7 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
           {active === 'usage' && <PersonUsage u={u} />}
           {active === 'audit' && <PersonAudit u={u} />}
         </div>
+        {viewingAs && <ViewAsDialog user={u.id} name={u.name} onClose={() => setViewingAs(false)} />}
         {deleting && <DeletePersonDialog id={u.id} username={u.username} onClose={() => setDeleting(false)} />}
       </AdminPageHeader>
     </div>

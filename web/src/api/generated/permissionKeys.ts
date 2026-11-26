@@ -29,6 +29,7 @@ export type PermissionKey =
   | 'tenant.spaces.takeover'
   | 'tenant.spaces.delete'
   | 'tenant.data.view'
+  | 'tenant.users.viewAs'
   | 'tenant.data.export'
   | 'tenant.storage.read'
   | 'tenant.recycle.read'

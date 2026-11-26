@@ -127,5 +127,7 @@
   "unauthenticated",
   "unavailable",
   "user_disabled",
-  "user_not_found"
+  "user_not_found",
+  "view_as_ended",
+  "view_as_read_only"
 ]

@@ -32,6 +32,7 @@ export const notifyEn: NotifyMessages = {
     account_changed: 'Account changes',
     password_set: 'Password',
     email_released: 'Email address',
+    viewed_as: 'Viewed as you',
   },
   unreadMark: 'Unread',
   moreProblems: (n: number) => (n === 1 ? 'And 1 more space has problems.' : `And ${n} more spaces have problems.`),
@@ -90,6 +91,11 @@ export const notifyEn: NotifyMessages = {
     emailReleased: {
       title: (email: string) => `Your email address “${email}” moved to another account`,
       body: 'It was not verified, and someone proved it is theirs. Set an address of your own in your profile.',
+    },
+    viewedAs: {
+      title: (by: string) => (by ? `${by} viewed the app as you` : 'An administrator viewed the app as you'),
+      body: (reason: string) =>
+        reason ? `Read only: nothing was changed. Reason: ${reason}` : 'Read only: nothing was changed.',
     },
     takeover: {
       takenTitle: (by: string, space: string) => `${by} took over “${space}”`,

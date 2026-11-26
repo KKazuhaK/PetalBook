@@ -190,6 +190,13 @@
       "builtInOnly": false
     },
     {
+      "name": "tenant.users.viewAs",
+      "scope": "tenant",
+      "feature": "features.adminView",
+      "description": "View the app as a person sees it: read only, for an hour, audited; never personal spaces, drafts or the person's account",
+      "builtInOnly": false
+    },
+    {
       "name": "tenant.data.export",
       "scope": "tenant",
       "feature": "",
@@ -609,6 +616,14 @@
         },
         {
           "name": "space_viewed",
+          "site": false
+        },
+        {
+          "name": "view_as_ended",
+          "site": false
+        },
+        {
+          "name": "view_as_started",
           "site": false
         }
       ]
