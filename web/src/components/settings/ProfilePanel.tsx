@@ -1,16 +1,18 @@
-import { useState, type FormEvent } from 'react'
-import { MailCheck, Save } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { MailCheck, Pencil } from 'lucide-react'
 import { api, ApiError } from '@/api/client'
-import { keys, useAccount, useAuthProviders, useSession } from '@/api/hooks'
-import type { AccountInfo, SessionInfo } from '@/api/types'
-import { Field, FormMessage } from '@/components/auth/Field'
+import { useAccount, useAuthProviders, useSession } from '@/api/hooks'
+import type { AccountInfo } from '@/api/types'
+import { Avatar } from '@/components/admin/users/Avatar'
+import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { SettingsSection } from './SettingsParts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { t } from '@/i18n'
+import { ChangeEmailDialog, EditProfileDialog } from '@/components/people/ProfileDialogs'
+import { lang, languages, t } from '@/i18n'
 import { tg } from '@/i18n/groups'
+import { tp } from '@/i18n/people'
 import { tm } from '@/i18n/mail'
 import { mailLang } from '@/pages/auth/MailPages'
 
@@ -65,70 +67,46 @@ function MyGroups({ account }: { account: AccountInfo }) {
   )
 }
 
+// The values, read-only: the avatar, name, username, email and language. One button edits name, username and
+// language in a dialog; the email has its own button (the new address is verified); the password is in Security.
 function Profile({ account }: { account: AccountInfo }) {
-  const qc = useQueryClient()
-  const [name, setName] = useState(account.user.name)
-  const [email, setEmail] = useState(account.user.email)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [done, setDone] = useState(false)
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (busy) return
-    setBusy(true)
-    setError('')
-    setDone(false)
-    try {
-      const { user } = await api.updateAccount({ name: name.trim(), email: email.trim() })
-      qc.setQueryData<AccountInfo>(keys.account, (prev) => prev && { ...prev, user })
-      qc.setQueryData<SessionInfo>(keys.session, (prev) => prev && { ...prev, user })
-      setName(user.name)
-      setEmail(user.email)
-      setDone(true)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t.auth.failed)
-    }
-    setBusy(false)
-  }
-
+  const [editing, setEditing] = useState(false)
+  const [changingEmail, setChangingEmail] = useState(false)
+  const user = account.user
+  const language = languages.find((l) => l.code === lang)?.name ?? lang
   return (
     <SettingsSection title={t.settings.profile}>
-      <EmailVerification user={account.user} />
-      <form className="grid gap-4" onSubmit={(e) => void submit(e)}>
-        <Field
-          label={t.settings.name}
-          value={name}
-          onChange={(e) => {
-            setName(e.target.value)
-            setDone(false)
-          }}
-          autoComplete="name"
-          required
-        />
-        <Field
-          label={t.settings.email}
-          help={t.settings.emailHelp}
-          type="email"
-          value={email}
-          onChange={(e) => {
-            setEmail(e.target.value)
-            setDone(false)
-          }}
-          autoComplete="email"
-        />
-        <FormMessage>{error}</FormMessage>
-        <div className="flex items-center gap-3">
-          <Button type="submit" disabled={busy || !name.trim()}>
-            <Save aria-hidden="true" />
-            {busy ? t.settings.saving : t.settings.save}
-          </Button>
-          {/* Announced when it appears. */}
-          <span role="status" className="text-sm text-muted-foreground">
-            {done ? t.settings.saved : ''}
-          </span>
+      <div className="flex flex-wrap items-center gap-3">
+        <Avatar name={user.name} size="lg" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-base font-medium">{user.name}</div>
+          <div className="truncate text-sm text-muted-foreground">{user.username}</div>
         </div>
-      </form>
+        <Button type="button" onClick={() => setEditing(true)}>
+          <Pencil aria-hidden="true" />
+          {tp.profile.editProfile}
+        </Button>
+      </div>
+      <dl className="grid gap-3 rounded-lg border p-3 text-sm sm:grid-cols-[8rem_1fr]" data-slot="profile-values">
+        <dt className="text-muted-foreground">{tp.profile.name}</dt>
+        <dd className="min-w-0 break-words">{user.name}</dd>
+        <dt className="text-muted-foreground">{tp.profile.username}</dt>
+        <dd className="min-w-0 break-words">{user.username}</dd>
+        <dt className="text-muted-foreground">{tp.profile.email}</dt>
+        <dd className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="break-all">{user.email || tp.profile.noEmail}</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => setChangingEmail(true)}>
+            {tp.profile.change}
+          </Button>
+        </dd>
+        <dt className="text-muted-foreground">{tp.profile.language}</dt>
+        <dd>{language}</dd>
+        <dt className="text-muted-foreground">{tp.profile.password}</dt>
+        <dd className="text-xs text-muted-foreground">{tp.profile.passwordNote}</dd>
+      </dl>
+      {user.email && <EmailVerification user={user} />}
+      <EditProfileDialog user={user} open={editing} onOpenChange={setEditing} />
+      <ChangeEmailDialog user={user} open={changingEmail} onOpenChange={setChangingEmail} />
     </SettingsSection>
   )
 }

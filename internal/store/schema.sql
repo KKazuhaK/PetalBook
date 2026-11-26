@@ -140,7 +140,11 @@ CREATE UNIQUE INDEX user_emails_primary ON user_emails(user_id) WHERE is_primary
 CREATE TABLE passwords (
   user_id TEXT COLLATE "C" PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   hash    TEXT COLLATE "C" NOT NULL,
-  updated BIGINT NOT NULL
+  updated BIGINT NOT NULL,
+  -- 1 for a temporary password an administrator set: the next sign-in with it
+  -- is held until the person chooses their own. Any other way of setting the
+  -- password clears it.
+  must_change BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE identities (

@@ -63,6 +63,8 @@ var routeAccessAdded = map[string][4]string{
 	"GET /api/admin/permissions":              {"ok", "ok", "403 forbidden", "403 token_scope"},
 	"POST /api/admin/spaces/{space}/takeover": {"ok", "ok", "403 forbidden", "403 token_scope"},
 
+	// A temporary password for a person.
+	"POST /api/users/{id}/password": {"ok", "ok", "403 forbidden", "403 token_scope"},
 	// A batch of people by file, and the picker's search.
 	"GET /api/people":                              {"ok", "ok", "ok", "403 token_scope"},
 	"POST /api/admin/members/batch":                {"ok", "ok", "403 forbidden", "403 token_scope"},

@@ -275,6 +275,7 @@ export const securityZhCN = {
       provider_changed: '修改提供方',
       provider_deleted: '删除提供方',
       user_changed: '修改用户',
+      password_set_by_admin: '设置了临时密码',
       token_created: '创建 API 令牌',
       token_revoked: '撤销 API 令牌',
       grant_revoked: '断开应用授权',

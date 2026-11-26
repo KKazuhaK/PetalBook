@@ -100,6 +100,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   email_not_ascii: '这个服务器不接受含非 ASCII 字符的邮箱。',
   terms_required: '请先同意服务条款。',
   passkey_required: '这个账号必须先用通行密钥登录。',
+  password_change_required: '请先换一个自己的密码，再继续。',
   passkey_failed: '通行密钥验证没有通过。',
   passkey_unavailable: '这个账号没有可用的通行密钥，不能要求它。',
   passkey_requirement_unsatisfiable: '有人还没有通行密钥，现在不能要求所有人使用。',

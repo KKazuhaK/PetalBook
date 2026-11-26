@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Mail, Trash2, Unlink } from 'lucide-react'
+import { KeyRound, Mail, Trash2, Unlink } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
@@ -20,12 +20,15 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { adminKindOf } from '@/lib/access'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import { tm } from '@/i18n/mail'
+import { tp } from '@/i18n/people'
 import { tsec } from '@/i18n/security'
 import { mailLang } from '@/pages/auth/MailPages'
+import { TemporaryPasswordDialog } from './PersonEditDialogs'
 import { useRequiredRoles } from './PersonProfile'
 import type { UserPatch } from './useUserChange'
 
@@ -50,6 +53,7 @@ export function PersonSecurity({
   const mailOn = useAuthProviders(true).data?.forgot === true
   const [sending, setSending] = useState(false)
   const [resetMsg, setResetMsg] = useState('')
+  const [temporary, setTemporary] = useState(false)
 
   const sendReset = async () => {
     setSending(true)
@@ -144,19 +148,35 @@ export function PersonSecurity({
         )}
         <FormMessage>{error}</FormMessage>
       </SettingsSection>
-      {mailOn && u.email && u.emailVerified && (
+      <SettingsSection title={tp.admin.password} id="person-password">
+        <p className="text-sm text-muted-foreground">{tp.admin.passwordHelp}</p>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" className="h-10" disabled={sending} onClick={() => void sendReset()}>
-            <Mail aria-hidden="true" />
-            {sending ? tm.users.sending : tm.users.sendReset}
-          </Button>
+          {mailOn && u.email && u.emailVerified && (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10"
+              disabled={sending}
+              onClick={() => void sendReset()}
+            >
+              <Mail aria-hidden="true" />
+              {sending ? tm.users.sending : tm.users.sendReset}
+            </Button>
+          )}
+          {(site || adminKindOf(u) !== 'site') && (
+            <Button type="button" variant="outline" className="h-10" onClick={() => setTemporary(true)}>
+              <KeyRound aria-hidden="true" />
+              {tp.admin.setTemporary}
+            </Button>
+          )}
           {resetMsg && (
             <span role="status" className="text-xs text-muted-foreground">
               {resetMsg}
             </span>
           )}
         </div>
-      )}
+        <TemporaryPasswordDialog u={u} open={temporary} onOpenChange={setTemporary} />
+      </SettingsSection>
       {site && <ConnectedAccounts u={u} />}
       <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
         <AlertDialogContent>

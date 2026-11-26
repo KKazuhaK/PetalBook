@@ -168,6 +168,7 @@ var routeTable = []route{
 	{"GET", "/api/users", needs(authz.TenantUsersRead), true, false, false, (*server).listUsers},
 	{"GET", "/api/users/{id}", needs(authz.TenantUsersRead), true, false, false, (*server).getUser},
 	{"PATCH", "/api/users/{id}", needs(authz.TenantUsersManage), true, false, false, (*server).patchUser},
+	{"POST", "/api/users/{id}/password", needs(authz.TenantUsersManage), true, false, false, (*server).setTemporaryPassword},
 	{"GET", "/api/users/{id}/memberships", needs(authz.TenantUsersRead), true, false, false, (*server).userMemberships},
 	// The sessions and connected accounts of a person are for administrators of the whole server (a tenant's administrator is answered 404).
 	{"GET", "/api/users/{id}/sessions", needs(authz.TenantUsersRead), true, false, false, (*server).userSessions},
@@ -460,7 +461,11 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				return
 			}
 		}
-		if c.p != nil && c.p.Held && !heldAllowed[rt.method+" "+rt.pattern] {
+		if c.p != nil && c.p.Held && !heldAllowed(c.p.HeldBy, rt.method+" "+rt.pattern) {
+			if c.p.HeldBy == auth.HoldPassword {
+				writeError(w, http.StatusForbidden, "password_change_required", "Choose a new password to continue.")
+				return
+			}
 			writeError(w, http.StatusForbidden, "passkey_required", "Register a passkey to continue.")
 			return
 		}

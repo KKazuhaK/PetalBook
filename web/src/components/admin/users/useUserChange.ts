@@ -8,6 +8,9 @@ import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
 
 export interface UserPatch {
+  name?: string
+  username?: string
+  emailMode?: 'verify' | 'mark'
   role?: Role
   disabled?: boolean
   passkeyRequired?: boolean

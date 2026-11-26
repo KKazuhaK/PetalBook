@@ -26,6 +26,7 @@ var scopeAllowlist = map[string]string{
 	"GetUserByUsername":          "sign-in by username: usernames are unique on the server, and the account found decides the tenant",
 	"FindUsableInvite":           "an invite by the hash of its secret token: the invite decides the tenant",
 	"UseInvite":                  "marks the invite found by its secret token as used",
+	"SetUsername":                "the caller has found the person by the administrator's scope (or is the person) before it renames them",
 	"FindPeople":                 "a batch names people by username or address and must tell a person of another tenant from nobody; the answer never shows the person, only that they are not in the tenant",
 	"HasUsers":                   "whether the server has any account (setup)",
 	"CountEnabledAdminsOutside":  "the rule 'keep one administrator' counts site administrators, the server's own",

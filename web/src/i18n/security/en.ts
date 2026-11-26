@@ -310,6 +310,7 @@ export const securityEn: SecurityMessages = {
       provider_changed: 'Provider changed',
       provider_deleted: 'Provider deleted',
       user_changed: 'User changed',
+      password_set_by_admin: 'Temporary password set',
       token_created: 'API token created',
       token_revoked: 'API token revoked',
       grant_revoked: 'OAuth grant revoked',

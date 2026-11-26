@@ -412,6 +412,9 @@ export function createMockServer(options: MockOptions = {}) {
   const forge = createForgeBook({ now, random, spacesUsing: () => 0, hasSpaces: () => 0 })
   // Sessions held until a passkey is registered, and when each session began (registering needs a recent sign-in).
   const held = new Set<string>()
+  // Sessions that signed in with a temporary password, and the people whose password is one.
+  const heldPassword = new Set<string>()
+  const temporary = new Set<string>()
   const sessionAt = new Map<string, number>()
   // What the administrators' list of a person's sessions shows.
   const sessionMeta = new Map<string, { userAgent: string; method: string; created: number }>()
@@ -1053,6 +1056,18 @@ export function createMockServer(options: MockOptions = {}) {
       headers: { 'Set-Cookie': startSession(u, { held: required && u.passkeys.length === 0, method: 'password' }) },
     }
   }
+  // A person with a temporary password gets a session that may only choose a new one.
+  const holdForTemporary = (res: MockResponse, u: UserRec): MockResponse => {
+    if (!temporary.has(u.id)) return res
+    const cookie = res.headers?.['Set-Cookie'] ?? ''
+    const token = new RegExp(`${SESSION_COOKIE}=([^;]+)`).exec(cookie)?.[1]
+    if (token) {
+      // The new password comes first; a passkey hold, if one is required, after it (changePassword).
+      heldPassword.add(token)
+      held.delete(token)
+    }
+    return res
+  }
 
   const mailBook = createMailBook({
     now,
@@ -1413,8 +1428,24 @@ export function createMockServer(options: MockOptions = {}) {
     groups: groupBook.inGroups(u.id),
   })
 
+  const checkNewUsername = (v: unknown, except: string): string => {
+    const name = checkUsername(v)
+    if ([...users.values()].some((x) => x.id !== except && x.username === name))
+      throw new HttpError(409, 'exists', 'That username is taken.')
+    return name
+  }
   const patchAccount = (u: UserRec, body: Record<string, unknown>) => {
     if (body.name !== undefined) u.name = checkName(body.name)
+    if (body.username !== undefined) {
+      const next = checkNewUsername(body.username, u.id)
+      if (next !== u.username)
+        book.record('user_changed', {
+          actor: u.id,
+          user: u.id,
+          detail: { username: next, old: { username: u.username } },
+        })
+      u.username = next
+    }
     if (body.email !== undefined) {
       if (typeof body.email !== 'string' || body.email.length > 254) throw new HttpError(400, 'invalid', '邮箱不合法')
       const email = body.email.trim()
@@ -1449,10 +1480,19 @@ export function createMockServer(options: MockOptions = {}) {
     } else if (body.current !== undefined) {
       throw new HttpError(400, 'invalid', '这个账号还没有密码，不需要当前密码')
     }
+    const wasHeld = !!ctx.token && heldPassword.has(ctx.token)
+    if (wasHeld && next === body.current)
+      throw new HttpError(400, 'invalid', 'Choose a new password, not the temporary one.')
     u.passwordHash = hashOf(next)
     mailBook.cleanUserTokens(u.id, 'reset')
-    // Other sessions end; this one stays.
+    // Other sessions end; this one stays. Choosing a password lifts the hold of a temporary one, or makes it a
+    // passkey hold for someone who must have a passkey and has none.
     endSessions(u.id, ctx.token, 'password_changed')
+    temporary.delete(u.id)
+    if (ctx.token && wasHeld) {
+      heldPassword.delete(ctx.token)
+      if (book.requiredOf(u) && u.passkeys.length === 0 && book.passkeyOn()) held.add(ctx.token)
+    }
   }
 
   const removeIdentity = (u: UserRec, id: string) => {
@@ -1577,7 +1617,10 @@ export function createMockServer(options: MockOptions = {}) {
     if (body.passkeyRequired === true && !(book.security.passkeys.enabled && book.view().passkeys.available))
       throw new HttpError(400, 'passkey_unavailable', '现在不能使用 passkey')
     const changed: Record<string, unknown> = {}
+    const old: Record<string, unknown> = {}
     const note = (k: string, v: unknown) => (changed[k] = v)
+    if (body.emailMode !== undefined && body.emailMode !== 'verify' && body.emailMode !== 'mark')
+      throw new HttpError(400, 'invalid', 'EmailMode is verify or mark.')
     // A site administrator is an administrator of the whole server (3.3): only one may make or end another.
     if ((body.siteAdmin !== undefined || isSiteAdmin(u)) && !isSiteAdmin(me))
       throw new HttpError(403, 'forbidden', '只有全站管理员可以改全站管理员')
@@ -1591,6 +1634,22 @@ export function createMockServer(options: MockOptions = {}) {
       [...users.values()].filter((x) => x.id !== u.id && isSiteAdmin(x) && !x.disabled).length === 0
     )
       throw new HttpError(409, 'conflict', '至少要留一个可用的全站管理员')
+    if (body.name !== undefined) {
+      const next = checkName(body.name)
+      if (next !== u.name) {
+        old.name = u.name
+        note('name', next)
+      }
+      u.name = next
+    }
+    if (body.username !== undefined) {
+      const next = checkNewUsername(body.username, u.id)
+      if (next !== u.username) {
+        old.username = u.username
+        note('username', next)
+      }
+      u.username = next
+    }
     if (nowSite !== wasSite) note('siteAdmin', nowSite)
     u.siteAdmin = nowSite
     if (role !== u.role) note('role', role)
@@ -1602,13 +1661,19 @@ export function createMockServer(options: MockOptions = {}) {
       u.passkeyRequired = body.passkeyRequired as boolean
       note('passkeyRequired', u.passkeyRequired)
     }
+    let verification: 'sent' | 'not_sent' | undefined
     if (body.email !== undefined && body.email.toString().trim() !== u.email) {
+      const before = { email: u.email, emailVerified: u.emailVerified }
+      old.email = u.email
       u.email = (body.email as string).trim()
-      // An address set without saying it is verified is not.
-      u.emailVerified = false
+      // An address set without saying it is verified is not; "mark" says it is.
+      u.emailVerified = body.emailMode === 'mark'
       note('email', u.email)
+      mailBook.noteChange(before)
+      if (!u.emailVerified && u.email !== '') verification = mailBook.ready() ? 'sent' : 'not_sent'
     }
     if (body.emailVerified !== undefined && body.emailVerified !== u.emailVerified) {
+      old.emailVerified = u.emailVerified
       u.emailVerified = body.emailVerified as boolean
       note('emailVerified', u.emailVerified)
     }
@@ -1617,8 +1682,9 @@ export function createMockServer(options: MockOptions = {}) {
       applyQuota()
       note('quota', quotaBook.ownOf(u.id))
     }
-    if (Object.keys(changed).length > 0) book.record('user_changed', { actor: me.id, user: u.id, detail: changed })
-    return { user: { ...publicUser(u), quota: quotaBook.ownOf(u.id) } }
+    if (Object.keys(changed).length > 0)
+      book.record('user_changed', { actor: me.id, user: u.id, detail: { ...changed, old } })
+    return { user: { ...publicUser(u), quota: quotaBook.ownOf(u.id) }, ...(verification ? { verification } : {}) }
   }
 
   const createInvite = (me: UserRec, body: Record<string, unknown>): MockResponse => {
@@ -4218,6 +4284,15 @@ export function createMockServer(options: MockOptions = {}) {
       if (!allowed) throw new HttpError(403, 'passkey_required', '请先设置一个 passkey')
     }
 
+    // A session that signed in with a temporary password may only choose a new one, and sign out: not even the
+    // passkey endpoints, since a passkey would not replace the password the administrator knows.
+    if (accounts && ctx.user && ctx.token && heldPassword.has(ctx.token)) {
+      const allowed =
+        (method === 'GET' && ['/session', '/meta', '/auth/providers', '/account'].includes(path)) ||
+        (method === 'POST' && (path === '/logout' || path === '/account/password'))
+      if (!allowed) throw new HttpError(403, 'password_change_required', 'Choose a new password to continue.')
+    }
+
     if (method === 'GET' && path === '/meta') {
       const u = ctx.user
       return j({
@@ -4236,7 +4311,12 @@ export function createMockServer(options: MockOptions = {}) {
           : null,
         ...(ended ? { endedReason: ended } : {}),
         setup: accounts && users.size === 0,
-        hold: accounts && ctx.token && ctx.user && held.has(ctx.token) ? ('passkey' as const) : null,
+        hold:
+          accounts && ctx.token && ctx.user && heldPassword.has(ctx.token)
+            ? ('password' as const)
+            : accounts && ctx.token && ctx.user && held.has(ctx.token)
+              ? ('passkey' as const)
+              : null,
         token: null,
       }
       return {
@@ -4351,7 +4431,9 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (path === '/login' && method === 'POST') {
       accountsOnly()
-      return login(body)
+      const res = login(body)
+      const who = [...users.values()].find((x) => x.username === String(body.username).toLowerCase())
+      return who ? holdForTemporary(res, who) : res
     }
     if (path === '/logout' && method === 'POST') {
       accountsOnly()
@@ -4386,7 +4468,11 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (path === '/auth/passkey/finish' && method === 'POST') {
       accountsOnly()
-      return passkeyFinish(url.searchParams, body)
+      // A temporary password is replaced at the next sign-in, a passkey's too.
+      const res = passkeyFinish(url.searchParams, body)
+      const id = (res.body as { user?: { id?: string } } | undefined)?.user?.id
+      const who = id ? users.get(id) : undefined
+      return who ? holdForTemporary(res, who) : res
     }
     // The endpoints from before 2.8 serve the provider marked `legacyCallback`.
     const legacy = [...book.providers.values()].find((p) => p.view.oidc?.legacyCallback)
@@ -4481,6 +4567,21 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/password/reset' && method === 'POST') {
       accountsOnly()
       return mailBook.reset(body)
+    }
+    const tempPassword = /^\/users\/([^/]+)\/password$/.exec(path)
+    if (tempPassword && method === 'POST') {
+      accountsOnly()
+      const me = requireAdmin(ctx)
+      const target = users.get(decodeURIComponent(tempPassword[1]))
+      if (!target) throw new HttpError(404, 'not_found', '没有这个用户')
+      if (isSiteAdmin(target) && !isSiteAdmin(me))
+        throw new HttpError(403, 'forbidden', '只有全站管理员可以改全站管理员')
+      target.passwordHash = hashOf(checkPassword(body.password, '密码'))
+      temporary.add(target.id)
+      endSessions(target.id, null, 'password_changed')
+      book.record('password_set_by_admin', { actor: me.id, user: target.id, detail: { temporary: true } })
+      notifyBook.add(target.id, 'system', '', { event: 'password_set', by: me.name })
+      return { status: 204 }
     }
     const adminReset = /^\/users\/([^/]+)\/password-reset$/.exec(path)
     if (adminReset && method === 'POST') {

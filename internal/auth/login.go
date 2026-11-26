@@ -66,8 +66,10 @@ type LoginParams struct {
 type LoginResult struct {
 	User  *store.User
 	Token string
-	// Held: the person must register a passkey before anything else.
-	Held bool
+	// Held: the person must register a passkey (HeldBy "") or choose a new
+	// password (HoldPassword) before anything else.
+	Held   bool
+	HeldBy string
 }
 
 // Login checks a username and password, in the order of docs/api.md: the
@@ -148,7 +150,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 	reserved = false
 	if rehash {
 		if nh, err := s.hasher.hash(ctx, p.Password); err == nil {
-			if err := store.SetPasswordHash(ctx, s.st.Q(), u.ID, nh, s.now()); err != nil {
+			if err := store.RehashPassword(ctx, s.st.Q(), u.ID, nh); err != nil {
 				s.log.Warn("could not upgrade a password hash", "error", err)
 			}
 		}
@@ -157,7 +159,10 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		s.Audit(AuditEvent{Kind: "login_failed", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "local_login_refused"}})
 		return nil, errLocalRefused()
 	}
-	held := false
+	// The passkey requirement comes first: someone who must sign in with a
+	// passkey and has one gets no password session, a temporary password
+	// included.
+	held, holdBy := false, ""
 	if s.passkeyRequiredOf(st, *u) {
 		// Only a passkey of this host can be used; one made for an old host leaves the person to register a new one.
 		n, err := store.CountPasskeysForRP(ctx, s.st.Q(), u.ID, s.pk.rpID)
@@ -170,12 +175,23 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		}
 		held = true
 	}
-	tok, err := s.issueSession(ctx, u.ID, held, "password")
+	if must, err := store.PasswordMustChange(ctx, s.st.Q(), u.ID); err != nil {
+		return nil, err
+	} else if must {
+		// A temporary password only opens a session that may choose a new
+		// one; ChangePassword then holds it for a passkey if one is required.
+		held, holdBy = true, HoldPassword
+	}
+	method := "password"
+	if holdBy == HoldPassword {
+		method = holdMethodPassword
+	}
+	tok, err := s.issueSession(ctx, u.ID, held, method)
 	if err != nil {
 		return nil, err
 	}
 	s.Audit(AuditEvent{Kind: "login", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password"}})
-	return &LoginResult{User: u, Token: tok, Held: held}, nil
+	return &LoginResult{User: u, Token: tok, Held: held, HeldBy: holdBy}, nil
 }
 
 func errLocalRefused() *Error {

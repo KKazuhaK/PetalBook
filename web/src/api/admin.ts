@@ -112,16 +112,21 @@ export const adminApi = {
   updateUser: (
     id: string,
     input: {
+      name?: string
+      username?: string
       role?: Role
       disabled?: boolean
       passkeyRequired?: boolean
       email?: string
+      // What to do with a new `email`: send the person a link that proves it (the default) or say it is verified.
+      emailMode?: 'verify' | 'mark'
       emailVerified?: boolean
       siteAdmin?: boolean
       quota?: Partial<OwnQuota>
       remoteExempt?: boolean
     },
-  ) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  ) =>
+    request<{ user: User; verification?: 'sent' | 'not_sent' }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
   // The passkeys of one person, for an administrator who removes a lost one.
   userPasskeys: (id: string, signal?: AbortSignal) =>
     request<{ passkeys: Passkey[] }>(`/users/${enc(id)}/passkeys`, { signal }),
@@ -193,6 +198,9 @@ export const adminApi = {
   putMail: (input: MailPatch) => request<MailSettings>('/admin/mail', { method: 'PUT', body: input }),
   testMail: (to: string, lang?: string) =>
     request<MailTestResult>('/admin/mail/test', { method: 'POST', body: { to, ...(lang ? { lang } : {}) } }),
+  // A password the administrator typed: the person must replace it at their next sign-in, and their sessions end.
+  setTemporaryPassword: (id: string, password: string) =>
+    request<void>(`/users/${enc(id)}/password`, { method: 'POST', body: { password } }),
   sendPasswordReset: (id: string, lang?: string) =>
     request<{ sent: boolean }>(`/users/${enc(id)}/password-reset`, { method: 'POST', body: lang ? { lang } : {} }),
 

@@ -358,31 +358,42 @@ func leaveError(err error) error {
 	return err
 }
 
-// revokeUserAccess ends the API tokens and OAuth grants of a person, and
-// disconnects their account at the providers (best effort: a platform that
-// cannot be reached does not stop the deletion; their authorisation row goes
-// either way, with the rest of their data, when they are purged).
-func (s *server) revokeUserAccess(ctx context.Context, id string) {
+// revokeTokensAndGrants revokes the personal API tokens of a person and ends
+// their OAuth grants (each through its service, so that the caches drop it at
+// once); why is the grants' reason. A failure is logged.
+func (s *server) revokeTokensAndGrants(ctx context.Context, id, why string) {
 	if s.tokens != nil {
 		if rows, err := s.tokens.List(ctx, store.AllTenants(), store.TokenFilter{UserID: id, Limit: 1000}); err == nil {
 			for _, t := range rows {
 				if t.Revoked.IsZero() {
 					if _, err := s.tokens.Revoke(ctx, t.ID); err != nil {
-						s.log.Warn("could not revoke a token of a deleted person", "token", t.ID, "error", err)
+						s.log.Warn("could not revoke a token", "token", t.ID, "error", err)
 					}
 				}
 			}
+		} else {
+			s.log.Warn("could not list a person's tokens", "user", id, "error", err)
 		}
 	}
 	if rows, err := store.ListOAuthGrants(ctx, s.opt.Store.Q(), store.AllTenants(), store.GrantFilter{UserID: id, Limit: 1000}); err == nil {
 		for _, g := range rows {
 			if s.oauth != nil {
-				s.oauth.Revoke(ctx, g.ID, "the person was deleted")
+				s.oauth.Revoke(ctx, g.ID, why)
 			} else {
 				store.DeleteOAuthGrant(ctx, s.opt.Store.Q(), g.ID)
 			}
 		}
+	} else {
+		s.log.Warn("could not list a person's grants", "user", id, "error", err)
 	}
+}
+
+// revokeUserAccess ends the API tokens and OAuth grants of a person, and
+// disconnects their account at the providers (best effort: a platform that
+// cannot be reached does not stop the deletion; their authorisation row goes
+// either way, with the rest of their data, when they are purged).
+func (s *server) revokeUserAccess(ctx context.Context, id string) {
+	s.revokeTokensAndGrants(ctx, id, "the person was deleted")
 	for _, p := range s.opt.Connections.List() {
 		if p.Descriptor().ID == "git" {
 			continue

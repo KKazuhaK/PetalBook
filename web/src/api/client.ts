@@ -280,7 +280,7 @@ function markSignedOut(reason: EndedReason | undefined) {
 // `passkey_required`. The app learns of it once, from whichever request hit it, and
 // shows the passkey page (a hold that began after the session was read).
 
-type HoldListener = () => void
+type HoldListener = (hold: 'passkey' | 'password') => void
 const holdListeners = new Set<HoldListener>()
 export function onHold(fn: HoldListener): () => void {
   holdListeners.add(fn)
@@ -444,7 +444,10 @@ export async function request<T>(
       throw new ApiError(res.status, 'forbidden', message)
     }
     if (res.status === 401 && !isSignIn) markSignedOut(endedReasonOf(err.reason))
-    if (res.status === 403 && err.error === 'passkey_required' && !isSignIn) holdListeners.forEach((fn) => fn())
+    if (res.status === 403 && err.error === 'passkey_required' && !isSignIn)
+      holdListeners.forEach((fn) => fn('passkey'))
+    if (res.status === 403 && err.error === 'password_change_required' && !isSignIn)
+      holdListeners.forEach((fn) => fn('password'))
     if (err.error === 'unavailable') unavailableListeners.forEach((fn) => fn())
     if (err.error === 'space_disabled' || err.error === 'no_permission' || err.error === 'not_found') {
       const space = /^\/spaces\/([^/]+)/.exec(barePath)?.[1]
@@ -810,7 +813,7 @@ export const api = {
   // Finding a group by part of its name, to add it to a space: names only.
   findGroups: (q: string, signal?: AbortSignal) =>
     request<{ groups: GroupRef[] }>(`/groups?q=${enc(q)}&limit=20`, { signal }),
-  updateAccount: (input: { name?: string; email?: string }) =>
+  updateAccount: (input: { name?: string; username?: string; email?: string }) =>
     request<{ user: User }>('/account', { method: 'PATCH', body: input }),
   // `current` is left out when the account has no password yet.
   changePassword: (input: { current?: string; new: string }) =>

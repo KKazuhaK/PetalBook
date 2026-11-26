@@ -114,12 +114,12 @@ func EndUserSession(ctx context.Context, q Q, id, userID, reason string, at time
 // ended ("" when no record is kept) with ErrNotFound: one query either way, so a
 // cookie that is not a session costs one round trip, not two.
 func LookupSession(ctx context.Context, q Q, id string) (*Session, string, error) {
-	var userID, reason, cur, proofs, client sql.NullString
+	var userID, reason, cur, proofs, client, method sql.NullString
 	var created, used, held sql.NullInt64
-	err := q.QueryRow(ctx, `SELECT s.user_id, s.created, s.last_used, s.held, e.reason, s.current_tenant, s.proofs, s.client
+	err := q.QueryRow(ctx, `SELECT s.user_id, s.created, s.last_used, s.held, e.reason, s.current_tenant, s.proofs, s.client, s.method
 		FROM (SELECT CAST(? AS TEXT) AS id) k
 		LEFT JOIN sessions s ON s.id = k.id
-		LEFT JOIN session_ends e ON e.id = k.id`, id).Scan(&userID, &created, &used, &held, &reason, &cur, &proofs, &client)
+		LEFT JOIN session_ends e ON e.id = k.id`, id).Scan(&userID, &created, &used, &held, &reason, &cur, &proofs, &client, &method)
 	if err != nil {
 		return nil, "", err
 	}
@@ -127,7 +127,7 @@ func LookupSession(ctx context.Context, q Q, id string) (*Session, string, error
 		return nil, reason.String, ErrNotFound
 	}
 	return &Session{ID: id, UserID: userID.String, Created: fromMS(created.Int64), LastUsed: fromMS(used.Int64), Held: held.Int64 != 0,
-		Client: client.String, CurrentTenant: cur.String, Proofs: decodeProofs(proofs.String)}, "", nil
+		Client: client.String, Method: method.String, CurrentTenant: cur.String, Proofs: decodeProofs(proofs.String)}, "", nil
 }
 
 func GetSession(ctx context.Context, q Q, id string) (*Session, error) {
@@ -280,6 +280,13 @@ func DeleteExpiredSessions(ctx context.Context, q Q, idleBefore, createdBefore, 
 // ReleaseSession lifts the hold of one session.
 func ReleaseSession(ctx context.Context, q Q, id string) error {
 	_, err := q.Exec(ctx, `UPDATE sessions SET held = 0 WHERE id = ?`, id)
+	return err
+}
+
+// HoldSessionForPasskey keeps a session held, now for a passkey: its method
+// becomes "password" (the sign-in it was), which is no hold for a new password.
+func HoldSessionForPasskey(ctx context.Context, q Q, id string) error {
+	_, err := q.Exec(ctx, `UPDATE sessions SET held = 1, method = 'password' WHERE id = ?`, id)
 	return err
 }
 

@@ -250,6 +250,7 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/spaces":  {kind: isoExempt, reason: "makes a space of the caller's own tenant"},
 
 	"GET /api/users":                      {kind: isoList},
+	"POST /api/users/{id}/password":       {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }, body: func(f *tenFx, id string) any { return map[string]any{"password": "a-new-password"} }},
 	"POST /api/users/{id}/password-reset": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }, body: func(f *tenFx, id string) any { return map[string]any{} }},
 	"PATCH /api/users/{id}":               {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }, body: func(f *tenFx, id string) any { return map[string]any{"disabled": true} }},
 	"POST /api/invites":                   {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"role": "member", "tenant": id} }, ids: func(f *tenFx) map[string]string { return map[string]string{} }},
