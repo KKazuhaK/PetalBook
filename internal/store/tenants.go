@@ -493,7 +493,7 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		for _, st := range []string{
 			`UPDATE users SET tenant_id = '` + DefaultTenantID + `' WHERE tenant_id = ? AND deleted_at IS NOT NULL`,
 			`UPDATE exports SET tenant_id = '` + DefaultTenantID + `', site_only = 1 WHERE tenant_id = ?`,
-			`UPDATE bulk_jobs SET tenant_id = '` + DefaultTenantID + `', site_only = 1 WHERE tenant_id = ?`,
+			`UPDATE jobs SET tenant_id = '` + DefaultTenantID + `', site_only = 1 WHERE tenant_id = ?`,
 			`DELETE FROM usage WHERE tenant_id = ?`,
 		} {
 			if _, err := q.Exec(ctx, st, id); err != nil {

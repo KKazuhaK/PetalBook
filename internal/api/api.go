@@ -28,6 +28,7 @@ import (
 	"petalbook.app/server/internal/drafts"
 	"petalbook.app/server/internal/gitstore"
 	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/jobs"
 	"petalbook.app/server/internal/oauth"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/quota"
@@ -155,8 +156,9 @@ type server struct {
 	// activities keeps the optional audit rows of reads and downloads to one an
 	// hour for each person and thing (activity.go).
 	activities *onceAnHour
-	// jobs runs the bulk jobs (see bulk.go).
-	jobs *jobRunner
+	// jobs runs the background jobs (internal/jobs; the bulk jobs, see
+	// bulk.go).
+	jobs *jobs.Runner
 	// prefs holds the preferences written and not committed yet (see prefs.go).
 	prefs prefsHub
 	// peopleGate limits the people search per person, batchGate the rows of
@@ -221,7 +223,7 @@ func (s *server) close() {
 	s.bgClosed = true
 	s.bgMu.Unlock()
 	s.bgCancel()
-	s.jobs.wake() // a job waiting for its turn stops waiting
+	s.jobs.Close() // stops the running jobs and waits for them
 	s.bg.Wait()
 }
 
@@ -251,7 +253,7 @@ func New(opt Options) *Handler {
 	}
 	s := &server{opt: opt, log: opt.Logger, settings: settings.Of(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1),
-		confirms: newConfirmStore(), views: newViewTable(), viewsAs: newViewAsTable(), consoles: newOnceAnHour(maxConsoleAudit), activities: newOnceAnHour(maxActivityAudit), jobs: newJobRunner(), now: opt.Now}
+		confirms: newConfirmStore(), views: newViewTable(), viewsAs: newViewAsTable(), consoles: newOnceAnHour(maxConsoleAudit), activities: newOnceAnHour(maxActivityAudit), now: opt.Now}
 	if s.now == nil {
 		s.now = time.Now
 	}
@@ -284,7 +286,9 @@ func New(opt Options) *Handler {
 	s.settings.SetFileCeiling(opt.MaxUpload)
 	s.bindRecycle()
 	s.bindDraftFileLimit()
-	s.markJobsInterrupted()
+	s.jobs = jobs.New(jobs.Options{Store: opt.Store, Logger: s.log, Now: now, WriteFault: jobWriteFault})
+	s.jobs.Register(bulkKindName, bulkKind{s})
+	s.jobs.Start()
 	s.bindDailySettings()
 	if s.auth != nil {
 		s.auth.UseSettings(s.settings)

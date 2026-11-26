@@ -1012,25 +1012,50 @@ CREATE TABLE retired_usernames (
   purged_at BIGINT NOT NULL
 );
 
--- A bulk action over many spaces, people or items, run in the background one
--- item at a time. failed is a JSON list of what did not work and why.
--- site_only marks a job a site administrator started.
-CREATE TABLE bulk_jobs (
-  id        TEXT COLLATE "C" PRIMARY KEY,
-  tenant_id TEXT COLLATE "C" NOT NULL REFERENCES tenants(id),
-  made_by   TEXT COLLATE "C" NOT NULL,
-  action    TEXT COLLATE "C" NOT NULL,
-  total     BIGINT NOT NULL,
-  done      BIGINT NOT NULL DEFAULT 0,
-  failed    TEXT COLLATE "C" NOT NULL DEFAULT '[]',
-  state     TEXT COLLATE "C" NOT NULL DEFAULT 'queued',
-  site_only BIGINT NOT NULL DEFAULT 0,
-  created   BIGINT NOT NULL,
-  updated   BIGINT NOT NULL
+-- Background work, one row per job whatever its kind (internal/jobs): a bulk
+-- action over many spaces, people or items now; exports, recycle actions,
+-- attachment and storage moves, rebuilds, invite sending and group sync are the
+-- kinds reserved for it (docs/design/consolidation-2.md, section 4). params is
+-- the request (JSON), failed a JSON list of the items that did not work and why,
+-- result what the job made. lock_key, when set, allows one active job per key
+-- (jobs_lock). capacity is the acting scope the job was asked in (site_admin,
+-- tenant_admin or ''), site_only marks a job only site administrators see.
+-- runner and lease_until name the process that claimed it; leasing (a standby
+-- server) is reserved: today a start recovers every active row.
+CREATE TABLE jobs (
+  id           TEXT COLLATE "C" PRIMARY KEY,
+  tenant_id    TEXT COLLATE "C" NOT NULL REFERENCES tenants(id),
+  kind         TEXT COLLATE "C" NOT NULL,
+  subject      TEXT COLLATE "C" NOT NULL DEFAULT '',
+  lock_key     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  made_by      TEXT COLLATE "C" NOT NULL DEFAULT '',
+  made_by_name TEXT COLLATE "C" NOT NULL DEFAULT '',
+  capacity     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  site_only    BIGINT NOT NULL DEFAULT 0,
+  params       TEXT COLLATE "C" NOT NULL DEFAULT '{}',
+  state        TEXT COLLATE "C" NOT NULL DEFAULT 'queued',
+  total        BIGINT NOT NULL DEFAULT 0,
+  done         BIGINT NOT NULL DEFAULT 0,
+  bytes_total  BIGINT NOT NULL DEFAULT 0,
+  bytes_done   BIGINT NOT NULL DEFAULT 0,
+  failed       TEXT COLLATE "C" NOT NULL DEFAULT '[]',
+  error        TEXT COLLATE "C" NOT NULL DEFAULT '',
+  result       TEXT COLLATE "C" NOT NULL DEFAULT '{}',
+  attempt      BIGINT NOT NULL DEFAULT 0,
+  runner       TEXT COLLATE "C" NOT NULL DEFAULT '',
+  lease_until  BIGINT NOT NULL DEFAULT 0,
+  created      BIGINT NOT NULL,
+  started      BIGINT NOT NULL DEFAULT 0,
+  updated      BIGINT NOT NULL,
+  expires      BIGINT NOT NULL DEFAULT 0
 );
-CREATE INDEX bulk_jobs_state ON bulk_jobs(state) WHERE state IN ('queued', 'running');
--- The daily pass deletes the jobs that ended long ago (PruneBulkJobs).
-CREATE INDEX bulk_jobs_updated ON bulk_jobs(updated);
+-- The runner's scans (at start, and when it is woken) read the active jobs only.
+CREATE INDEX jobs_active ON jobs(state, created, id) WHERE state IN ('queued', 'running');
+CREATE UNIQUE INDEX jobs_lock ON jobs(lock_key) WHERE lock_key <> '' AND state IN ('queued', 'running');
+CREATE INDEX jobs_tenant ON jobs(tenant_id, kind, created DESC, id DESC);
+CREATE INDEX jobs_expires ON jobs(expires) WHERE expires > 0;
+-- The daily pass deletes the jobs that ended long ago (PruneJobs).
+CREATE INDEX jobs_updated ON jobs(updated);
 
 -- PostgreSQL: the tables whose rows are rewritten often (usage counters,
 -- measurements of spaces, a person's last activity, a session's last use, a
@@ -1048,3 +1073,5 @@ ALTER TABLE users SET (fillfactor = 85);
 ALTER TABLE sessions SET (fillfactor = 85);
 -- dialect: postgres
 ALTER TABLE remotes SET (fillfactor = 85);
+-- dialect: postgres
+ALTER TABLE jobs SET (fillfactor = 85);

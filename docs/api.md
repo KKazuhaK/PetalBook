@@ -8261,11 +8261,11 @@ at once, and is `409 confirm_stale` when the plan, made again from the records,
 has another hash (ids, states, owners, members, heirs, transfers). The actions
 `evict`, `pin` and `unpin` are the site's (`403 forbidden` for each item for a
 tenant administrator); `export` makes one export of the whole set. A job is a row
-of `bulk_jobs`; its `state` is `queued`, `running`, `done` (with `failed` listing
+of `jobs` (kind `bulk`, run by `internal/jobs`); its `state` is `queued`, `running`, `done` (with `failed` listing
 `{"id", "error", "code"}` of each item that did not work, `409 busy` among them)
 or `interrupted`, and `failed` when the job broke (a panic, which the server
 survives, or progress that could not be written after a few tries; `failed` names
-the item it was on); `GET /api/admin/jobs/{id}` is the tenant's. Each item is done
+the item it was on); `GET /api/admin/jobs/{id}` is the tenant's, and while the job runs it is answered from memory (progress is written at most once a second or every 100 items). Each item is done
 with the rights the administrator who started the job has at that moment (one who
 is no longer an administrator gets `403 forbidden` for the items left). A job
 waits in the queue of each tenant it works on (a site administrator's job on one

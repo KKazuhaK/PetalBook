@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"petalbook.app/server/internal/auditlog"
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
+	"petalbook.app/server/internal/jobs"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -20,76 +20,41 @@ import (
 
 // Bulk actions (docs/api.md, "Confirmations and bulk actions"). A job runs the
 // items of a confirmed action one at a time in the background, each with the
-// rules of its single action: an item that fails is listed, the rest go on. At
-// most one job per tenant and two on the server run at once; the others wait.
-// A job is a row of bulk_jobs, so what was not done when the server stopped is
-// read as interrupted.
+// rules of its single action: an item that fails is listed, the rest go on. A
+// job is a row of jobs, of kind "bulk", run by the server's runner
+// (internal/jobs) in the class jobs.Bulk: at most one job per tenant it works
+// on and two on the server run at once; the others wait. What was not done
+// when the server stopped is read as interrupted.
 
-const maxJobsAtOnce = 2
+const bulkKindName = "bulk"
 
-type jobRunner struct {
-	mu      sync.Mutex
-	cond    *sync.Cond
-	tenants map[string]bool
-	running int
+// bulkParams is a bulk job's request, as its row keeps it.
+type bulkParams struct {
+	confirmRequest
+	IP string `json:"ip"`
+	// Queue is the tenants whose turn the job takes (jobTenants).
+	Queue []string `json:"queue"`
+	// Narrowed and ScopeTenant are the acting scope of the request that
+	// started it (its capacity is the row's): each item keeps to it.
+	Narrowed    bool   `json:"narrowed,omitempty"`
+	ScopeTenant string `json:"scopeTenant,omitempty"`
 }
 
-func newJobRunner() *jobRunner {
-	r := &jobRunner{tenants: map[string]bool{}}
-	r.cond = sync.NewCond(&r.mu)
-	return r
+func bulkParamsOf(j *store.Job) bulkParams {
+	var p bulkParams
+	_ = json.Unmarshal(j.Params, &p)
+	return p
 }
 
-// acquire waits for the turn of every tenant the job works on and a place on
-// the server, and takes them all at once. It reports false, having taken
-// nothing, when ctx ends first (wake makes a waiting acquire look at it).
-func (r *jobRunner) acquire(ctx context.Context, tenants ...string) bool {
-	r.mu.Lock()
-	for r.running >= maxJobsAtOnce || r.anyTaken(tenants) {
-		if ctx.Err() != nil {
-			r.mu.Unlock()
-			return false
-		}
-		r.cond.Wait()
-	}
-	if ctx.Err() != nil {
-		r.mu.Unlock()
-		return false
-	}
-	for _, t := range tenants {
-		r.tenants[t] = true
-	}
-	r.running++
-	r.mu.Unlock()
-	return true
-}
+// bulkKind runs the bulk jobs.
+type bulkKind struct{ s *server }
 
-// wake makes the waiting acquires check their contexts again. It takes the lock
-// so that an acquire between its check and its wait cannot miss it.
-func (r *jobRunner) wake() {
-	r.mu.Lock()
-	r.cond.Broadcast()
-	r.mu.Unlock()
-}
+func (bulkKind) Class() jobs.Class { return jobs.Bulk }
 
-func (r *jobRunner) anyTaken(tenants []string) bool {
-	for _, t := range tenants {
-		if r.tenants[t] {
-			return true
-		}
-	}
-	return false
-}
+// Recover: an interrupted bulk job is not taken up again.
+func (bulkKind) Recover(context.Context, *store.Job) jobs.Outcome { return jobs.Interrupt }
 
-func (r *jobRunner) release(tenants ...string) {
-	r.mu.Lock()
-	for _, t := range tenants {
-		delete(r.tenants, t)
-	}
-	r.running--
-	r.mu.Unlock()
-	r.cond.Broadcast()
-}
+func (bulkKind) Queues(j *store.Job) []string { return bulkParamsOf(j).Queue }
 
 // jobWriteFaults makes the writes of a job's progress fail, by who started the
 // job (tests; see SetUpdateBulkJob).
@@ -100,34 +65,19 @@ var jobWriteFaults sync.Map
 // (tests; see SetBulkJobHook).
 var jobHooks sync.Map
 
-func jobHook(ctx context.Context, job *store.BulkJob, point, item string) {
-	if f, ok := jobHooks.Load(job.MadeBy); ok {
+func jobHook(ctx context.Context, madeBy, point, item string) {
+	if f, ok := jobHooks.Load(madeBy); ok {
 		f.(func(context.Context, string, string))(ctx, point, item)
 	}
 }
 
-// jobWriteTries is how many times a write of a job's progress is tried.
-const jobWriteTries = 3
-
-// writeJob records how far a job is, trying again a few times; an error is
-// logged and returned (the caller marks the job failed when it can).
-func (s *server) writeJob(job *store.BulkJob, state string, done int, failed []store.BulkFailure) error {
-	var err error
-	for try := 0; try < jobWriteTries; try++ {
-		if try > 0 {
-			time.Sleep(time.Duration(try) * 50 * time.Millisecond)
-		}
-		if f, ok := jobWriteFaults.Load(job.MadeBy); ok {
-			if err = f.(func(string, int) error)(state, try); err != nil {
-				continue
-			}
-		}
-		if err = store.UpdateBulkJob(context.Background(), s.opt.Store.Q(), job.ID, state, done, failed, s.now()); err == nil {
-			return nil
-		}
+// jobWriteFault is the runner's WriteFault: the fault a test set for whoever
+// started the job.
+func jobWriteFault(j *store.Job, state string, try int) error {
+	if f, ok := jobWriteFaults.Load(j.MadeBy); ok {
+		return f.(func(string, int) error)(state, try)
 	}
-	s.log.Warn("could not record how far a bulk job is", "job", job.ID, "state", state, "error", err)
-	return err
+	return nil
 }
 
 // jobTenants are the tenants a confirmed action works on: a job waits in the
@@ -190,32 +140,20 @@ func (s *server) jobActor(ctx context.Context, id string, sc actingScope) (store
 }
 
 type jobResp struct {
-	ID     string              `json:"id"`
-	Action string              `json:"action"`
-	Total  int                 `json:"total"`
-	Done   int                 `json:"done"`
-	Failed []store.BulkFailure `json:"failed"`
-	State  string              `json:"state"`
+	ID     string             `json:"id"`
+	Action string             `json:"action"`
+	Total  int64              `json:"total"`
+	Done   int64              `json:"done"`
+	Failed []store.JobFailure `json:"failed"`
+	State  string             `json:"state"`
 }
 
-func jobOf(j *store.BulkJob) jobResp {
+func jobOf(j *store.Job) jobResp {
 	f := j.Failed
 	if f == nil {
-		f = []store.BulkFailure{}
+		f = []store.JobFailure{}
 	}
-	return jobResp{j.ID, j.Action, j.Total, j.Done, f, j.State}
-}
-
-// markJobsInterrupted is made once, when the server starts.
-func (s *server) markJobsInterrupted() {
-	if s.single {
-		return
-	}
-	if n, err := store.InterruptBulkJobs(context.Background(), s.opt.Store.Q(), s.now()); err != nil {
-		s.log.Warn("could not mark the bulk jobs a restart interrupted", "error", err)
-	} else if n > 0 {
-		s.log.Info("bulk jobs were interrupted by a restart", "count", n)
-	}
+	return jobResp{j.ID, bulkParamsOf(j).Action, j.Total, j.Done, f, j.State}
 }
 
 func (s *server) adminBulk(c *call) {
@@ -256,28 +194,30 @@ func (s *server) adminBulk(c *call) {
 	if len(queue) == 1 {
 		tenant = queue[0]
 	}
-	job := store.BulkJob{ID: page.NewID(s.now()), TenantID: tenant, MadeBy: c.user().ID, Action: e.req.Action, Total: len(ids), State: store.JobQueued,
-		SiteOnly: c.siteWide(authz.TenantBulkRun), Created: s.now()}
-	if err := store.InsertBulkJob(c.r.Context(), s.opt.Store.Q(), job); err != nil {
+	params, err := json.Marshal(bulkParams{confirmRequest: e.req, IP: s.auth.ClientAddr(c.r), Queue: queue, Narrowed: c.scope.narrowed, ScopeTenant: c.scope.tenant})
+	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	actor, ip := c.user(), s.auth.ClientAddr(c.r)
-	if !s.goBg(func(ctx context.Context) { s.runJob(ctx, job, e.req, actor, ip, queue, c.scope) }) {
-		// The server is stopping: the job never starts, and reads as a restart
-		// leaves it.
-		s.writeJob(&job, store.JobInterrupted, 0, nil)
+	job, err := s.jobs.Enqueue(c.r.Context(), store.Job{ID: page.NewID(s.now()), TenantID: tenant, Kind: bulkKindName, MadeBy: c.user().ID, MadeByName: c.user().Username,
+		Capacity: c.scope.capacity, SiteOnly: c.siteWide(authz.TenantBulkRun), Params: params, Total: int64(len(ids))})
+	if errors.Is(err, jobs.ErrClosed) {
+		// The server is stopping: the job is not added.
 		writeError(c.w, http.StatusServiceUnavailable, "unavailable", "The server is stopping: ask again once it has started.")
 		return
 	}
-	s.auditRow(c, "bulk_started", job.TenantID, map[string]any{"job": job.ID, "action": job.Action, "count": job.Total, "failed": 0})
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	s.auditRow(c, "bulk_started", job.TenantID, map[string]any{"job": job.ID, "action": e.req.Action, "count": job.Total, "failed": 0})
 	writeJSON(c.w, http.StatusAccepted, struct {
 		Job jobResp `json:"job"`
-	}{jobOf(&job)})
+	}{jobOf(job)})
 }
 
 func (s *server) adminGetJob(c *call) {
-	j, err := store.GetBulkJob(c.r.Context(), s.opt.Store.Q(), c.reach(), c.r.PathValue("id"))
+	j, err := s.jobs.Get(c.r.Context(), c.reach(), c.r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such job.")
 		return
@@ -291,110 +231,78 @@ func (s *server) adminGetJob(c *call) {
 	}{jobOf(j)})
 }
 
-// runJob runs a job's items, in the queue of each of the tenants it works on.
-// A panic in an item marks the job failed (with that item) and the server goes
-// on; progress that cannot be written is tried again, and a job whose progress
-// could not be written ends failed rather than read as running. When ctx ends
-// (the handler is closed) the job stops before its next item, or with the item
-// it was on cut short as a request whose client went away is, and ends
-// interrupted with what was done: as a restart leaves it.
-func (s *server) runJob(ctx context.Context, job store.BulkJob, req confirmRequest, actor store.User, ip string, queue []string, sc actingScope) {
+// Run runs a bulk job's items. A panic in an item fails the job (with that
+// item) and the server goes on; progress that cannot be written is tried again,
+// and a job whose progress could not be written ends failed rather than read
+// as running (the runner sees to both). When ctx ends (the handler is closed)
+// the job stops before its next item, or with the item it was on cut short as a
+// request whose client went away is, and ends interrupted with what was done:
+// as a restart leaves it.
+func (k bulkKind) Run(ctx context.Context, j *store.Job, p *jobs.Progress) error {
+	s := k.s
+	bp := bulkParamsOf(j)
 	// Its rows record the capacity of the request that started it.
-	ctx = auditlog.WithCapacity(ctx, sc.capacity)
-	defer jobHook(ctx, &job, "end", "")
-	if !s.jobs.acquire(ctx, queue...) {
-		s.writeJob(&job, store.JobInterrupted, 0, nil)
-		return
-	}
-	defer s.jobs.release(queue...)
-	var failed []store.BulkFailure
-	done, current, broken := 0, "", false
-	write := func(state string) {
-		if err := s.writeJob(&job, state, done, failed); err != nil {
-			broken = true
-		}
-	}
-	finish := func(state string) {
-		if broken && state == store.JobDone {
-			state = store.JobFailed
-		}
-		if err := s.writeJob(&job, state, done, failed); err != nil {
-			s.log.Error("a bulk job ended and could not be recorded; the next start reads it as interrupted", "job", job.ID, "error", err)
-		}
-		// An interrupted job did not finish (as after a restart, nothing says so
-		// but its row).
-		if s.auth != nil && state != store.JobInterrupted {
-			s.auth.AuditIn(ctx, auth.AuditEvent{Kind: "bulk_finished", Actor: actor.ID, Tenant: job.TenantID, IP: ip,
-				Detail: map[string]any{"job": job.ID, "action": job.Action, "count": job.Total, "failed": len(failed)}})
-		}
-	}
-	defer func() {
-		if p := recover(); p != nil {
-			s.log.Error("a bulk job broke", "job", job.ID, "item", current, "panic", p, "stack", string(debug.Stack()))
-			id := current
-			if id == "" {
-				id = "*"
-			}
-			failed = append(failed, store.BulkFailure{ID: id, Error: "an internal error stopped the job", Code: "internal"})
-			finish(store.JobFailed)
-		}
-	}()
-	write(store.JobRunning)
+	ctx = auditlog.WithCapacity(ctx, j.Capacity)
+	sc := actingScope{tenant: bp.ScopeTenant, narrowed: bp.Narrowed, capacity: j.Capacity}
 	fail := func(id string, err error) {
 		code, msg := errorCodeOf(s, err)
-		failed = append(failed, store.BulkFailure{ID: id, Error: msg, Code: code})
+		p.Fail(store.JobFailure{ID: id, Error: msg, Code: code})
 	}
-	if req.Action == "export" {
+	if bp.Action == "export" {
 		// One zip of the whole set, with the rights of the administrator now.
-		current = "*"
-		jobHook(ctx, &job, "item", "*")
+		p.Item("*")
+		jobHook(ctx, j.MadeBy, "item", "*")
 		err := ctx.Err()
 		if err == nil {
 			var cur store.User
 			var access authz.Subject
-			if cur, access, err = s.jobActor(ctx, actor.ID, sc); err == nil {
-				err = s.bulkExport(ctx, req, cur, access)
+			if cur, access, err = s.jobActor(ctx, j.MadeBy, sc); err == nil {
+				err = s.bulkExport(ctx, bp.confirmRequest, cur, access)
 			}
 		}
 		switch {
 		case err == nil:
-			done = job.Total
+			p.Step(j.Total, 0)
 		case ctx.Err() != nil:
-			current = ""
-			finish(store.JobInterrupted)
-			return
+			return ctx.Err()
 		default:
 			fail("*", err)
 		}
-	} else {
-		for _, id := range req.idList() {
-			current = id
-			jobHook(ctx, &job, "item", id)
-			if ctx.Err() != nil {
-				current = ""
-				finish(store.JobInterrupted)
-				return
-			}
-			cur, access, err := s.jobActor(ctx, actor.ID, sc)
-			if err == nil {
-				err = s.bulkItem(ctx, req, id, cur, access, ip, job.ID)
-			}
-			if err != nil && ctx.Err() != nil {
-				// Cut short by the close: not this item's failure.
-				current = ""
-				finish(store.JobInterrupted)
-				return
-			}
-			if err != nil {
-				fail(id, err)
-			} else {
-				done++
-			}
-			write(store.JobRunning)
+		return nil
+	}
+	for _, id := range bp.idList() {
+		p.Item(id)
+		jobHook(ctx, j.MadeBy, "item", id)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		cur, access, err := s.jobActor(ctx, j.MadeBy, sc)
+		if err == nil {
+			err = s.bulkItem(ctx, bp.confirmRequest, id, cur, access, bp.IP, j.ID)
+		}
+		if err != nil && ctx.Err() != nil {
+			// Cut short by the close: not this item's failure.
+			return ctx.Err()
+		}
+		if err != nil {
+			fail(id, err)
+		} else {
+			p.Step(1, 0)
 		}
 	}
-	current = ""
-	finish(store.JobDone)
+	return nil
+}
+
+// Ended records the end of a job that finished (an interrupted one did not: as
+// after a restart, nothing says so but its row).
+func (k bulkKind) Ended(ctx context.Context, j *store.Job) {
+	defer jobHook(ctx, j.MadeBy, "end", "")
+	if k.s.auth == nil || j.State == store.JobInterrupted {
+		return
+	}
+	bp := bulkParamsOf(j)
+	k.s.auth.AuditIn(auditlog.WithCapacity(ctx, j.Capacity), auth.AuditEvent{Kind: "bulk_finished", Actor: j.MadeBy, Tenant: j.TenantID, IP: bp.IP,
+		Detail: map[string]any{"job": j.ID, "action": bp.Action, "count": j.Total, "failed": len(j.Failed)}})
 }
 
 // errorCodeOf is the code and message an error would be answered with.
