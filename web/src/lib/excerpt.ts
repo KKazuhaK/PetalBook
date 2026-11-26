@@ -1,5 +1,5 @@
 // The excerpt of a page, built the way the server builds it (internal/page/text.go), for the offline reader and
-// the mock server. Both are tested with the same cases (internal/page/testdata/excerpts.json).
+// the fixture server. Both are tested with the same cases (internal/page/testdata/excerpts.json).
 
 // A run of three or more backquotes or tildes: the character and the length.
 function fenceRun(t: string): [string, number] {

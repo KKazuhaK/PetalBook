@@ -53,7 +53,7 @@ function browserLanguages(): readonly string[] {
 export const lang: Lang = decideLanguage(readStored(), browserLanguages())
 export const t: Messages = dictionaries[lang]
 
-// Outside a browser (the mock server in Node) there is no document or location.
+// Outside a browser (the fixture server in Node) there is no document or location.
 const dom = globalThis as { document?: { documentElement: { lang: string } }; location?: { reload(): void } }
 
 try {

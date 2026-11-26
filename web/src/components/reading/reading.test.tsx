@@ -8,7 +8,7 @@ import { listShell, putViews, sender, TASK, type Send } from '@/testing/listKit'
 import { t } from '@/i18n'
 import { tb } from '@/i18n/boards'
 
-// Continuous reading against the mock server. The drawing of diagrams is not run here (it needs a real browser).
+// Continuous reading against the fixture server. The drawing of diagrams is not run here (it needs a real browser).
 const renderDiagram = vi.fn<(text: string, dark: boolean) => Promise<string>>()
 vi.mock('@/components/editor/code/mermaidRender', () => ({
   renderDiagram: (text: string, dark: boolean) => renderDiagram(text, dark),
