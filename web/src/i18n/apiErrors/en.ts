@@ -18,6 +18,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   request_failed: 'The request did not succeed.',
   status: 'The other side answered with a status that cannot be used.',
   no_text: 'The answer has no text to show.',
+  already_invited: 'This address has an open invitation already.',
   answer_reveals_secret: 'The answer carried a secret, so it was refused.',
   not_cached: (p) =>
     p.wait
