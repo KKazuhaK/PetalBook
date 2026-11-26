@@ -1,9 +1,11 @@
 import { useState, type FormEvent } from 'react'
+import { CircleCheck, Copy, Plus, Save, Trash2 } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { useCreateTenant, useDeleteTenant, useSetTenancy, useTenancy, useTenants, useUpdateTenant } from '@/api/admin'
 import type { CreatedTenant, Tenant, TenantQuotaKey } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
+import { AdminPageActions } from './AdminPageHeader'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -93,9 +95,12 @@ function TenantList({ enabled }: { enabled: boolean }) {
     <SettingsSection title={tl.title} id="tenants-heading">
       <div className="flex flex-wrap items-center gap-3">
         {!enabled && <p className="text-xs text-muted-foreground">{tl.off}</p>}
-        <Button type="button" size="sm" className="ml-auto" disabled={!enabled} onClick={() => setCreating(true)}>
-          {tl.create}
-        </Button>
+        <AdminPageActions>
+          <Button type="button" disabled={!enabled} onClick={() => setCreating(true)}>
+            <Plus aria-hidden="true" />
+            {tl.create}
+          </Button>
+        </AdminPageActions>
       </div>
       {made?.invite && <InviteNotice tenant={made} onClose={() => setMade(null)} />}
       {list.data.length === 0 ? (
@@ -103,7 +108,7 @@ function TenantList({ enabled }: { enabled: boolean }) {
       ) : (
         <ul className="divide-y rounded-lg border" data-slot="tenant-list">
           {list.data.map((tn) => (
-            <li key={tn.id} className="grid gap-3 px-3 py-2.5">
+            <li key={tn.id} className="grid gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <div className="min-w-0 flex-1 basis-48">
                   <div className="flex flex-wrap items-center gap-2">
@@ -161,6 +166,7 @@ function InviteNotice({ tenant, onClose }: { tenant: CreatedTenant; onClose: () 
             void navigator.clipboard?.writeText(link).then(() => setCopied(true))
           }}
         >
+          <Copy aria-hidden="true" />
           {copied ? tl.copied : tl.copy}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={onClose}>
@@ -295,6 +301,7 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
         />
         <div className="sm:col-span-2">
           <Button type="submit" size="sm" disabled={update.isPending || !name.trim()}>
+            <Save aria-hidden="true" />
             {update.isPending ? tl.saving : tl.save}
           </Button>
         </div>
@@ -311,11 +318,13 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
               onClick={flip}
               className="w-fit"
             >
+              <CircleCheck aria-hidden="true" />
               {tenant.disabled ? tl.enable : tl.disable}
             </Button>
             <p className="text-xs text-muted-foreground">{tl.disableHelp}</p>
           </div>
           <Button type="button" size="sm" variant="destructive" className="ml-auto" onClick={() => setConfirm(true)}>
+            <Trash2 aria-hidden="true" />
             {tl.delete}
           </Button>
         </div>
@@ -424,6 +433,7 @@ function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
         </div>
         <div>
           <Button type="submit" size="sm" disabled={update.isPending}>
+            <Save aria-hidden="true" />
             {update.isPending ? tu.tenant.saving : tu.tenant.save}
           </Button>
         </div>

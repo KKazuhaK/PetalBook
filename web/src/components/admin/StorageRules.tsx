@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Save } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAdminStorage, useSaveAdminStorage } from '@/api/admin'
 import { useConnections } from '@/api/hooks'
@@ -287,7 +288,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
       <FormMessage>{error}</FormMessage>
       <div>
         <Button type="submit" disabled={save.isPending}>
-          {save.isPending && <Spinner />}
+          {save.isPending ? <Spinner /> : <Save aria-hidden="true" />}
           {a.save}
         </Button>
       </div>

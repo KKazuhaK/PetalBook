@@ -3169,6 +3169,7 @@ export function createMockServer(options: MockOptions = {}) {
         openSpaces: spaces.size,
         diskFreeBytes: 50 * 1024 ** 3,
         goVersion: 'go1.27.4',
+        build: { commit: '3f9c2ab', time: '2026-11-25T22:48:00Z', timeKind: 'commit', modified: false },
         storage: storageStatus(),
       }
       return j(status)

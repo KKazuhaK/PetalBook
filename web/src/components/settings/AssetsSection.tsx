@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
-import { Cloud, CloudOff, CircleAlert, CirclePause } from 'lucide-react'
+import { CircleAlert, CirclePause, Cloud, CloudOff, Link2, RefreshCw, Unlink } from 'lucide-react'
 import { useAssetsRemote, useConnectAssets, useDisconnectAssets, useMoveAssets, useRemote } from '@/api/hooks'
 import type { AssetMove, AssetsRemote, RemoteState } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
@@ -97,7 +97,7 @@ function ConnectAssets({ space }: { space: string }) {
       <FormMessage>{error}</FormMessage>
       <div>
         <Button type="submit" disabled={connect.isPending}>
-          {connect.isPending && <Spinner />}
+          {connect.isPending ? <Spinner /> : <Link2 aria-hidden="true" />}
           {connect.isPending ? a.connecting : a.connect}
         </Button>
       </div>
@@ -143,6 +143,7 @@ function Connected({ space, v }: { space: string; v: AssetsRemote }) {
 
       {!v.move && (
         <Button variant="outline" onClick={() => setConfirm(true)}>
+          <Unlink aria-hidden="true" />
           {a.disconnect}
         </Button>
       )}
@@ -202,6 +203,7 @@ function MoveButton({ space, running, failed }: { space: string; running: boolea
   return (
     <div>
       <Button variant="outline" disabled={running || move.isPending} onClick={() => void start()}>
+        <RefreshCw aria-hidden="true" />
         {(running || move.isPending) && <Spinner />}
         {failed ? a.retry : a.moveStart}
       </Button>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, Plus, RefreshCw, Save, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   useAdminGitHub,
@@ -152,7 +152,7 @@ function MadeButNotSaved({ slug, pending }: { slug: string; pending: boolean }) 
       {pending && state !== 'gone' && (
         <div>
           <Button type="button" size="sm" onClick={() => void go()} disabled={retry.isPending}>
-            {retry.isPending && <Spinner />}
+            {retry.isPending ? <Spinner /> : <RefreshCw aria-hidden="true" />}
             {retry.isPending ? tg.admin.pendingRetrying : tg.admin.pendingRetry}
           </Button>
         </div>
@@ -333,11 +333,12 @@ function AppSettings({ app }: { app: AdminGitHub }) {
         <FormMessage>{error}</FormMessage>
         <div className="flex flex-wrap gap-2">
           <Button type="submit" disabled={save.isPending}>
-            {save.isPending && <Spinner />}
+            {save.isPending ? <Spinner /> : <Save aria-hidden="true" />}
             {save.isPending ? tg.admin.checking : tg.admin.save}
           </Button>
           {configured && (
             <Button type="button" variant="outline" onClick={() => setConfirmDelete(true)}>
+              <Trash2 aria-hidden="true" />
               {tg.admin.delete}
             </Button>
           )}
@@ -385,7 +386,7 @@ function Recheck({ checked }: { checked: string }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button type="button" variant="outline" size="sm" disabled={check.isPending} onClick={() => void run()}>
-        {check.isPending && <Spinner />}
+        {check.isPending ? <Spinner /> : <RefreshCw aria-hidden="true" />}
         {check.isPending ? tg.admin.rechecking : tg.admin.recheck}
       </Button>
       <span className="text-xs text-muted-foreground">{t.fmt.labelled(tg.admin.checkedAt, absoluteTime(checked))}</span>
@@ -443,7 +444,7 @@ function CreateApp({ app }: { app: AdminGitHub }) {
       <FormMessage>{error}</FormMessage>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" disabled={start.isPending || inUse} onClick={() => void go()}>
-          {start.isPending && <Spinner />}
+          {start.isPending ? <Spinner /> : <Plus aria-hidden="true" />}
           {start.isPending ? tg.admin.createStarting : tg.admin.createButton}
         </Button>
         <span className="text-xs text-muted-foreground">{tg.admin.createManual}</span>

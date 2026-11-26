@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { useAuditLog } from '@/api/admin'
 import type { AuditItem } from '@/api/types'
 import { ErrorState } from '@/components/common'
@@ -86,6 +87,7 @@ export function AuditSection() {
           />
         </div>
         <Button type="button" variant="outline" onClick={() => void log.refetch()}>
+          <RefreshCw aria-hidden="true" />
           {ta.refresh}
         </Button>
       </form>
@@ -127,7 +129,10 @@ function Row({ r }: { r: AuditItem }) {
     .filter(Boolean)
     .join(' · ')
   return (
-    <li className="grid min-w-0 grid-cols-1 gap-1 px-3 py-2.5 text-sm" data-audit={r.id}>
+    <li
+      className="grid min-w-0 grid-cols-1 gap-1 px-3 py-2.5 text-sm transition-colors hover:bg-muted/40"
+      data-audit={r.id}
+    >
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
         <Badge variant="secondary">{ta.kinds[r.kind] ?? r.kind}</Badge>
         <time dateTime={r.at} className="text-xs text-muted-foreground">

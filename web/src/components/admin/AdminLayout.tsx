@@ -1,12 +1,21 @@
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { ArrowLeft, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import { useActiveSpace } from '@/api/hooks'
+import { useActiveSpace, useSession } from '@/api/hooks'
+import { Logo } from '@/components/brand/Logo'
 import { topBarButton, topBarFrame } from '@/components/layout/topBarStyles'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { spaceUrls, type AdminSection, adminPath } from '@/lib/urls'
+import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import type { NavSection } from './adminNav'
+import { VersionBadge } from './VersionBadge'
+
+// A row of the rail. Collapsed, a row is a 40 px square centred in the rail, so the icon is on the rail's centre line and
+// the highlight is a square round it; open, it is a full-width row.
+const RAIL_ITEM =
+  'flex h-10 items-center rounded-md text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50'
+const RAIL_ICON_ONLY = 'mx-auto w-10 justify-center'
 
 const COLLAPSED_KEY = 'pb.admin.collapsed'
 
@@ -37,6 +46,8 @@ export function AdminLayout({
   const [open, setOpen] = useState(false)
   const { id, spaces } = useActiveSpace()
   const space = spaces.find((s) => s.id === id)
+  // Only the administrators of the whole server may read the build (it is in the server's status).
+  const site = useSession().data?.user?.siteAdmin !== false
   const toggle = () =>
     setCollapsed((c) => {
       try {
@@ -62,24 +73,27 @@ export function AdminLayout({
           back={back}
           spaceName={space?.name}
           collapsed={collapsed}
-          Title="h1"
+          Title="p"
           footer={
-            <button
-              type="button"
-              onClick={toggle}
-              aria-label={collapsed ? tc.expand : tc.collapse}
-              aria-expanded={!collapsed}
-              className="flex h-10 w-full items-center gap-2 rounded-md px-3 text-sm text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
-            >
-              {collapsed ? (
-                <PanelLeftOpen className="size-4 shrink-0" aria-hidden="true" />
-              ) : (
-                <>
-                  <PanelLeftClose className="size-4 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{tc.collapse}</span>
-                </>
-              )}
-            </button>
+            <>
+              <VersionBadge site={site} collapsed={collapsed} />
+              <button
+                type="button"
+                onClick={toggle}
+                aria-label={collapsed ? tc.expand : tc.collapse}
+                aria-expanded={!collapsed}
+                className={`${RAIL_ITEM} ${collapsed ? RAIL_ICON_ONLY : 'w-full gap-2 px-3'} text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground`}
+              >
+                {collapsed ? (
+                  <PanelLeftOpen className="size-4 shrink-0" aria-hidden="true" />
+                ) : (
+                  <>
+                    <PanelLeftClose className="size-4 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{tc.collapse}</span>
+                  </>
+                )}
+              </button>
+            </>
           }
         />
       </aside>
@@ -112,6 +126,7 @@ export function AdminLayout({
             spaceName={space?.name}
             collapsed={false}
             Title="p"
+            footer={<VersionBadge site={site} collapsed={false} />}
             onNavigate={() => setOpen(false)}
           />
         </SheetContent>
@@ -144,12 +159,19 @@ function Nav({
   return (
     <>
       <div className="shrink-0 px-2 pt-3">
+        <div
+          data-slot="admin-brand"
+          className={`flex h-10 items-center ${collapsed ? 'mx-auto w-10 justify-center' : 'gap-2 px-3'}`}
+        >
+          <Logo />
+          {!collapsed && <span className="truncate text-sm font-semibold">{t.appName}</span>}
+        </div>
         <Link
           to={back}
           onClick={onNavigate}
           title={collapsed ? backText : undefined}
           aria-label={backText}
-          className="flex h-10 items-center gap-2 rounded-md px-3 text-sm text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          className={`${RAIL_ITEM} ${collapsed ? RAIL_ICON_ONLY : 'gap-2 px-3'} text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground`}
         >
           <ArrowLeft className="size-4 shrink-0" aria-hidden="true" />
           {!collapsed && <span className="truncate">{backText}</span>}
@@ -168,7 +190,7 @@ function Nav({
                   aria-current={on ? 'page' : undefined}
                   title={collapsed ? label : undefined}
                   aria-label={collapsed ? label : undefined}
-                  className={`flex h-10 items-center gap-3 rounded-md px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${on ? 'bg-brand/10 font-medium text-brand' : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-foreground'}`}
+                  className={`${RAIL_ITEM} ${collapsed ? RAIL_ICON_ONLY : 'gap-3 px-3'} ${on ? 'bg-brand/10 font-medium text-brand' : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-foreground'}`}
                 >
                   <Icon aria-hidden="true" className={`size-4 shrink-0 ${on ? 'text-brand' : ''}`} strokeWidth={1.75} />
                   {!collapsed && <span className="truncate">{label}</span>}
@@ -178,7 +200,7 @@ function Nav({
           })}
         </ul>
       </nav>
-      {footer && <div className="shrink-0 border-t p-2">{footer}</div>}
+      {footer && <div className="grid shrink-0 gap-0.5 border-t p-2">{footer}</div>}
     </>
   )
 }

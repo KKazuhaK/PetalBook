@@ -49,7 +49,8 @@ describe('the administration frame', () => {
   it('is a sidebar of sections with its heading and a way back to the space, the open one marked', async () => {
     m = await open('/admin/groups')
     await settle(() => document.querySelector('[data-slot="admin-layout"]') !== null, 'the frame')
-    expect(document.querySelector('h1')!.textContent).toBe(tc.title)
+    expect(document.querySelector('h1')!.textContent).toBe(tc.sections.groups)
+    expect(sidebar().textContent).toContain(tc.title)
     expect(sidebar().className).toContain('w-[232px]')
     const current = document.querySelector('nav [aria-current="page"]')!
     expect(current.textContent).toBe(tc.sections.groups)
@@ -123,7 +124,10 @@ describe('the administration frame', () => {
   it('folds on a tablet, and the choice is kept in this browser', async () => {
     m = await open('/admin/groups')
     await settle(() => document.querySelector('[data-slot="admin-layout"]') !== null, 'the frame')
-    const fold = () => document.querySelector<HTMLButtonElement>('aside button[aria-expanded]')!
+    const fold = () =>
+      document.querySelector<HTMLButtonElement>(
+        `aside button[aria-label="${tc.collapse}"], aside button[aria-label="${tc.expand}"]`,
+      )!
     expect(fold().getAttribute('aria-expanded')).toBe('true')
     await click(fold())
     expect(sidebar().getAttribute('data-collapsed')).toBe('true')

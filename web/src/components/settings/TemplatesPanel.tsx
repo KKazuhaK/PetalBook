@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Save, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import {
@@ -423,7 +423,7 @@ function TemplateEditor({
             {isNew || dirty ? tt.cancel : tt.close}
           </Button>
           <Button type="submit" disabled={!dirty || invalid || save.isPending}>
-            {save.isPending && <Spinner />}
+            {save.isPending ? <Spinner /> : <Save aria-hidden="true" />}
             {isNew ? tt.settings.create : tt.settings.save}
           </Button>
         </div>
@@ -499,6 +499,7 @@ function DefaultsSection({
                   aria-label={tt.defaults.removeOf(path)}
                   onClick={() => setFolder.mutate({ folder: path, template: '' }, { onError: fail })}
                 >
+                  <Trash2 aria-hidden="true" />
                   {tt.defaults.remove}
                 </Button>
               )}

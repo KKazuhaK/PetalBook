@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Plus, Save, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { errorMessage, useBindFolder, useDeleteType, useSaveType, useTypes } from '@/api/hooks'
@@ -590,7 +590,7 @@ function TypeEditor({
             {isNew || dirty ? tp.cancel : tp.close}
           </Button>
           <Button type="submit" disabled={!dirty || invalid || save.isPending}>
-            {save.isPending && <Spinner />}
+            {save.isPending ? <Spinner /> : <Save aria-hidden="true" />}
             {isNew ? tp.types.create : tp.types.save}
           </Button>
         </div>

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Save } from 'lucide-react'
 import { useSecuritySettings } from '@/api/admin'
 import type { Role, User } from '@/api/types'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -54,6 +55,7 @@ export function PersonProfile({
             />
           </div>
           <Button type="submit" variant="outline" className="h-10" disabled={busy || email.trim() === u.email}>
+            <Save aria-hidden="true" />
             {tsec.users.saveEmail}
           </Button>
           <span role="status" className="text-xs text-muted-foreground">

@@ -2429,6 +2429,8 @@ function suite(target: Target) {
           expect(st.users).toBeGreaterThanOrEqual(1)
           expect(st.openSpaces).toBeGreaterThanOrEqual(0)
           expect(typeof st.goVersion).toBe('string')
+          expect(typeof st.build.commit).toBe('string')
+          expect(typeof st.build.modified).toBe('boolean')
           if (st.diskFreeBytes !== undefined) expect(st.diskFreeBytes).toBeGreaterThanOrEqual(0)
         })
       })

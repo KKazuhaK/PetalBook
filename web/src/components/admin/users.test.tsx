@@ -173,10 +173,10 @@ describe("a person's page", () => {
       return `/admin/user/${amy.id}`
     })
     await settle(() => document.querySelector('[data-slot="person-page"]') !== null, 'the page')
-    expect(document.querySelector('[data-slot="person-summary"]')!.textContent).toBe(
+    expect(document.querySelector('[data-slot="page-description"]')!.textContent).toBe(
       tc.person.summary('amy', '', '', t.roles.member),
     )
-    expect(document.querySelector('h2')!.textContent).toBe('名 amy')
+    expect(document.querySelector('h1')!.textContent).toBe('名 amy')
     expect(
       [...document.querySelectorAll(`nav[aria-label="${tc.person.tabsLabel}"] a`)].map((a) => a.textContent),
     ).toEqual([

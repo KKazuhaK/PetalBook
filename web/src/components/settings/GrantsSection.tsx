@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Ban } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
@@ -74,6 +75,7 @@ export default function GrantsSection() {
                   aria-label={oa.yours.revokeLabel(g.client.name)}
                   onClick={() => setRevoking(g)}
                 >
+                  <Ban aria-hidden="true" />
                   {oa.yours.revoke}
                 </Button>
               }

@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { Link, Navigate } from 'react-router'
-import { ArrowLeft, Ellipsis } from 'lucide-react'
+import { ArrowLeft, Ban, CircleCheck, Copy, Ellipsis, Eye, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useUserRow } from '@/api/admin'
 import { ApiError } from '@/api/client'
@@ -16,6 +16,7 @@ import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { adminPath, adminUserPath } from '@/lib/urls'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
+import { AdminPageHeader } from '../AdminPageHeader'
 import { Avatar } from './Avatar'
 import { PersonAudit } from './PersonAudit'
 import { PersonProfile } from './PersonProfile'
@@ -85,94 +86,101 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
   return (
     <div className="min-w-0 space-y-5" data-slot="person-page" data-person={u.id}>
       {back}
-      <header className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3">
-        <Avatar name={u.name} size="lg" />
-        <div className="min-w-0 flex-1 basis-56">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h2 className="truncate text-xl font-semibold">{u.name}</h2>
+      <AdminPageHeader
+        title={u.name}
+        description={tc.person.summary(u.username, u.email, tenant, roleText)}
+        leading={<Avatar name={u.name} size="lg" />}
+        meta={
+          <>
             {self && <span className="text-xs text-muted-foreground">{tc.users.you}</span>}
             {u.disabled && <Badge variant="secondary">{t.users.disabled}</Badge>}
-          </div>
-          <p className="truncate text-sm text-muted-foreground" data-slot="person-summary">
-            {tc.person.summary(u.username, u.email, tenant, roleText)}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10"
-            disabled
-            title={tc.person.viewAsSoon}
-            aria-describedby="view-as-note"
-          >
-            {tc.person.viewAs}
-          </Button>
-          <span id="view-as-note" className="sr-only">
-            {tc.person.viewAsSoon}
-          </span>
-          {!self && (
+          </>
+        }
+        actions={
+          <>
             <Button
               type="button"
               variant="outline"
               className="h-10"
-              disabled={busy === u.id}
-              onClick={() => void toggle()}
-              aria-label={t.fmt.labelled(u.disabled ? t.users.enable : t.users.disable, u.name)}
+              disabled
+              title={tc.person.viewAsSoon}
+              aria-describedby="view-as-note"
             >
-              {u.disabled ? t.users.enable : t.users.disable}
+              <Eye aria-hidden="true" />
+              {tc.person.viewAs}
             </Button>
-          )}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              aria-label={t.fmt.labelled(tc.person.more, u.name)}
-              className="inline-flex size-10 items-center justify-center rounded-lg border text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 data-popup-open:bg-muted"
-            >
-              <Ellipsis className="size-4" aria-hidden="true" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-44">
-              <DropdownMenuItem
-                className="min-h-10"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(u.username).catch(() => undefined)
-                }}
+            <span id="view-as-note" className="sr-only">
+              {tc.person.viewAsSoon}
+            </span>
+            {!self && (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10"
+                disabled={busy === u.id}
+                onClick={() => void toggle()}
+                aria-label={t.fmt.labelled(u.disabled ? t.users.enable : t.users.disable, u.name)}
               >
-                {tc.users.copyUsername}
-              </DropdownMenuItem>
-              {!self && (
-                <DropdownMenuItem className="min-h-10 text-destructive" onClick={() => setDeleting(true)}>
-                  {tc.users.delete}
+                {u.disabled ? <CircleCheck aria-hidden="true" /> : <Ban aria-hidden="true" />}
+                {u.disabled ? t.users.enable : t.users.disable}
+              </Button>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label={t.fmt.labelled(tc.person.more, u.name)}
+                className="inline-flex size-10 items-center justify-center rounded-lg border text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 data-popup-open:bg-muted"
+              >
+                <Ellipsis className="size-4" aria-hidden="true" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-44">
+                <DropdownMenuItem
+                  className="min-h-10"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(u.username).catch(() => undefined)
+                  }}
+                >
+                  <Copy />
+                  {tc.users.copyUsername}
                 </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                {!self && (
+                  <DropdownMenuItem className="min-h-10 text-destructive" onClick={() => setDeleting(true)}>
+                    <Trash2 />
+                    {tc.users.delete}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        }
+      >
+        <FormMessage focusRef={messageRef}>{error ? error.message : ''}</FormMessage>
+        <nav ref={fadeRef} aria-label={tc.person.tabsLabel} className={`${scrollFadeClass} -mx-4 px-4 md:mx-0 md:px-0`}>
+          <ul className="flex min-w-max gap-1 border-b">
+            {tabs.map((x) => (
+              <li key={x}>
+                <Link
+                  to={adminUserPath(u.id, x === 'profile' ? undefined : x)}
+                  aria-current={x === active ? 'page' : undefined}
+                  className={`relative flex h-11 items-center px-3 text-sm whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${x === active ? 'font-medium text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-brand' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  {tc.person.tabs[x]}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        <div className="min-w-0 animate-in duration-150 fade-in-0" key={active}>
+          {active === 'profile' && <PersonProfile u={u} busy={busy === u.id} save={(p) => change(u, p)} site={site} />}
+          {active === 'security' && (
+            <PersonSecurity u={u} busy={busy === u.id} save={(p) => change(u, p)} site={site} />
+          )}
+          {active === 'sessions' && <PersonSessions u={u} />}
+          {active === 'spaces' && <PersonSpaces u={u} />}
+          {active === 'usage' && <PersonUsage u={u} />}
+          {active === 'audit' && <PersonAudit u={u} />}
         </div>
-      </header>
-      <FormMessage focusRef={messageRef}>{error ? error.message : ''}</FormMessage>
-      <nav ref={fadeRef} aria-label={tc.person.tabsLabel} className={`${scrollFadeClass} -mx-4 px-4 md:mx-0 md:px-0`}>
-        <ul className="flex min-w-max gap-1 border-b">
-          {tabs.map((x) => (
-            <li key={x}>
-              <Link
-                to={adminUserPath(u.id, x === 'profile' ? undefined : x)}
-                aria-current={x === active ? 'page' : undefined}
-                className={`relative flex h-11 items-center px-3 text-sm whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${x === active ? 'font-medium text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-brand' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                {tc.person.tabs[x]}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </nav>
-      <div className="min-w-0 animate-in duration-150 fade-in-0" key={active}>
-        {active === 'profile' && <PersonProfile u={u} busy={busy === u.id} save={(p) => change(u, p)} site={site} />}
-        {active === 'security' && <PersonSecurity u={u} busy={busy === u.id} save={(p) => change(u, p)} site={site} />}
-        {active === 'sessions' && <PersonSessions u={u} />}
-        {active === 'spaces' && <PersonSpaces u={u} />}
-        {active === 'usage' && <PersonUsage u={u} />}
-        {active === 'audit' && <PersonAudit u={u} />}
-      </div>
-      {deleting && <DeletePersonDialog id={u.id} username={u.username} onClose={() => setDeleting(false)} />}
+        {deleting && <DeletePersonDialog id={u.id} username={u.username} onClose={() => setDeleting(false)} />}
+      </AdminPageHeader>
     </div>
   )
 }

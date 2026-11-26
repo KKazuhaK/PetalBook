@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { useConfirm, useJob, useStartBulk } from '@/api/manage'
 import type {
@@ -315,6 +316,7 @@ export function BulkDialog({
             className={`w-fit ${tapTarget}`}
             onClick={() => look(heir?.id)}
           >
+            <RefreshCw aria-hidden="true" />
             {tg.retry}
           </Button>
         )}

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Pencil, Plus, Save, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -145,6 +146,7 @@ export function PasskeysSection({
                   aria-label={t.fmt.labelled(ts.passkeys.rename, p.name)}
                   onClick={() => setRenaming(p)}
                 >
+                  <Pencil aria-hidden="true" />
                   {ts.passkeys.rename}
                 </Button>
                 <Button
@@ -157,6 +159,7 @@ export function PasskeysSection({
                     setRemoving(p)
                   }}
                 >
+                  <Trash2 aria-hidden="true" />
                   {ts.passkeys.remove}
                 </Button>
               </div>
@@ -180,6 +183,7 @@ export function PasskeysSection({
             />
           </div>
           <Button type="submit" disabled={busy}>
+            <Plus aria-hidden="true" />
             {busy ? ts.passkeys.adding : ts.passkeys.add}
           </Button>
         </form>
@@ -279,6 +283,7 @@ function RenameForm({
       <FormMessage>{error}</FormMessage>
       <div className="flex gap-2">
         <Button type="submit" disabled={busy || !name.trim()}>
+          <Save aria-hidden="true" />
           {busy ? ts.passkeys.saving : ts.passkeys.save}
         </Button>
         <Button type="button" variant="ghost" onClick={onClose}>

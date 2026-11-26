@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { LogOut, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import {
@@ -123,6 +124,7 @@ function DisabledSpace({ space }: { space: SpaceInfo }) {
           <p className="text-sm text-muted-foreground">{t.members.disabledLeaveHelp}</p>
           <FormMessage>{error}</FormMessage>
           <Button type="button" variant="outline" size="sm" onClick={() => setAsking(true)}>
+            <LogOut aria-hidden="true" />
             {t.members.leave}
           </Button>
           <AlertDialog open={asking} onOpenChange={setAsking}>
@@ -221,6 +223,7 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
             </div>
             {m.you && !space.personal ? (
               <Button type="button" variant="outline" size="sm" onClick={() => setAsking(m)}>
+                <LogOut aria-hidden="true" />
                 {t.members.leave}
               </Button>
             ) : manage && !m.you ? (
@@ -231,6 +234,7 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
                 aria-label={t.fmt.labelled(t.members.remove, m.name)}
                 onClick={() => setAsking(m)}
               >
+                <Trash2 aria-hidden="true" />
                 {t.members.remove}
               </Button>
             ) : null}
@@ -332,7 +336,7 @@ function AddMember({ space }: { space: string }) {
           </div>
         </div>
         <Button type="submit" disabled={add.isPending}>
-          {add.isPending && <Spinner />}
+          {add.isPending ? <Spinner /> : <Plus aria-hidden="true" />}
           {add.isPending ? t.members.adding : t.members.add}
         </Button>
         <p id="add-member-role-help" className="basis-full text-xs text-muted-foreground">

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { X } from 'lucide-react'
+import { Eraser, RefreshCw, X } from 'lucide-react'
 import { useActiveSpace, useSession, useTags, useTree } from '@/api/hooks'
 import { ErrorState, PageFallback } from '@/components/common'
 import { Button } from '@/components/ui/button'
@@ -188,6 +188,7 @@ export default function OfflinePanel({ space }: { space: string }) {
               disabled={syncing || busy || offline}
               onClick={() => void syncNow(user, space).finally(reload)}
             >
+              <RefreshCw aria-hidden="true" />
               {syncing ? ol.syncing : ol.syncNow}
             </Button>
             <Button
@@ -196,6 +197,7 @@ export default function OfflinePanel({ space }: { space: string }) {
               disabled={busy}
               onClick={() => void dropCopy(user, space).then(() => (reload(), toast.success(ol.cleared)))}
             >
+              <Eraser aria-hidden="true" />
               {ol.clear}
             </Button>
           </div>

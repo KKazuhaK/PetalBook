@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Copy, Eraser, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { adminApi, useAuthProviders, useSyncedGroups } from '@/api/admin'
@@ -6,7 +7,7 @@ import { ApiError } from '@/api/client'
 import { keys } from '@/api/hooks'
 import type { AuthProvider, ProviderInput, ProviderKind } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
-import { ICON_PRESETS, ProviderIcon } from '@/components/auth/ProviderIcon'
+import { ProviderIcon } from '@/components/auth/ProviderIcon'
 import { ErrorState } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import {
@@ -56,6 +57,7 @@ export function ProvidersSection() {
     <SettingsSection title={tp.title} description={tp.help} id="security-providers">
       <div>
         <Button type="button" onClick={() => setEditing('new')}>
+          <Plus aria-hidden="true" />
           {tp.add}
         </Button>
       </div>
@@ -166,6 +168,7 @@ function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => v
           aria-label={tp.editFor(p.name)}
           onClick={onEdit}
         >
+          <Pencil aria-hidden="true" />
           {tp.edit}
         </Button>
         <Button
@@ -176,6 +179,7 @@ function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => v
           aria-label={tp.refreshFor(p.name)}
           onClick={() => void run(() => adminApi.refreshAuthProvider(p.slug), tp.refreshed)}
         >
+          <RefreshCw aria-hidden="true" />
           {busy ? tp.refreshing : tp.refresh}
         </Button>
         <Button
@@ -186,6 +190,7 @@ function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => v
           aria-label={tp.deleteFor(p.name)}
           onClick={onDelete}
         >
+          <Trash2 aria-hidden="true" />
           {tp.delete}
         </Button>
       </div>
@@ -490,20 +495,6 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
           maxLength={60}
           autoComplete="off"
         />
-        <div className="grid gap-1.5">
-          <Label htmlFor="provider-icon">{tp.icon}</Label>
-          <div className="flex min-w-0 items-center gap-2">
-            <ProviderIcon icon={f.icon} className="size-5 shrink-0" />
-            <NativeSelect id="provider-icon" value={f.icon} onChange={(e) => set({ icon: e.target.value })}>
-              <option value="">{tp.iconNone}</option>
-              {ICON_PRESETS.map((n) => (
-                <option key={n} value={`preset:${n}`}>
-                  {tp.icons[n] ?? n}
-                </option>
-              ))}
-            </NativeSelect>
-          </div>
-        </div>
         <Field
           label={tp.order}
           help={tp.orderHelp}
@@ -676,6 +667,7 @@ function GroupsFields({ f, set }: { f: F; set: (p: Partial<F>) => void }) {
               aria-label={`${tgp.removeRow}: ${e.value}`}
               onClick={() => up({ map: g.map.filter((_, j) => j !== i) })}
             >
+              <Trash2 aria-hidden="true" />
               {tgp.removeRow}
             </Button>
           </div>
@@ -687,6 +679,7 @@ function GroupsFields({ f, set }: { f: F; set: (p: Partial<F>) => void }) {
             size="sm"
             onClick={() => up({ map: [...g.map, { value: '', groupId: '' }] })}
           >
+            <Plus aria-hidden="true" />
             {tgp.addRow}
           </Button>
         </div>
@@ -761,6 +754,7 @@ function ReadOnly({
           />
         )}
         <Button type="button" variant="outline" size="sm" onClick={() => void copy()}>
+          <Copy aria-hidden="true" />
           {copied ? tp.copied : tp.copy}
         </Button>
       </div>
@@ -797,6 +791,7 @@ function WriteOnly({
           </button>
         </span>
         <Button type="button" variant="outline" size="sm" onClick={() => onChange('')}>
+          <Eraser aria-hidden="true" />
           {tp.secretClear}
         </Button>
       </div>

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Pencil, Plus, RefreshCw, Save, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   useAdminForge,
@@ -63,6 +64,7 @@ export function ForgeCards() {
       ) : (
         <div>
           <Button type="button" variant="outline" onClick={() => setAdding(true)}>
+            <Plus aria-hidden="true" />
             {tf.admin.add}
           </Button>
         </div>
@@ -186,7 +188,7 @@ function ForgeDetails({ forge }: { forge: AdminForge }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" disabled={check.isPending} onClick={() => void recheck()}>
-            {check.isPending && <Spinner />}
+            {check.isPending ? <Spinner /> : <RefreshCw aria-hidden="true" />}
             {check.isPending ? tf.admin.checking : tf.admin.check}
           </Button>
           {forge.checked && (
@@ -232,7 +234,7 @@ function ForgeDetails({ forge }: { forge: AdminForge }) {
           <FormMessage>{error}</FormMessage>
           <div className="flex flex-wrap gap-2">
             <Button type="submit" disabled={patch.isPending}>
-              {patch.isPending && <Spinner />}
+              {patch.isPending ? <Spinner /> : <Save aria-hidden="true" />}
               {patch.isPending ? tf.admin.saving : tf.admin.save}
             </Button>
             <Button type="button" variant="ghost" onClick={() => setEditing(false)}>
@@ -243,9 +245,11 @@ function ForgeDetails({ forge }: { forge: AdminForge }) {
       ) : (
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" onClick={() => setEditing(true)}>
+            <Pencil aria-hidden="true" />
             {tf.admin.edit}
           </Button>
           <Button type="button" variant="outline" onClick={() => setConfirm(true)}>
+            <Trash2 aria-hidden="true" />
             {tf.admin.remove}
           </Button>
         </div>
@@ -390,7 +394,7 @@ function AddForge({ onDone }: { onDone: () => void }) {
       <FormMessage>{error}</FormMessage>
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={create.isPending}>
-          {create.isPending && <Spinner />}
+          {create.isPending ? <Spinner /> : <Save aria-hidden="true" />}
           {create.isPending ? tf.admin.saving : tf.admin.save}
         </Button>
         <Button type="button" variant="ghost" onClick={onDone}>

@@ -480,7 +480,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 			return fmt.Errorf("the authorization server: %w", err)
 		}
 	}
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, Connections: conns, PublicURL: cfg.publicURL, MaxSpaces: c.maxSpacesFlag(), NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, Connections: conns, PublicURL: cfg.publicURL, MaxSpaces: c.maxSpacesFlag(), NoMCP: c.noMCP, Version: version, BuildTime: buildTime, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
 	var webOpts []webui.Option
 	if svc != nil {

@@ -1,4 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react'
+import { Eraser, Save } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { adminApi, useSecuritySettings } from '@/api/admin'
@@ -290,6 +291,7 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
                         </button>
                       </p>
                       <Button type="button" variant="outline" size="sm" onClick={() => set({ secret: '' })}>
+                        <Eraser aria-hidden="true" />
                         {tsec.captcha.clear}
                       </Button>
                     </>
@@ -466,6 +468,7 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
       {err('page')}
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={busy || !dirty}>
+          <Save aria-hidden="true" />
           {busy ? tsec.saving : tsec.save}
         </Button>
         {dirty && (
