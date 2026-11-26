@@ -373,7 +373,7 @@ func TestPurgingAPersonDeletesTheirDataLeavesATombstoneAndRetiresTheName(t *test
 		binDirs := a.dir + "/recycle"
 		tok := confirmFor(t, f.admin, "purge", "items", item)
 		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		// Their personal data is gone; the row stays as a tombstone.
 		for _, q := range []string{
 			`SELECT COUNT(*) FROM passwords WHERE user_id = '` + f.ownerID + `'`,
@@ -436,7 +436,7 @@ func TestAPurgedUsernameIsFreeByDefaultAndNeverWhenTheSiteSaysSo(t *testing.T) {
 			item := f.admin.do("DELETE", "/api/users/"+id, map[string]any{"heir": f.editorID}).want(t, 200, "").body["id"].(string)
 			tok := confirmFor(t, f.admin, "purge", "items", item)
 			f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-			a.mgr.WaitPurges()
+			waitPurges(t, a)
 		}
 		take := func(username string) result {
 			inv := f.admin.do("POST", "/api/invites", map[string]any{"role": "member"}).want(t, 201, "")
@@ -719,7 +719,7 @@ func TestARestoreAndAPurgeOfAPersonThatWereCutShortAreFinished(t *testing.T) {
 		// Purging the item of a person who is not deleted must not touch their data.
 		tok := confirmFor(t, f.admin, "purge", "items", item)
 		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		if n := a.countRows(t, `SELECT COUNT(*) FROM passwords WHERE user_id = '`+f.ownerID+`'`); n != 1 {
 			t.Fatal("a purge of an item whose person is not deleted deleted their data")
 		}
@@ -732,7 +732,7 @@ func TestARestoreAndAPurgeOfAPersonThatWereCutShortAreFinished(t *testing.T) {
 		stop.Store("purge-user:spaces")
 		tok = confirmFor(t, f.admin, "purge", "items", item)
 		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		stop.Store("")
 		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+item+`' AND job_id <> ''`); n != 1 {
 			t.Fatal("the item is not left purging")
@@ -805,7 +805,7 @@ func TestPurgingAStaleItemOfAPersonLeavesALaterDeletionWhole(t *testing.T) {
 			t.Helper()
 			tok := confirmFor(t, f.admin, "purge", "items", item)
 			f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-			a.mgr.WaitPurges()
+			waitPurges(t, a)
 			if err := a.mgr.FinishRecycle(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -1259,7 +1259,7 @@ func TestDeletingAPersonCountsAndEndsTheirConnectionsToEveryProvider(t *testing.
 		connect(f.ownerID)
 		tok := confirmFor(t, f.admin, "purge", "items", item)
 		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		if n := a.countRows(t, `SELECT COUNT(*) FROM provider_authorizations WHERE user_id = '`+f.ownerID+`'`); n != 0 {
 			t.Fatalf("%d connections survive the purge", n)
 		}

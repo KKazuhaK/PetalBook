@@ -102,7 +102,7 @@ func TestPurgingEarlyNeedsASiteAdministratorAndAFreshConfirmation(t *testing.T) 
 		}
 		// It works once.
 		f.root.do("DELETE", "/api/admin/recycle/"+one+"?confirm="+tok, nil).want(t, 202, "")
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		f.root.do("DELETE", "/api/admin/recycle/"+one+"?confirm="+tok, nil).want(t, 404, "not_found")
 		if n := f.countOf(`SELECT COUNT(*) FROM recycle_items WHERE id = '` + one + `'`); n != 0 {
 			t.Fatalf("the item is still there")
@@ -120,7 +120,7 @@ func TestPurgingEarlyNeedsASiteAdministratorAndAFreshConfirmation(t *testing.T) 
 		// And a stale token is spent: asking again works.
 		tok = confirmFor(t, f.root, "purge", "items", two)
 		f.root.do("DELETE", "/api/admin/recycle/"+two+"?confirm="+tok, nil).want(t, 202, "")
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		// Purging deletes the directory too, and is audited.
 		a.auth.FlushAudit(context.Background())
 		if rows := f.root.audit(t, "space_purged"); len(rows) != 2 {
@@ -614,7 +614,7 @@ func TestAnEarlyPurgeRunsInTheBackground(t *testing.T) {
 		}
 		admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 409, "busy")
 		close(release)
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+item+`'`); n != 0 {
 			t.Fatal("the purge did not finish")
 		}

@@ -3,7 +3,7 @@
 // Kept apart from admin.ts, which is the older half of the administration's calls.
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { enc, request } from './client'
+import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
 import type {
   ConfirmRequest,
@@ -244,6 +244,9 @@ export function useStartBulk() {
   })
 }
 export const jobActive = (j: { state: string } | undefined) => !!j && (j.state === 'queued' || j.state === 'running')
+// A refusal (403: no key for the kind; 404: no such job, or not the caller's) is not asked again: it would answer the
+// same. A 429 and the server's own failures are asked again at the next tick.
+const refused = (e: unknown) => e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 429
 
 // A job is asked about while it is queued or running, and once more when it ends (so what it did shows: the lists it
 // changed, the recycle bin and the exports, are read again then). It is the one poller of every kind of job.
@@ -261,7 +264,8 @@ export function useJob(id: string | null) {
       }
       return job
     },
-    refetchInterval: (q) => (q.state.data && !jobActive(q.state.data) ? false : pollMs.value),
+    refetchInterval: (q) =>
+      refused(q.state.error) || (q.state.data && !jobActive(q.state.data)) ? false : pollMs.value,
     staleTime: 0,
   })
 }
@@ -276,7 +280,8 @@ export function useJobs(params: Omit<JobsParams, 'cursor' | 'limit'>, enabled = 
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 0,
-    refetchInterval: (q) => (q.state.data?.pages.some((p) => p.items.some(jobActive)) ? pollMs.value : false),
+    refetchInterval: (q) =>
+      !refused(q.state.error) && q.state.data?.pages.some((p) => p.items.some(jobActive)) ? pollMs.value : false,
   })
 }
 

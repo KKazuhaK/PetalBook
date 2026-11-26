@@ -63,7 +63,12 @@ func (s *server) enterScope(c *call, rt route) bool {
 	c.scope = actingScope{tenant: c.p.User.TenantID, own: c.p.User.TenantID}
 	admin := rt.access.kind == kindKey && administers(rt.access.key)
 	if admin {
-		c.scope.capacity = capacityFor(c.p.Access, rt.access.key)
+		c.scope.capacity = auditlog.CapacityTenantAdmin
+		for _, k := range rt.access.keys() {
+			if capacityFor(c.p.Access, k) == auditlog.CapacitySiteAdmin {
+				c.scope.capacity = auditlog.CapacitySiteAdmin
+			}
+		}
 	}
 	vals := c.r.Header.Values(ScopeHeader)
 	// What a browser fetches by its address (the audit's CSV) cannot carry a

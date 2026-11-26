@@ -127,8 +127,10 @@ type Options struct {
 	// (default time.After).
 	After func(time.Duration) <-chan time.Time
 	// MaxRunning and PerTenant, when set, are the limits of the classes that
-	// have one (Bulk and IO, which share them: the settings jobs.maxRunning
-	// and jobs.perTenant). They are read each time the runner decides what to
+	// have one (Bulk and IO: the settings jobs.maxRunning and jobs.perTenant).
+	// MaxRunning is the server's total of those classes together; PerTenant
+	// applies to each class on its own (a tenant runs up to that many bulk
+	// actions and that many exports or moves). They are read each time the runner decides what to
 	// start, so a change applies at the next dispatch; a lowered limit stops
 	// nothing that runs. Unset, a class keeps its own numbers.
 	MaxRunning func() int
@@ -509,6 +511,7 @@ func (r *Runner) cancelOnce(ctx context.Context, sc store.Scope, id string) erro
 	if err == nil {
 		j.State = store.JobCancelled
 		r.deliver(id, Result{Job: j, Err: context.Canceled})
+		r.wentIdle()
 	}
 	return err
 }
@@ -691,6 +694,9 @@ func (r *Runner) dispatch() error {
 			delete(r.claiming, j.ID)
 			r.mu.Unlock()
 			r.release(cl, queues)
+			if !ok && err == nil {
+				r.wentIdle() // lost to a cancel or another runner: it may have ended
+			}
 			continue
 		}
 		if r.afterClaim != nil {
@@ -717,6 +723,16 @@ func (r *Runner) failQueued(h Handler, j *store.Job) {
 	end.Updated = r.opt.Now()
 	r.ended(context.Background(), h, &end)
 	r.deliver(j.ID, Result{Job: &end, Err: errPanicked})
+	r.wentIdle()
+}
+
+// wentIdle wakes WaitIdle: a job has ended (and released its slots, if it held
+// any), so it looks again.
+func (r *Runner) wentIdle() {
+	r.mu.Lock()
+	close(r.idle)
+	r.idle = make(chan struct{})
+	r.mu.Unlock()
 }
 
 // ended tells an Ender kind that a job has ended and its end is written.
@@ -738,9 +754,10 @@ func queuesOf(h Handler, j *store.Job) []string {
 }
 
 // take takes a slot of the class on the server and for each tenant, all or
-// none.
+// none. Each class counts its own jobs per tenant (a long bulk action does not
+// hold a tenant's exports); the classes with limits share the server's count.
 func (r *Runner) take(cl Class, tenants []string) bool {
-	cl = r.limited(cl)
+	group, perServer := r.limited(cl)
 	perTenant := make(map[string]int, len(tenants))
 	if cl.PerTenant > 0 {
 		for _, t := range tenants {
@@ -752,7 +769,7 @@ func (r *Runner) take(cl Class, tenants []string) bool {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if cl.PerServer > 0 && r.server[cl.Name] >= cl.PerServer {
+	if perServer > 0 && r.server[group] >= perServer {
 		return false
 	}
 	per := r.tenant[cl.Name]
@@ -768,28 +785,28 @@ func (r *Runner) take(cl Class, tenants []string) bool {
 	for _, t := range tenants {
 		per[t]++
 	}
-	r.server[cl.Name]++
+	r.server[group]++
 	return true
 }
 
-// limitedName is the slot group of the classes that the settings limit.
+// limitedName is the server's slot group of the classes that the settings limit.
 const limitedName = "limited"
 
-// limited is the class as it counts its slots: the classes with limits (bulk
-// actions, exports and moves) share one group, whose numbers are the settings'.
-func (r *Runner) limited(cl Class) Class {
+// limited is the group the class counts its server slots in, and the group's
+// limit: the classes with limits (bulk actions, exports and moves) share one,
+// whose number is the setting's (jobs.maxRunning, the server's total).
+func (r *Runner) limited(cl Class) (string, int) {
 	if cl.PerTenant == 0 && cl.PerServer == 0 {
-		return cl
+		return cl.Name, 0
 	}
-	cl.Name = limitedName
 	if r.opt.MaxRunning != nil {
-		cl.PerServer = max(1, r.opt.MaxRunning())
+		return limitedName, max(1, r.opt.MaxRunning())
 	}
-	return cl
+	return limitedName, cl.PerServer
 }
 
 func (r *Runner) release(cl Class, tenants []string) {
-	cl = r.limited(cl)
+	group, _ := r.limited(cl)
 	r.mu.Lock()
 	per := r.tenant[cl.Name]
 	for _, t := range tenants {
@@ -797,7 +814,7 @@ func (r *Runner) release(cl Class, tenants []string) {
 			delete(per, t)
 		}
 	}
-	r.server[cl.Name]--
+	r.server[group]--
 	r.mu.Unlock()
 }
 
@@ -829,9 +846,8 @@ func (r *Runner) start(h Handler, j *store.Job, cl Class, queues []string) {
 		r.Wake()
 		r.mu.Lock()
 		r.running--
-		close(r.idle)
-		r.idle = make(chan struct{})
 		r.mu.Unlock()
+		r.wentIdle()
 	}()
 }
 

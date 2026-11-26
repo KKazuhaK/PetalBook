@@ -90,7 +90,7 @@ func TestARecycleItemSaysItsState(t *testing.T) {
 		if r.body["state"] != "purging" {
 			t.Fatalf("%s", r.raw)
 		}
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 	})
 }
 

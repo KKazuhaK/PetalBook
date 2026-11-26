@@ -650,7 +650,8 @@ func (m *Manager) PurgeItem(ctx context.Context, sc store.Scope, itemID string) 
 
 // WaitPurges returns once no job of the runner is queued or running: the
 // purges StartPurge made are over (tests, and a caller that wants them over).
-func (m *Manager) WaitPurges() { _ = m.runner().WaitIdle(context.Background()) }
+// It returns ctx's error should ctx end first.
+func (m *Manager) WaitPurges(ctx context.Context) error { return m.runner().WaitIdle(ctx) }
 
 // PurgeBy says who asks for a purge (and from where, for the audit row its end
 // makes); the server's own purge of an item past its days has none.
