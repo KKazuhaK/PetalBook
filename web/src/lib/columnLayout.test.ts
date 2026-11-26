@@ -139,10 +139,10 @@ describe('auto fit', () => {
     expect(out.widths.b).toBeGreaterThan(out.widths.a)
     expect(out.widths.b).toBeLessThan(300)
   })
-  it('keeps the least widths, and reports their total, only when even those do not fit the room', () => {
+  it('keeps each column whole (its content, up to its cap) when even the least widths do not fit the room', () => {
     const out = autoWidths([col('a', 250), col('b', 300)], 150)
-    expect(out.widths).toEqual({ a: 100, b: 100 })
-    expect(out.total).toBe(200)
+    expect(out.widths).toEqual({ a: 250, b: 300 })
+    expect(out.total).toBe(550)
   })
   it('lets a cap below the least width give way, and takes a column not measured as its least width', () => {
     const out = autoWidths([col('a', 500, { max: 50 }), col('b', 0)], 0)
@@ -170,5 +170,22 @@ describe('least widths in a narrow box', () => {
   })
   it('takes the narrow ones only in a narrow box where the declared ones do not fit', () => {
     expect(leastWidths(cols, 250, true)).toEqual({ a: 140, b: 100 })
+  })
+  it('keeps the declared least widths when even the narrow ones would not fit: the table scrolls, nothing is cut', () => {
+    expect(leastWidths(cols, 200, true)).toEqual({ a: 180, b: 100 })
+  })
+})
+
+describe('widths when the table has to scroll', () => {
+  it('gives each column its content width (at least its least, at most its cap) rather than squeezing to the least', () => {
+    const cols = [
+      { id: 'a', content: 150, min: 100, max: 300, weight: 1 },
+      { id: 'b', content: 400, min: 100, max: 300, weight: 1 },
+      { id: 'c', content: 50, min: 100, max: 300, weight: 1 },
+    ]
+    // The least widths alone (300) do not fit 250: the table scrolls, and each column is whole.
+    const out = autoWidths(cols, 250)
+    expect(out.widths).toEqual({ a: 150, b: 300, c: 100 })
+    expect(out.total).toBe(550)
   })
 })
