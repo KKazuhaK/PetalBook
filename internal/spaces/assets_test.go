@@ -1,6 +1,7 @@
 package spaces
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,12 +9,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"petalbook.app/server/internal/gitstore"
 	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/jobs"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/space"
 	"petalbook.app/server/internal/store"
@@ -286,14 +289,14 @@ func TestMovingAttachmentsIntoTheAttachmentRepository(t *testing.T) {
 		if _, err := a.m.ConnectAssets(ctx, a.h, fileTokenReq(a.aRemote)); err != nil {
 			t.Fatalf("the same repository with the same credential: %v", err)
 		}
-		v, started, err := a.m.StartMove(ctx, a.h)
+		v, started, err := a.m.StartMove(ctx, a.h, "", "")
 		if err != nil || !started || v.Move == nil || v.Move.Files != 3 {
 			t.Fatalf("%+v %v %v", v, started, err)
 		}
-		if _, _, err := a.m.StartMove(ctx, a.h); err != nil && !errors.Is(err, ErrAssetsConflict) {
+		if _, _, err := a.m.StartMove(ctx, a.h, "", ""); err != nil && !errors.Is(err, ErrAssetsConflict) {
 			t.Fatalf("%v", err)
 		}
-		mv := a.waitMove(store.MoveDone)
+		mv := a.waitMove(MoveDone)
 		if mv.Files != 3 || mv.FilesDone != 3 || mv.Bytes == 0 || mv.BytesDone != mv.Bytes {
 			t.Fatalf("%+v", mv)
 		}
@@ -334,7 +337,7 @@ func TestMovingAttachmentsIntoTheAttachmentRepository(t *testing.T) {
 			t.Fatal(err)
 		}
 		// A second move has nothing to do; the repository cannot be taken away.
-		if v, started, err := a.m.StartMove(ctx, a.h); err != nil || started {
+		if v, started, err := a.m.StartMove(ctx, a.h, "", ""); err != nil || started {
 			t.Fatalf("%+v %v %v", v, started, err)
 		}
 		if err := a.m.DisconnectAssets(ctx, a.h); !errors.Is(err, ErrAssetsConflict) {
@@ -389,7 +392,7 @@ func TestACrashAtEveryStepOfMovingAttachmentsLosesNone(t *testing.T) {
 				want := a.uploadBeforeMove()
 				a.connectAssets()
 				crash = step
-				if _, _, err := a.m.StartMove(ctx, a.h); err != nil {
+				if _, _, err := a.m.StartMove(ctx, a.h, "", ""); err != nil {
 					t.Fatal(err)
 				}
 				select {
@@ -397,19 +400,19 @@ func TestACrashAtEveryStepOfMovingAttachmentsLosesNone(t *testing.T) {
 				case <-time.After(20 * time.Second):
 					t.Fatalf("the move never reached %s", step)
 				}
-				// Wait until the run has ended, as a stopped process would have.
-				deadline := time.Now().Add(10 * time.Second)
-				for a.m.moveRunning(a.in.ID) && time.Now().Before(deadline) {
-					time.Sleep(10 * time.Millisecond)
-				}
+				// The run stops at the crash, as a stopped process would have.
 				nothingLost(t, a, want)
-				// The move was not recorded as a failure: it goes on at the next start.
-				row, err := store.GetAssetRemote(ctx, st.Q(), a.in.ID)
-				if err != nil || !row.Move.Running() {
+				// The move was not recorded as a failure: the stop of the server
+				// queues it again, and it goes on at the next start.
+				row, err := store.GetRemote(ctx, st.Q(), a.in.ID, store.RoleAssets)
+				if err != nil || row.JobID == "" {
 					t.Fatalf("the move after a crash at %s: %+v %v", step, row, err)
 				}
 				a.h.Release()
 				a.m.Close()
+				if j, err := store.GetJob(ctx, st.Q(), store.AllTenants(), row.JobID); err != nil || j.State != store.JobQueued {
+					t.Fatalf("the move after a crash at %s and a stop: %+v %v", step, j, err)
+				}
 				crash = ""
 				m2 := a.open(serving)
 				h, err := m2.Open(ctx, a.user, a.in.ID)
@@ -418,7 +421,7 @@ func TestACrashAtEveryStepOfMovingAttachmentsLosesNone(t *testing.T) {
 				}
 				defer h.Release()
 				a.m, a.h = m2, h
-				a.waitMove(store.MoveDone)
+				a.waitMove(MoveDone)
 				nothingLost(t, a, want)
 				for rel, data := range want {
 					if body, _, err := readAsset(t, h.Space, rel); err != nil || body != data {
@@ -456,10 +459,10 @@ func movedFixture(t *testing.T, st *store.Store, mod ...func(*Options)) (*assetF
 	a := newAssetFixture(t, st, mod...)
 	want := a.uploadBeforeMove()
 	a.connectAssets()
-	if _, _, err := a.m.StartMove(ctx, a.h); err != nil {
+	if _, _, err := a.m.StartMove(ctx, a.h, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	a.waitMove(store.MoveDone)
+	a.waitMove(MoveDone)
 	a.h.Release()
 	a.idle(72 * time.Hour)
 	return a, want
@@ -562,7 +565,7 @@ func TestNothingIsEvictedWhileTheAttachmentRepositoryMayHoldTheOnlyCopy(t *testi
 		})
 		a.uploadBeforeMove()
 		a.connectAssets()
-		if _, _, err := a.m.StartMove(ctx, a.h); err != nil {
+		if _, _, err := a.m.StartMove(ctx, a.h, "", ""); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -573,7 +576,7 @@ func TestNothingIsEvictedWhileTheAttachmentRepositoryMayHoldTheOnlyCopy(t *testi
 			t.Fatalf("a space whose attachments are being moved was evicted or not refused as busy: %v", err)
 		}
 		release()
-		a.waitMove(store.MoveDone)
+		a.waitMove(MoveDone)
 		time.Sleep(100 * time.Millisecond)
 	})
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
@@ -708,7 +711,7 @@ func TestAMoveWhoseAttachmentRepositoryLostItsBranchLosesNone(t *testing.T) {
 				aRemote = a.aRemote
 				want := a.uploadBeforeMove()
 				a.connectAssets()
-				if _, _, err := a.m.StartMove(ctx, a.h); err != nil {
+				if _, _, err := a.m.StartMove(ctx, a.h, "", ""); err != nil {
 					t.Fatal(err)
 				}
 				deadline := time.Now().Add(20 * time.Second)
@@ -839,10 +842,10 @@ func TestASwitchWhoseAnswerWasLostEndsDone(t *testing.T) {
 		defer a.h.Release()
 		want := a.uploadBeforeMove()
 		a.connectAssets()
-		if _, _, err := a.m.StartMove(ctx, a.h); err != nil {
+		if _, _, err := a.m.StartMove(ctx, a.h, "", ""); err != nil {
 			t.Fatal(err)
 		}
-		a.waitMove(store.MoveFailed)
+		a.waitMove(MoveFailed)
 		a.r.setDown(false)
 		if runGit(t, a.remote, "log", "-n1", "--format=%s", "main") != space.SwitchMessage {
 			t.Fatal("the switch did not land")
@@ -850,11 +853,11 @@ func TestASwitchWhoseAnswerWasLostEndsDone(t *testing.T) {
 		if err := a.h.Space.Pull(ctx, true); err != nil {
 			t.Fatal(err)
 		}
-		v, started, err := a.m.StartMove(ctx, a.h)
-		if err != nil || started || v.Move == nil || v.Move.State != store.MoveDone {
+		v, started, err := a.m.StartMove(ctx, a.h, "", "")
+		if err != nil || started || v.Move == nil || v.Move.State != MoveDone {
 			t.Fatalf("%+v %v %v", v, started, err)
 		}
-		if v, err := a.m.AssetsRemote(ctx, a.h); err != nil || v.Move.State != store.MoveDone {
+		if v, err := a.m.AssetsRemote(ctx, a.h); err != nil || v.Move.State != MoveDone {
 			t.Fatalf("%+v %v", v, err)
 		}
 		nothingLost(t, a, want)
@@ -927,7 +930,7 @@ func TestReconnectingTheAttachmentRepositoryWhileItIsOpened(t *testing.T) {
 		defer a.h.Release()
 		type opened struct {
 			r   any
-			row *store.AssetRemote
+			row *store.Remote
 			err error
 		}
 		var armed atomic.Bool
@@ -957,7 +960,7 @@ func TestReconnectingTheAttachmentRepositoryWhileItIsOpened(t *testing.T) {
 		if o.err != nil || o.r == nil {
 			t.Fatalf("the opener: %v %v", o.r, o.err)
 		}
-		row, err := store.GetAssetRemote(ctx, st.Q(), a.in.ID)
+		row, err := store.GetRemote(ctx, st.Q(), a.in.ID, store.RoleAssets)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -993,12 +996,174 @@ func TestARefreshCancelledByAReconnectLeavesTheStateAlone(t *testing.T) {
 		a.connectAssets() // the same repository again (a new token)
 		close(release)
 		a.m.Close() // waits for the refresh
-		row, err := store.GetAssetRemote(ctx, st.Q(), a.in.ID)
+		row, err := store.GetRemote(ctx, st.Q(), a.in.ID, store.RoleAssets)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if row.State != store.RemoteOK {
 			t.Fatalf("the state is %q (%s) after connecting again", row.State, row.LastError)
+		}
+	})
+}
+
+// A stop between the switch's commit and the work tree's reset: the next start
+// puts the work tree in line when the space is opened, before the move's job
+// has run (it may wait long for its slot), and an upload then goes to the
+// attachment repository rather than into an ignored assets/.
+func TestAnUploadWorksAfterAStopInTheSwitchBeforeTheMoveRunsAgain(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		var crash atomic.Value
+		crash.Store("")
+		gate := make(chan struct{})
+		var once sync.Once
+		open := func() { once.Do(func() { close(gate) }) }
+		t.Cleanup(open)
+		hook := func(s string) error {
+			if s == crash.Load().(string) {
+				return errors.New("crash at " + s)
+			}
+			if s == "started" && crash.Load().(string) == "" {
+				<-gate
+			}
+			return nil
+		}
+		crashed := make(chan struct{}, 1)
+		a := newAssetFixture(t, st, func(o *Options) {
+			o.AssetsHook = func(s string) error {
+				err := hook(s)
+				if err != nil {
+					select {
+					case crashed <- struct{}{}:
+					default:
+					}
+				}
+				return err
+			}
+		})
+		want := a.uploadBeforeMove()
+		a.connectAssets()
+		crash.Store("switch-committed")
+		if _, _, err := a.m.StartMove(ctx, a.h, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-crashed:
+		case <-time.After(20 * time.Second):
+			t.Fatal("the move never reached the switch's commit")
+		}
+		a.h.Release()
+		a.m.Close()
+		crash.Store("")
+		// The next start: the move's job is held before it touches the space.
+		b := reopen(t, a, serving, func(o *Options) {
+			o.AssetsHook = hook
+		})
+		h, err := b.m.Open(ctx, b.user, b.in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Release()
+		as, err := h.Space.PutAsset(space.Author{}, pageB, "after.txt", []byte("AFTER"))
+		if err != nil {
+			t.Fatalf("an upload before the move ran again: %v", err)
+		}
+		if body, _, err := readAsset(t, h.Space, as.Rel); err != nil || body != "AFTER" {
+			t.Fatalf("%q %v", body, err)
+		}
+		for rel, data := range want {
+			if body, _, err := readAsset(t, h.Space, rel); err != nil || body != data {
+				t.Fatalf("%s: %v", rel, err)
+			}
+		}
+		nothingLost(t, b, want)
+		// Let the move run: it has nothing left to copy, and is done.
+		open()
+		b.h = h
+		b.waitMove(MoveDone)
+		nothingLost(t, b, want)
+	})
+}
+
+// holdKind takes the tenant's IO slot until released.
+type holdKind struct{ release chan struct{} }
+
+func (holdKind) Class() jobs.Class                                { return jobs.IO }
+func (holdKind) Recover(context.Context, *store.Job) jobs.Outcome { return jobs.Interrupt }
+func (k holdKind) Run(ctx context.Context, _ *store.Job, _ *jobs.Progress) error {
+	select {
+	case <-k.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// A move cancelled while it waits for its slot lets the uploads go to the
+// attachment repository again, and says it did not happen.
+func TestAMoveCancelledInTheQueueHoldsNoUploads(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		a.uploadBeforeMove()
+		a.connectAssets()
+		r := a.m.runner()
+		release := make(chan struct{})
+		defer close(release)
+		r.Register("hold", holdKind{release})
+		sp, err := store.GetSpace(ctx, st.Q(), store.AllTenants(), a.in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.Enqueue(ctx, store.Job{ID: "HOLD", TenantID: sp.TenantID, Kind: "hold"}); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if j, err := r.Get(ctx, store.AllTenants(), "HOLD"); err == nil && j.State == store.JobRunning {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the holding job did not start")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if _, started, err := a.m.StartMove(ctx, a.h, "", ""); err != nil || !started {
+			t.Fatalf("%v %v", started, err)
+		}
+		row, err := store.GetRemote(ctx, st.Q(), a.in.ID, store.RoleAssets)
+		if err != nil || !a.m.moveRunning(a.in.ID) {
+			t.Fatalf("the queued move does not hold the uploads: %+v %v", row, err)
+		}
+		if err := r.Cancel(ctx, store.AllTenants(), row.JobID); err != nil {
+			t.Fatal(err)
+		}
+		if a.m.moveRunning(a.in.ID) {
+			t.Fatal("a move cancelled in the queue still holds the uploads in assets/")
+		}
+		if v, err := a.m.AssetsRemote(ctx, a.h); err != nil || v.Move == nil || v.Move.State != MoveFailed {
+			t.Fatalf("%+v %v", v, err)
+		}
+	})
+}
+
+// A move asked for while the server stops is not added: jobs.ErrClosed (the
+// API answers 503), and the row names the move it named before.
+func TestAMoveAskedForWhileTheServerStopsIsNotAdded(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		a.uploadBeforeMove()
+		a.connectAssets()
+		a.m.runner().Close()
+		if _, _, err := a.m.StartMove(ctx, a.h, "", ""); !errors.Is(err, jobs.ErrClosed) {
+			t.Fatalf("%v", err)
+		}
+		row, err := store.GetRemote(ctx, st.Q(), a.in.ID, store.RoleAssets)
+		if err != nil || row.JobID != "" || a.m.moveRunning(a.in.ID) {
+			t.Fatalf("%+v %v", row, err)
 		}
 	})
 }

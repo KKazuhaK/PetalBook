@@ -308,10 +308,10 @@ func (m *Manager) exportSource(ctx context.Context, zw *zip.Writer, src store.Ex
 		for i, d := range ds {
 			drafts = append(drafts, exportedDraft{Page: d.PageID, UserID: d.UserID, Username: names[i], BaseRev: d.BaseRev, Meta: rawJSON(d.Meta), Body: d.Body, Held: d.Held, Updated: d.Updated.UTC()})
 		}
-		if r, err := store.GetRemote(ctx, q, spaceID); err == nil {
+		if r, err := store.GetRemote(ctx, q, spaceID, store.RoleContent); err == nil {
 			remoteURL = r.URL
 		}
-		if r, err := store.GetAssetRemote(ctx, q, spaceID); err == nil {
+		if r, err := store.GetRemote(ctx, q, spaceID, store.RoleAssets); err == nil {
 			assetsURL = r.URL
 		}
 	}

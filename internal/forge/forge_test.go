@@ -43,7 +43,7 @@ func (h *harness) space(id, provider, userID string, members map[string]string) 
 		}
 	}
 	r := store.Remote{SpaceID: id, URL: h.f.URL + "/x/y.git", Branch: "main", CredType: "connection", Provider: provider, State: "ok", Updated: h.now,
-		GHVia: "user", GHUserID: userID}
+		Via: "user", CredUserID: userID}
 	if err := store.PutRemote(ctx, h.st.Q(), r); err != nil {
 		h.t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func (h *harness) space(id, provider, userID string, members map[string]string) 
 
 func (h *harness) remote(spaceID string) *store.Remote {
 	h.t.Helper()
-	r, err := store.GetRemote(ctx, h.st.Q(), spaceID)
+	r, err := store.GetRemote(ctx, h.st.Q(), spaceID, store.RoleContent)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func TestARemovedProviderMustNotBeInUse(t *testing.T) {
 		if ce.Counts["connections"] != 1 || ce.Counts["spaces"] != 1 {
 			t.Fatalf("%v", ce.Counts)
 		}
-		if err := store.DeleteRemote(ctx, h.st.Q(), "S1"); err != nil {
+		if err := store.DeleteRemote(ctx, h.st.Q(), "S1", store.RoleContent); err != nil {
 			t.Fatal(err)
 		}
 		wantCode(t, p.AdminDelete(ctx), 409, "provider_in_use") // still one connection
@@ -1100,11 +1100,11 @@ func TestAConnectionIsNeverUsedForAnotherPersonsSpace(t *testing.T) {
 		}
 		// Credentials this provider does not understand.
 		r := h.remote("SB")
-		r.GHVia = "app"
+		r.Via = "app"
 		if _, err := p.GitToken(ctx, r, true); !errors.As(err, &ce) || ce.Code != connections.CodeNotConfigured {
 			t.Fatalf("%v", err)
 		}
-		r.GHVia, r.GHUserID = "user", ""
+		r.Via, r.CredUserID = "user", ""
 		if _, err := p.GitToken(ctx, r, true); !errors.As(err, &ce) || ce.Code != connections.CodeNotConfigured {
 			t.Fatalf("%v", err)
 		}

@@ -203,7 +203,7 @@ func (m *Manager) persistStatus(id string) func(space.RemoteStatus) {
 		defer m.syncNotice(id, prev, st)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		err := store.UpdateRemoteStatus(ctx, m.opt.Store.Q(), id, store.RemoteStatus{
+		err := store.UpdateRemoteStatus(ctx, m.opt.Store.Q(), id, store.RoleContent, store.RemoteStatus{
 			State: st.State, ErrorKind: st.Kind, LastError: st.Error, LastGood: st.LastGood, RemoteTip: st.RemoteTip, LastSync: st.LastSync,
 		}, m.opt.Now())
 		if err != nil {
@@ -312,28 +312,28 @@ func (m *Manager) viewOf(h *Handle, r *store.Remote) *RemoteView {
 
 // connectionView says what a connection credential is: no secret, only where it points.
 func (m *Manager) connectionView(r *store.Remote) *ConnectionView {
-	g := &ConnectionView{Via: r.GHVia, InstallationID: r.GHInstallationID, RepoID: r.GHRepoID, UserID: r.GHUserID}
+	g := &ConnectionView{Via: r.Via, InstallationID: r.InstallationID, RepoID: r.RepoID, UserID: r.CredUserID}
 	if u, err := url.Parse(r.URL); err == nil {
 		// The account is the namespace: a person's, an organisation's, or a group
 		// with its subgroups.
 		full := strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), ".git")
 		g.Account = full[:max(strings.LastIndex(full, "/"), 0)]
 	}
-	if r.GHVia == connections.ViaUser && r.GHUserID != "" {
+	if r.Via == connections.ViaUser && r.CredUserID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		// The person is looked up in the space's tenant only: a credential of
 		// someone elsewhere (which connecting refuses) shows no name.
 		if sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), r.SpaceID); err == nil { // the space being viewed, by id
-			if u, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(sp.TenantID), r.GHUserID); err == nil {
+			if u, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(sp.TenantID), r.CredUserID); err == nil {
 				g.Username = u.Username
 				if r.Provider == store.ProviderGitHub || r.Provider == "" {
-					if a, err := store.GetGitHubAuthorization(ctx, m.opt.Store.Q(), r.GHUserID); err == nil {
+					if a, err := store.GetGitHubAuthorization(ctx, m.opt.Store.Q(), r.CredUserID); err == nil {
 						g.Login = a.Login
 					}
 				} else if p, ok := m.opt.Connections.Get(r.Provider); ok {
 					if c, ok := p.(connections.Connected); ok {
-						g.Login = c.Login(ctx, r.GHUserID)
+						g.Login = c.Login(ctx, r.CredUserID)
 					}
 				}
 			}
@@ -344,7 +344,7 @@ func (m *Manager) connectionView(r *store.Remote) *ConnectionView {
 
 // Remote returns the remote of the space, or ErrNoRemote when it is local.
 func (m *Manager) Remote(ctx context.Context, h *Handle) (*RemoteView, error) {
-	r, err := store.GetRemote(ctx, m.opt.Store.Q(), h.Info.ID)
+	r, err := store.GetRemote(ctx, m.opt.Store.Q(), h.Info.ID, store.RoleContent)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && !r.Connected()) {
 		return nil, ErrNoRemote
 	}
@@ -367,7 +367,7 @@ func (m *Manager) SSHKey(ctx context.Context, h *Handle, rotate bool) (publicKey
 	id := h.Info.ID
 	m.remoteMu.Lock()
 	defer m.remoteMu.Unlock()
-	r, err := store.GetRemote(ctx, m.opt.Store.Q(), id)
+	r, err := store.GetRemote(ctx, m.opt.Store.Q(), id, store.RoleContent)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return "", "", err
 	}
@@ -456,7 +456,7 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 	}
 	m.remoteMu.Lock()
 	defer m.remoteMu.Unlock()
-	old, err := store.GetRemote(ctx, m.opt.Store.Q(), id)
+	old, err := store.GetRemote(ctx, m.opt.Store.Q(), id, store.RoleContent)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
@@ -537,7 +537,7 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 		// before (a deploy key, a token) goes, once the new connection works.
 		row.CredType, row.Username, row.Provider = CredConnection, "", req.Provider
 		row.PrivKeyEnc, row.PubKey, row.TokenEnc = "", "", ""
-		row.GHVia, row.GHInstallationID, row.GHRepoID, row.GHUserID = ghCred.Via, ghCred.InstallationID, ghCred.RepoID, ghCred.UserID
+		row.Via, row.InstallationID, row.RepoID, row.CredUserID = ghCred.Via, ghCred.InstallationID, ghCred.RepoID, ghCred.UserID
 		if old != nil && old.CredType == CredSSH {
 			dropOldHosts = func() { os.Remove(m.knownHosts(id)) }
 		}
@@ -589,7 +589,7 @@ func (m *Manager) Disconnect(ctx context.Context, h *Handle) error {
 	defer m.remoteMu.Unlock()
 	// Attachments in their own repository are read through the space's remote;
 	// without one the space could not serve them.
-	if row, err := store.GetAssetRemote(ctx, m.opt.Store.Q(), id); err == nil && row.URL != "" {
+	if row, err := store.GetRemote(ctx, m.opt.Store.Q(), id, store.RoleAssets); err == nil && row.URL != "" {
 		return assetsConflict("The space has an attachment repository; disconnect that first.")
 	}
 	// A local space is the complete copy: a partial clone is made whole first
@@ -601,7 +601,7 @@ func (m *Manager) Disconnect(ctx context.Context, h *Handle) error {
 	if err := h.Space.Disconnect(); err != nil {
 		return err
 	}
-	if err := store.DeleteRemote(ctx, m.opt.Store.Q(), id); err != nil {
+	if err := store.DeleteRemote(ctx, m.opt.Store.Q(), id, store.RoleContent); err != nil {
 		return err
 	}
 	os.Remove(m.knownHosts(id))
@@ -638,7 +638,7 @@ func (m *Manager) Accept(ctx context.Context, h *Handle, commit string) (*Remote
 }
 
 func (m *Manager) stored(ctx context.Context, h *Handle) (*store.Remote, error) {
-	r, err := store.GetRemote(ctx, m.opt.Store.Q(), h.Info.ID)
+	r, err := store.GetRemote(ctx, m.opt.Store.Q(), h.Info.ID, store.RoleContent)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && !r.Connected()) {
 		return nil, ErrNoRemote
 	}

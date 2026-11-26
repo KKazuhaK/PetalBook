@@ -44,9 +44,9 @@ func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember boo
 	if st == nil {
 		return "", credErr(CodeNotConfigured, "the server's GitHub App is not set up any more; an administrator must set it up again", nil)
 	}
-	switch r.GHVia {
+	switch r.Via {
 	case ViaApp:
-		tok, err := st.app.Token(ctx, githubapp.TokenSpec{Installation: r.GHInstallationID, RepoIDs: []int64{r.GHRepoID}, Perms: contentsWrite})
+		tok, err := st.app.Token(ctx, githubapp.TokenSpec{Installation: r.InstallationID, RepoIDs: []int64{r.RepoID}, Perms: contentsWrite})
 		if err == nil {
 			return tok, nil
 		}
@@ -65,7 +65,7 @@ func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember boo
 	case ViaUser:
 		if checkMember {
 			// Manage may come directly or through a group: the union counts.
-			roles, disabled, err := store.MemberStanding(ctx, s.opt.Store.Q(), r.SpaceID, r.GHUserID)
+			roles, disabled, err := store.MemberStanding(ctx, s.opt.Store.Q(), r.SpaceID, r.CredUserID)
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
 				return "", offlineErr(err)
 			}
@@ -78,7 +78,7 @@ func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember boo
 				return "", credErr(CodeConnectionMissing, "the GitHub connection this space syncs with belongs to someone who can no longer manage it; connect another", nil)
 			}
 		}
-		tok, err := s.UserToken(ctx, r.GHUserID)
+		tok, err := s.UserToken(ctx, r.CredUserID)
 		switch {
 		case err == nil:
 			return tok, nil

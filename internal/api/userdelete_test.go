@@ -79,7 +79,7 @@ func TestTheDeletionOfAPersonIsPlannedByTheContractsRules(t *testing.T) {
 		f := newUdFix(t, a)
 		// A remote token of olive's own syncs Team: after the transfer it stops until reconnected.
 		if err := store.PutRemote(context.Background(), a.st.Q(), store.Remote{SpaceID: f.sid, URL: "https://github.com/o/team.git", Branch: "main", CredType: store.CredConnection,
-			Provider: store.ProviderGitHub, GHVia: "user", GHUserID: f.ownerID, State: "ok", Updated: a.clock.Now()}); err != nil {
+			Provider: store.ProviderGitHub, Via: "user", CredUserID: f.ownerID, State: "ok", Updated: a.clock.Now()}); err != nil {
 			t.Fatal(err)
 		}
 		pre := f.admin.do("GET", "/api/admin/users/"+f.ownerID+"/deletion", nil).want(t, 200, "")

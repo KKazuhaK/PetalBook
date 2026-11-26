@@ -341,7 +341,6 @@ var recycledTables = []recycledTable{
 	{name: "space_members", user: "user_id"},
 	{name: "space_groups", grp: "group_id"},
 	{name: "remotes"},
-	{name: "asset_remotes"},
 	{name: "space_daily"},
 	{name: "folder_moves"},
 	{name: "favorites", user: "user_id"},
@@ -503,7 +502,6 @@ func RecycleSpaceRows(ctx context.Context, q Q, sc Scope, in RecycleSpaceIn) (ou
 	for _, stmt := range []string{
 		`DELETE FROM drafts WHERE space_id = ?`,
 		`DELETE FROM remotes WHERE space_id = ?`,
-		`DELETE FROM asset_remotes WHERE space_id = ?`,
 		`DELETE FROM favorites WHERE space_id = ?`,
 		`DELETE FROM space_daily WHERE space_id = ?`,
 		`DELETE FROM folder_moves WHERE space_id = ?`,
@@ -795,11 +793,10 @@ func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string,
 		return out, err
 	}
 	out.Disabled = disabled != 0
-	if err := q.QueryRow(ctx, `SELECT state FROM remotes WHERE space_id = ? AND url <> ''`, item.SpaceID).Scan(&out.Remote); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return out, err
-	}
+	// Both roles in one read of the space's rows (the primary key).
 	var ar int
-	if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM asset_remotes WHERE space_id = ? AND url <> ''`, item.SpaceID).Scan(&ar); err != nil {
+	if err := q.QueryRow(ctx, `SELECT COALESCE(MAX(CASE WHEN role = 'content' THEN state END), ''), COUNT(CASE WHEN role = 'assets' THEN 1 END)
+		FROM remotes WHERE space_id = ? AND url <> ''`, item.SpaceID).Scan(&out.Remote, &ar); err != nil {
 		return out, err
 	}
 	out.AssetsRemote = ar > 0
@@ -845,11 +842,14 @@ func RecycledView(ctx context.Context, q Q, it *RecycleItem) (RecycledSummary, e
 		}
 		return ""
 	}
-	if tr, ok := rec.Tables["remotes"]; ok && len(tr.Rows) > 0 {
-		out.RemoteURL = str(tr, tr.Rows[0], "url")
-	}
-	if tr, ok := rec.Tables["asset_remotes"]; ok && len(tr.Rows) > 0 {
-		out.AssetsURL = str(tr, tr.Rows[0], "url")
+	rt := rec.Tables["remotes"]
+	for _, r := range rt.Rows {
+		switch str(rt, r, "role") {
+		case RoleContent:
+			out.RemoteURL = str(rt, r, "url")
+		case RoleAssets:
+			out.AssetsURL = str(rt, r, "url")
+		}
 	}
 	tr := rec.Tables["drafts"]
 	names := map[string]string{}

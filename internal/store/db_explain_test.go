@@ -168,7 +168,7 @@ func TestCollatedSortsUseTheirIndexes(t *testing.T) {
 // A lookup by address reads user_emails_key (it scanned every person of the tenant,
 // 88 ms on 30,000 people, when it lower-cased each stored address); the cascades
 // of a person's deletion read the child indexes; the sweep of old session ends
-// and the attachment moves read theirs.
+// and the spaces using a connection read theirs.
 func TestLookupsUseTheirIndexes(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
@@ -187,12 +187,20 @@ func TestLookupsUseTheirIndexes(t *testing.T) {
 		bulk(t, st, "spaces", "id, name, name_key, created", n, 200, func(i int) []any {
 			return []any{fmt.Sprintf("S%05d", i), "s", "s", now}
 		})
-		bulk(t, st, "asset_remotes", "space_id, updated, move_state", n, 200, func(i int) []any {
-			state := ""
-			if i%500 == 0 {
-				state = store.MoveCopying
+		// Both roles of every space; one in fifty through a person's link, one
+		// in fifty through an installation.
+		bulk(t, st, "remotes", "space_id, role, url, updated, cred_type, via, installation_id, cred_user_id", 2*n, 200, func(i int) []any {
+			role, via, inst, user := store.RoleContent, "", int64(0), ""
+			if i%2 == 1 {
+				role = store.RoleAssets
 			}
-			return []any{fmt.Sprintf("S%05d", i), now, state}
+			switch i % 100 {
+			case 0, 1:
+				via, user = "user", fmt.Sprintf("U%05d", i/2)
+			case 50, 51:
+				via, inst = "app", int64(i/2)
+			}
+			return []any{fmt.Sprintf("S%05d", i/2), role, "https://example.test/r.git", now, "connection", via, inst, user}
 		})
 		// A lookup sorts its few rows: only scans of whole tables are made dear.
 		withDear(t, st, []string{"enable_seqscan"}, func(q store.Q) {
@@ -205,7 +213,10 @@ func TestLookupsUseTheirIndexes(t *testing.T) {
 				{`SELECT 1 FROM invites WHERE created_by = ?`, "invites_created_by"},
 				{`SELECT 1 FROM provider_leftovers WHERE user_id = ?`, "provider_leftovers_user"},
 				{`SELECT id FROM session_ends WHERE ended < ?`, "session_ends_ended"},
-				{`SELECT space_id FROM asset_remotes WHERE move_state IN (?, ?) AND move_state <> '' ORDER BY space_id`, "asset_remotes_move"},
+				// "The spaces using a connection", both roles in one scan
+				// (store.CountUserProviderSpaces, PlanUserDeletion, GitHubSpaceCounts).
+				{`SELECT COUNT(DISTINCT space_id) FROM remotes WHERE cred_user_id = ? AND cred_user_id <> '' AND url <> '' AND cred_type = 'connection' AND via = 'user'`, "remotes_cred_user"},
+				{`SELECT installation_id, COUNT(DISTINCT space_id) FROM remotes WHERE installation_id IN (?) AND installation_id <> 0 AND url <> '' AND via = 'app' GROUP BY installation_id`, "remotes_installation"},
 			} {
 				var arg any = "U00042"
 				if strings.Contains(c.sql, "ended") {
@@ -213,8 +224,8 @@ func TestLookupsUseTheirIndexes(t *testing.T) {
 					arg = now - int64(n-10)*1000
 				}
 				args := []any{arg}
-				if strings.Contains(c.sql, "move_state") {
-					args = []any{store.MoveCopying, store.MoveSwitching}
+				if strings.Contains(c.sql, "installation_id IN") {
+					args = []any{int64(25)}
 				}
 				if plan := explain(t, st, q, c.sql, args...); !strings.Contains(plan, c.index) {
 					t.Errorf("%s does not read %s:\n%s", c.sql, c.index, plan)

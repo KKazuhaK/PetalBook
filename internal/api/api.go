@@ -291,7 +291,8 @@ func New(opt Options) *Handler {
 		PerTenant:  func(tenant string) int { return s.jobLimit(tenant, settings.JobsPerTenant, 1) }})
 	s.jobs.Register(bulkKindName, bulkKind{s})
 	if opt.Spaces != nil && opt.Store != nil {
-		// The exports and the actions of the recycle bin run on the same runner.
+		// The exports, the actions of the recycle bin and the moves of
+		// attachments run on the same runner.
 		opt.Spaces.UseJobs(s.jobs)
 		opt.Spaces.SetRecycleEnded(s.purgeEnded)
 	}

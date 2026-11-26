@@ -192,9 +192,9 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		put("S1", store.Remote{GHVia: "app", GHInstallationID: 10, GHRepoID: 1})
-		put("S2", store.Remote{GHVia: "app", GHInstallationID: 10, GHRepoID: 2})
-		put("S3", store.Remote{GHVia: "user", GHUserID: "A", GHRepoID: 3})
+		put("S1", store.Remote{Via: "app", InstallationID: 10, RepoID: 1})
+		put("S2", store.Remote{Via: "app", InstallationID: 10, RepoID: 2})
+		put("S3", store.Remote{Via: "user", CredUserID: "A", RepoID: 3})
 		counts, err := store.GitHubSpaceCounts(ctx, q, []int64{10, 20})
 		if err != nil || counts[10] != 2 || counts[20] != 0 {
 			t.Fatalf("%v %v", counts, err)
@@ -214,8 +214,8 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 		if n, _ := store.CountUserGitHubSpaces(ctx, q, "A"); n != 1 {
 			t.Fatal(n)
 		}
-		r, _ := store.GetRemote(ctx, q, "S3")
-		if r.GHVia != "user" || r.GHUserID != "A" || r.GHRepoID != 3 {
+		r, _ := store.GetRemote(ctx, q, "S3", store.RoleContent)
+		if r.Via != "user" || r.CredUserID != "A" || r.RepoID != 3 {
 			t.Fatalf("%+v", r)
 		}
 		// Standing in a space.
@@ -345,18 +345,18 @@ func TestGitHubSpaceCountsIncludeAttachmentRepositories(t *testing.T) {
 		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "S1", URL: "https://example.test/s1.git", Branch: "main", State: "ok", Updated: now, CredType: "token"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.PutAssetRemote(ctx, q, rem("S1", store.Remote{GHVia: "app", GHInstallationID: 10, GHRepoID: 11})); err != nil {
+		if err := store.PutRemote(ctx, q, rem("S1", store.Remote{Role: store.RoleAssets, Via: "app", InstallationID: 10, RepoID: 11})); err != nil {
 			t.Fatal(err)
 		}
 		// S2: both through installation 10.
-		if err := store.PutRemote(ctx, q, rem("S2", store.Remote{GHVia: "app", GHInstallationID: 10, GHRepoID: 2})); err != nil {
+		if err := store.PutRemote(ctx, q, rem("S2", store.Remote{Via: "app", InstallationID: 10, RepoID: 2})); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.PutAssetRemote(ctx, q, rem("S2", store.Remote{GHVia: "app", GHInstallationID: 10, GHRepoID: 21})); err != nil {
+		if err := store.PutRemote(ctx, q, rem("S2", store.Remote{Role: store.RoleAssets, Via: "app", InstallationID: 10, RepoID: 21})); err != nil {
 			t.Fatal(err)
 		}
 		// S3: the attachments only, through user A.
-		if err := store.PutAssetRemote(ctx, q, rem("S3", store.Remote{GHVia: "user", GHUserID: "A", GHRepoID: 31})); err != nil {
+		if err := store.PutRemote(ctx, q, rem("S3", store.Remote{Role: store.RoleAssets, Via: "user", CredUserID: "A", RepoID: 31})); err != nil {
 			t.Fatal(err)
 		}
 		if counts, err := store.GitHubSpaceCounts(ctx, q, []int64{10}); err != nil || counts[10] != 2 {
@@ -445,7 +445,7 @@ func TestGitHubLeftovers(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		r := store.Remote{SpaceID: "S1", URL: "https://github.com/o/r1.git", Branch: "main", State: "ok", Updated: now, CredType: "connection", GHVia: "user", GHUserID: "A", GHRepoID: 1}
+		r := store.Remote{SpaceID: "S1", URL: "https://github.com/o/r1.git", Branch: "main", State: "ok", Updated: now, CredType: "connection", Via: "user", CredUserID: "A", RepoID: 1}
 		if err := store.PutRemote(ctx, q, r); err != nil {
 			t.Fatal(err)
 		}

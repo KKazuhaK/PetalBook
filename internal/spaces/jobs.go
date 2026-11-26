@@ -16,12 +16,16 @@ import (
 // runner.
 func (m *Manager) UseJobs(r *jobs.Runner) {
 	m.jobsMu.Lock()
-	m.jobs, m.ownsJobs = r, false
+	m.jobs = r
 	m.jobsMu.Unlock()
 	m.registerKinds(r)
 }
 
 func (m *Manager) registerKinds(r *jobs.Runner) {
+	if m.single == nil {
+		m.AssetCache()
+		r.Register(MoveKind, moveKind{m}) // the moves of attachments (assets_move.go)
+	}
 	r.Register(store.JobExport, exportKind{m})
 	for _, kind := range []string{store.JobRecycleMove, store.JobRecycleRestore, store.JobRecyclePurge} {
 		r.Register(kind, recycleKind{m, kind})
@@ -35,7 +39,7 @@ func (m *Manager) runner() *jobs.Runner {
 	r := m.jobs
 	if r == nil {
 		r = jobs.New(jobs.Options{Store: m.opt.Store, Logger: m.log, Now: m.opt.Now})
-		m.jobs, m.ownsJobs = r, true
+		m.jobs = r
 		m.registerKinds(r)
 	}
 	m.jobsMu.Unlock()
@@ -43,13 +47,15 @@ func (m *Manager) runner() *jobs.Runner {
 	return r
 }
 
-// closeJobs stops the runner the manager made itself: the jobs it runs work on
-// the spaces, which are closed after it.
+// closeJobs closes the runner, the server's too (the API has closed it already
+// when it was its; a second close does nothing): the jobs work on the spaces,
+// which are closed after it, and a move stopped now is queued again for the
+// next start, which it would not be were the manager closed under it.
 func (m *Manager) closeJobs() {
 	m.jobsMu.Lock()
-	r, own := m.jobs, m.ownsJobs
+	r := m.jobs
 	m.jobsMu.Unlock()
-	if r != nil && own {
+	if r != nil {
 		r.Close()
 	}
 }
