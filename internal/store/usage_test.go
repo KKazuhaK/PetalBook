@@ -93,7 +93,7 @@ func TestUsageFollowsSpacesMembersAndMeasurements(t *testing.T) {
 			if err := store.LockSpace(ctx, q, "Sa"); err != nil {
 				return err
 			}
-			_, err := store.TransferOwnership(ctx, q, "Sa", "X1", now)
+			_, err := store.TransferOwnership(ctx, q, "Sa", "X1", now, false)
 			return err
 		}); err != nil {
 			t.Fatal(err)
@@ -280,7 +280,7 @@ func TestConcurrentChangesKeepTheCountersExact(t *testing.T) {
 							if err := store.LockSpace(ctx, q, sid); err != nil {
 								return err
 							}
-							_, err := store.TransferOwnership(ctx, q, sid, next, now)
+							_, err := store.TransferOwnership(ctx, q, sid, next, now, false)
 							return err
 						}); err != nil {
 							errs <- err
@@ -494,7 +494,7 @@ func TestARecountDuringWritesLeavesTheCountersExact(t *testing.T) {
 								if err := store.LockSpace(ctx, q, sid); err != nil {
 									return err
 								}
-								_, err := store.TransferOwnership(ctx, q, sid, next, now)
+								_, err := store.TransferOwnership(ctx, q, sid, next, now, false)
 								return err
 							}); err != nil {
 								errs <- err

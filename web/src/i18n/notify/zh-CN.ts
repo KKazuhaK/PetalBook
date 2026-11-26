@@ -65,6 +65,11 @@ export const notifyZhCN = {
     mention: { title: '有人提到了你', body: '点开去看。' },
     todo: { title: '待办提醒', body: '点开去看。' },
     system: { title: '来自管理员的通知', body: '点开去看。' },
+    takeover: {
+      takenTitle: (by: string, space: string) => `${by} 接管了「${space}」`,
+      transferredTitle: (by: string, space: string) => `${by} 转让了「${space}」`,
+      body: (reason: string) => (reason ? `你现在是它的编辑者。原因：${reason}` : '你现在是它的编辑者。'),
+    },
   },
   browser: {
     heading: '浏览器通知',

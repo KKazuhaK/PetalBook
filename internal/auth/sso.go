@@ -938,7 +938,7 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 		if e != nil || u.Disabled {
 			return ssoErr("expired")
 		}
-		p = &Principal{User: *u}
+		p = &Principal{User: *u, Access: AccessOf(*u)}
 	} else if p, err = s.Authenticate(ctx, sessionToken); err != nil || p.User.ID != userID {
 		return ssoErr("expired")
 	}

@@ -183,8 +183,12 @@ func queueMissingSpaces(ctx context.Context, q Q) (int, error) {
 // TransferOwnership makes newOwner the owner of the space, adding them as a
 // member if they are none, and makes every other owner an editor. Call it in a
 // transaction, after LockSpace. It returns the users whose role changed or who
-// were added, for the caller to drop their cached lists.
-func TransferOwnership(ctx context.Context, q Q, spaceID, newOwner string, now time.Time) (touched []string, err error) {
+// were added, for the caller to drop their cached lists. newOwner must be of
+// the space's tenant, except with siteAdmin, where an administrator of the
+// whole server is also accepted (the explicit takeover, 3.6): the one
+// membership that may join two tenants.
+func TransferOwnership(ctx context.Context, q Q, spaceID, newOwner string, now time.Time, siteAdmin bool) (touched []string, err error) {
+	anyTenant := b2i(siteAdmin)
 	old, err := q.Query(ctx, `SELECT user_id FROM space_members WHERE space_id = ? AND role = 'owner' AND user_id <> ?`, spaceID, newOwner)
 	if err != nil {
 		return nil, err
@@ -208,8 +212,10 @@ func TransferOwnership(ctx context.Context, q Q, spaceID, newOwner string, now t
 	// (nothing is written and the answer is ErrNotFound). Callers also hold
 	// LockSpace, as every change of members does.
 	res, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created)
-		SELECT s.id, u.id, 'owner', ? FROM spaces s JOIN users u ON u.tenant_id = s.tenant_id WHERE s.id = ? AND u.id = ? AND u.deleted_at IS NULL
-		ON CONFLICT (space_id, user_id) DO UPDATE SET role = 'owner'`, ms(now), spaceID, newOwner)
+		SELECT s.id, u.id, 'owner', ? FROM spaces s JOIN users u
+			ON u.tenant_id = s.tenant_id OR (? = 1 AND u.role = 'admin' AND u.site_admin = 1)
+		WHERE s.id = ? AND u.id = ? AND u.deleted_at IS NULL
+		ON CONFLICT (space_id, user_id) DO UPDATE SET role = 'owner'`, ms(now), anyTenant, spaceID, newOwner)
 	if err := oneRow(res, err); err != nil {
 		return nil, err
 	}

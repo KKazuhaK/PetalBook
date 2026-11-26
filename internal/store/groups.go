@@ -219,6 +219,17 @@ func SpaceGroupUserIDs(ctx context.Context, q Q, spaceID string) ([]string, erro
 	return strCol(ctx, q, `SELECT DISTINCT gm.user_id FROM space_groups sg JOIN group_members gm ON gm.group_id = sg.group_id WHERE sg.space_id = ?`, spaceID)
 }
 
+// OwnerGroupsOf lists the groups that hold the owner role in a space, and
+// their people.
+func OwnerGroupsOf(ctx context.Context, q Q, spaceID string) (groups, people []string, err error) {
+	if groups, err = strCol(ctx, q, `SELECT group_id FROM space_groups WHERE space_id = ? AND role = 'owner' ORDER BY group_id`, spaceID); err != nil {
+		return nil, nil, err
+	}
+	people, err = strCol(ctx, q, `SELECT DISTINCT gm.user_id FROM space_groups sg JOIN group_members gm ON gm.group_id = sg.group_id
+		WHERE sg.space_id = ? AND sg.role = 'owner' ORDER BY gm.user_id`, spaceID)
+	return groups, people, err
+}
+
 func strCol(ctx context.Context, q Q, query string, args ...any) ([]string, error) {
 	rows, err := q.Query(ctx, query, args...)
 	if err != nil {

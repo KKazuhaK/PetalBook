@@ -41,8 +41,22 @@ func (m *Manager) Members(ctx context.Context, h *Handle) ([]store.Member, error
 	return store.ListMembers(ctx, m.opt.Store.Q(), h.Info.ID)
 }
 
+// viaAdminOwnership refuses, to an administrator who is not a member, a
+// change that is taking the space over: one that makes or unmakes an owner, or
+// that is about themselves.
+func viaAdminOwnership(h *Handle, self bool, roles ...string) error {
+	if !h.Info.ViaAdmin {
+		return nil
+	}
+	if self || slices.Contains(roles, perm.Owner) {
+		return ErrTakeover
+	}
+	return nil
+}
+
 // AddMember makes the enabled user with this username a member in role.
-func (m *Manager) AddMember(ctx context.Context, h *Handle, username, role string) (*store.Member, error) {
+// actorID is who asks.
+func (m *Manager) AddMember(ctx context.Context, h *Handle, actorID, username, role string) (*store.Member, error) {
 	if err := m.needMembers(h); err != nil {
 		return nil, err
 	}
@@ -57,6 +71,9 @@ func (m *Manager) AddMember(ctx context.Context, h *Handle, username, role strin
 		return nil, ErrUserNotFound
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := viaAdminOwnership(h, u.ID == actorID, role); err != nil {
 		return nil, err
 	}
 	now := m.opt.Now()
@@ -93,7 +110,8 @@ func (m *Manager) AddMember(ctx context.Context, h *Handle, username, role strin
 }
 
 // SetMemberRole changes a member's role. The last owner cannot be demoted.
-func (m *Manager) SetMemberRole(ctx context.Context, h *Handle, userID, role string) (*store.Member, error) {
+// actorID is who asks.
+func (m *Manager) SetMemberRole(ctx context.Context, h *Handle, actorID, userID, role string) (*store.Member, error) {
 	if err := m.needMembers(h); err != nil {
 		return nil, err
 	}
@@ -115,6 +133,9 @@ func (m *Manager) SetMemberRole(ctx context.Context, h *Handle, userID, role str
 			return ErrNotMember
 		}
 		if err != nil {
+			return err
+		}
+		if err := viaAdminOwnership(h, userID == actorID, cur, role); err != nil {
 			return err
 		}
 		if cur != role {
@@ -181,6 +202,9 @@ func (m *Manager) RemoveMember(ctx context.Context, actor store.User, h *Handle,
 			return ErrNotMember
 		}
 		if err != nil {
+			return err
+		}
+		if err := viaAdminOwnership(h, false, cur); err != nil {
 			return err
 		}
 		if err := m.keepOneOwner(ctx, q, h.Info.ID, userID, cur); err != nil {

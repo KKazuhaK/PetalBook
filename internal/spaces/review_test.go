@@ -33,7 +33,7 @@ func TestOnlyTheFirstOwnersProfileSetsTheDefaultAuthor(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer h.Release()
-		if _, err := m.AddMember(ctx, h, "bo", perm.Owner); err != nil {
+		if _, err := m.AddMember(ctx, h, "", "bo", perm.Owner); err != nil {
 			t.Fatal(err)
 		}
 		bo.Name, bo.Email = "Bo Renamed", "bo@example.test"
@@ -71,8 +71,8 @@ func TestTransferAndAddOfTheSameUserDoNotCollide(t *testing.T) {
 			var wg sync.WaitGroup
 			var addErr, transferErr error
 			wg.Add(2)
-			go func() { defer wg.Done(); _, addErr = m.AddMember(ctx, h, u.Username, perm.Viewer) }()
-			go func() { defer wg.Done(); transferErr = m.Transfer(ctx, store.AllTenants(), info.ID, u.ID) }()
+			go func() { defer wg.Done(); _, addErr = m.AddMember(ctx, h, "", u.Username, perm.Viewer) }()
+			go func() { defer wg.Done(); _, transferErr = m.Transfer(ctx, store.AllTenants(), info.ID, u.ID) }()
 			wg.Wait()
 			h.Release()
 			if transferErr != nil || (addErr != nil && !errors.Is(addErr, ErrAlreadyMember)) {
@@ -87,10 +87,10 @@ func TestTransferAndAddOfTheSameUserDoNotCollide(t *testing.T) {
 		u := addUser(t, st, "W1", "walt")
 		h, _ := m.Open(ctx, owner, info.ID)
 		defer h.Release()
-		if _, err := m.AddMember(ctx, h, "walt", perm.Viewer); err != nil {
+		if _, err := m.AddMember(ctx, h, "", "walt", perm.Viewer); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.Transfer(ctx, store.AllTenants(), info.ID, u.ID); err != nil {
+		if _, err := m.Transfer(ctx, store.AllTenants(), info.ID, u.ID); err != nil {
 			t.Fatal(err)
 		}
 		if role, _ := store.MemberRole(ctx, st.Q(), info.ID, u.ID); role != perm.Owner {

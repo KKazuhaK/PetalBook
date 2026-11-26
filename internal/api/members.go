@@ -52,7 +52,7 @@ func (s *server) addMember(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	m, err := s.spaces.AddMember(c.r.Context(), c.sp, req.Username, req.Role)
+	m, err := s.spaces.AddMember(c.r.Context(), c.sp, c.user().ID, req.Username, req.Role)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -77,7 +77,7 @@ func (s *server) patchMember(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	m, err := s.spaces.SetMemberRole(c.r.Context(), c.sp, c.r.PathValue("user"), req.Role)
+	m, err := s.spaces.SetMemberRole(c.r.Context(), c.sp, c.user().ID, c.r.PathValue("user"), req.Role)
 	if err != nil {
 		s.fail(c.w, err)
 		return

@@ -72,6 +72,12 @@ export const notifyEn: NotifyMessages = {
     mention: { title: 'Someone mentioned you', body: 'Open it to see.' },
     todo: { title: 'A reminder', body: 'Open it to see.' },
     system: { title: 'A notice from the administrators', body: 'Open it to see.' },
+    takeover: {
+      takenTitle: (by: string, space: string) => `${by} took over “${space}”`,
+      transferredTitle: (by: string, space: string) => `${by} transferred “${space}”`,
+      body: (reason: string) =>
+        reason ? `You are an editor of it now. Reason: ${reason}` : 'You are an editor of it now.',
+    },
   },
   browser: {
     heading: 'Browser notifications',

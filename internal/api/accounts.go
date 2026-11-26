@@ -147,11 +147,16 @@ func (s *server) getSession(c *call) {
 			Name string `json:"name"`
 		} `json:"oidc"`
 	}
+	// The session's user says which permission keys they hold in their tenant.
+	type sessionUser struct {
+		userResp
+		Permissions []string `json:"permissions"`
+	}
 	out := struct {
-		Mode  string    `json:"mode"`
-		User  *userResp `json:"user"`
-		Setup bool      `json:"setup"`
-		Hold  *string   `json:"hold"`
+		Mode  string       `json:"mode"`
+		User  *sessionUser `json:"user"`
+		Setup bool         `json:"setup"`
+		Hold  *string      `json:"hold"`
 		// EndedReason is why the session of the request's cookie ended, for a visitor
 		// who is not signed in because of it; absent otherwise.
 		EndedReason string   `json:"endedReason,omitempty"`
@@ -165,8 +170,7 @@ func (s *server) getSession(c *call) {
 		} `json:"token"`
 	}{Mode: "single"}
 	if c.p != nil {
-		u := s.toUser(c.user())
-		out.User = &u
+		out.User = &sessionUser{s.toUser(c.user()), permissionsOf(c)}
 		if c.p.Held {
 			h := "passkey"
 			out.Hold = &h

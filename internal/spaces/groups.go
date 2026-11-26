@@ -496,8 +496,10 @@ func (m *Manager) AddSpaceGroup(ctx context.Context, h *Handle, userID, groupID,
 		if err := store.AddSpaceGroup(ctx, q, h.Info.ID, groupID, role, m.opt.Now()); err != nil {
 			return err
 		}
-		people, err = store.GroupUserIDs(ctx, q, groupID)
-		return err
+		if people, err = store.GroupUserIDs(ctx, q, groupID); err != nil {
+			return err
+		}
+		return viaAdminOwnership(h, slices.Contains(people, userID), role)
 	})
 	if store.IsUnique(err) {
 		return nil, ErrGroupMember
@@ -535,14 +537,17 @@ func (m *Manager) SetSpaceGroupRole(ctx context.Context, h *Handle, userID, grou
 		if old, err = store.SpaceGroupRole(ctx, q, h.Info.ID, groupID); err != nil {
 			return err
 		}
-		if old != role {
-			if err := store.SetSpaceGroupRole(ctx, q, h.Info.ID, groupID, role); err != nil {
-				return err
-			}
+		if people, err = store.GroupUserIDs(ctx, q, groupID); err != nil {
+			return err
 		}
-		people, err = store.GroupUserIDs(ctx, q, groupID)
 		m.at("group-people-read")
-		return err
+		if err := viaAdminOwnership(h, slices.Contains(people, userID), old, role); err != nil {
+			return err
+		}
+		if old != role {
+			return store.SetSpaceGroupRole(ctx, q, h.Info.ID, groupID, role)
+		}
+		return nil
 	})
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, "", ErrGroupNotMember
@@ -580,6 +585,9 @@ func (m *Manager) RemoveSpaceGroup(ctx context.Context, h *Handle, groupID strin
 			return err
 		}
 		m.at("group-people-read")
+		if err := viaAdminOwnership(h, false, old); err != nil {
+			return err
+		}
 		return store.RemoveSpaceGroup(ctx, q, h.Info.ID, groupID)
 	})
 	if errors.Is(err, store.ErrNotFound) {

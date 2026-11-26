@@ -123,7 +123,7 @@ func TestUsageCosts(t *testing.T) {
 				if err := store.LockSpace(ctx, q, sid); err != nil {
 					return err
 				}
-				_, err := store.TransferOwnership(ctx, q, sid, fmt.Sprintf("U%07d", (i+5)%people), now)
+				_, err := store.TransferOwnership(ctx, q, sid, fmt.Sprintf("U%07d", (i+5)%people), now, false)
 				return err
 			}); err != nil {
 				t.Fatal(err)

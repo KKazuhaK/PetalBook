@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/gitstore"
 	"petalbook.app/server/internal/page"
@@ -58,6 +59,11 @@ var (
 	ErrPersonalSpace = errors.New("a personal space belongs to one person")
 	// ErrDataDirInUse: another server runs on this data directory.
 	ErrDataDirInUse = errors.New("another server uses this data directory (DATA/serve.lock is held)")
+	// ErrTakeover: an administrator who is not a member asked for what only
+	// taking the space over gives: to make or unmake an owner, to give
+	// themselves (or a group of theirs) a role in it, or to change its remote.
+	// Taking over is its own audited action (Manager.Transfer).
+	ErrTakeover = errors.New("an administrator who is not a member takes the space over for that")
 	// ErrUserDisabled: the user cannot sign in, so cannot own a space.
 	ErrUserDisabled = errors.New("that user is disabled")
 	errClosed       = errors.New("the server is shutting down")
@@ -79,9 +85,10 @@ type Info struct {
 	// Perms is what the user may do here. Everything that decides access reads
 	// this, never Role.
 	Perms perm.Set
-	// ViaAdmin: the user is no member but an administrator, who manages the
-	// space (AdminPerms) without belonging to it (so it is in no list). Reading
-	// takes a view (Viewing).
+	// ViaAdmin: the user is no member but holds tenant.spaces.manage in the
+	// space's tenant, and manages the space (AdminPerms) without belonging to it
+	// (so it is in no list). Reading takes a view (Viewing); its owners and its
+	// remote take a takeover.
 	ViaAdmin bool
 	// Viewing: an administrator reads the space in a view they opened (set by the
 	// API, which holds the views); Perms then include read.
@@ -105,8 +112,11 @@ type Info struct {
 	Assets string
 }
 
-// AdminPerms is what an administrator who is not a member may do in a space:
-// manage it and its people. Not read, and never write.
+// AdminPerms is what a holder of tenant.spaces.manage who is not a member may
+// do in a space: manage its settings and its people. Not read, and never
+// write. Members here excludes owners and the administrator themselves
+// (ErrTakeover), and the remote routes are for members only; both take the
+// explicit takeover.
 var AdminPerms = perm.Of(perm.Members, perm.Manage)
 
 // Handle is an open space together with the caller's view of it. Release it
@@ -572,7 +582,14 @@ func (m *Manager) openForIndex(ctx context.Context, user store.User, spaceID str
 		}
 	}
 	if !found {
-		if m.single != nil || !viaAdmin || user.Role != "admin" || !page.ValidID(spaceID) {
+		if m.single != nil || !viaAdmin || !page.ValidID(spaceID) {
+			return nil, ErrNotFound
+		}
+		// Who may manage a space they are not a member of holds
+		// tenant.spaces.manage there: asked first in their own tenant (no query
+		// for anyone else), then in the space's.
+		access := authz.SubjectFor(user.Role, user.SiteAdmin, user.TenantID)
+		if !access.Can(authz.TenantSpacesManage, user.TenantID) && !access.SiteWide(authz.TenantSpacesManage) {
 			return nil, ErrNotFound
 		}
 		sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.ScopeOf(user), spaceID)
@@ -581,6 +598,9 @@ func (m *Manager) openForIndex(ctx context.Context, user store.User, spaceID str
 		}
 		if err != nil {
 			return nil, err
+		}
+		if !access.Can(authz.TenantSpacesManage, sp.TenantID) {
+			return nil, ErrNotFound
 		}
 		if m.opt.Store.TenantDisabled(sp.TenantID) {
 			return nil, ErrDisabled // the spaces of a disabled tenant cannot be opened, by anyone

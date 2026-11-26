@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/dailyfetch"
 	"petalbook.app/server/internal/drafts"
@@ -127,11 +128,16 @@ type server struct {
 	// settings are the layered settings (site, tenant; see internal/settings).
 	settings *settings.Service
 	// quota knows which limits apply and notices crossings (accounts mode).
-	quota   *quota.Service
-	single  bool
-	started time.Time
-	local   store.User // the built-in user of single-user mode
-	origins map[string]bool
+	quota *quota.Service
+	// caps says which capabilities each tenant has; nil: all of them (the
+	// capabilities of 3.6 are not there yet).
+	caps authz.Capabilities
+	// localAccess is what the built-in user of single-user mode holds.
+	localAccess authz.Subject
+	single      bool
+	started     time.Time
+	local       store.User // the built-in user of single-user mode
+	origins     map[string]bool
 	// importing lets one import run at a time (see importMarkdown).
 	importing chan struct{}
 	// confirms are the tokens of the confirmations; views the views of spaces
@@ -253,6 +259,7 @@ func New(opt Options) *Handler {
 		if u, err := store.GetUser(context.Background(), opt.Store.Q(), store.AllTenants(), store.LocalUserID); err == nil {
 			s.local = *u
 		}
+		s.localAccess = auth.AccessOf(s.local)
 	}
 	s.settings.SetFileCeiling(opt.MaxUpload)
 	s.bindRecycle()
@@ -572,8 +579,11 @@ type errorBody struct {
 	AssetsRepo *repoRefResp `json:"assetsRepo,omitempty"`
 	// InstallURL is where the App is installed (app_not_installed).
 	InstallURL string `json:"installUrl,omitempty"`
-	// Permission is the first permission an App lacks (app_missing_permission).
+	// Permission is the first permission an App lacks (app_missing_permission),
+	// or the permission key a refused route needs (forbidden, capability_off).
 	Permission string `json:"permission,omitempty"`
+	// Capability is the tenant capability that is off (capability_off).
+	Capability string `json:"capability,omitempty"`
 	// What some refusals are about (docs/api.md, "Daily text refusals"): a
 	// request header, a field of an interface.
 	Header string `json:"header,omitempty"`
@@ -825,6 +835,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "user_disabled", "That user is disabled and cannot own a space.")
 	case errors.Is(err, spaces.ErrForbidden):
 		writeError(w, http.StatusForbidden, "no_permission", "Your role in this space does not allow that.")
+	case errors.Is(err, spaces.ErrTakeover):
+		writeError(w, http.StatusForbidden, "takeover_required", "Only a member of the space may change its owners, give an administrator a role in it, or change its remote; an administrator takes the space over first.")
 	case errors.Is(err, spaces.ErrUserNotFound):
 		writeError(w, http.StatusNotFound, "user_not_found", "There is no such user.")
 	case errors.Is(err, spaces.ErrNotMember):

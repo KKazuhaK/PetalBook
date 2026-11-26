@@ -288,6 +288,9 @@ function suite(target: Target) {
       expect(typeof r.json.user.id).toBe('string')
       expect(typeof r.json.user.username).toBe('string')
       expect(typeof r.json.user.name).toBe('string')
+      // The permission keys the user holds in their tenant (3.6): the contract user administers the whole server.
+      expect(r.json.user.permissions).toEqual(expect.arrayContaining(['site.settings.manage', 'tenant.users.read']))
+      expect(r.json.user.permissions).not.toContain('space.read')
       if (accounts) {
         expect(r.json.methods.password).toBe(true)
         expect(r.json.methods).toHaveProperty('oidc')
@@ -363,6 +366,8 @@ function suite(target: Target) {
         ['GET', `/api/admin/spaces/${spaceId}`],
         ['POST', `/api/admin/spaces/${spaceId}/size`],
         ['POST', `/api/admin/spaces/${spaceId}/transfer`, { userId: 'local' }],
+        ['POST', `/api/admin/spaces/${spaceId}/takeover`, { reason: 'x' }],
+        ['GET', '/api/admin/permissions'],
         ['POST', `/api/admin/spaces/${spaceId}/disable`],
         ['POST', `/api/admin/spaces/${spaceId}/enable`],
         ['DELETE', `/api/admin/spaces/${spaceId}`],
@@ -2196,6 +2201,8 @@ function suite(target: Target) {
           ['GET', '/api/admin/spaces/01ZZZZZZZZ'],
           ['POST', '/api/admin/spaces/01ZZZZZZZZ/size'],
           ['POST', '/api/admin/spaces/01ZZZZZZZZ/transfer', { userId: 'x' }],
+          ['POST', '/api/admin/spaces/01ZZZZZZZZ/takeover', { reason: 'x' }],
+          ['GET', '/api/admin/permissions'],
           ['POST', '/api/admin/spaces/01ZZZZZZZZ/disable'],
           ['POST', '/api/admin/spaces/01ZZZZZZZZ/enable'],
           ['DELETE', '/api/admin/spaces/01ZZZZZZZZ'],
@@ -2354,6 +2361,64 @@ function suite(target: Target) {
           ])
           expect(await roleOf(owner.browser, sp.id)).toMatchObject({ role: 'editor', permissions: ['read', 'write'] })
           expect((await listAll(sp.name.toLowerCase())).find((s) => s.id === sp.id)!.owner!.id).toBe(heir.user.id)
+        })
+
+        it('an administrator who is no member takes a space over only explicitly: not by its owners, themselves or its remote; the takeover is told to the owner', async () => {
+          const owner = await newMember(uniq('ko'))
+          const other = await newMember(uniq('kx'))
+          const sp = await ownedSpace(owner, 'Taken over')
+          const me = (await call(admin, 'GET', '/api/session')).json.user
+          const base = `/api/spaces/${sp.id}`
+          const refused = [
+            await call(admin, 'POST', `${base}/members`, { username: me.username, role: 'editor' }),
+            await call(admin, 'POST', `${base}/members`, { username: other.user.username, role: 'owner' }),
+            await call(admin, 'PATCH', `${base}/members/${owner.user.id}`, { role: 'editor' }),
+            await call(admin, 'DELETE', `${base}/members/${owner.user.id}`),
+            await call(admin, 'PUT', `${base}/remote`, { url: 'https://git.example.test/a/b.git' }),
+          ]
+          for (const r of refused) expect([r.status, r.json?.error]).toEqual([403, 'takeover_required'])
+          // Managing the members who are no owners is still theirs.
+          expect(
+            (await call(admin, 'POST', `${base}/members`, { username: other.user.username, role: 'viewer' })).status,
+          ).toBe(201)
+          // A transfer to oneself is a takeover without a reason.
+          const self = await call(admin, 'POST', `/api/admin/spaces/${sp.id}/transfer`, { userId: me.id })
+          expect([self.status, self.json.error]).toEqual([403, 'takeover_required'])
+          const none = await call(admin, 'POST', `/api/admin/spaces/${sp.id}/takeover`, { reason: ' ' })
+          expect([none.status, none.json.error]).toEqual([400, 'invalid'])
+          expect(
+            (await call(admin, 'POST', `/api/admin/spaces/${sp.id}/takeover`, { reason: 'the owner left' })).status,
+          ).toBe(204)
+          const list = (await call(admin, 'GET', `${base}/members`)).json.members as Member[]
+          expect(list.find((m) => m.userId === me.id)?.role).toBe('owner')
+          expect(list.find((m) => m.userId === owner.user.id)?.role).toBe('editor')
+          const items = (await call(owner.browser, 'GET', '/api/notifications')).json.items as {
+            kind: string
+            ref: string
+            payload: Record<string, unknown>
+          }[]
+          expect(items.find((n) => n.kind === 'system' && n.ref === sp.id)?.payload).toMatchObject({
+            event: 'space_taken_over',
+            space: 'Taken over',
+            reason: 'the owner left',
+          })
+          // Given back, so the contract user owns no more spaces than before.
+          expect(
+            (await call(admin, 'POST', `/api/admin/spaces/${sp.id}/transfer`, { userId: owner.user.id })).status,
+          ).toBe(204)
+        })
+
+        it('lists the permission keys of the registry, each with its scope', async () => {
+          const r = await call(admin, 'GET', '/api/admin/permissions')
+          expect(r.status).toBe(200)
+          const l = r.json.permissions as { name: string; scope: string; capability: string; description: string }[]
+          expect(l.map((p) => p.name)).toEqual(expect.arrayContaining(['tenant.spaces.takeover', 'space.read']))
+          for (const p of l) {
+            expect(['site', 'tenant', 'space']).toContain(p.scope)
+            expect(p.name.startsWith(`${p.scope}.`)).toBe(true)
+            expect(typeof p.capability).toBe('string')
+            expect(p.description).not.toBe('')
+          }
         })
 
         it("disables a space: it stays in its members' lists, marked, and nothing opens it for anyone, an administrator included; enabling undoes it", async () => {

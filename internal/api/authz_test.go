@@ -1,0 +1,154 @@
+package api_test
+
+import (
+	"os"
+	"regexp"
+	"slices"
+	"strings"
+	"testing"
+
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/authz"
+)
+
+// Every route is public, for anyone signed in, on a space, or names a key; every
+// administration route names a key, and every key a route names is a site or
+// tenant key of the registry.
+func TestEveryAdminRouteHasAKey(t *testing.T) {
+	t.Parallel()
+	used := map[string]bool{}
+	for _, r := range api.Routes() {
+		name := r.Method + " " + r.Pattern
+		admin := strings.HasPrefix(r.Pattern, "/api/admin/") || strings.HasPrefix(r.Pattern, "/api/users") ||
+			(strings.HasPrefix(r.Pattern, "/api/invites") && !r.Public)
+		if admin && r.Key == "" {
+			t.Errorf("%s is an administration route without a permission key", name)
+		}
+		if r.Key == "" {
+			continue
+		}
+		used[r.Key] = true
+		k, ok := authz.Lookup(r.Key)
+		if !ok {
+			t.Errorf("%s names %s, which is not registered", name, r.Key)
+			continue
+		}
+		if k.Scope() == authz.ScopeSpace || r.Space || r.Public {
+			t.Errorf("%s: a route outside spaces names a site or tenant key (%s)", name, r.Key)
+		}
+		if r.SiteAdmin != (k.Scope() == authz.ScopeSite) {
+			t.Errorf("%s: SiteAdmin does not follow its key's scope", name)
+		}
+	}
+	// A site or tenant key no route names would be a key nobody can use.
+	for _, in := range authz.All() {
+		if in.Scope != authz.ScopeSpace && !used[in.Name] {
+			t.Errorf("no route names %s", in.Name)
+		}
+	}
+}
+
+// The table of keys in docs/api.md and the PermissionKey union of the web app
+// list exactly the registry, in its order.
+func TestPermissionKeysMatchTheDocsAndTheWebApp(t *testing.T) {
+	t.Parallel()
+	var want []string
+	scopes := map[string]string{}
+	for _, in := range authz.All() {
+		want = append(want, in.Name)
+		capName := in.Capability
+		if capName == "" {
+			capName = "—"
+		} else {
+			capName = "`" + capName + "`"
+		}
+		scopes[in.Name] = in.Scope.String() + "|" + capName
+	}
+
+	doc, err := os.ReadFile("../../docs/api.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sec := string(doc)
+	i := strings.Index(sec, "\n### Permission keys\n")
+	if i < 0 {
+		t.Fatal(`docs/api.md has no "### Permission keys"`)
+	}
+	sec = sec[i+1:]
+	if j := strings.Index(sec[4:], "\n### "); j >= 0 {
+		sec = sec[:j+4]
+	}
+	row := regexp.MustCompile("^\\| `([a-z][a-zA-Z.]*)` \\| (site|tenant|space) \\| ([^|]+) \\|")
+	var docKeys []string
+	for _, line := range strings.Split(sec, "\n") {
+		m := row.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		docKeys = append(docKeys, m[1])
+		if got := m[2] + "|" + strings.TrimSpace(m[3]); got != scopes[m[1]] {
+			t.Errorf("docs/api.md: %s is %q, the registry says %q", m[1], got, scopes[m[1]])
+		}
+	}
+	if !slices.Equal(docKeys, want) {
+		t.Errorf("docs/api.md lists\n%v\nthe registry has\n%v", docKeys, want)
+	}
+
+	ts, err := os.ReadFile("../../web/src/api/types.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(ts)
+	i = strings.Index(src, "export type PermissionKey =")
+	if i < 0 {
+		t.Fatal("web/src/api/types.ts has no PermissionKey")
+	}
+	var webKeys []string
+	lit := regexp.MustCompile(`^\s*\|\s*'([^']+)'\s*$`)
+	for _, line := range strings.Split(src[i:], "\n")[1:] {
+		m := lit.FindStringSubmatch(line)
+		if m == nil {
+			break
+		}
+		webKeys = append(webKeys, m[1])
+	}
+	if !slices.Equal(webKeys, want) {
+		t.Errorf("web/src/api/types.ts PermissionKey lists\n%v\nthe registry has\n%v", webKeys, want)
+	}
+}
+
+func TestSessionAndAdminListThePermissions(t *testing.T) {
+	t.Parallel()
+	f := newRouteAccessFx(t)
+	perms := func(c *client) []string {
+		var out []string
+		for _, p := range c.do("GET", "/api/session", nil).want(t, 200, "").user()["permissions"].([]any) {
+			out = append(out, p.(string))
+		}
+		return out
+	}
+	site, _ := authz.RoleSet(authz.RoleSiteAdmin)
+	ten, _ := authz.RoleSet(authz.RoleTenantAdmin)
+	if got := perms(f.site); !slices.Equal(got, site.Names()) {
+		t.Errorf("site administrator: %v", got)
+	}
+	if got := perms(f.tenant); !slices.Equal(got, ten.Names()) || slices.Contains(got, "site.settings.manage") || !slices.Contains(got, "tenant.spaces.takeover") {
+		t.Errorf("tenant administrator: %v", got)
+	}
+	if got := perms(f.mem); !slices.Equal(got, []string{"tenant.spaces.create"}) {
+		t.Errorf("member: %v", got)
+	}
+	if got := perms(f.tok); len(got) != 0 {
+		t.Errorf("token: %v", got)
+	}
+	r := f.tenant.do("GET", "/api/admin/permissions", nil).want(t, 200, "")
+	l := r.body["permissions"].([]any)
+	if len(l) != len(authz.All()) {
+		t.Fatalf("%d keys, %d registered", len(l), len(authz.All()))
+	}
+	first := l[0].(map[string]any)
+	if first["name"] != authz.All()[0].Name || first["scope"] == "" || first["description"] == "" {
+		t.Fatal(first)
+	}
+	f.mem.do("GET", "/api/admin/permissions", nil).want(t, 403, "forbidden")
+}

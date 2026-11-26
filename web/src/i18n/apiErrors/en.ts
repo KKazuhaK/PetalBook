@@ -59,6 +59,9 @@ export const apiErrorsEn: ApiErrorTexts = {
   member_via_group: 'This person is a member through a group. Remove them from the group.',
   default_tenant: 'The default organisation cannot be changed that way.',
   tenant_limit: 'The limit on organisations is reached.',
+  capability_off: 'Your organisation does not have this feature.',
+  takeover_required:
+    'Only a member of the space can change its owners or its remote. An administrator takes the space over first.',
   tenant_not_empty:
     'The organisation still has users, spaces, groups, invites or items in the recycle bin, so it cannot be moved as it is.',
   tenants_off: 'Several organisations are not turned on.',
@@ -146,7 +149,4 @@ export const apiErrorsEn: ApiErrorTexts = {
   path_reveals_secret: (p) => `The path${p.field ? ` of "${p.field}"` : ''} would show a secret, so it was refused.`,
   link_uses_header: 'A link cannot use an interface with headers.',
   skip_too_large: 'There is too much to skip.',
-
-  // Not sent by the server today; kept for the pages that name it.
-  capability_off: 'This organisation does not have this turned on.',
 }

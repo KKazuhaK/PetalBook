@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/mail"
 	"petalbook.app/server/internal/store"
 )
@@ -12,9 +13,9 @@ import (
 // docs/api.md "Mail", "Registration", "Email verification", "Password reset").
 
 var mailRoutes = []route{
-	{"GET", "/api/admin/mail", siteAdmin, true, false, false, (*server).adminGetMail},
-	{"PUT", "/api/admin/mail", siteAdmin, true, false, false, (*server).adminPutMail},
-	{"POST", "/api/admin/mail/test", siteAdmin, true, false, false, (*server).adminTestMail},
+	{"GET", "/api/admin/mail", needs(authz.SiteMailManage), true, false, false, (*server).adminGetMail},
+	{"PUT", "/api/admin/mail", needs(authz.SiteMailManage), true, false, false, (*server).adminPutMail},
+	{"POST", "/api/admin/mail/test", needs(authz.SiteMailManage), true, false, false, (*server).adminTestMail},
 
 	{"GET", "/api/register", public, true, false, false, (*server).getRegister},
 	{"POST", "/api/register", public, true, false, false, (*server).postRegister},
@@ -26,7 +27,7 @@ var mailRoutes = []route{
 	{"POST", "/api/password/forgot", public, true, false, false, (*server).passwordForgot},
 	{"POST", "/api/password/reset/check", public, true, false, false, (*server).passwordResetCheck},
 	{"POST", "/api/password/reset", public, true, false, false, (*server).passwordReset},
-	{"POST", "/api/users/{id}/password-reset", admin, true, false, false, (*server).userPasswordReset},
+	{"POST", "/api/users/{id}/password-reset", needs(authz.TenantUsersManage), true, false, false, (*server).userPasswordReset},
 }
 
 func init() { routeTable = append(routeTable, mailRoutes...) }

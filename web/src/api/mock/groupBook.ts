@@ -381,6 +381,9 @@ export function createGroupBook(o: GroupBookOptions) {
     method: string,
     rest: string,
     body: Record<string, unknown>,
+    // Set for an administrator who is not a member: the refusal of what is taking the space over (an owner group, or
+    // a group of their own).
+    takeover?: () => Error,
   ): MockResponse | null => {
     const book = o.book()
     const checkRole = (raw: unknown): SpaceRole => {
@@ -403,6 +406,7 @@ export function createGroupBook(o: GroupBookOptions) {
       const g = typeof body.groupId === 'string' ? groups.get(body.groupId) : undefined
       if (!g) throw new HttpError(404, 'group_not_found', 'there is no such group')
       if (s.groups.has(g.id)) throw new HttpError(409, 'exists', 'that group is a member of this space already')
+      if (takeover && (role === 'owner' || g.people.has(me.id))) throw takeover()
       if (s.groups.size >= GROUP_LIMITS.perSpace)
         throw new HttpError(409, 'group_limit', `a space has at most ${GROUP_LIMITS.perSpace} groups`)
       s.groups.set(g.id, role)
@@ -416,6 +420,7 @@ export function createGroupBook(o: GroupBookOptions) {
       if (method === 'PATCH') {
         const role = checkRole(body.role)
         if (cur === undefined) throw new HttpError(404, 'not_found', 'that group is not a member of this space')
+        if (takeover && (role === 'owner' || cur === 'owner' || groups.get(gid)?.people.has(me.id))) throw takeover()
         if (cur !== role) {
           s.groups.set(gid, role)
           book.record('space_group_changed', {
@@ -427,6 +432,7 @@ export function createGroupBook(o: GroupBookOptions) {
       }
       if (method === 'DELETE') {
         if (cur === undefined) throw new HttpError(404, 'not_found', 'that group is not a member of this space')
+        if (takeover && cur === 'owner') throw takeover()
         s.groups.delete(gid)
         book.record('space_group_removed', { actor: me.id, detail: { space: s.id, group: gid, role: cur } })
         return { status: 204 }

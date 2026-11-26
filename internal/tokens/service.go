@@ -183,6 +183,7 @@ func (s *Service) Authenticate(ctx context.Context, secret, ip string) (*auth.Pr
 			s.log.Warn("could not record a person's last use", "error", err)
 		}
 	}
+	// No Access: no route outside spaces takes a token, so none is built.
 	return &auth.Principal{User: *u, Grant: e.grant}, nil
 }
 

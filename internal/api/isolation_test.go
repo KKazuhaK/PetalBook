@@ -178,6 +178,7 @@ type isoEntry struct {
 var isolationRoutes = map[string]isoEntry{
 	"GET /api/meta":                        {kind: isoList},
 	"GET /api/session":                     {kind: isoExempt, reason: "the caller's own user"},
+	"GET /api/admin/permissions":           {kind: isoExempt, reason: "the registry of permission keys: the same for every tenant"},
 	"POST /api/setup":                      {kind: isoExempt, reason: "public: nothing of a tenant"},
 	"POST /api/login":                      {kind: isoExempt, reason: "public: the account that signs in decides the tenant"},
 	"POST /api/logout":                     {kind: isoExempt, reason: "the caller's own session"},
@@ -296,6 +297,7 @@ var isolationRoutes = map[string]isoEntry{
 	"GET /api/admin/exports/{id}/download":            {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.exportB} }},
 	"POST /api/admin/spaces/{space}/size":             {kind: isoParam},
 	"POST /api/admin/spaces/{space}/transfer":         {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"userId": f.userB} }},
+	"POST /api/admin/spaces/{space}/takeover":         {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"reason": "taking over"} }},
 	"POST /api/admin/spaces/{space}/disable":          {kind: isoParam},
 	"POST /api/admin/spaces/{space}/enable":           {kind: isoParam},
 	"DELETE /api/admin/spaces/{space}":                {kind: isoParam},
@@ -585,7 +587,8 @@ func (f *tenFx) countOf(q string) int {
 func assertNoCrossTenantMemberships(t *testing.T, a *acc) {
 	t.Helper()
 	for name, q := range map[string]string{
-		"space_members": `SELECT COUNT(*) FROM space_members m JOIN spaces s ON s.id = m.space_id JOIN users u ON u.id = m.user_id WHERE s.tenant_id <> u.tenant_id`,
+		// A site administrator who took a space over explicitly is the one exception (3.6).
+		"space_members": `SELECT COUNT(*) FROM space_members m JOIN spaces s ON s.id = m.space_id JOIN users u ON u.id = m.user_id WHERE s.tenant_id <> u.tenant_id AND NOT (u.role = 'admin' AND u.site_admin = 1)`,
 		"group_members": `SELECT COUNT(*) FROM group_members m JOIN groups g ON g.id = m.group_id JOIN users u ON u.id = m.user_id WHERE g.tenant_id <> u.tenant_id`,
 		"space_groups":  `SELECT COUNT(*) FROM space_groups x JOIN spaces s ON s.id = x.space_id JOIN groups g ON g.id = x.group_id WHERE s.tenant_id <> g.tenant_id`,
 		"token spaces":  `SELECT COUNT(*) FROM api_token_spaces x JOIN api_tokens k ON k.id = x.token_id JOIN users u ON u.id = k.user_id JOIN spaces s ON s.id = x.space_id WHERE s.tenant_id <> u.tenant_id`,

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"petalbook.app/server/internal/store"
@@ -114,15 +115,22 @@ func (s *server) adminResizeSpace(c *call) {
 func (s *server) adminTransferSpace(c *call) {
 	var req struct {
 		UserID string `json:"userId"`
+		Reason string `json:"reason"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	if err := s.spaces.Transfer(c.r.Context(), store.AdminScopeOf(c.user()), c.r.PathValue("space"), req.UserID); err != nil {
-		s.fail(c.w, err)
+	reason := strings.TrimSpace(req.Reason)
+	if len([]rune(reason)) > 500 {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Reason is at most 500 characters.")
 		return
 	}
-	c.w.WriteHeader(http.StatusNoContent)
+	if req.UserID == c.user().ID {
+		// Becoming the owner oneself is taking the space over, which says why.
+		writeError(c.w, http.StatusForbidden, "takeover_required", "To become the owner yourself, take the space over: POST /api/admin/spaces/{space}/takeover, with a reason.")
+		return
+	}
+	s.transferSpace(c, req.UserID, reason, "space_transferred")
 }
 
 func (s *server) adminDisableSpace(c *call) {

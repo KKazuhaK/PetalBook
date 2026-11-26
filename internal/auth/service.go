@@ -26,6 +26,7 @@ import (
 	"github.com/KazuhaHub/authcore/captcha"
 	authsaml "github.com/KazuhaHub/authcore/saml"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/mail"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/perm"
@@ -165,7 +166,9 @@ type cachedSession struct {
 }
 
 type cachedUser struct {
-	u      store.User
+	u store.User
+	// access is what the person holds outside spaces, built with the entry.
+	access authz.Subject
 	loaded time.Time
 }
 
@@ -177,6 +180,10 @@ type Principal struct {
 	SessionCreated time.Time
 	// Held: the session may only register a passkey and sign out.
 	Held bool
+	// Access is what the person holds outside the content of spaces: their
+	// permission keys (internal/authz). A grant never widens it, and no route
+	// outside a space takes a grant.
+	Access authz.Subject
 	// Grant is set when the request is made with a credential of narrower
 	// reach than the person (an API token, later an OAuth access token); nil
 	// for a session and for the built-in user.

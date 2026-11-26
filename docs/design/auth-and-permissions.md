@@ -111,3 +111,68 @@ The conventions to hold to now, for this purpose:
 - The isolation table (3.3) and the "capabilities" of 3.6 stay in front as
   before: first ask whether the tenant has the capability, then ask whether
   this person has the permission.
+
+### 16.1 Permission keys (3.6 part 1, built)
+
+What the conventions above became in code:
+
+- **`internal/authz`** (server only; the engine never imports it, see
+  `internal/boundary`). `Register(name, scope, capability, description)` at init
+  returns a `Key`; a duplicate name, or one that does not begin with its scope,
+  panics. The bit of a key exists only in the process: anything stored or sent
+  names the key. A `Set` is `[2]uint64` (up to 128 keys), so a check is one AND.
+- **Subject.** `Subject{Site Set; Tenant map[tenant]Set}`; a tenant key in
+  `Site` is held in every tenant. The session cache builds it when it loads a
+  person (from `role` and `site_admin` today; from 3.7 the person's memberships
+  of organisations fill `Tenant`) and keeps it with the user, so
+  `Principal.Access` costs no query and no allocation on a request.
+- **Built-in roles, in code**: site administrator = every site and tenant key, in
+  every tenant; tenant administrator = every tenant key in their tenant; member =
+  `tenant.spaces.create`; viewer = none. Custom roles (stored) are a later part.
+- **The check** is `allow(c, key, tenant)`, the tenant always explicit (the
+  route table checks the caller's own): (1) the tenant's capability, which a
+  holder of the key across the site is not bound by, `403 capability_off`;
+  (2) the key, `403 forbidden` naming it; (3) a hook that allows everything
+  until 3.7 checks the caller's standing in that organisation.
+- **Routes** say `needs(key)` in place of the old `admin` and `siteAdmin`
+  levels; space routes keep `inSpace(perm.X)`, and `perm.Set` stays the space
+  level's bitset, its four permissions registered as `space.read`,
+  `space.write`, `space.members.manage` and `space.manage` (the API keeps the
+  short names). A golden file pins every route's decision for a site
+  administrator, a tenant administrator, a member and an API token, written
+  before the change; the keys decide the same except where listed below.
+- **Admin keys never grant content.** No site or tenant key reads or writes a
+  space; content goes only through space keys, held as a member of the space or,
+  for reading, in an administrator's audited view.
+- **The tenant administrator's bypass is closed** (the owner's decision,
+  2026-11-25). An administrator who was not a member of a space had `members`
+  and `manage` there (`spaces.AdminPerms`), enough to add themselves, make
+  anyone an owner, or point the space's remote at their own repository: taking
+  the space over unnoticed. Now `tenant.spaces.manage` covers a space's
+  settings and members except its owners and its remote. Making, unmaking,
+  demoting or removing an owner (a person or a group), giving oneself or a group
+  one is in a role, and changing the remote (`PUT`/`DELETE …/remote`,
+  `…/remote/key`, `…/remote/accept`, `…/remote/assets`, `…/remote/assets/move`)
+  answer `403 takeover_required` to an administrator who is not a member. The
+  one way is the new key `tenant.spaces.takeover` through
+  `POST /api/admin/spaces/{space}/takeover` with a reason: the administrator
+  becomes the owner and the owners editors, it is audited
+  (`space_taken_over`), and each replaced owner gets a `system` notification.
+  `…/transfer` needs the same key and is audited and told the same way. The
+  built-in tenant (and site) administrator holds `takeover`, but only these two
+  endpoints use it, and a transfer to oneself is refused (it would be a takeover
+  without a reason). A site administrator may take over a space of any tenant
+  (the owner's decision, 2026-11-25), which makes the one membership that joins
+  two tenants (`TransferOwnership` accepts it only for a site administrator); a
+  tenant administrator only within their tenant; a personal space nobody.
+  Groups that hold the owner role keep it for now and their people are told;
+  part 2 decides to remove or lower a group's owner role on a takeover.
+- Whether someone reaches a space they are not a member of is decided by
+  `tenant.spaces.manage` in the space's tenant, not by the role name.
+- Token and OAuth principals carry no `Access`: no route outside spaces takes
+  them, so nothing is built for them per request.
+- Left for later parts: the in-handler `isSiteAdmin()` checks and the inline
+  `Role == "admin"` comparisons become key checks (part 2, with custom roles);
+  an administrator may still add themselves to a group that is already a member
+  of a space through the group administration (`tenant.groups.manage`), which
+  part 2 has to decide together with roles.

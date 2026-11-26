@@ -42,7 +42,7 @@ describe('the texts of the server error codes', () => {
   }
   it('has no text for a code the server does not send, except the few client-side ones', () => {
     const extra = Object.keys(apiErrorsEn).filter((c) => !codes.includes(c))
-    expect(extra).toEqual(['capability_off'])
+    expect(extra).toEqual([])
     expect(Object.keys(apiErrorsZhCN).filter((c) => !codes.includes(c))).toEqual(extra)
   })
   it('says the limit and what a file was in the file_too_large text', () => {

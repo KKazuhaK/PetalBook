@@ -190,6 +190,8 @@ Never an error; no session needed. `Cache-Control: no-store`.
 - `endedReason`: only when there is no `user` and the request's session cookie
   belonged to a session that ended (the same values as `reason` of a 401, below);
   absent for everyone else, so a cookie that never was a session learns nothing.
+- `user.permissions` (3.6): the permission keys the user holds in their own
+  tenant, site keys included (see "Permission keys"); `[]` with an API token.
 - `methods` is kept for clients older than 2.8 and is absent in single-user
   mode. `methods.oidc` is the provider that answers the pre-2.8 endpoints (see
   "The pre-2.8 endpoints"), or `null` when there is none. The sign-in page reads
@@ -1168,8 +1170,10 @@ space, each with a role (`owner`, `editor` or `viewer`, see "Space"). A space
 always keeps at least one owner. A personal space (`personal: true`) belongs to
 its person alone and never has other members. An administrator is not a member
 of the spaces they open, so they are not listed here and not in `GET /api/spaces`,
-but may use these endpoints as if they were an owner (the permissions an
-administrator has in a space they are not a member of are `members` and `manage`). From 3.2 a shared space's
+but may use these endpoints (the permissions an administrator has in a space
+they are not a member of are `members` and `manage`), except for owners and
+themselves: from 3.6 that is taking the space over, `403 takeover_required`
+(see "Taking over a space"). From 3.2 a shared space's
 members may also be groups, with endpoints of their own (see "Groups"); this
 section is about people.
 
@@ -7854,8 +7858,9 @@ reason, and shows a banner "管理员查看，只读，已记录" while it lasts
 
 - An administrator who is not a member of a space (a site administrator for any
   space, a tenant administrator for their tenant's) has **only `members` and
-  `manage`** there, without a view: the names of its people, its remote, its
-  settings, its rename, its transfer. Not `read`, and never `write`. This
+  `manage`** there, without a view: the names of its people, its
+  settings, its rename, its transfer. Not `read`, and never `write`. From 3.6
+  not its owners nor its remote either (see "Taking over a space"). This
   replaces 1.7's "an administrator may do everything in every space", which the
   view would otherwise make pointless. A view adds `read` to those, for the
   session that opened it, and nothing else.
@@ -9479,6 +9484,136 @@ own organisation**.
 tenant's layer of the same switches is `…/tenants/{tenant}/settings` and
 `…/security`.
 
+### Permission keys
+
+3.6 part 1 (built). Every route outside spaces names the **permission key** it
+needs in the route table, and one check decides it; no route asks "is this an
+administrator" any more. A key is a name, a scope (`site`, `tenant` or
+`space`), the tenant capability it needs (if any) and a description. The
+registry is in code (`internal/authz`): a key is registered once, and the
+names below, `GET /api/admin/permissions` and the web app's `PermissionKey`
+are the same list (a test compares them).
+
+| Key | Scope | Capability | What it allows |
+|---|---|---|---|
+| `site.settings.manage` | site | — | Read and change the site's settings |
+| `site.security.manage` | site | — | Read and change the sign-in security of the site |
+| `site.signin.manage` | site | — | Add, change and remove sign-in providers |
+| `site.mail.manage` | site | — | Read and change the mail settings, and send a test message |
+| `site.access.manage` | site | — | Read and change who may register and sign in |
+| `site.tenancy.manage` | site | — | Turn tenants on and off |
+| `site.tenants.manage` | site | — | List, create and delete tenants |
+| `site.connections.manage` | site | — | Set up the providers people connect to |
+| `site.daily.manage` | site | — | Set up the daily text: its interfaces, providers and lines |
+| `site.status.read` | site | — | Read the server's status |
+| `site.storage.manage` | site | — | Change the server's storage budget and a space's storage, and evict spaces |
+| `site.recycle.purge` | site | — | Purge an item of the recycle bin for good |
+| `tenant.settings.read` | tenant | — | Read the tenant and its settings |
+| `tenant.settings.write` | tenant | — | Change the tenant and its settings |
+| `tenant.users.read` | tenant | — | List people and read their accounts, memberships, sessions, identities and passkeys |
+| `tenant.users.manage` | tenant | — | Change people's accounts, end their sessions, remove identities and passkeys, send password resets |
+| `tenant.users.delete` | tenant | — | Delete people |
+| `tenant.invites.manage` | tenant | — | Create, list and withdraw invitations |
+| `tenant.groups.read` | tenant | — | List groups, their members and their spaces |
+| `tenant.groups.manage` | tenant | — | Create, change and delete groups and their members |
+| `tenant.spaces.create` | tenant | — | Create spaces |
+| `tenant.spaces.read` | tenant | — | List the tenant's spaces |
+| `tenant.spaces.manage` | tenant | — | Manage a space without being its member: its settings and members, but not its owners or its remote; measure, disable and enable it |
+| `tenant.spaces.takeover` | tenant | — | Take over a space (become its owner) or transfer it; audited, and its owners are told |
+| `tenant.spaces.delete` | tenant | — | Delete spaces |
+| `tenant.data.view` | tenant | `data.adminView` | Open an audited, read-only view of a space |
+| `tenant.data.export` | tenant | — | Export spaces and download the exports |
+| `tenant.storage.read` | tenant | — | Read the storage used by the tenant and its people |
+| `tenant.recycle.read` | tenant | — | List the recycle bin |
+| `tenant.recycle.restore` | tenant | — | Restore an item of the recycle bin |
+| `tenant.bulk.run` | tenant | — | Confirm and run bulk actions, and follow their jobs |
+| `tenant.usage.read` | tenant | — | Read the usage of the tenant |
+| `tenant.audit.read` | tenant | — | Read the audit log |
+| `tenant.tokens.read` | tenant | — | List people's API tokens and app authorizations |
+| `tenant.tokens.revoke` | tenant | — | Revoke people's API tokens and app authorizations |
+| `tenant.permissions.read` | tenant | — | List the permission keys |
+| `space.read` | space | — | See pages, history, attachments and search |
+| `space.write` | space | — | Create, change, move and delete pages and folders |
+| `space.members.manage` | space | — | Add, change and remove the members of the space |
+| `space.manage` | space | — | Rename the space; its inbox, remote, sync, types and templates |
+
+- **Built-in roles**, in code: a **site administrator** holds every site and
+  tenant key, in every tenant; a **tenant administrator** every tenant key in
+  their tenant; a **member** `tenant.spaces.create`; a **viewer** (3.6 part 7)
+  none. Custom roles are a later part of 3.6.
+- **The check**, in this order: (1) the tenant's capability the key needs
+  (`403 capability_off` with `capability` and `permission`; a site
+  administrator is not bound by capabilities); (2) the key, among what the caller
+  holds in the tenant (`403 forbidden` with `permission`, the key); (3) from
+  3.7, the caller's standing in that organisation. A route outside spaces is
+  checked in the caller's own tenant.
+- **No site or tenant key reads or writes a space's content.** Content goes
+  through the space keys only, which a person holds as a member of the space
+  (`space.read` … `space.manage` are the four permissions `read`, `write`,
+  `members`, `manage`; the API keeps those short names), or, for reading, in
+  an administrator's audited view ("Viewing a space").
+- **Cost.** What a person holds is built when the session cache loads them
+  (with the account row it already reads) and kept with it; a check is one AND
+  on two words in memory. No request makes a query it did not make before.
+
+#### `GET /api/admin/permissions`
+
+Needs `tenant.permissions.read`. The registry, in its order:
+
+```json
+{"permissions": [{"name": "site.settings.manage", "scope": "site", "capability": "", "description": "Read and change the site's settings"}]}
+```
+
+`GET /api/session` lists the keys the caller holds in their own tenant as
+`user.permissions` (site keys included; `[]` for a request with an API token,
+which no route outside spaces takes).
+
+### Taking over a space
+
+3.6 part 1 (built), the owner's decision of 2026-11-25. Until now an
+administrator who was not a member of a space managed it with `members` and
+`manage`, which let them add themselves, make anyone an owner, or point the
+space's remote at a repository of their own: taking the space over without
+saying so. That is closed:
+
+- Managing a space without being its member (`tenant.spaces.manage`) still
+  covers its settings and its members, **except its owners and its remote**.
+  Such an administrator is refused `403 takeover_required` when they would add
+  or promote an owner, demote or remove one, give themselves a role (or add or
+  change a group they are in), or add, demote or remove an owner group; and on
+  `PUT`/`DELETE …/remote`, `POST …/remote/key`, `POST …/remote/accept`,
+  `PUT`/`DELETE …/remote/assets` and `POST …/remote/assets/move`, which are for
+  members only. `GET …/remote` and `POST …/remote/sync` stay theirs.
+- **Taking over is explicit**: `POST /api/admin/spaces/{space}/takeover`,
+  `{"reason": "the owner left the team"}` (1 to 500 characters), needs
+  `tenant.spaces.takeover`. The caller becomes the space's owner (added, or
+  promoted) and every other owner an editor, as `…/transfer` does. `204`.
+  Audited as `space_taken_over` with `space`, `to`, `previous` (the owners it
+  replaced) and `reason`; each previous owner is told by a notification of kind
+  `system` with `{"event": "space_taken_over", "space": "Team", "by": "Ada", "reason": "…"}`
+  (`ref` is the space). `409 personal_space` for a personal space; a personal
+  space is not found for a tenant administrator, as for every administration
+  route. After it the administrator is a member, and the remote and owners are
+  theirs to change. A **site administrator** may take over a space of any
+  tenant (the owner's decision, 2026-11-25): they become its owner although
+  they are of another tenant, the one membership that joins two tenants. A
+  **tenant administrator** only within their tenant (another tenant's space is
+  `404 not_found`). A **personal space is never taken over**, by anyone:
+  `409 personal_space`.
+- **Groups that hold the owner role** keep it in this part: a takeover or a
+  transfer changes only the owners who were added directly, and the people of
+  each owner group are told as well (the audit row lists the groups as
+  `ownerGroups`). Part 2 of 3.6 removes or lowers a group's owner role on a
+  takeover.
+- A built-in tenant administrator holds `tenant.spaces.takeover`, but only this
+  endpoint (and `…/transfer`) uses it; it never widens what they may do in a
+  space implicitly. The same holds for a site administrator.
+- `POST /api/admin/spaces/{space}/transfer` needs `tenant.spaces.takeover`
+  too, takes an optional `reason`, is audited as `space_transferred` (same
+  detail) and tells the owners it replaced (`event: "space_transferred"`). A
+  transfer to oneself is `403 takeover_required`: becoming the owner oneself is
+  the takeover, with its reason.
+
 ### Storage of this section
 
 Migration `0021_tenant_autonomy.sql`, SQLite and PostgreSQL. It exists so that
@@ -9548,6 +9683,7 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
 | `storage_repository_created` | a repository made at a tenant's target for a space | `space`, `repository` |
 | `space_storage_moved` | a space moved between modes or targets | `space`, `from`, `to`, `job` |
 | `audit_downloaded` | someone downloaded audit rows | `from`, `to`, `kind`, `rows` |
+| `space_taken_over`, `space_transferred` | an administrator took a space over, or transferred it | `space`, `to`, `previous`, `ownerGroups`, `reason` |
 
 Every row about a tenant carries `by.role` (`site` or `tenant`). Tenant
 administrators see their tenant's rows of these kinds, the site
@@ -9572,7 +9708,8 @@ their tenant's rows, while the tenant has `data.auditDownload`
 | `domain_code_expired` | 409 | checking an unverified claim whose code is older than 7 days |
 | `domain_managed` | 409 | creating an organisation with an address of a domain with `restrictOrgs`; with `tenant`, `join`, `start` |
 | `email_taken` | 409 | setting an address another account holds |
-| `capability_off` | 403 | the tenant's capabilities leave out what was asked; with `capability` |
+| `capability_off` | 403 | the tenant's capabilities leave out what was asked; with `capability` (and `permission`, the key, when a route's key needs it) |
+| `takeover_required` | 403 | an administrator who is not a member of the space asked for what only taking it over gives (see "Taking over a space") |
 | `confirm_required` | 409 | a capability or plan change that stops something in use, without a confirmation; with `plan` |
 | `plan_in_use` | 409 | deleting a plan that tenants use; with `tenants` |
 | `partial_unsupported` | 409 | connecting a space to a host that cannot sync partially while `storage.partial.unsupported` is `refuse`; with `host` |
@@ -10218,7 +10355,9 @@ running: they never run in parallel) and stores the result. `200` with
 
 ### `POST /api/admin/spaces/{space}/transfer`
 
-`{"userId": "01JD3K7A2M"}`. The user becomes the owner of the space (a member
+`{"userId": "01JD3K7A2M", "reason": "…"}` (`reason` optional, at most 500
+characters). Needs `tenant.spaces.takeover` (3.6); audited and the replaced
+owners are told, as for "Taking over a space". The user becomes the owner of the space (a member
 is promoted, anyone else added) and every other owner becomes an editor. The
 Git author of later commits is the new owner, also in a space that is open
 now. `204`. `404 user_not_found` when there is no such user, `409 user_disabled`
