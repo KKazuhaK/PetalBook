@@ -2880,7 +2880,7 @@ empty string for an untitled page with an empty body. `created` is absent
 when the header has none. `updated` is when the file was last written.
 `icon` and `color` are the page's own, from its header, and are left out when it has none (see
 "Icons, colours and the presets of the sources"). `excerpt` keeps the line breaks of the text as single `\n`; blank lines
-between paragraphs are not kept. A task item keeps its state at the start of its line, as `[x] ` (done, whatever the case of the x in the file) or `[ ] ` (not done), without the list dash or the indentation; the marker counts toward the 400 characters.
+between paragraphs are not kept. A task item keeps its state at the start of its line, as `[x] ` (done, whatever the case of the x in the file) or `[ ] ` (not done), without the list dash or the indentation; the marker counts toward the 400 characters. A line that starts with `[x] ` or `[ ] ` in the excerpt is shown as a task, and a client cannot tell it from the same literal text in the page.
 
 `type` is what the header says (`""` when it says nothing). `effectiveType` is
 the type the page has: the header's, else the type of the nearest folder

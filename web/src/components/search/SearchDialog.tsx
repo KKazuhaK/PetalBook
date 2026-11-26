@@ -367,7 +367,7 @@ function Result({
         </div>
         {page.excerpt && (
           <div className="mt-1 line-clamp-2 text-[0.8rem] leading-snug break-words text-muted-foreground">
-            <Highlighted text={page.excerpt} query={query} />
+            <ExcerptText text={page.excerpt} body={(l) => <Highlighted text={l} query={query} />} />
           </div>
         )}
         {page.tags && page.tags.length > 0 && (
