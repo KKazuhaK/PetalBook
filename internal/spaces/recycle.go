@@ -259,7 +259,7 @@ func (m *Manager) recycleLocked(ctx context.Context, sc store.Scope, tenant, id 
 	// the transaction above; a crash between that and the job's insert leaves an
 	// item whose job is not there, which the hourly look takes up as a move.
 	_, done, err := m.runner().EnqueueWait(ctx, store.Job{ID: jobID, TenantID: tenant, Kind: store.JobRecycleMove, Subject: itemID, LockKey: store.RecycleLock(itemID),
-		MadeBy: o.By, MadeByName: o.ByName, Params: recycleParamsJSON(RecycleParams{}), Total: 1, BytesTotal: res.Item.Bytes}, nil)
+		MadeBy: o.By, MadeByName: o.ByName, SiteOnly: res.Item.Personal, Params: recycleParamsJSON(RecycleParams{}), Total: 1, BytesTotal: res.Item.Bytes}, nil)
 	if err != nil {
 		// The records are safe in the item; the move is tried again by the hourly look.
 		m.log.Error("a deleted space's directories could not be queued for the recycle bin; they stay where they are and the move is tried again", "space", id, "item", itemID, "error", err)
@@ -401,6 +401,15 @@ type RecycleParams struct {
 	WithPerson bool `json:"withPerson,omitempty"`
 	// IP is the address of the request that asked for it, for its audit row.
 	IP string `json:"ip,omitempty"`
+	// Item is a purge's item as it was when the purge was enqueued: the audit
+	// row of its end is written from it when the item's row is gone already
+	// (a crash between the row's delete and the job's end).
+	Item *PurgeResult `json:"item,omitempty"`
+}
+
+// purgeSnapshot is what a purge's audit row needs of its item.
+func purgeSnapshot(it *store.RecycleItem) *PurgeResult {
+	return &PurgeResult{Kind: it.Kind, SpaceID: it.SpaceID, UserID: it.UserID, Name: it.Name, Bytes: it.Bytes, Reason: it.Reason, TenantID: it.TenantID}
 }
 
 // RecycleParamsOf reads the params of a recycle job.
@@ -419,8 +428,11 @@ func recycleParamsJSON(p RecycleParams) json.RawMessage {
 // ErrNotFound when it is gone. The channel gets the job's result.
 func (m *Manager) holdAndEnqueue(ctx context.Context, it *store.RecycleItem, kind, by, byName, capacity string, params RecycleParams) (*store.Job, <-chan jobs.Result, error) {
 	id := page.NewID(m.opt.Now())
+	if kind == store.JobRecyclePurge {
+		params.Item = purgeSnapshot(it)
+	}
 	j, done, err := m.runner().EnqueueWait(ctx, store.Job{ID: id, TenantID: it.TenantID, Kind: kind, Subject: it.ID, LockKey: store.RecycleLock(it.ID), MadeBy: by, MadeByName: byName,
-		Capacity: capacity, Params: recycleParamsJSON(params), Total: 1, BytesTotal: it.Bytes},
+		Capacity: capacity, SiteOnly: it.Personal, Params: recycleParamsJSON(params), Total: 1, BytesTotal: it.Bytes},
 		func(q store.Q) error { return store.HoldRecycleItem(ctx, q, it.ID, id) })
 	switch {
 	case errors.Is(err, store.ErrJobLocked):
@@ -678,15 +690,24 @@ func (m *Manager) StartPurge(ctx context.Context, sc store.Scope, itemID string,
 
 // recyclePurgeRun is what a purge job does.
 func (m *Manager) recyclePurgeRun(ctx context.Context, j *store.Job, p *jobs.Progress) error {
-	it, err := m.heldItem(ctx, j)
-	if err != nil || it == nil {
+	it, err := store.GetRecycleItem(ctx, m.opt.Store.Q(), store.AllTenants(), j.Subject, false)
+	if errors.Is(err, store.ErrNotFound) {
+		// Gone already: this purge deleted the row before a crash cut it short.
+		// Its result is the item as it was enqueued, for the audit row.
+		if snap := RecycleParamsOf(j).Item; snap != nil {
+			res, _ := json.Marshal(snap)
+			p.SetResult(res)
+		}
+		return nil
+	}
+	if err != nil || it.JobID != j.ID {
 		return err
 	}
 	if err := m.finishPurge(ctx, it); err != nil {
 		m.log.Warn("a purge did not finish; the hourly look takes it up again", "item", it.ID, "error", err)
 		return err
 	}
-	res, _ := json.Marshal(PurgeResult{Kind: it.Kind, SpaceID: it.SpaceID, UserID: it.UserID, Name: it.Name, Bytes: it.Bytes, Reason: it.Reason, TenantID: it.TenantID})
+	res, _ := json.Marshal(purgeSnapshot(it))
 	p.SetResult(res)
 	p.Step(1, it.Bytes)
 	return nil
@@ -862,7 +883,12 @@ func (m *Manager) recycleStuck(ctx context.Context) error {
 		}
 		id := page.NewID(m.opt.Now())
 		old := it.JobID
-		_, done, err := m.runner().EnqueueWait(ctx, store.Job{ID: id, TenantID: it.TenantID, Kind: kind, Subject: it.ID, LockKey: store.RecycleLock(it.ID), Total: 1, BytesTotal: it.Bytes},
+		var params RecycleParams
+		if kind == store.JobRecyclePurge {
+			params.Item = purgeSnapshot(it)
+		}
+		_, done, err := m.runner().EnqueueWait(ctx, store.Job{ID: id, TenantID: it.TenantID, Kind: kind, Subject: it.ID, LockKey: store.RecycleLock(it.ID), Total: 1, BytesTotal: it.Bytes,
+			SiteOnly: it.Personal, Params: recycleParamsJSON(params)},
 			func(q store.Q) error { return store.HandRecycleItem(ctx, q, it.ID, old, id) })
 		if err != nil {
 			if errors.Is(err, store.ErrJobLocked) || errors.Is(err, store.ErrBusyItem) || errors.Is(err, store.ErrNotFound) {

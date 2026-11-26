@@ -52,7 +52,9 @@ func jobOf(j *store.Job) jobResp {
 	return out
 }
 
-// jobKeyOf is the key that lets a person follow the jobs of a kind.
+// jobKeyOf is the key that lets a person follow the jobs of a kind. The jobs of
+// a personal space's item (its move, restore and purge) are site_only: a
+// tenant's administrator never reaches them (spaces/recycle.go).
 func jobKeyOf(kind string) authz.Key {
 	switch kind {
 	case store.JobExport:

@@ -206,8 +206,10 @@ func (m *Manager) purgeUserItem(ctx context.Context, it *store.RecycleItem) erro
 	}
 	for i := range children {
 		c := &children[i]
-		// Each space of the person is purged under the hold of this job; one
-		// that a purge of its own had left (it is purging) is finished as well.
+		// Each space of the person is purged under the hold of this job. One
+		// whose own purge is queued or running is left to it (never two walks
+		// deleting one directory); one that a purge of its own left when it
+		// ended (it is purging) is handed to this job and finished.
 		err := store.HoldRecycleItem(ctx, m.opt.Store.Q(), c.ID, it.JobID)
 		if errors.Is(err, store.ErrNotFound) {
 			continue
@@ -217,10 +219,28 @@ func (m *Manager) purgeUserItem(ctx context.Context, it *store.RecycleItem) erro
 			if errors.Is(gerr, store.ErrNotFound) {
 				continue
 			}
-			if gerr != nil || cur.State != store.RecyclePurging {
+			if gerr != nil {
+				return gerr
+			}
+			if cur.State != store.RecyclePurging {
 				return ErrBusyItem // another action has it; the purge is finished later
 			}
-			err = nil
+			if cur.JobID == it.JobID {
+				err = nil // this job holds it already (a run cut short)
+			} else {
+				j, jerr := store.GetJob(ctx, m.opt.Store.Q(), store.AllTenants(), cur.JobID)
+				if jerr == nil && !store.JobEnded(j.State) {
+					continue // its own purge is under way, and finishes it
+				}
+				if jerr != nil && !errors.Is(jerr, store.ErrNotFound) {
+					return jerr
+				}
+				err = store.HandRecycleItem(ctx, m.opt.Store.Q(), c.ID, cur.JobID, it.JobID)
+				if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrBusyItem) {
+					continue // gone, or taken up by another job meanwhile
+				}
+			}
+			c.JobID = it.JobID
 		}
 		if err != nil {
 			return err

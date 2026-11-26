@@ -62,6 +62,58 @@ func TestAnExportIsAJobWithProgressAResultAndItsDays(t *testing.T) {
 	})
 }
 
+// A crash between the rename and the end's write leaves a whole <id>.zip behind
+// a job that is not done: a restart removes it with the half one, and the
+// expiry or deletion of an export removes both whatever the job's state.
+func TestAnOrphanedExportZipIsRemovedOnRecoverExpiryAndDelete(t *testing.T) {
+	t.Parallel()
+	f := newRbFix(t, storetest.Open(t, "sqlite"))
+	if err := os.MkdirAll(f.m.exportsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := func(id string) []string {
+		return []string{filepath.Join(f.m.exportsDir(), id+".zip"), filepath.Join(f.m.exportsDir(), id+".zip.tmp")}
+	}
+	plant := func(id string) {
+		t.Helper()
+		for _, p := range files(id) {
+			if err := os.WriteFile(p, []byte("zip"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	gone := func(id, when string) {
+		t.Helper()
+		for _, p := range files(id) {
+			if _, err := os.Stat(p); !os.IsNotExist(err) {
+				t.Fatalf("%s: %s stayed (%v)", when, filepath.Base(p), err)
+			}
+		}
+	}
+	plant("EXR")
+	if out := (exportKind{f.m}).Recover(ctx, &store.Job{ID: "EXR", Kind: store.JobExport, State: store.JobRunning}); out != jobs.Fail {
+		t.Fatalf("%s", out)
+	}
+	gone("EXR", "recover")
+
+	// A job whose end could not be written as done (failed, no result) still
+	// has its zip removed when it expires or is deleted.
+	now := f.m.opt.Now()
+	for _, id := range []string{"EXE", "EXD"} {
+		if err := store.InsertJob(ctx, f.st.Q(), store.Job{ID: id, TenantID: store.DefaultTenantID, Kind: store.JobExport, State: store.JobFailed, Created: now, Expires: now.Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		plant(id)
+	}
+	f.m.DeleteExportFile(&store.Job{ID: "EXD", Kind: store.JobExport, State: store.JobFailed})
+	gone("EXD", "delete")
+	f.advance(2 * time.Hour)
+	if err := f.m.ExpireExports(ctx); err != nil {
+		t.Fatal(err)
+	}
+	gone("EXE", "expiry")
+}
+
 // A restart does not take an export up again: it ends failed and what it wrote
 // is removed.
 func TestAnExportACrashCutShortEndsFailedAndLeavesNoFile(t *testing.T) {

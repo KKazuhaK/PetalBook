@@ -217,15 +217,28 @@ func (s *server) adminPurgeItem(c *call) {
 	writeJSON(c.w, http.StatusAccepted, s.recycleItemOf(*started, days, nil))
 }
 
-// purgeEnded audits a purge that a person asked for once its job has ended
-// done (the server's own purge of an item past its days is not audited: no
-// one asked for it).
+// auditActorSystem is the actor of what the server does by itself (the purge
+// of an item past its days).
+const auditActorSystem = "system"
+
+// purgeEnded audits a purge once its job has ended done: the person who asked
+// for it, or the server for its own purge of an item past its days. The item is
+// the one the job's result holds (from the row, or from what the job kept of
+// it when the row was gone already); a purge that found its item held by
+// another job purged nothing and is not audited.
 func (s *server) purgeEnded(ctx context.Context, j *store.Job) {
-	if j.Kind != store.JobRecyclePurge || j.State != store.JobDone || j.MadeBy == "" {
+	if j.Kind != store.JobRecyclePurge || j.State != store.JobDone {
 		return
 	}
 	r := spaces.PurgeResultOf(j)
-	s.auditPurged(j.MadeBy, spaces.RecycleParamsOf(j).IP, j.Capacity, &store.RecycleItem{ID: j.Subject, TenantID: r.TenantID, Kind: r.Kind, SpaceID: r.SpaceID, UserID: r.UserID,
+	if r.Kind == "" {
+		return
+	}
+	actor := j.MadeBy
+	if actor == "" {
+		actor = auditActorSystem
+	}
+	s.auditPurged(actor, spaces.RecycleParamsOf(j).IP, j.Capacity, &store.RecycleItem{ID: j.Subject, TenantID: r.TenantID, Kind: r.Kind, SpaceID: r.SpaceID, UserID: r.UserID,
 		Name: r.Name, Bytes: r.Bytes, Reason: r.Reason}, "")
 }
 

@@ -86,7 +86,9 @@ type exportKind struct{ m *Manager }
 func (exportKind) Class() jobs.Class { return jobs.IO }
 
 func (k exportKind) Recover(_ context.Context, j *store.Job) jobs.Outcome {
-	os.Remove(filepath.Join(k.m.exportsDir(), j.ID+".zip.tmp"))
+	// A crash between the rename and the write of the end leaves a whole zip
+	// that no job that is done names: it goes with the half one.
+	k.m.removeExportFiles(j)
 	return jobs.Fail
 }
 
@@ -492,11 +494,25 @@ func (m *Manager) zipAssets(ctx context.Context, zw *zip.Writer, spaceID, folder
 	return notIncluded
 }
 
-// DeleteExportFile removes the file of an export, if there is one.
+// DeleteExportFile removes the file of an export, whatever the job's state:
+// the one its result names, and <id>.zip and <id>.zip.tmp, which a crash
+// between the rename and the end's write, or an end that could not be written,
+// leaves behind a job that is not done.
 func (m *Manager) DeleteExportFile(j *store.Job) {
 	if p := m.ExportPath(j); p != "" {
 		os.Remove(p)
 	}
+	m.removeExportFiles(j)
+}
+
+// removeExportFiles removes <id>.zip and <id>.zip.tmp of an export job.
+func (m *Manager) removeExportFiles(j *store.Job) {
+	if j.ID == "" || filepath.Base(j.ID) != j.ID || j.ID == "." || j.ID == ".." {
+		return // ids are the server's; never a path
+	}
+	final := filepath.Join(m.exportsDir(), j.ID+".zip")
+	os.Remove(final)
+	os.Remove(final + ".tmp")
 }
 
 // ExpireExports deletes the exports whose days are over: their files and rows.

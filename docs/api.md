@@ -7996,7 +7996,9 @@ confirmation token from `POST /api/admin/confirm` (below). `204`.
 **As built:** `202` with the item: the purge is paced and may take long, so it
 starts in the background. The item is `purging` until it is gone (a restore of
 it answers `409 busy`); `space_purged` or `user_purged` is written when it is
-over; one that fails stays `purging` and the hourly job finishes it.
+over; one that fails stays `purging` and the hourly job finishes it. The
+server's own purge of an item past its days is audited too, with the actor
+`system`.
 
 **What a restore leaves out.** `skipped` (in the answer of the restore of a space
 and of a person) lists what was left out, each with its `name` as it was when the
@@ -8374,6 +8376,11 @@ works on (a recycle item); `action` is added to a `bulk` job. `total` and `done`
 count the items (the spaces of an export), `bytesDone` the bytes written;
 `expires` is when an export's file goes (`null` for any other job).
 
+- Both routes admit a caller with any one of `tenant.bulk.run`,
+  `tenant.data.export` and `tenant.recycle.read` (`403 forbidden` naming
+  `tenant.bulk.run` with none of them); what each answers is narrowed to the
+  kinds those keys cover. The move, restore and purge of a personal space's
+  item are the site's: a tenant administrator does not see them.
 - `GET /api/admin/jobs/{id}`: one job, `404` outside the caller's scope or for a
   kind their keys do not cover. While the job runs on this server the answer
   comes from memory (progress is written at most once a second or every 100
@@ -8384,8 +8391,10 @@ count the items (the spaces of an export), `bytesDone` the bytes written;
   kinds the caller sees follows their keys: `bulk` with `tenant.bulk.run`,
   `export` with `tenant.data.export`, `recycle.*` with `tenant.recycle.read`.
   `next` is the cursor of the following page.
-- Slots: `bulk` and `export` take one per tenant and two on the server; a
-  recycle action takes none but holds its item (one job at a time per item).
+- Slots: a tenant runs at most `jobs.perTenant` (default 1) bulk actions and,
+  apart from them, as many exports and moves of attachments; the server runs at
+  most `jobs.maxRunning` (default 2) of all of them together. A recycle action
+  takes none but holds its item (one job at a time per item).
   After a restart a running `export` or `bulk` job reads `failed` or
   `interrupted`; a move or a purge is taken up again, a restore is undone (the
   item is at rest again).

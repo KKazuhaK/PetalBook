@@ -624,3 +624,49 @@ func TestAnEarlyPurgeRunsInTheBackground(t *testing.T) {
 		}
 	})
 }
+
+// A purge is audited whoever made it: the server's own purge of an item past
+// its days with the actor "system", and a purge whose item row was gone already
+// (a crash between the row's delete and the job's end) from what the job kept
+// of the item when it was enqueued.
+func TestEveryPurgeIsAuditedEvenWhenTheRowIsGoneOrNobodyAsked(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		root := a.setup("root", pw)
+		ctx := context.Background()
+		params := `{"item":{"kind":"space","space":"SPGONE0001","name":"Gone before","bytes":5,"tenant":"` + store.DefaultTenantID + `"}}`
+		if err := store.InsertJob(ctx, a.st.Q(), store.Job{ID: "0000000PG1", TenantID: store.DefaultTenantID, Kind: store.JobRecyclePurge, State: store.JobQueued,
+			Subject: "ITEMGONE01", LockKey: store.RecycleLock("ITEMGONE01"), MadeBy: mustUserID(t, a, "root"), Params: json.RawMessage(params), Created: a.clock.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		// Deleting a space enqueues its move, which wakes the runner for both.
+		sid := root.do("POST", "/api/spaces", map[string]any{"name": "Old"}).want(t, 201, "").body["id"].(string)
+		item := root.do("DELETE", "/api/admin/spaces/"+sid, nil).want(t, 200, "").body["id"].(string)
+		waitPurges(t, a)
+		a.auth.FlushAudit(ctx)
+		rows := root.audit(t, "space_purged")
+		if len(rows) != 1 {
+			t.Fatalf("the purge of a gone row: %v", rows)
+		}
+		if d := rows[0]["detail"].(map[string]any); d["item"] != "ITEMGONE01" || d["name"] != "Gone before" || d["space"] != "SPGONE0001" {
+			t.Fatalf("%v", d)
+		}
+
+		a.clock.Advance(31 * 24 * time.Hour)
+		if n, err := a.mgr.PurgeExpired(ctx); err != nil || n != 1 {
+			t.Fatalf("%d %v", n, err)
+		}
+		a.auth.FlushAudit(ctx)
+		root = a.newClient("") // the session ended with the days
+		root.do("POST", "/api/login", map[string]any{"username": "root", "password": pw}).want(t, 200, "")
+		var sys map[string]any
+		for _, r := range root.audit(t, "space_purged") {
+			if r["detail"].(map[string]any)["item"] == item {
+				sys = r
+			}
+		}
+		if sys == nil || sys["actor"] != "system" {
+			t.Fatalf("the server's own purge: %v", sys)
+		}
+	})
+}

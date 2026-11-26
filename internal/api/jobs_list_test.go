@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/store"
 )
 
@@ -176,6 +177,35 @@ func TestEachKindsKeyAloneFollowsItsJobs(t *testing.T) {
 	})
 }
 
+// The move, restore and purge of a personal space's item are the site's: a
+// tenant administrator, who does not see the item, does not see its jobs.
+func TestThePersonalSpacesRecycleJobsAreTheSites(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		root := a.setup("root", pw)
+		if _, err := a.auth.CreateUser(context.Background(), auth.CreateParams{Username: "adm", Role: "admin", Password: pw, TenantID: store.DefaultTenantID}); err != nil {
+			t.Fatal(err)
+		}
+		adm := a.newClient("")
+		adm.do("POST", "/api/login", map[string]any{"username": "adm", "password": pw}).want(t, 200, "")
+		mem := a.addUser("mem", pw, "member")
+		mem.personalSpace()
+		root.do("DELETE", "/api/users/"+mustUserID(t, a, "mem"), map[string]any{}).want(t, 200, "")
+		waitPurges(t, a)
+		var job string
+		if err := a.st.Q().QueryRow(context.Background(), `SELECT j.id FROM jobs j JOIN recycle_items r ON r.id = j.subject WHERE j.kind = 'recycle.move' AND r.personal = 1`).Scan(&job); err != nil {
+			t.Fatalf("no move of the personal space: %v", err)
+		}
+		root.do("GET", "/api/admin/jobs/"+job, nil).want(t, 200, "")
+		adm.do("GET", "/api/admin/jobs/"+job, nil).want(t, 404, "not_found")
+		for _, it := range adm.do("GET", "/api/admin/jobs", nil).want(t, 200, "").body["items"].([]any) {
+			if it.(map[string]any)["id"] == job {
+				t.Fatal("a tenant administrator lists the personal space's move")
+			}
+		}
+	})
+}
+
 // waitPurges waits until the jobs runner has nothing queued or running.
 func waitPurges(t *testing.T, a *acc) {
 	t.Helper()
@@ -184,4 +214,26 @@ func waitPurges(t *testing.T, a *acc) {
 	if err := a.mgr.WaitPurges(ctx); err != nil {
 		t.Fatalf("the jobs did not end: %v", err)
 	}
+}
+
+// A plan's rule caps jobs.perTenant for the tenants on it: the site allows 5
+// for each tenant, a plan restricts its tenants to at most 2, and the runner
+// reads 2 for a tenant on the plan and 5 for one that is not.
+func TestAPlanCapsTheJobsPerTenant(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		root := a.setup("root", pw)
+		root.putSetting("features.tenancy", true).want(t, 200, "")
+		root.putSetting("jobs.perTenant", 5).want(t, 200, "")
+		tn := root.do("POST", "/api/admin/tenants", map[string]any{"slug": "small", "name": "Small"}).want(t, 201, "").body["id"].(string)
+		root.do("POST", "/api/admin/plans", map[string]any{"slug": "lite", "name": "Lite", "rules": map[string]any{
+			"jobs.perTenant": map[string]any{"lower": map[string]any{"mode": "restrict", "max": 2}}}}).want(t, 201, "")
+		root.do("PUT", "/api/admin/tenants/"+tn+"/plan", map[string]any{"plan": "lite"}).want(t, 200, "")
+		if _, per := a.h.JobLimits(tn); per != 2 {
+			t.Fatalf("a tenant on the plan runs %d at once, want 2", per)
+		}
+		if _, per := a.h.JobLimits(store.DefaultTenantID); per != 5 {
+			t.Fatalf("a tenant on no plan runs %d at once, want 5", per)
+		}
+	})
 }

@@ -1265,3 +1265,64 @@ func TestDeletingAPersonCountsAndEndsTheirConnectionsToEveryProvider(t *testing.
 		}
 	})
 }
+
+// A person's purge leaves a space of theirs whose own purge is under way to
+// that purge (never two walks deleting one directory); once that one has ended
+// without finishing, the next look finishes it.
+func TestAPersonsPurgeLeavesASpaceWhoseOwnPurgeRuns(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newUdFix(t, a)
+		ctx := context.Background()
+		f.owner.personalSpace()
+		item := f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "").body["id"].(string)
+		waitPurges(t, a)
+		var child string
+		if err := a.st.Q().QueryRow(ctx, `SELECT id FROM recycle_items WHERE parent = ? ORDER BY id LIMIT 1`, item).Scan(&child); err != nil {
+			t.Fatal(err)
+		}
+		// The child's own purge runs (on another runner: this one never claims it).
+		if err := store.InsertJob(ctx, a.st.Q(), store.Job{ID: "0000000CP1", TenantID: store.DefaultTenantID, Kind: store.JobRecyclePurge, State: store.JobRunning,
+			Subject: child, LockKey: "elsewhere", Runner: "other", Created: a.clock.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.st.Q().Exec(ctx, `UPDATE recycle_items SET job_id = '0000000CP1' WHERE id = ?`, child); err != nil {
+			t.Fatal(err)
+		}
+		childDir := a.mgr.RecycleDir(child)
+		if _, err := os.Stat(childDir); err != nil {
+			t.Fatalf("the child's directory: %v", err)
+		}
+		_, done, err := a.mgr.StartPurge(ctx, store.AllTenants(), item, spaces.PurgeBy{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case r := <-done:
+			if r.Err != nil {
+				t.Fatalf("the person's purge: %v", r.Err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("the person's purge did not end")
+		}
+		if _, err := os.Stat(childDir); err != nil {
+			t.Fatalf("the person's purge deleted the directory a running purge holds: %v", err)
+		}
+		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+child+`' AND job_id = '0000000CP1'`); n != 1 {
+			t.Fatal("the child was taken from its own purge")
+		}
+		// That purge ends without finishing: the next look finishes the child.
+		if err := store.SetJobState(ctx, a.st.Q(), "0000000CP1", store.JobRunning, store.JobFailed, a.clock.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.mgr.FinishRecycle(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+child+`'`); n != 0 {
+			t.Fatal("the child was not finished")
+		}
+		if _, err := os.Stat(childDir); !os.IsNotExist(err) {
+			t.Fatalf("the child's directory stayed: %v", err)
+		}
+	})
+}

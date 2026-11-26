@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"net/http"
+
+	"petalbook.app/server/internal/settings"
 )
 
 // HeaderPurpose is what a stored header value is bound to, for tests that
@@ -61,3 +63,9 @@ func (h *Handler) CheckBoundaries() { h.s.settings.CheckBoundaries(context.Backg
 // SetFeatureFault makes the gate of a route's feature fail its read with the
 // error f returns for the tenant and feature (nil: it reads).
 func (h *Handler) SetFeatureFault(f func(tenant, feature string) error) { h.s.featureFault = f }
+
+// JobLimits are the limits the jobs runner reads at a dispatch for a tenant:
+// jobs.maxRunning (the server's) and jobs.perTenant (the tenant's).
+func (h *Handler) JobLimits(tenant string) (maxRunning, perTenant int) {
+	return h.s.jobLimit("", settings.JobsMaxRunning, 2), h.s.jobLimit(tenant, settings.JobsPerTenant, 1)
+}
