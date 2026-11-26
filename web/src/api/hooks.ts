@@ -390,8 +390,11 @@ export function applySignIn(qc: QueryClient, answer: SignInAnswer) {
   clearPendingMethod()
   const prev = qc.getQueryData<SessionInfo>(keys.session)
   qc.clear()
+  // Why an earlier session ended is not this one's: a later sign-out must not show it again.
+  const { endedReason: _ended, ...kept } = prev ?? { mode: 'accounts' as const }
+  void _ended
   qc.setQueryData<SessionInfo>(keys.session, {
-    ...(prev ?? { mode: 'accounts' as const }),
+    ...kept,
     user: answer.user,
     hold: answer.hold,
     setup: false,
