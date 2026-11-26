@@ -783,6 +783,7 @@ func ListEffective(ctx context.Context, q Q, d Dialect, spaceID, query, after st
 // (when a member) and the roles of their groups' places there.
 type UserAccess struct {
 	SpaceID, Name, Inbox string
+	TenantID             string
 	Personal             bool
 	Role                 string // the direct role, "" when none
 	Direct               bool
@@ -794,7 +795,7 @@ type UserAccess struct {
 // direct memberships and, grouped by space and role, those of their groups.
 // It is the cache fill of a person; groups are never expanded anywhere else.
 func ListUserAccess(ctx context.Context, q Q, userID string) ([]UserAccess, error) {
-	rows, err := q.Query(ctx, `SELECT s.id, s.name, s.personal_of, s.inbox, u.role, u.direct
+	rows, err := q.Query(ctx, `SELECT s.id, s.name, s.personal_of, s.inbox, s.tenant_id, u.role, u.direct
 		FROM (SELECT space_id, role, 1 AS direct FROM space_members WHERE user_id = ?
 			UNION ALL
 			SELECT sg.space_id, sg.role, 0 AS direct FROM space_groups sg
@@ -811,7 +812,7 @@ func ListUserAccess(ctx context.Context, q Q, userID string) ([]UserAccess, erro
 		var personal sql.NullString
 		var direct int64
 		var role string
-		if err := rows.Scan(&a.SpaceID, &a.Name, &personal, &a.Inbox, &role, &direct); err != nil {
+		if err := rows.Scan(&a.SpaceID, &a.Name, &personal, &a.Inbox, &a.TenantID, &role, &direct); err != nil {
 			return nil, err
 		}
 		a.Personal = personal.Valid

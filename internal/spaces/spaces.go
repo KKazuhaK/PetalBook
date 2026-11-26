@@ -94,6 +94,8 @@ type Info struct {
 	// API, which holds the views); Perms then include read.
 	Viewing  bool
 	Personal bool
+	// TenantID is the tenant the space belongs to.
+	TenantID string
 	// Disabled: an administrator has switched the space off. Perms are what the
 	// user would have in it, but Open refuses it. Read when the list is asked
 	// for, like Sync, not cached with it.
@@ -637,7 +639,7 @@ func (m *Manager) openForIndex(ctx context.Context, user store.User, access auth
 		// its remote, its settings) and does not read it: reading is a view the
 		// administrator opens with a reason, which is recorded (see api
 		// "Viewing a space"), and the caller adds read to these only then.
-		in = Info{ID: sp.ID, Name: sp.Name, Perms: AdminPerms, ViaAdmin: true, Personal: sp.Personal, Inbox: sp.Inbox}
+		in = Info{ID: sp.ID, Name: sp.Name, Perms: AdminPerms, ViaAdmin: true, Personal: sp.Personal, Inbox: sp.Inbox, TenantID: sp.TenantID}
 	}
 	in = m.withSync(ctx, []Info{in})[0]
 	var sp *space.Space

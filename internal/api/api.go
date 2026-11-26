@@ -150,6 +150,9 @@ type server struct {
 	views    *viewTable
 	// consoles throttles the record of entering a tenant's scope (scope.go).
 	consoles *onceAnHour
+	// activities keeps the optional audit rows of reads and downloads to one an
+	// hour for each person and thing (activity.go).
+	activities *onceAnHour
 	// jobs runs the bulk jobs (see bulk.go).
 	jobs *jobRunner
 	// prefs holds the preferences written and not committed yet (see prefs.go).
@@ -246,7 +249,7 @@ func New(opt Options) *Handler {
 	}
 	s := &server{opt: opt, log: opt.Logger, settings: settings.Of(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1),
-		confirms: newConfirmStore(), views: newViewTable(), consoles: newOnceAnHour(maxConsoleAudit), jobs: newJobRunner(), now: opt.Now}
+		confirms: newConfirmStore(), views: newViewTable(), consoles: newOnceAnHour(maxConsoleAudit), activities: newOnceAnHour(maxActivityAudit), jobs: newJobRunner(), now: opt.Now}
 	if s.now == nil {
 		s.now = time.Now
 	}
