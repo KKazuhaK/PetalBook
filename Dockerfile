@@ -4,6 +4,9 @@ WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+# The web tests share the excerpt cases with the Go tests (internal/page/testdata),
+# and the build type-checks them, so that one file comes along.
+COPY internal/page/testdata/excerpts.json /src/internal/page/testdata/excerpts.json
 RUN npm run build
 
 # The server with the web app embedded. Cross-compiled instead of emulated:

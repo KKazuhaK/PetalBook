@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -378,6 +379,15 @@ type AuditRow struct {
 // all sit in the default tenant).
 var SiteAuditKinds = []string{"security_changed", "provider_created", "provider_changed", "provider_deleted",
 	"mail_changed", "mail_test", "connection_provider_changed", "tenant_created", "tenant_changed", "tenant_deleted", "dropped", "rate_limited", "lockout"}
+
+var auditSeq atomic.Uint64
+
+// NewAuditID is an id for an audit row made at t: Unix milliseconds, then a
+// sequence, so ids sort by time and then by order of arrival. Every writer of
+// the log takes its ids here, so two never collide.
+func NewAuditID(t time.Time) string {
+	return fmt.Sprintf("%012x%06x", ms(t), auditSeq.Add(1)&0xffffff)
+}
 
 // InsertAudit writes rows (a repeated id is ignored).
 func InsertAudit(ctx context.Context, q Q, rows []AuditRow) error {

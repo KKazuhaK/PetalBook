@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,7 +35,6 @@ type AuditEvent struct {
 type auditLog struct {
 	ch      chan store.AuditRow
 	dropped atomic.Int64
-	seq     atomic.Uint64
 	flushMu sync.Mutex
 }
 
@@ -66,7 +64,7 @@ func (a *auditLog) row(ev AuditEvent, now time.Time) (store.AuditRow, bool) {
 		detail = string(b)
 	}
 	// Sorts by time, then by order of arrival.
-	id := fmt.Sprintf("%012x%06x", now.UnixMilli(), a.seq.Add(1)&0xffffff)
+	id := store.NewAuditID(now)
 	return store.AuditRow{ID: id, At: now.UTC(), Kind: ev.Kind, Actor: ev.Actor, UserID: ev.User, Username: clip(ev.Username, 100), IP: ev.IP, Detail: detail, TenantID: ev.Tenant}, true
 }
 

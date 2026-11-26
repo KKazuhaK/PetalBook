@@ -2672,8 +2672,7 @@ function suite(target: Target) {
             ref: string
             payload: Record<string, unknown>
           }[]
-          expect(items.find((n) => n.kind === 'system' && n.ref === sp.id)?.payload).toMatchObject({
-            event: 'space_taken_over',
+          expect(items.find((n) => n.kind === 'space_taken_over' && n.ref === sp.id)?.payload).toMatchObject({
             space: 'Taken over',
             reason: 'the owner left',
           })

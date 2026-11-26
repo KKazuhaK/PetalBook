@@ -1,8 +1,11 @@
 package store_test
 
 import (
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -119,14 +122,14 @@ func TestNotificationKindsAreARegistry(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
-		for _, k := range []string{"", "bogus", store.NotifyProblems} {
+		for _, k := range []string{"", "bogus", "system", store.NotifyProblems} {
 			_, err := store.InsertNotification(ctx, st.Q(), store.Notification{UserID: "A", Tenant: store.DefaultTenantID, Kind: k})
 			if !errors.Is(err, store.ErrNotifyKind) {
 				t.Errorf("kind %q: %v", k, err)
 			}
 		}
 		// The reserved kinds can be written: nothing makes them yet.
-		for _, k := range []string{store.NotifyMention, store.NotifyTodo, store.NotifySystem} {
+		for _, k := range []string{store.NotifyMention, store.NotifyTodo} {
 			if _, err := store.InsertNotification(ctx, st.Q(), store.Notification{UserID: "A", Tenant: store.DefaultTenantID, Kind: k}); err != nil {
 				t.Errorf("reserved kind %q: %v", k, err)
 			}
@@ -268,4 +271,37 @@ func TestADeletedPersonTakesTheirNotificationsAlong(t *testing.T) {
 			t.Fatalf("%d notifications and %d cursors left", n, m)
 		}
 	})
+}
+
+var updateKinds = flag.Bool("update-kinds", false, "rewrite web/src/i18n/notifyKinds.json from the registry")
+
+// The web app lists the kinds from this file and has a test that each has its
+// text in both languages (web/src/i18n/notify.test.ts).
+const kindsFile = "../../web/src/i18n/notifyKinds.json"
+
+// TestNotifyKindsListIsCurrent keeps web/src/i18n/notifyKinds.json equal to
+// store.NotifyKinds. When a kind is added, this fails until the list is
+// regenerated (go test ./internal/store -run TestNotifyKindsListIsCurrent
+// -update-kinds), and then the web test fails until the kind has its texts.
+func TestNotifyKindsListIsCurrent(t *testing.T) {
+	t.Parallel()
+	var kinds []string
+	for _, k := range store.NotifyKinds {
+		kinds = append(kinds, k.Kind)
+	}
+	want, err := json.MarshalIndent(kinds, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = append(want, '\n')
+	if *updateKinds {
+		if err := os.WriteFile(kindsFile, want, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	got, err := os.ReadFile(kindsFile)
+	if err != nil || string(got) != string(want) {
+		t.Fatalf("web/src/i18n/notifyKinds.json is not store.NotifyKinds; run: go test ./internal/store -run TestNotifyKindsListIsCurrent -update-kinds (%v)", err)
+	}
 }

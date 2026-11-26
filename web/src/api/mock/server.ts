@@ -3357,8 +3357,8 @@ export function createMockServer(options: MockOptions = {}) {
           const had = s.members.get(u.id)
           if (had) had.role = 'owner'
           else s.members.set(u.id, { role: 'owner', joined: ++counter })
-          const event = takeover ? 'space_taken_over' : 'space_transferred'
-          for (const id of previous) notifyBook.add(id, 'system', s.id, { event, space: s.name, by: me.name, reason })
+          const kind = takeover ? 'space_taken_over' : 'space_transferred'
+          for (const id of previous) notifyBook.add(id, kind, s.id, { space: s.name, by: me.name, reason })
           return { status: 204 }
         }
         case 'disable':
@@ -4580,7 +4580,7 @@ export function createMockServer(options: MockOptions = {}) {
       temporary.add(target.id)
       endSessions(target.id, null, 'password_changed')
       book.record('password_set_by_admin', { actor: me.id, user: target.id, detail: { temporary: true } })
-      notifyBook.add(target.id, 'system', '', { event: 'password_set', by: me.name })
+      notifyBook.add(target.id, 'password_set', '', { by: me.name })
       return { status: 204 }
     }
     const adminReset = /^\/users\/([^/]+)\/password-reset$/.exec(path)
