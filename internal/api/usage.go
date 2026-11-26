@@ -76,7 +76,7 @@ func (s *server) accountUsage(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	lim, err := s.quota.Limits(ctx, u.TenantID, quota.ParseOwn(raw))
+	lim, err := s.quota.Limits(ctx, c.tenant(), quota.ParseOwn(raw))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -91,12 +91,12 @@ func (s *server) accountUsage(c *call) {
 		notices = append(notices, noticeResp{k, "person", limitValue(k, lim), usedOf(row, k)})
 	}
 	// The tenant's total is the person's business too, once it is over.
-	trow, err := store.GetUsage(ctx, q, store.UsageTenant, u.TenantID)
+	trow, err := store.GetUsage(ctx, q, store.UsageTenant, c.tenant())
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	tl := s.quota.Totals(ctx, u.TenantID)
+	tl := s.quota.Totals(ctx, c.tenant())
 	for _, k := range quota.OverTenant(trow, tl) {
 		var l int64
 		switch k {

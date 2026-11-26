@@ -244,7 +244,7 @@ func (s *server) adminCreateTenant(c *call) {
 	if req.Admin != nil {
 		// The first administrator's invite carries the account's name, username
 		// and address, which the form that accepts it starts with. Nothing is mailed.
-		inv, err := s.auth.CreateInvite(ctx, c.user(), t.ID, "admin", nil, nil, fill)
+		inv, err := s.auth.CreateInvite(ctx, c.user(), c.p.Access, t.ID, "admin", nil, nil, fill)
 		if err != nil {
 			s.fail(c.w, err)
 			return

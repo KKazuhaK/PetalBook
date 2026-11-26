@@ -933,19 +933,15 @@ func (s *Service) ResetPassword(ctx context.Context, token, password, ip string)
 }
 
 // AdminPasswordReset sends a reset link to a person's verified address.
-func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, ip, targetID, lang string) error {
+func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, access authz.Subject, ip, targetID, lang string) error {
 	u, err := store.GetUser(ctx, s.st.Q(), store.ScopeOf(actor), targetID)
 	if errors.Is(err, store.ErrNotFound) {
 		return errf(NotFound, "No such user.")
 	} else if err != nil {
 		return err
 	}
-	if u.IsSiteAdmin() {
-		if access, err := s.SubjectOf(ctx, actor); err != nil {
-			return err
-		} else if !access.Can(authz.SiteAdminsManage, "") {
-			return errf(Forbidden, "Only a site administrator may reset a site administrator's password.")
-		}
+	if u.IsSiteAdmin() && !access.Can(authz.SiteAdminsManage, "") {
+		return errf(Forbidden, "Only a site administrator may reset a site administrator's password.")
 	}
 	if err := s.needMail(); err != nil {
 		return err

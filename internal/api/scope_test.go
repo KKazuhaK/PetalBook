@@ -195,13 +195,64 @@ func TestAuditRowsRecordTheCapacity(t *testing.T) {
 
 // No handler reads the signed-in person's tenant or scope directly: the acting
 // scope (scope.go) is the one place that says which tenant a request acts in,
-// so a site administrator narrowed to a tenant is narrowed everywhere.
+// so a site administrator narrowed to a tenant is narrowed everywhere. An
+// alias counts: a name given c.user() or c.p.User in the same function
+// (u := c.user(); u.TenantID) is the person as well.
 func TestNoHandlerReadsThePersonsTenantDirectly(t *testing.T) {
 	t.Parallel()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || f == "scope.go" {
+			continue
+		}
+		fset := token.NewFileSet()
+		af, err := parser.ParseFile(fset, f, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pos := range personTenantReads(af) {
+			t.Errorf("%s: %s", fset.Position(pos.at), pos.what)
+		}
+	}
+}
+
+// The scan itself finds direct reads and aliases, and leaves other values be.
+func TestTheTenantScanFindsAliases(t *testing.T) {
+	t.Parallel()
+	const src = `package api
+func (s *server) a(c *call) { _ = c.user().TenantID }
+func (s *server) b(c *call) { u := c.user(); _ = u.TenantID }
+func (s *server) d(c *call) { var u = c.p.User; _ = u.IsSiteAdmin() }
+func (s *server) e(c *call) { u, x := c.user(), 1; _ = x; _ = store.ScopeOf(u) }
+func (s *server) g(c *call) { var u store.User; u = c.user(); go func() { _ = u.TenantID }() }
+func (s *server) ok(c *call) { u := other(); _ = u.TenantID; _ = c.tenant() }
+`
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "x.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []int
+	for _, r := range personTenantReads(af) {
+		lines = append(lines, fset.Position(r.at).Line)
+	}
+	if !slices.Equal(lines, []int{2, 3, 4, 5, 6}) {
+		t.Fatalf("found on lines %v", lines)
+	}
+}
+
+type tenantRead struct {
+	at   token.Pos
+	what string
+}
+
+// personTenantReads is every read of the person's tenant in a file: .TenantID
+// or .IsSiteAdmin, or store.ScopeOf / AdminScopeOf, of c.user(), c.p.User, or
+// a name a function gave either.
+func personTenantReads(af *ast.File) []tenantRead {
 	isCallUser := func(e ast.Expr) bool {
 		// c.user(), or c.p.User
 		if call, ok := e.(*ast.CallExpr); ok {
@@ -216,29 +267,114 @@ func TestNoHandlerReadsThePersonsTenantDirectly(t *testing.T) {
 		}
 		return false
 	}
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") || f == "scope.go" {
+	var out []tenantRead
+	for _, d := range af.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
 			continue
 		}
-		fset := token.NewFileSet()
-		af, err := parser.ParseFile(fset, f, nil, parser.SkipObjectResolution)
-		if err != nil {
-			t.Fatal(err)
+		// The names given the person anywhere in the function (closures included).
+		alias := map[string]bool{}
+		bind := func(lhs []ast.Expr, rhs []ast.Expr) {
+			if len(lhs) != len(rhs) {
+				return
+			}
+			for i, r := range rhs {
+				if id, ok := lhs[i].(*ast.Ident); ok && isCallUser(r) {
+					alias[id.Name] = true
+				}
+			}
 		}
-		ast.Inspect(af, func(n ast.Node) bool {
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.AssignStmt:
+				bind(x.Lhs, x.Rhs)
+			case *ast.ValueSpec:
+				lhs := make([]ast.Expr, len(x.Names))
+				for i, id := range x.Names {
+					lhs[i] = id
+				}
+				bind(lhs, x.Values)
+			}
+			return true
+		})
+		isPerson := func(e ast.Expr) bool {
+			if id, ok := e.(*ast.Ident); ok {
+				return alias[id.Name]
+			}
+			return isCallUser(e)
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.SelectorExpr:
-				if (x.Sel.Name == "TenantID" || x.Sel.Name == "IsSiteAdmin") && isCallUser(x.X) {
-					t.Errorf("%s: reads the person's %s: use c.tenant() or a key (scope.go)", fset.Position(x.Pos()), x.Sel.Name)
+				if (x.Sel.Name == "TenantID" || x.Sel.Name == "IsSiteAdmin") && isPerson(x.X) {
+					out = append(out, tenantRead{x.Pos(), "reads the person's " + x.Sel.Name + ": use c.tenant() or a key (scope.go)"})
 				}
 			case *ast.CallExpr:
 				if sel, ok := x.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "ScopeOf" || sel.Sel.Name == "AdminScopeOf") {
-					if p, ok := sel.X.(*ast.Ident); ok && p.Name == "store" && len(x.Args) == 1 && isCallUser(x.Args[0]) {
-						t.Errorf("%s: store.%s of the person: use c.reach() or c.adminReach() (scope.go)", fset.Position(x.Pos()), sel.Sel.Name)
+					if p, ok := sel.X.(*ast.Ident); ok && p.Name == "store" && len(x.Args) == 1 && isPerson(x.Args[0]) {
+						out = append(out, tenantRead{x.Pos(), "store." + sel.Sel.Name + " of the person: use c.reach() or c.adminReach() (scope.go)"})
 					}
 				}
 			}
 			return true
 		})
 	}
+	return out
+}
+
+// The accounts service decides by the request's subject, never one rebuilt
+// from the person: in a tenant's scope a custom site role brings no site key
+// back, and an administrator of A holding a custom role in B holds there only
+// what it grants, not B's built-in administrator.
+func TestTheAccountsServiceDecidesByTheRequestsSubject(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		inB := []string{scopeHeader, "tenant:" + f.tenB}
+		admBID := mustUserID(t, a, "adm-b")
+		f.root.do("PATCH", "/api/users/"+admBID, map[string]any{"siteAdmin": true}).want(t, 200, "")
+		grantRole(t, a, "RS", store.RoleScopeSite, "", store.GrantToUser, mustUserID(t, a, "root"),
+			"site.admins.manage", "site.storage.manage", "tenant.invites.manage")
+
+		// Site actions are refused in B's scope, whatever site role root holds.
+		f.root.do("PATCH", "/api/users/"+f.userB, map[string]any{"remoteExempt": true}, inB...).want(t, 403, "forbidden")
+		f.root.do("PATCH", "/api/users/"+admBID, map[string]any{"name": "nope"}, inB...).want(t, 403, "forbidden")
+		f.root.do("POST", "/api/users/"+admBID+"/password", map[string]any{"password": "Another-pass-1"}, inB...).want(t, 403, "forbidden")
+		f.root.do("POST", "/api/invites", map[string]any{"role": "admin", "siteAdmin": true}, inB...).want(t, 403, "forbidden")
+		f.root.do("POST", "/api/invites", map[string]any{"tenant": store.DefaultTenantID}, inB...).want(t, 404, "not_found")
+		f.root.do("POST", "/api/admin/members/batch", map[string]any{"tenant": store.DefaultTenantID, "dryRun": true,
+			"rows": []map[string]any{{"user": "x@example.test"}}}, inB...).want(t, 404, "not_found")
+		// Outside the scope they are root's.
+		f.root.do("PATCH", "/api/users/"+f.userB, map[string]any{"remoteExempt": true}).want(t, 200, "")
+
+		// A's administrator with a custom role in B holds there what it grants.
+		grantRole(t, a, "RB", store.RoleScopeTenant, f.tenB, store.GrantToUser, mustUserID(t, a, "adm-a"),
+			"tenant.settings.read", "tenant.users.read", "tenant.users.manage")
+		f.admA.do("PATCH", "/api/users/"+f.userB, map[string]any{"name": "by A in B"}, inB...).want(t, 200, "")
+		f.admA.do("POST", "/api/invites", map[string]any{"role": "member"}, inB...).want(t, 403, "forbidden")
+		f.admA.do("POST", "/api/admin/members/batch", map[string]any{"dryRun": true, "rows": []map[string]any{{"user": "x@example.test"}}}, inB...).want(t, 403, "forbidden")
+	})
+}
+
+// Entering a tenant's scope is recorded only for a request its route lets
+// through: a refusal by the route's key or feature writes nothing.
+func TestARefusedRequestRecordsNoConsoleOpening(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		inB := []string{scopeHeader, "tenant:" + f.tenB}
+		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.adminView", map[string]any{"siteLock": true, "value": false}).want(t, 200, "")
+		f.root.do("GET", "/api/admin/settings", nil, inB...).want(t, 403, "forbidden")
+		f.root.do("POST", "/api/admin/spaces/"+f.spaceB+"/view", map[string]any{"reason": "a check"}, inB...).want(t, 403, "feature_off")
+		a.auth.FlushAudit(context.Background())
+		if rows := f.admB.audit(t, "tenant_console_opened"); len(rows) != 0 {
+			t.Fatalf("refused requests wrote %v", rows)
+		}
+		f.root.do("GET", "/api/users", nil, inB...).want(t, 200, "")
+		a.auth.FlushAudit(context.Background())
+		if rows := f.admB.audit(t, "tenant_console_opened"); len(rows) != 1 {
+			t.Fatalf("an allowed request wrote %v", rows)
+		}
+	})
 }

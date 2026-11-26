@@ -523,6 +523,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 		if !s.featureGate(c, rt) {
 			return
 		}
+		s.consoleOpened(c)
 		if rt.access.kind == kindSpace {
 			if !s.openSpace(c, rt) {
 				return

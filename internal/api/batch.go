@@ -291,7 +291,7 @@ func (s *server) adminAddMembersBatch(c *call) {
 		groupNames = append(groupNames, r.Groups...)
 	}
 	// What the caller may do in the tenant is decided before anything is read of it.
-	if _, _, err := s.auth.InviteMany(ctx, c.user(), tenant, nil, true); err != nil {
+	if _, _, err := s.auth.InviteMany(ctx, c.user(), c.p.Access, tenant, nil, true); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -370,7 +370,7 @@ func (s *server) adminAddMembersBatch(c *call) {
 		}
 		out[i] = o
 	}
-	made, errs, err := s.auth.InviteMany(ctx, c.user(), tenant, specs, req.DryRun)
+	made, errs, err := s.auth.InviteMany(ctx, c.user(), c.p.Access, tenant, specs, req.DryRun)
 	if err != nil {
 		s.fail(c.w, err)
 		return

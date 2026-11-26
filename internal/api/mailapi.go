@@ -430,7 +430,7 @@ func (s *server) userPasswordReset(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
 		return
 	}
-	if err := s.auth.AdminPasswordReset(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), langOf(c, req.Lang)); err != nil {
+	if err := s.auth.AdminPasswordReset(c.r.Context(), c.user(), c.p.Access, s.auth.ClientAddr(c.r), c.r.PathValue("id"), langOf(c, req.Lang)); err != nil {
 		s.fail(c.w, err)
 		return
 	}

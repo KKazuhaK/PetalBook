@@ -300,12 +300,8 @@ type UserPatch struct {
 // enabled administrator, an administrator disabling themself, and, while
 // password sign-in is refused to everyone else, leaving no enabled
 // administrator with a password.
-func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID string, patch UserPatch) (*store.User, error) {
+func (s *Service) UpdateUser(ctx context.Context, actor store.User, access authz.Subject, ip, targetID string, patch UserPatch) (*store.User, error) {
 	actorID := actor.ID
-	access, err := s.SubjectOf(ctx, actor)
-	if err != nil {
-		return nil, err
-	}
 	// What the actor may do beyond changing people of their tenant: change
 	// administrators of the whole server (and make or end one), and exempt a
 	// person from the site's requirement of a remote.
@@ -352,7 +348,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 	// old holds what each changed field was, for the audit row (never a password).
 	old := map[string]any{}
 	exemptChanged := false
-	err = s.st.Tx(ctx, func(q store.Q) error {
+	err := s.st.Tx(ctx, func(q store.Q) error {
 		// A person of another tenant is no person at all.
 		u, err := store.GetUser(ctx, q, store.ScopeOf(actor), targetID)
 		if err != nil {
@@ -637,7 +633,7 @@ type NewInvite struct {
 // administrator is a site administrator (what every administrator of the
 // server was before tenants), unless siteAdmin says otherwise; nobody else
 // can make one.
-func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, role string, daysGiven *int, siteAdmin *bool, fill ...InviteFill) (*NewInvite, error) {
+func (s *Service) CreateInvite(ctx context.Context, actor store.User, access authz.Subject, tenantID, role string, daysGiven *int, siteAdmin *bool, fill ...InviteFill) (*NewInvite, error) {
 	if role == "" {
 		role = "member"
 	}
@@ -655,10 +651,6 @@ func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, 
 	token := randomToken()
 	if tenantID == "" {
 		tenantID = actor.TenantID
-	}
-	access, err := s.SubjectOf(ctx, actor)
-	if err != nil {
-		return nil, err
 	}
 	// Inviting into another tenant is for who invites across the site; making
 	// a site administrator, for who manages them.
@@ -926,12 +918,8 @@ func accountChangeFields(actor store.User, targetID string, changed map[string]a
 // never sees a password after this: it is the one they typed. Who may change
 // whom is as for UpdateUser: a site administrator's password needs
 // site.admins.manage, and a tenant's administrator reaches their own tenant.
-func (s *Service) SetTemporaryPassword(ctx context.Context, actor store.User, ip, targetID, password string) error {
+func (s *Service) SetTemporaryPassword(ctx context.Context, actor store.User, access authz.Subject, ip, targetID, password string) error {
 	if err := CheckPassword(password); err != nil {
-		return err
-	}
-	access, err := s.SubjectOf(ctx, actor)
-	if err != nil {
 		return err
 	}
 	u, err := store.GetUser(ctx, s.st.Q(), store.ScopeOf(actor), targetID)

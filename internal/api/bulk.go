@@ -446,7 +446,7 @@ func (s *server) bulkItem(ctx context.Context, req confirmRequest, id string, ac
 		return err
 	case "disable_users", "enable_users":
 		off := req.Action == "disable_users"
-		_, err := s.auth.UpdateUser(ctx, actor, ip, id, auth.UserPatch{Disabled: &off})
+		_, err := s.auth.UpdateUser(ctx, actor, access, ip, id, auth.UserPatch{Disabled: &off})
 		return err
 	case "purge":
 		if !can(authz.SiteRecyclePurge) {

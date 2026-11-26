@@ -578,7 +578,7 @@ func (s *server) patchUser(c *call) {
 		req.EmailVerified = &yes
 	}
 	before, _ := store.GetUser(c.r.Context(), s.opt.Store.Q(), c.reach(), c.r.PathValue("id"))
-	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Name: req.Name, Username: req.Username, Role: req.Role, Disabled: req.Disabled,
+	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), c.p.Access, s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Name: req.Name, Username: req.Username, Role: req.Role, Disabled: req.Disabled,
 		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified, MakeSiteAdmin: req.SiteAdmin, RemoteExempt: req.RemoteExempt})
 	if err != nil {
 		s.fail(c.w, err)
@@ -621,7 +621,7 @@ func (s *server) setTemporaryPassword(c *call) {
 		return
 	}
 	id := c.r.PathValue("id")
-	if err := s.auth.SetTemporaryPassword(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), id, req.Password); err != nil {
+	if err := s.auth.SetTemporaryPassword(c.r.Context(), c.user(), c.p.Access, s.auth.ClientAddr(c.r), id, req.Password); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -643,7 +643,7 @@ func (s *server) createInvite(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
 		return
 	}
-	inv, err := s.auth.CreateInvite(c.r.Context(), c.user(), req.Tenant, req.Role, req.Days, req.SiteAdmin)
+	inv, err := s.auth.CreateInvite(c.r.Context(), c.user(), c.p.Access, req.Tenant, req.Role, req.Days, req.SiteAdmin)
 	if err != nil {
 		s.fail(c.w, err)
 		return

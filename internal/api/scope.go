@@ -39,6 +39,9 @@ type actingScope struct {
 	// capacity is what the person acts as on this route: site_admin,
 	// tenant_admin, or "" for no administration.
 	capacity string
+	// entered: a site administrator entered the tenant's scope; it is
+	// recorded (consoleOpened) once the route lets the request through.
+	entered bool
 }
 
 // enterScope sets c's acting scope from the person and the header, and
@@ -79,10 +82,7 @@ func (s *server) enterScope(c *call, rt route) bool {
 		p := *c.p
 		p.User, p.Access = narrowTo(p.User, p.Access, id)
 		c.p = &p
-		c.scope.tenant, c.scope.narrowed = id, true
-		if siteWide {
-			s.consoleOpened(c, id)
-		}
+		c.scope.tenant, c.scope.narrowed, c.scope.entered = id, true, siteWide
 	}
 	if c.scope.capacity != "" {
 		c.r = c.r.WithContext(auditlog.WithCapacity(c.r.Context(), c.scope.capacity))
@@ -128,15 +128,24 @@ func capacityFor(access authz.Subject, k authz.Key) string {
 	return auditlog.CapacityTenantAdmin
 }
 
-// consoleOpened records that a site administrator entered a tenant's scope:
-// at most one row an hour for each session and tenant (the bounded table of
-// the views). It opens no content, so it asks for no reason.
-func (s *server) consoleOpened(c *call, tenant string) {
+// maxConsoleAudit bounds the console-open throttle's table.
+const maxConsoleAudit = 10000
+
+// consoleOpened records that a site administrator entered a tenant's scope,
+// for a request the route's key and feature let through (a refused one opened
+// nothing): at most one row an hour for each session and tenant, in a bounded
+// table of its own (the views' audit table is cleared at its cap, which would
+// reset this one too). It opens no content, so it asks for no reason.
+func (s *server) consoleOpened(c *call) {
+	if !c.scope.entered {
+		return
+	}
+	tenant := c.scope.tenant
 	who := c.p.SessionID
 	if who == "" {
 		who = c.p.User.ID
 	}
-	if !s.views.firstOpen("scope:"+who, "", tenant, s.now()) {
+	if !s.consoles.first(who+"\x00"+tenant, s.now()) {
 		return
 	}
 	s.audit(c, auth.AuditEvent{Kind: "tenant_console_opened", Actor: c.p.User.ID, Tenant: tenant, Capacity: c.scope.capacity,

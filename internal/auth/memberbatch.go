@@ -79,11 +79,7 @@ func (s *Service) joinInvitedGroups(ctx context.Context, q store.Q, u store.User
 // for one (the same checks of the caller and the tenant, done once). The result
 // has an entry per spec, in order. A spec that cannot be made has its error
 // (the rest are made); dry only checks and makes nothing.
-func (s *Service) InviteMany(ctx context.Context, actor store.User, tenantID string, specs []InviteSpec, dry bool) ([]InviteOutcome, []error, error) {
-	access, err := s.SubjectOf(ctx, actor)
-	if err != nil {
-		return nil, nil, err
-	}
+func (s *Service) InviteMany(ctx context.Context, actor store.User, access authz.Subject, tenantID string, specs []InviteSpec, dry bool) ([]InviteOutcome, []error, error) {
 	if !access.Can(authz.TenantInvitesManage, tenantID) {
 		return nil, nil, errf(NotFound, "No such tenant.")
 	}

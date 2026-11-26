@@ -257,7 +257,7 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 	}
 	// 1. disabled at once: sessions end, tokens and grants answer 401.
 	disabled := true
-	if _, err := s.auth.UpdateUser(ctx, in.Actor, in.IP, id, auth.UserPatch{Disabled: &disabled}); err != nil {
+	if _, err := s.auth.UpdateUser(ctx, in.Actor, in.Access, in.IP, id, auth.UserPatch{Disabled: &disabled}); err != nil {
 		if began {
 			// Nothing was done: no deletion is under way.
 			if ferr := store.ForgetUserDeletion(context.WithoutCancel(ctx), s.opt.Store.Q(), id); ferr != nil {
