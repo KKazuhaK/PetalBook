@@ -313,6 +313,15 @@ type OrgMembership struct {
 	Role  string `json:"role"`
 }
 
+// githubOrgOwner is GitHub's role name for an organisation's owner: a role on
+// GitHub, not one of this server's (those are asked through authz).
+const githubOrgOwner = "admin"
+
+// ActiveOwner reports whether the membership is an accepted one as an owner.
+func (m *OrgMembership) ActiveOwner() bool {
+	return m.State == "active" && m.Role == githubOrgOwner
+}
+
 // UserOrgMembership reads the token's user's membership of an organisation
 // (GET /user/memberships/orgs/{org}); a 404 when they are not a member.
 func (c *Client) UserOrgMembership(ctx context.Context, token, org string) (*OrgMembership, error) {

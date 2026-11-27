@@ -234,7 +234,7 @@ func (s *Service) completeInstall(ctx context.Context, a *attempt, code string, 
 		case err != nil:
 			s.log.Warn("could not read the person's membership of the organisation", "reason", reason(err))
 			return fail(cbError)
-		case m.State != "active" || m.Role != "admin":
+		case !m.ActiveOwner():
 			return fail(cbNotOrgAdmin)
 		}
 	}
