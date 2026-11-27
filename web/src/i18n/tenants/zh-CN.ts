@@ -248,6 +248,7 @@ export const tenantsZhCN = {
       files: '文件',
       registration: '注册',
       orgCreation: '自己创建的组织',
+      tenants: '新组织',
       legal: '法律',
       daily: '每日文案',
       mail: '邮件',
@@ -318,6 +319,7 @@ export const tenantsZhCN = {
       'features.idpAdmins': '由身份提供方指定管理员',
       'features.adminView': '管理员查看组织空间的内容',
       'features.auditDownload': '下载审计日志',
+      'features.tenantAudit': '组织管理员查看本组织的审计日志',
       'mail.ownSender': '租户自己的发信设置（SMTP）',
       'features.ownCaptcha': '租户自己的验证码密钥',
       'features.ownConnections': '租户自己的代码托管连接',
@@ -336,6 +338,7 @@ export const tenantsZhCN = {
       'features.tokens': '允许创建和使用 API 令牌',
       'features.mcp': 'MCP 和给 MCP 客户端用的 OAuth',
       'features.tenancy': '允许存在默认租户以外的租户',
+      'tenants.newAuditDefault': '新组织开放审计日志',
       'features.orgCreation': '允许大家自己创建组织',
       'orgCreation.perPerson': '每人可创建的组织数',
       'orgCreation.perHour': '每小时创建的组织数（全服务器）',
@@ -372,6 +375,8 @@ export const tenantsZhCN = {
         '默认开启。关闭后，租户里没人能创建或使用 API 令牌；令牌会保留，再打开就恢复。租户可以给自己关掉，全站也可以为某个租户强制。',
       'features.mcp':
         '默认开启。关闭后，/mcp 和授权服务对这个租户答 404；已连接的应用会保留。租户可以给自己关掉，全站也可以为某个租户强制。',
+      'tenants.newAuditDefault':
+        '默认关闭。新建组织时“组织管理员查看本组织的审计日志”取这个值，并且被锁定：组织自己改不了。只影响设置之后新建的组织；已有的组织请到它自己的页面里改。审计记录照常写入，站点管理员始终能看到所有组织的记录。',
       'features.orgCreation':
         '默认关闭。开启后，注册页提供“创建我自己的组织”：填写名称和地址，确认邮箱，就成为新租户的管理员（绝不会是站点管理员）。需要先开启多租户开关并配置发信。仅站点管理员可改。',
       'orgCreation.perPerson':

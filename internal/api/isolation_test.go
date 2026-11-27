@@ -51,6 +51,8 @@ func newTenFx(t *testing.T, a *acc) *tenFx {
 	f := &tenFx{a: a}
 	f.root = a.setup("root", pw)
 	f.root.putSetting("features.tenancy", true).want(t, 200, "")
+	// The audit is the tenant console's own in these tests; the default for new tenants is off (tenantaudit_test.go).
+	f.root.putSetting("tenants.newAuditDefault", true).want(t, 200, "")
 
 	// Tenant B, with its first administrator through the invite the creation gives.
 	r := f.root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme", "admin": map[string]any{"username": "adm-b"}}).want(t, 201, "")

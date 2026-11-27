@@ -425,7 +425,21 @@ func CountSelfTenantsSince(ctx context.Context, q Q, since time.Time) (n int, er
 // CreateTenant adds a tenant, refusing the 1,001st (ErrTenantLimit). A taken
 // slug is a unique violation.
 func (s *Store) CreateTenant(ctx context.Context, t Tenant) error {
-	if err := s.Tx(ctx, func(q Q) error { return InsertTenant(ctx, q, t) }); err != nil {
+	return s.CreateTenantWith(ctx, t, nil)
+}
+
+// CreateTenantWith is CreateTenant that also runs with in the same transaction
+// (what a new tenant starts with: its rules).
+func (s *Store) CreateTenantWith(ctx context.Context, t Tenant, with func(q Q) error) error {
+	if err := s.Tx(ctx, func(q Q) error {
+		if err := InsertTenant(ctx, q, t); err != nil {
+			return err
+		}
+		if with != nil {
+			return with(q)
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	return s.loadTenantState(ctx)

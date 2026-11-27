@@ -214,7 +214,14 @@ func (s *server) adminCreateTenant(c *call) {
 	}
 	now := time.Now().UTC()
 	t := store.Tenant{ID: page.NewID(now), Slug: req.Slug, Name: name, Origin: store.OriginAdmin, CreatedBy: c.user().ID, Created: now, Updated: now}
-	err = s.opt.Store.CreateTenant(ctx, t)
+	var stamped func()
+	err = s.opt.Store.CreateTenantWith(ctx, t, func(q store.Q) (err error) {
+		stamped, err = s.settings.StampNewTenant(ctx, q, t.ID, c.user().ID)
+		return err
+	})
+	if err == nil {
+		stamped()
+	}
 	switch {
 	case errors.Is(err, store.ErrTenantLimit):
 		writeError(c.w, http.StatusConflict, "tenant_limit", "A server has at most "+strconv.Itoa(store.MaxTenants)+" tenants.")

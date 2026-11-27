@@ -41,6 +41,7 @@ type access struct {
 	// feature; one of the two is stated for every route (see on and always),
 	// so a new route cannot forget to choose.
 	feature  string
+	also     string
 	alwaysOn bool
 }
 
@@ -52,6 +53,17 @@ func (a access) on(feature string) access {
 		panic("api: a route belongs to one feature, and a public one to none (" + feature + ")")
 	}
 	a.feature = feature
+	return a
+}
+
+// and adds a second feature to a route whose key has one: the route answers
+// 403 feature_off while the caller's tenant lacks either (the key's is checked
+// with the key, as a site-wide holder of it is not bound by it).
+func (a access) and(feature string) access {
+	if a.kind != kindKey || a.feature == "" || a.also != "" || feature == "" || feature == a.feature {
+		panic("api: and adds a second feature to a route whose key has one (" + feature + ")")
+	}
+	a.also = feature
 	return a
 }
 
@@ -291,9 +303,9 @@ var routeTable = []route{
 	{"POST", "/api/admin/groups/{group}/members/batch", needs(authz.TenantGroupsManage).always(), true, false, false, (*server).adminAddGroupMembersBatch},
 	{"DELETE", "/api/admin/groups/{group}/members/{user}", needs(authz.TenantGroupsManage).always(), true, false, false, (*server).adminRemoveGroupMember},
 	{"GET", "/api/admin/groups/{group}/spaces", needs(authz.TenantGroupsRead).always(), true, false, false, (*server).adminGroupSpaces},
-	{"GET", "/api/admin/audit", needs(authz.TenantAuditRead).always(), true, false, false, (*server).adminAudit},
-	{"GET", "/api/admin/audit/kinds", needs(authz.TenantAuditRead).always(), true, false, false, (*server).adminAuditKinds},
-	{"GET", "/api/admin/audit/download", needs(authz.TenantAuditRead).on(settings.FeatureAuditDownload), true, false, false, (*server).adminAuditDownload},
+	{"GET", "/api/admin/audit", needs(authz.TenantAuditRead), true, false, false, (*server).adminAudit},
+	{"GET", "/api/admin/audit/kinds", needs(authz.TenantAuditRead), true, false, false, (*server).adminAuditKinds},
+	{"GET", "/api/admin/audit/download", needs(authz.TenantAuditRead).and(settings.FeatureAuditDownload), true, false, false, (*server).adminAuditDownload},
 	{"POST", "/api/admin/audit/purge", needs(authz.SiteAuditPurge).always(), true, false, false, (*server).adminAuditPurge},
 	{"GET", "/api/admin/tenants", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminListTenants},
 	{"POST", "/api/admin/tenants", needs(authz.SiteTenantsManage).on(settings.FeatureTenancy), true, false, false, (*server).adminCreateTenant},

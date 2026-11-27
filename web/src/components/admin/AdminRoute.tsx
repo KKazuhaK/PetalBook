@@ -5,6 +5,7 @@ import { useSession } from '@/api/hooks'
 import { PageFallback } from '@/components/common'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { acrossSite } from '@/lib/access'
+import { useFeature } from '@/lib/features'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
@@ -60,7 +61,12 @@ function Console({ scope, segments }: { scope: string | null; segments: string[]
   const org =
     !site &&
     (scope !== null ? scope !== DEFAULT_TENANT_ID : ownTenant !== undefined && ownTenant.id !== DEFAULT_TENANT_ID)
-  const sections = navFor(site, org)
+  // A tenant's own administrator has the audit log only while the site gives it (features.tenantAudit); a site
+  // administrator, in a scope too, always does.
+  const auditFeature = useFeature('features.tenantAudit')
+  const siteUser = acrossSite(useSession().data?.user)
+  const auditOff = auditFeature === false && !siteUser
+  const sections = navFor(site, org).filter((s) => s.key !== 'audit' || !auditOff)
   const person = first === 'user' && second !== undefined
   // A tenant's own page: `/admin/tenants/<id>/<tab>`; the list's two pages are tenants and plans.
   const ofTenant = site && first === 'tenants' && second !== undefined && second !== 'tenants' && second !== 'plans'

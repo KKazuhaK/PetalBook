@@ -2399,6 +2399,7 @@
    "features.passkeys": "boolean",
    "features.registration": "boolean",
    "features.tenancy": "boolean",
+   "features.tenantAudit": "boolean",
    "features.tokens": "boolean",
    "mail.ownSender": "boolean"
   },

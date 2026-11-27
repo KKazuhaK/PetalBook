@@ -132,6 +132,7 @@ export const SETTING_DEFS: SiteSetting[] = [
   { key: 'features.idpAdmins', kind: 'boolean', layers: ['site'], site: { value: false, lower: { mode: 'allow' } } },
   { key: 'features.adminView', kind: 'boolean', layers: ['site'], site: { value: true, lower: { mode: 'allow' } } },
   { key: 'features.auditDownload', kind: 'boolean', layers: ['site'], site: { value: true, lower: { mode: 'allow' } } },
+  { key: 'features.tenantAudit', kind: 'boolean', layers: ['site'], site: { value: true, lower: { mode: 'allow' } } },
   { key: 'mail.ownSender', kind: 'boolean', layers: ['site'], site: { value: false, lower: { mode: 'allow' } } },
   { key: 'features.ownCaptcha', kind: 'boolean', layers: ['site'], site: { value: true, lower: { mode: 'allow' } } },
   {
@@ -175,6 +176,13 @@ export const SETTING_DEFS: SiteSetting[] = [
     kind: 'boolean',
     layers: ['site'],
     serverWide: 'whether tenants besides the default one exist',
+    site: { value: false, lower: { mode: 'allow' } },
+  },
+  {
+    key: 'tenants.newAuditDefault',
+    kind: 'boolean',
+    layers: ['site'],
+    serverWide: 'it is the value a tenant is made with; the tenant does not exist yet',
     site: { value: false, lower: { mode: 'allow' } },
   },
   {
@@ -431,6 +439,7 @@ export const TENANT_KEYS: string[] = [
   'features.idpAdmins',
   'features.adminView',
   'features.auditDownload',
+  'features.tenantAudit',
   'mail.ownSender',
   'features.ownCaptcha',
   'features.ownConnections',

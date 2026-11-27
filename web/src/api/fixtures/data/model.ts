@@ -114,6 +114,7 @@ export const DEFAULT_FEATURES: Record<string, boolean> = {
   'accounts.multipleEmails': false,
   'features.adminView': false,
   'features.auditDownload': false,
+  'features.tenantAudit': true,
   'features.domains': false,
   'features.githubConnect': true,
   'features.idpAdmins': false,
