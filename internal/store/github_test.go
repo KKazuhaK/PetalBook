@@ -472,3 +472,43 @@ func TestAReclaimedInstallationShowsOnlyTheNewOwnersSpaces(t *testing.T) {
 		}
 	})
 }
+
+// A space whose own repository syncs through something else (a token) and only
+// its attachment repository through the installation keeps the state of its own
+// remote when the installation is disconnected: only the attachment remote loses access.
+func TestDisconnectingMarksASpaceOnlyWhenItsOwnRepositoryWasOnIt(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		mkGitHubRow(t, st, now)
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T1", Slug: "t1", Name: "T1", Created: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.ClaimGitHubInstallation(ctx, q, store.GitHubInstallation{ID: 5, Account: "Org", AccountType: "Organization", OwnerTenant: "T1", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.InsertSpace(ctx, q, "T1", "SX", "x", "", "", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "SX", URL: "https://example.test/x.git", Branch: "main", State: "ok", Updated: now, CredType: "token"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "SX", Role: store.RoleAssets, URL: "https://github.com/o/x-assets.git", Branch: "main", State: "ok", Updated: now,
+			CredType: "connection", Provider: "github", Via: "app", InstallationID: 5, RepoID: 9}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, store.InstallOwner{TenantID: "T1"}, "lost", now); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, st, `SELECT COUNT(*) FROM spaces WHERE id = 'SX' AND remote_state = 'error'`); n != 0 {
+			t.Fatal("the space's own remote state was marked although its own repository is not on the installation")
+		}
+		if r, _ := store.GetRemote(ctx, q, "SX", store.RoleAssets); r.ErrorKind != store.AccessLost {
+			t.Fatalf("%+v", r)
+		}
+		if r, _ := store.GetRemote(ctx, q, "SX", store.RoleContent); r.State != "ok" {
+			t.Fatalf("%+v", r)
+		}
+	})
+}

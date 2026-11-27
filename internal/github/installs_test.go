@@ -436,3 +436,24 @@ func TestAnOrgMemberWhoIsNotItsAdminCannotClaimTheOrgsInstallation(t *testing.T)
 		}
 	})
 }
+
+// An App made before it asked for the organisation's Members permission cannot
+// read an owner's membership: the claim is refused as the App's missing
+// permission (an administrator's fix), not as the person not being an owner.
+func TestAnAppWithoutMembersPermissionIsToldApartFromANonOwner(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		o := newOrg(t, st)
+		o.f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
+		to := o.installFor("A1", store.InstallOwner{TenantID: "T1"}, "petal-team", "kaz-admin", "petal-team", true)
+		if to != "/back?connection_error=app_missing_permission" {
+			t.Fatalf("%q", to)
+		}
+		if list, _ := o.svc.Installations(ctx, store.InstallOwner{TenantID: "T1"}); len(list) != 0 {
+			t.Fatalf("%+v", list)
+		}
+		// The administration sees which permission is missing.
+		if v, _ := o.svc.View(ctx); strings.Join(v.Missing, ",") != "members" {
+			t.Fatalf("%+v", v.Missing)
+		}
+	})
+}

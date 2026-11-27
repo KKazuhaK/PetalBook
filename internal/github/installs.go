@@ -223,6 +223,12 @@ func (s *Service) completeInstall(ctx context.Context, a *attempt, code string, 
 		// one of its repositories: only the organisation's owners may connect it.
 		m, err := s.c.UserOrgMembership(ctx, tok, in.Account.Login)
 		switch {
+		case githubapp.IsPermissionRefusal(err):
+			// The App (or this installation) lacks the organisation's Members
+			// permission, which GitHub needs to answer: an administrator's fix,
+			// not the person's standing.
+			s.autoRecheck(ctx, st)
+			return fail(CodeMissingPermission)
 		case githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden) && !limited(err):
 			return fail(cbNotOrgAdmin)
 		case err != nil:

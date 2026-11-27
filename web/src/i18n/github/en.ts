@@ -239,7 +239,7 @@ export const githubEn = {
     disconnectBody:
       'It stays installed on GitHub (uninstall it there). The spaces below lose GitHub access: their notes are kept, and they stop syncing until GitHub is connected again or they are connected to another repository.',
     disconnectGrace:
-      'Where this server requires every space to sync to a repository, they count as having none: a space whose time to get one has already run out (it counts from when the space was made) becomes read only at once; the others keep what is left of theirs.',
+      'Where this server requires every space to sync to a repository, they count as having none: a space whose time to get one has already run out (it counts from when the space was made or when the requirement began, whichever is later) becomes read only at once; the others keep what is left of theirs.',
     disconnectSpaces: (n: number) => (n === 1 ? '1 space syncs through it:' : `${n} spaces sync through it:`),
     disconnectMore: (n: number) => `and ${n} more`,
     disconnectNone: 'No space syncs through it.',
@@ -261,6 +261,8 @@ export const githubEn = {
         'GitHub does not list that installation for your GitHub account, so it was not connected. Install it again from here.',
       wrong_account: 'The App was installed on another account than the one asked for, so it was not connected.',
       installation_taken: 'That installation is already connected to another organisation or person on this server.',
+      app_missing_permission:
+        'The site’s GitHub App lacks the Members permission it needs to check that you own the organisation. A site administrator adds it to the App on GitHub, and the installation accepts it; then install again.',
       not_org_admin:
         'Only an owner of the GitHub organisation can connect its installation. GitHub says your account is a member there, not an owner; ask an owner to install it from here.',
       not_connected:
@@ -275,7 +277,7 @@ export const githubEn = {
     loadFailed: 'Could not load the GitHub App',
     title: 'GitHub App',
     intro:
-      'One GitHub App for the whole server. The easiest way is the button below, which makes it on GitHub for you. Or make it yourself on GitHub (Settings, Developer settings), installable on any account, with “Request user authorization (OAuth) during installation” ticked and with the Contents (read and write), Metadata (read) and Administration (read and write) permissions, then copy its details here. The key and secret are kept encrypted and never shown again.',
+      'One GitHub App for the whole server. The easiest way is the button below, which makes it on GitHub for you. Or make it yourself on GitHub (Settings, Developer settings), installable on any account, with “Request user authorization (OAuth) during installation” ticked and with the Contents (read and write), Metadata (read) and Administration (read and write) permissions and the organisation permission Members (read), then copy its details here. An App made before Members was asked for needs it added on GitHub, and each installation must accept it, before organisations can connect theirs. The key and secret are kept encrypted and never shown again.',
     openApp: 'Open on GitHub',
     fingerprint: 'Key fingerprint',
     permissions: 'Permissions',

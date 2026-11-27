@@ -279,7 +279,7 @@ func New(t testing.TB, clock Clocker) *Fake {
 	yes := true
 	f := &Fake{t: t, Clock: clock, Public: &yes, AppID: 424242, Slug: "petalbook-notes", Name: "PetalBook Notes",
 		ClientID: "Iv23liFakeClientId", ClientSecret: "fake-client-secret-0123456789", Key: sharedKey(), nextID: 1000,
-		AppPerms: map[string]string{"administration": "write", "contents": "write", "metadata": "read"},
+		AppPerms: map[string]string{"administration": "write", "contents": "write", "members": "read", "metadata": "read"},
 		accounts: map[string]*Account{}, installs: map[int64]*Install{}, repos: map[string]*Repo{},
 		inst: map[string]*instToken{}, users: map[string]*userToken{}, refresh: map[string]*refreshToken{}, codes: map[string]*code{}, mcodes: map[string]*manifestCode{},
 		gitRoot: t.TempDir()}
@@ -1003,6 +1003,13 @@ func (f *Fake) serveAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "GET" && strings.HasPrefix(path, "/user/memberships/orgs/") && p.kind == "user":
 		org := strings.ToLower(strings.TrimPrefix(path, "/user/memberships/orgs/"))
 		f.mu.Lock()
+		// GitHub answers this to an App's user token only when the App has the
+		// organisation's Members permission.
+		if f.AppPerms["members"] == "" {
+			f.mu.Unlock()
+			apiError(w, 403, "Resource not accessible by integration")
+			return
+		}
 		a := f.accounts[org]
 		me := strings.ToLower(p.login)
 		member := a != nil && a.Org && a.Members[me]

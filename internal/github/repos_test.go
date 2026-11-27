@@ -229,7 +229,7 @@ func TestCreateWithTheOrganisationsOwnInstallation(t *testing.T) {
 			t.Fatalf("%v %d", err, o.f.Minted()-minted)
 		}
 		// An App without the Administration permission: the answer names the permission.
-		o.f.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
+		o.f.AppPerms = map[string]string{"members": "read", "contents": "write", "metadata": "read"}
 		if _, _, err := create(t, o.world, "M1", "petal-team", "wiki3"); code(err) != "app_missing_permission" || status(err) != 403 {
 			t.Fatalf("%v", err)
 		}
@@ -599,7 +599,7 @@ func TestMissingPermissionIsToldApartFromANotReachedRepository(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The App has no Contents permission: GitHub answers 422 about permissions.
-		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
+		w.f.AppPerms = map[string]string{"members": "read", "administration": "write", "metadata": "read"}
 		_, err = w.svc.ChooseCredential(ctx, p, r)
 		if code(err) != "app_missing_permission" || status(err) != 403 || strings.Join(missing(err), ",") != "contents" {
 			t.Fatalf("422 about permissions: %v (%s) %v", err, code(err), missing(err))
@@ -613,9 +613,9 @@ func TestMissingPermissionIsToldApartFromANotReachedRepository(t *testing.T) {
 		}
 		w.f.PermissionRefusal403 = false
 		// An App that has it, installed where it has not been accepted yet: the installation lacks it.
-		w.f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
+		w.f.AppPerms = map[string]string{"members": "read", "administration": "write", "contents": "write", "metadata": "read"}
 		w.f.SetInstall(w.kazuhahub, func(i *githubapptest.Install) {
-			i.Perms = map[string]string{"administration": "write", "metadata": "read"}
+			i.Perms = map[string]string{"members": "read", "administration": "write", "metadata": "read"}
 		})
 		if _, err = w.svc.ChooseCredential(ctx, p, r); code(err) != "app_missing_permission" || strings.Join(missing(err), ",") != "contents" {
 			t.Fatalf("installation: %v (%s)", err, code(err))
@@ -637,7 +637,7 @@ func TestMissingPermissionIsToldApartFromANotReachedRepository(t *testing.T) {
 		// A space's own credential: the remote shows the code.
 		repo := w.f.AddRepo("kazuhahub", "docs", true)
 		w.spaceIn("T1", "S1", "", store.Remote{Via: "app", InstallationID: w.kazuhahub, RepoID: repo.ID})
-		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
+		w.f.AppPerms = map[string]string{"members": "read", "administration": "write", "metadata": "read"}
 		rem, _ := store.GetRemote(ctx, st.Q(), "S1", store.RoleContent)
 		_, err = w.svc.GitToken(ctx, rem, false)
 		var ce *gitstore.CredentialError
@@ -645,7 +645,7 @@ func TestMissingPermissionIsToldApartFromANotReachedRepository(t *testing.T) {
 			t.Fatalf("git token: %v", err)
 		}
 		// Creating a repository without the Administration permission names it.
-		w.f.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
+		w.f.AppPerms = map[string]string{"members": "read", "contents": "write", "metadata": "read"}
 		if _, _, err = create(t, w, "M1", "kazuhahub", "wiki3"); code(err) != "app_missing_permission" || strings.Join(missing(err), ",") != "administration" {
 			t.Fatalf("create: %v (%s) %v", err, code(err), missing(err))
 		}
@@ -661,7 +661,7 @@ func TestGitHubsRefusalsAreInTheLogWithoutASecret(t *testing.T) {
 		if _, _, err := create(t, w, "U1", "kazuhahub", "nope"); code(err) != "provider_refused" {
 			t.Fatalf("%v", err)
 		}
-		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
+		w.f.AppPerms = map[string]string{"members": "read", "administration": "write", "metadata": "read"}
 		w.f.AddOrg("petal-team")
 		w.f.Install("petal-team", "all")
 		w.asOrg("petal-team")

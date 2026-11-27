@@ -136,7 +136,9 @@ func TestAnInstalledPersonalAccountWithoutAdministrationIsAPermissionProblem(t *
 		w := newWorld(t, st)
 		w.f.PersonalNeedsInstall = true
 		in := w.f.Install("tang", "all")
-		w.f.SetInstall(in, func(i *githubapptest.Install) { i.Perms = map[string]string{"contents": "write", "metadata": "read"} })
+		w.f.SetInstall(in, func(i *githubapptest.Install) {
+			i.Perms = map[string]string{"members": "read", "contents": "write", "metadata": "read"}
+		})
 		_, _, err := create(t, w, "U1", "tang", "notes")
 		if code(err) != "app_missing_permission" {
 			t.Fatalf("%v (%s)", err, code(err))

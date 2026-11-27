@@ -48,7 +48,7 @@ func TestMakingTheAppFromAManifest(t *testing.T) {
 		if m.Name == "" || len(m.Name) > 34 || m.URL != publicURL || m.RedirectURL != publicURL+"/api/providers/github/manifest/callback" || m.SetupURL != m.RedirectURL ||
 			len(m.CallbackURLs) != 2 || m.CallbackURLs[0] != publicURL+"/api/account/links/github/callback" || m.CallbackURLs[1] != publicURL+"/api/auth/github/github/callback" || !m.Public || !m.RequestOAuthOnInst ||
 			m.HookAttributes.Active || m.DefaultPermissions["administration"] != "write" || m.DefaultPermissions["contents"] != "write" ||
-			m.DefaultPermissions["metadata"] != "read" || len(m.DefaultPermissions) != 3 {
+			m.DefaultPermissions["metadata"] != "read" || m.DefaultPermissions["members"] != "read" || len(m.DefaultPermissions) != 4 {
 			t.Fatalf("%+v", m)
 		}
 		q := submit(t, h, s)

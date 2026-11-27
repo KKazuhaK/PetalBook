@@ -2232,7 +2232,10 @@ administrator who installed it; any of its administrators manages it).
      must also be an active owner of it (`GET /user/memberships/orgs/{org}`
      with their token answers `state: active`, `role: admin`): GitHub lists an
      organisation's installation for any member who reaches one of its
-     repositories, so a plain member gets `not_org_admin`;
+     repositories, so a plain member gets `not_org_admin`. GitHub answers that
+     only when the App has the organisation permission Members: read; without
+     it the claim is refused with `app_missing_permission` (an administrator
+     adds the permission to the App and the installation accepts it);
   5. no other person or organisation on this server has it (one statement; of
      two at once one wins): `installation_taken`, "already connected to another
      organisation or person on this server".
@@ -2259,7 +2262,8 @@ administrator who installed it; any of its administrators manages it).
   Under a storage requirement of a remote, such a space counts as having none
   and is in the requirement's grace like any space without one (`InGrace`, then
   `Overdue`; exemptions of spaces and people as always); no other grace period
-  applies: the grace counts from the space's creation, so a space whose grace
+  applies: the grace counts from the space's creation or from when the requirement
+  began, whichever is later, so a space whose grace
   has already run out is `Overdue` (read only) at once, and the others keep what
   is left of theirs. Connecting the same installation again by the same owner
   restores them. The spaces listed, counted and marked are the owner's only: a
@@ -19863,7 +19867,7 @@ is the `callbackUrl` below.
  "installUrl": "https://github.com/apps/petalbook-notes/installations/new",
  "privateKey": {"set": true, "fingerprint": "SHA256:…"}, "clientSecret": {"set": true},
  "callbackUrl": "https://notes.example.com/api/account/links/github/callback",
- "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
+ "permissions": {"administration": "write", "contents": "write", "members": "read", "metadata": "read"},
  "missing": [], "gaps": [], "anyAccount": true,
  "userAuthorization": true, "checked": "2026-11-23T08:30:00Z",
  "spaces": 4, "authorizations": 3}
@@ -19876,6 +19880,13 @@ Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
   public page; `installUrl` is where an organisation or a user installs it.
 - `privateKey.fingerprint` is the SHA-256 fingerprint of the public half, to
   compare with what GitHub shows for the App's keys.
+- The App needs the organisation permission **Members: read** (since
+  2026-11-26): GitHub answers `GET /user/memberships/orgs/{org}`, which an
+  organisation's claim of an installation reads, only with it. An App made
+  before then adds it in its settings on GitHub, and each installation accepts
+  the change (an organisation's claim is refused with `app_missing_permission`
+  until then); a re-check shows it in `missing` and `gaps`. There is no
+  migration: pre-release.
 - `missing` lists the permissions above that the App lacks (`"administration"`,
   `"contents"`, `"metadata"`). It is a warning: saving is not refused.
 - `gaps` lists, from the last check, the installations that lack one of them
@@ -19966,7 +19977,7 @@ unique, so the administrator may need another). `200`:
    "callback_urls": ["https://notes.example.com/api/account/links/github/callback"],
    "setup_url": "https://notes.example.com/api/providers/github/manifest/callback",
    "public": true, "request_oauth_on_install": true,
-   "default_permissions": {"administration": "write", "contents": "write", "metadata": "read"}}}
+   "default_permissions": {"administration": "write", "contents": "write", "metadata": "read", "members": "read"}}}
 ```
 
 and a short-lived cookie that ties the attempt to this browser. The client

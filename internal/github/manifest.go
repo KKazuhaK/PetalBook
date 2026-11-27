@@ -97,7 +97,7 @@ func (s *Service) StartManifest(ctx context.Context, userID string, req connecti
 		SetupURL:           ret,
 		Public:             true,
 		RequestOAuthOnInst: true,
-		DefaultPermissions: map[string]string{"administration": "write", "contents": "write", "metadata": "read"},
+		DefaultPermissions: map[string]string{"administration": "write", "contents": "write", "metadata": "read", "members": "read"},
 	}
 	return &connections.ManifestStart{URL: s.c.ManifestURL(org, state), Manifest: m, Binding: binding}, nil
 }

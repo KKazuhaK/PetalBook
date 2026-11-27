@@ -318,7 +318,7 @@ func DisconnectGitHubInstallation(ctx context.Context, q Q, id int64, o InstallO
 				sargs = append(sargs, sid)
 			}
 			if _, err := q.Exec(ctx, `UPDATE spaces SET remote_state = ? WHERE remote_state <> ? AND id IN (?`+marks+`)
-				AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = spaces.id AND r.role = 'content' AND r.url <> '')`, sargs...); err != nil {
+				AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = spaces.id AND r.role = 'content' AND `+onInstallation+`)`, append(sargs, id)...); err != nil {
 				return err
 			}
 			rest = rest[n:]

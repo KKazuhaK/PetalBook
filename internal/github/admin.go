@@ -17,7 +17,7 @@ import (
 )
 
 // RequiredPermissions are what the App needs, and the level of each.
-var RequiredPermissions = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
+var RequiredPermissions = map[string]string{"administration": "write", "contents": "write", "metadata": "read", "members": "read"}
 
 // AppView is the App's settings as an administrator sees them. No secret is in it.
 type AppView struct {
@@ -56,7 +56,7 @@ type Gap struct {
 
 func missingPermissions(have map[string]string) []string {
 	out := []string{}
-	for _, k := range []string{"administration", "contents", "metadata"} {
+	for _, k := range []string{"administration", "contents", "members", "metadata"} {
 		want, got := RequiredPermissions[k], have[k]
 		if got == "" || (want == "write" && got != "write") {
 			out = append(out, k)
