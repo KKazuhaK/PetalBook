@@ -33,6 +33,8 @@ type tenFx struct {
 	userB, spaceB, groupB, inviteB, tokenB, grantB string
 	userA, spaceA, groupA, inviteA                 string
 	secretB                                        string
+	// domainB is a domain B claimed.
+	domainB string
 
 	// syncedB is a synced group of B that a provider of B maps (addMappedB).
 	syncedB string
@@ -115,6 +117,8 @@ func newTenFx(t *testing.T, a *acc) *tenFx {
 	f.exportB = f.admB.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceB}}).want(t, 202, "").body["job"].(map[string]any)["id"].(string)
 	tok := f.admB.do("POST", "/api/admin/confirm", map[string]any{"action": "export", "spaces": []string{f.spaceB}}).want(t, 200, "").body["confirm"].(string)
 	f.jobB = f.admB.do("POST", "/api/admin/bulk", map[string]any{"confirm": tok}).want(t, 202, "").body["job"].(map[string]any)["id"].(string)
+	// An email domain B claimed (3.6 d2).
+	f.domainB = f.admB.do("POST", "/api/admin/tenants/"+f.tenB+"/domains", map[string]any{"domain": "acme-b.example"}).want(t, 201, "").body["domain"].(string)
 	a.auth.FlushAudit(ctx)
 	return f
 }
@@ -126,7 +130,7 @@ func (f *tenFx) groupAdd(t *testing.T, c *client, g string, ids ...string) {
 
 // bIDs are everything of tenant B that must never show in an answer to A.
 func (f *tenFx) bIDs() []string {
-	l := []string{f.tenB, f.userB, f.spaceB, f.groupB, f.inviteB, f.tokenB, f.grantB, "adm-b", "mem-b", "Space B", "Group B", "Acme", f.secretB, f.itemB, f.exportB, f.jobB, "Space B2"}
+	l := []string{f.tenB, f.userB, f.spaceB, f.groupB, f.inviteB, f.tokenB, f.grantB, "adm-b", "mem-b", "Space B", "Group B", "Acme", f.secretB, f.itemB, f.exportB, f.jobB, "Space B2", "acme-b.example"}
 	if f.syncedB != "" {
 		l = append(l, f.syncedB, "Synced B")
 	}
@@ -334,20 +338,33 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/admin/groups/{group}/members/batch": {kind: isoParam, body: func(f *tenFx, id string) any {
 		return map[string]any{"rows": []map[string]any{{"user": "mem-b"}}}
 	}},
-	"DELETE /api/admin/groups/{group}/members/{user}":   {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"group": f.groupB, "user": f.userB} }},
-	"GET /api/admin/groups/{group}/spaces":              {kind: isoParam},
-	"GET /api/admin/tokens":                             {kind: isoList},
-	"DELETE /api/admin/tokens/{id}":                     {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.tokenB} }},
-	"GET /api/admin/grants":                             {kind: isoList},
-	"DELETE /api/admin/grants/{id}":                     {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.grantB} }},
-	"GET /api/admin/audit":                              {kind: isoList},
-	"GET /api/admin/audit/kinds":                        {kind: isoList},
-	"GET /api/admin/audit/download":                     {kind: isoList},
-	"GET /api/admin/usage":                              {kind: isoList},
-	"GET /api/admin/tenants/{tenant}":                   {kind: isoParam},
-	"PATCH /api/admin/tenants/{tenant}":                 {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"name": "taken over"} }},
-	"GET /api/admin/tenants/{tenant}/settings":          {kind: isoParam},
-	"GET /api/admin/tenants/{tenant}/overview":          {kind: isoParam},
+	"DELETE /api/admin/groups/{group}/members/{user}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"group": f.groupB, "user": f.userB} }},
+	"GET /api/admin/groups/{group}/spaces":            {kind: isoParam},
+	"GET /api/admin/tokens":                           {kind: isoList},
+	"DELETE /api/admin/tokens/{id}":                   {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.tokenB} }},
+	"GET /api/admin/grants":                           {kind: isoList},
+	"DELETE /api/admin/grants/{id}":                   {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.grantB} }},
+	"GET /api/admin/audit":                            {kind: isoList},
+	"GET /api/admin/audit/kinds":                      {kind: isoList},
+	"GET /api/admin/audit/download":                   {kind: isoList},
+	"GET /api/admin/usage":                            {kind: isoList},
+	"GET /api/admin/tenants/{tenant}":                 {kind: isoParam},
+	"PATCH /api/admin/tenants/{tenant}":               {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"name": "taken over"} }},
+	"GET /api/admin/tenants/{tenant}/settings":        {kind: isoParam},
+	"GET /api/admin/tenants/{tenant}/overview":        {kind: isoParam},
+	"GET /api/admin/tenants/{tenant}/domains":         {kind: isoParam},
+	"POST /api/admin/tenants/{tenant}/domains":        {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"domain": "evil.example"} }},
+	"POST /api/admin/tenants/{tenant}/domains/{domain}/verify": {kind: isoParam, ids: func(f *tenFx) map[string]string {
+		return map[string]string{"tenant": f.tenB, "domain": f.domainB}
+	}},
+	"POST /api/admin/tenants/{tenant}/domains/{domain}/code": {kind: isoParam, ids: func(f *tenFx) map[string]string {
+		return map[string]string{"tenant": f.tenB, "domain": f.domainB}
+	}},
+	"PATCH /api/admin/tenants/{tenant}/domains/{domain}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"tenant": f.tenB, "domain": f.domainB} },
+		body: func(f *tenFx, id string) any { return map[string]any{"restrictOrgs": true} }},
+	"DELETE /api/admin/tenants/{tenant}/domains/{domain}": {kind: isoParam, ids: func(f *tenFx) map[string]string {
+		return map[string]string{"tenant": f.tenB, "domain": f.domainB}
+	}},
 	"GET /api/admin/tenants/{tenant}/secrets":           {kind: isoParam},
 	"PUT /api/admin/tenants/{tenant}/secrets/{name}":    {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"tenant": f.tenB, "name": "mail.password"} }, body: func(f *tenFx, id string) any { return map[string]any{"value": "evil"} }},
 	"DELETE /api/admin/tenants/{tenant}/secrets/{name}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"tenant": f.tenB, "name": "mail.password"} }},

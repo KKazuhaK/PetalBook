@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 
 	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/settings"
@@ -91,10 +92,33 @@ func errSlugReserved() *Error {
 
 func errSlugTaken() *Error { return coded(409, "slug_taken", "That organization address is taken.") }
 
-// orgCreationBlocked is where (d) says that an email domain belongs to an
-// organisation that does not want others made on it (restrictOrgs on a verified
-// domain). Until then nothing is blocked.
-func (s *Service) orgCreationBlocked(ctx context.Context, email string) error { return nil }
+// OrgRef names an organisation in an answer.
+type OrgRef struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+// orgCreationBlocked refuses an organisation whose founder's address is on a
+// domain an organisation holds verified and keeps for itself (restrictOrgs):
+// 409 domain_managed, naming that organisation, which the domain's people are
+// meant to join instead. It is answered from memory (ManagedDomain), and
+// about the domain only, never about whether the address has an account.
+func (s *Service) orgCreationBlocked(ctx context.Context, email string) error {
+	if s.cfg.ManagedDomain == nil {
+		return nil
+	}
+	id := s.cfg.ManagedDomain(ctx, email)
+	if id == "" {
+		return nil
+	}
+	e := coded(409, "domain_managed", "An organization manages the addresses of this email domain: ask it to add you, instead of making another.")
+	if t, err := store.GetTenant(ctx, s.st.Q(), id); err == nil {
+		e.Organization = &OrgRef{Slug: t.Slug, Name: t.Name}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return e
+}
 
 // orgCapped says whether no organisation may be made now, before anything is
 // written: a person may have none (perPerson 0), the server has its most, or

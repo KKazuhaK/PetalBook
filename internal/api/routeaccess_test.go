@@ -133,6 +133,16 @@ var routeAccessAdded = map[string][4]string{
 	"PUT /api/admin/tenants/{tenant}/secrets/{name}":    {"ok", "ok", "403 forbidden", "403 token_scope"},
 	"DELETE /api/admin/tenants/{tenant}/secrets/{name}": {"ok", "ok", "403 forbidden", "403 token_scope"},
 
+	// 3.6 d2: a tenant's email domains (its administrators', with features.domains), and the site's list and transfer.
+	"GET /api/admin/tenants/{tenant}/domains":                  {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/tenants/{tenant}/domains":                 {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/tenants/{tenant}/domains/{domain}/verify": {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/tenants/{tenant}/domains/{domain}/code":   {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"PATCH /api/admin/tenants/{tenant}/domains/{domain}":       {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"DELETE /api/admin/tenants/{tenant}/domains/{domain}":      {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/domains":                                   {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/domains/{domain}/assign":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+
 	// 3.6 step c: the tenant's page, for its administrators and the site's.
 	"GET /api/admin/tenants/{tenant}/overview": {"ok", "ok", "403 forbidden", "403 token_scope"},
 

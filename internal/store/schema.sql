@@ -1033,6 +1033,44 @@ CREATE TABLE retired_usernames (
   purged_at BIGINT NOT NULL
 );
 
+-- The email domains tenants claim (3.6 d2), verified by a DNS record. domain is
+-- the IDNA (UTS #46) form in punycode, lower case. A tenant may claim a domain
+-- many have claimed, but only one holds it verified (tenant_domains_verified):
+-- the first to verify gets it. code_hash is the SHA-256 of the verification
+-- code (the code itself is shown once), valid until code_expires. verified_at
+-- is 0 for a claim not (or no longer) verified; lapsed_at when the daily
+-- recheck cancelled it. checked_at and last_check (JSON) are the latest check,
+-- by hand or by the recheck; missing_since when the recheck first did not find
+-- the record (0: found). next_check_at is when the recheck looks again (0: not
+-- verified). provider_id (3.6 d3), join_mode (d5) and managed (3.7) are
+-- reserved; managed is always 0 until then.
+CREATE TABLE tenant_domains (
+  tenant_id     TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  domain        TEXT COLLATE "C" NOT NULL,
+  code_hash     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  code_expires  BIGINT NOT NULL DEFAULT 0,
+  verified_at   BIGINT NOT NULL DEFAULT 0,
+  lapsed_at     BIGINT NOT NULL DEFAULT 0,
+  checked_at    BIGINT NOT NULL DEFAULT 0,
+  missing_since BIGINT NOT NULL DEFAULT 0,
+  last_check    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  next_check_at BIGINT NOT NULL DEFAULT 0,
+  provider_id   TEXT COLLATE "C" NOT NULL DEFAULT '',
+  join_mode     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  restrict_orgs BIGINT NOT NULL DEFAULT 0,
+  managed       BIGINT NOT NULL DEFAULT 0 CHECK (managed = 0),
+  created_by    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  created       BIGINT NOT NULL,
+  updated       BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, domain)
+);
+-- One verified holder of a domain; it is also the in-memory map's read at start.
+CREATE UNIQUE INDEX tenant_domains_verified ON tenant_domains(domain) WHERE verified_at > 0;
+-- The site's list, by domain, every claim.
+CREATE INDEX tenant_domains_domain ON tenant_domains(domain, tenant_id);
+-- The recheck's timer: the next one due, and those due now.
+CREATE INDEX tenant_domains_due ON tenant_domains(next_check_at, tenant_id, domain) WHERE verified_at > 0;
+
 -- Background work, one row per job whatever its kind (internal/jobs): a bulk
 -- action over many spaces, people or items now; exports, recycle actions,
 -- attachment and storage moves, rebuilds, invite sending and group sync are the

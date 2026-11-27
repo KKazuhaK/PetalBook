@@ -103,37 +103,43 @@ func (s *server) adminGetSettings(c *call) {
 
 // readChange reads {"value": …, "lower": {…}} and, for a tenant's layer,
 // "siteLock": which of them were given.
-func (s *server) readChange(c *call, tenantLayer bool) (settings.Change, bool) {
+func (s *server) readChange(c *call, tenantLayer bool) (settings.Change, string, bool) {
 	var req map[string]json.RawMessage
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
-		return settings.Change{}, false
+		return settings.Change{}, "", false
 	}
 	var ch settings.Change
 	for k := range req {
-		if k != "value" && k != "lower" && !(tenantLayer && (k == "siteLock" || k == "siteRule")) {
+		if k != "value" && k != "lower" && k != "confirm" && !(tenantLayer && (k == "siteLock" || k == "siteRule")) {
 			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown field "+k+".")
-			return ch, false
+			return ch, "", false
 		}
+	}
+	// confirm is the confirmation of switching off a feature that is in use (capabilities.go).
+	var tok string
+	if raw, ok := req["confirm"]; ok && json.Unmarshal(raw, &tok) != nil {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Confirm is the token of POST /api/admin/confirm.")
+		return ch, "", false
 	}
 	if raw, ok := req["value"]; ok {
 		ch.HasValue = true
 		if err := json.Unmarshal(raw, &ch.Value); err != nil {
 			writeError(c.w, http.StatusBadRequest, "invalid", "Value is not JSON.")
-			return ch, false
+			return ch, "", false
 		}
 	}
 	if raw, ok := req["lower"]; ok {
 		ch.HasLower = true
 		if err := json.Unmarshal(raw, &ch.Lower); err != nil {
 			writeError(c.w, http.StatusBadRequest, "invalid", "Lower is {\"mode\": …}.")
-			return ch, false
+			return ch, "", false
 		}
 	}
 	if raw, ok := req["siteLock"]; ok {
 		ch.HasSiteLock = true
 		if err := json.Unmarshal(raw, &ch.SiteLock); err != nil {
 			writeError(c.w, http.StatusBadRequest, "invalid", "SiteLock is true or false.")
-			return ch, false
+			return ch, "", false
 		}
 	}
 	if raw, ok := req["siteRule"]; ok {
@@ -142,14 +148,14 @@ func (s *server) readChange(c *call, tenantLayer bool) (settings.Change, bool) {
 		ch.HasSiteRule = true
 		if err := json.Unmarshal(raw, &ch.SiteRule); err != nil {
 			writeError(c.w, http.StatusBadRequest, "invalid", "SiteRule is {\"value\": …, \"lower\": {…}, \"from\": …, \"until\": …} or null, the times in RFC 3339.")
-			return ch, false
+			return ch, "", false
 		}
 	}
 	if !ch.HasValue && !ch.HasLower && !ch.HasSiteLock && !ch.HasSiteRule {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Give value, lower, siteLock, siteRule or any of them.")
-		return ch, false
+		return ch, "", false
 	}
-	return ch, true
+	return ch, tok, true
 }
 
 // beforeOpening is the checks of "Registration" for a value that opens it.
@@ -231,7 +237,7 @@ func (s *server) closedRegistration(ctx context.Context, key string) {
 
 func (s *server) adminPutSetting(c *call) {
 	key := c.r.PathValue("key")
-	ch, ok := s.readChange(c, false)
+	ch, tok, ok := s.readChange(c, false)
 	if !ok {
 		return
 	}
@@ -242,6 +248,9 @@ func (s *server) adminPutSetting(c *call) {
 	}
 	if err := s.beforeOpening(ctx, key, ch, true); err != nil {
 		s.failSetting(c, err)
+		return
+	}
+	if !s.capabilityGate(c, key, "", ch, tok) {
 		return
 	}
 	before, err := s.settings.Get(ctx, "", key)
@@ -325,7 +334,7 @@ func (s *server) adminPutTenantSetting(c *call) {
 		return
 	}
 	key := c.r.PathValue("key")
-	ch, ok := s.readChange(c, true)
+	ch, tok, ok := s.readChange(c, true)
 	if !ok {
 		return
 	}
@@ -343,6 +352,9 @@ func (s *server) adminPutTenantSetting(c *call) {
 		}
 	}
 	ch.Site, ch.By = c.siteWide(authz.TenantSettingsWrite), c.user().ID
+	if ch.Site && !s.capabilityGate(c, key, t.ID, ch, tok) {
+		return
+	}
 	res, err := s.settings.SetTenantResult(ctx, t.ID, key, ch)
 	if err != nil {
 		s.failSetting(c, err)

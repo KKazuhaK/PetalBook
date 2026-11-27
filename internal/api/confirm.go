@@ -137,6 +137,10 @@ type confirmRequest struct {
 	Items     []string          `json:"items"`
 	Heir      string            `json:"heir"`
 	Transfers map[string]string `json:"transfers"`
+	// Key and Tenant are the feature change_capabilities switches off, and the
+	// tenant of the rule ("" for the site's value).
+	Key    string `json:"key"`
+	Tenant string `json:"tenant"`
 }
 
 // confirmPlan is what an action would do, as the confirmation shows it.
@@ -165,6 +169,8 @@ var confirmActions = map[string]string{
 	"delete_spaces": "spaces", "purge": "items", "restore": "items", "evict": "spaces", "pin": "spaces", "unpin": "spaces",
 	"disable_spaces": "spaces", "enable_spaces": "spaces", "delete_users": "users", "disable_users": "users", "enable_users": "users",
 	"export": "spaces+items",
+	// Switching a feature off that is in use (capabilities.go).
+	"change_capabilities": "key",
 }
 
 // ids of the request that this action takes.
@@ -178,6 +184,11 @@ func (r confirmRequest) idList() []string {
 		return r.Items
 	case "spaces+items":
 		return append(append([]string(nil), r.Spaces...), r.Items...)
+	case "key":
+		if r.Key == "" {
+			return nil
+		}
+		return []string{r.Key, "tenant:" + r.Tenant}
 	}
 	return nil
 }
@@ -267,6 +278,8 @@ func (s *server) planFor(c *call, req confirmRequest) (confirmPlan, bool) {
 		return s.planItems(c, sc, req)
 	case "users":
 		return s.planUsers(c, sc, req)
+	case "key":
+		return s.planCapabilities(c, req)
 	case "spaces+items":
 		p1, ok := s.planSpaces(c, sc, confirmRequest{Action: req.Action, Spaces: req.Spaces})
 		if !ok {

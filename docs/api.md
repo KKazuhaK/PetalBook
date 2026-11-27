@@ -10457,6 +10457,7 @@ held by the built-in site administrator only: no custom role may hold it.
 | `tenant.tokens.revoke` | tenant | — | Revoke people's API tokens and app authorizations |
 | `tenant.permissions.read` | tenant | — | List the permission keys |
 | `tenant.github.manage` | tenant | — | Install the site's GitHub App on the organisation's GitHub account, and see, change or disconnect the organisation's installations |
+| `tenant.domains.manage` | tenant | `features.domains` | Claim the organisation's email domains, verify them by DNS, keep others from making organisations on them, and remove them |
 | `space.read` | space | — | See pages, history, attachments and search |
 | `space.write` | space | — | Create, change, move and delete pages and folders |
 | `space.members.manage` | space | — | Add, change and remove the members of the space |

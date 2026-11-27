@@ -58,6 +58,11 @@ const (
 	// (payload {"provider", "name", "login"}; ref is the provider). Written once
 	// per link that stops working.
 	NotifyLinkReauth = "link_reauth"
+	// NotifyDomainLapsed: an email domain the person's organisation had
+	// verified lapsed, its DNS record missing for seven days (payload
+	// {"domain", "missingSince"}; ref is the domain's key). Sent to the
+	// tenant's administrators.
+	NotifyDomainLapsed = "domain_lapsed"
 )
 
 // NotifyKind is one entry of the registry.
@@ -83,6 +88,7 @@ var NotifyKinds = []NotifyKind{
 	{NotifyEmailReleased, false, "another account proving an address the person held unverified"},
 	{NotifyViewedAs, false, ""},
 	{NotifyLinkReauth, false, "the renewal of a linked account's tokens failing for good"},
+	{NotifyDomainLapsed, false, "the daily recheck of an organisation's verified email domains"},
 }
 
 // KnownNotifyKind says whether the registry has the kind.

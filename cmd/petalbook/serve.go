@@ -22,6 +22,7 @@ import (
 	"petalbook.app/server/internal/api"
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/domains"
 	"petalbook.app/server/internal/drafts"
 	"petalbook.app/server/internal/forge"
 	"petalbook.app/server/internal/github"
@@ -363,6 +364,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		fgs        *forge.Manager
 		conns      *connections.Registry
 		linkTokens *connections.Tokens
+		dom        *domains.Service
 		spClosed   bool
 	)
 	defer func() {
@@ -421,8 +423,10 @@ func runServe(ctx context.Context, c serveConfig) error {
 		}
 		fgs.SetHostAllowed(mgr.HostAllowed)
 		conns.OnChange(func(_, userID string) { mgr.ConnectionFixed(userID) })
+		// The tenants' verified email domains, in memory: sign-in and registration ask them.
+		dom = domains.New(domains.Options{Store: st, SiteHost: api.SiteHostOf(cfg.publicURL), Logger: log})
 		if svc, err = auth.New(ctx, auth.Config{Store: st, Spaces: mgr, PublicURL: cfg.publicURL, TrustedProxies: cfg.proxies,
-			HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log}); err != nil {
+			HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log, OrgDomains: dom.OfTenant, ManagedDomain: dom.Managed}); err != nil {
 			return err
 		}
 	} else {
@@ -467,7 +471,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		}
 	}
 	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, Connections: conns, PublicURL: cfg.publicURL, MaxSpaces: c.maxSpacesFlag(), NoMCP: c.noMCP, Version: version, BuildTime: buildTime, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
-		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
+		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log, Domains: dom})
 	var webOpts []webui.Option
 	if svc != nil {
 		// The page's policy lets the configured captcha provider's widget load.
@@ -515,6 +519,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		run(mgr.Run)
 		run(mgr.RunPull)
 		run(linkTokens.Run)
+		run(dom.Run)
 		run(fgs.RunReload)
 	}
 	if svc != nil {

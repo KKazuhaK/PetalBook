@@ -31,6 +31,8 @@ type Error struct {
 	Status int
 	// Accounts is the count a provider_in_use answer carries.
 	Accounts *int
+	// Organization is the organisation a domain_managed answer names.
+	Organization *OrgRef
 	// Reason, on an Unauthenticated refusal of a cookie whose session ended, is
 	// why (store.EndExpired and the others); "" for any other cookie.
 	Reason string

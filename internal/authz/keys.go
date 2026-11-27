@@ -55,6 +55,7 @@ var (
 	TenantTokensRevoke    = Register("tenant.tokens.revoke", ScopeTenant, "", "Revoke people's API tokens and app authorizations")
 	TenantPermissionsRead = Register("tenant.permissions.read", ScopeTenant, "", "List the permission keys")
 	TenantGitHubManage    = Register("tenant.github.manage", ScopeTenant, "", "Install the site's GitHub App on the organisation's GitHub account, and see, change or disconnect the organisation's installations")
+	TenantDomainsManage   = Register("tenant.domains.manage", ScopeTenant, "features.domains", "Claim the organisation's email domains, verify them by DNS, keep others from making organisations on them, and remove them")
 
 	// A space's: the four permissions of internal/perm, under their key names.
 	// The API keeps their short names (read, write, members, manage).

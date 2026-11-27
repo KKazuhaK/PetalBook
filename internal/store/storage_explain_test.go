@@ -160,6 +160,14 @@ func TestListQueriesUseIndexes(t *testing.T) {
 			now.Add(-24*time.Hour).UnixMilli(), now.Add(-3000*time.Minute).UnixMilli()); err != nil {
 			t.Fatal(err)
 		}
+		// Claimed email domains (3.6 d2): half verified, their rechecks spread over two days.
+		bulk(t, st, "tenant_domains", "tenant_id, domain, code_hash, verified_at, next_check_at, created, updated", n/2, 200, func(i int) []any {
+			var verified, next int64
+			if i%2 == 0 {
+				verified, next = now.UnixMilli(), now.Add(time.Duration(i%2880)*time.Minute).UnixMilli()
+			}
+			return []any{tenantOf(i), fmt.Sprintf("d%05d.example", i), "h", verified, next, now.UnixMilli(), now.UnixMilli()}
+		})
 		if _, err := st.Q().Exec(ctx, `ANALYZE`); err != nil {
 			t.Fatal(err)
 		}
@@ -348,6 +356,44 @@ func checkPlans(t *testing.T, st *store.Store, q store.Q, now time.Time, tenants
 			}
 			if testing.Verbose() {
 				t.Logf("%s:\n%s", q.name, strings.Join(pq.plans, "\n--\n"))
+			}
+		}
+		// The domains: the recheck's due list by its index, in its order; a
+		// tenant's list and the site's by theirs.
+		for _, dc := range []struct {
+			name, index string
+			run         func() error
+		}{
+			{"domains due", "tenant_domains_due", func() error {
+				_, err := store.DueDomains(ctx, pq, now.Add(6*time.Hour), 50)
+				return err
+			}},
+			// A tenant has at most 100: PostgreSQL may walk the site's index in
+			// the rows' physical order instead of the key's; either is an index in order.
+			{"domains of a tenant", "sqlite_autoindex_tenant_domains_1|tenant_domains_pkey|tenant_domains_domain", func() error {
+				_, err := store.TenantDomains(ctx, pq, small)
+				return err
+			}},
+			{"domains of the site", "tenant_domains_domain", func() error {
+				_, err := store.ListDomains(ctx, pq, store.DomainFilter{AfterDomain: "d01000.example", AfterTenant: small, Limit: 101})
+				return err
+			}},
+		} {
+			pq.plans = nil
+			if err := dc.run(); err != nil {
+				t.Fatalf("%s: %v", dc.name, err)
+			}
+			for _, p := range pq.plans {
+				uses := false
+				for _, ix := range strings.Split(dc.index, "|") {
+					uses = uses || strings.Contains(p, ix)
+				}
+				if !uses || strings.Contains(p, "Seq Scan on tenant_domains") || strings.Contains(p, "TEMP B-TREE") || strings.Contains(p, "Sort  (") {
+					bad = append(bad, dc.name+": not by "+dc.index+" in its order\n"+p)
+				}
+			}
+			if testing.Verbose() {
+				t.Logf("%s:\n%s", dc.name, strings.Join(pq.plans, "\n--\n"))
 			}
 		}
 		for _, b := range bad {

@@ -25,6 +25,7 @@ import (
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/dailyfetch"
+	"petalbook.app/server/internal/domains"
 	"petalbook.app/server/internal/drafts"
 	"petalbook.app/server/internal/github"
 	"petalbook.app/server/internal/gitstore"
@@ -120,6 +121,10 @@ type Options struct {
 	// PrefsQuiet is how long a person's first preference write waits for others
 	// before they are committed together (DefaultPrefsQuiet when 0).
 	PrefsQuiet time.Duration
+	// Domains is the tenants' email domains (accounts mode): the caller gives
+	// its map to auth (OrgDomains, ManagedDomain) and runs its recheck (Run).
+	// Made here, with the system's resolver and no recheck, when nil.
+	Domains *domains.Service
 }
 
 type server struct {
@@ -132,6 +137,8 @@ type server struct {
 	oauth  *oauth.Service
 	// settings are the layered settings (site, tenant; see internal/settings).
 	settings *settings.Service
+	// domains is the tenants' email domains.
+	domains *domains.Service
 	// featureFault, set by tests only, fails a route gate's read of a feature.
 	featureFault func(tenant, feature string) error
 	// vault is the secrets of the site and of tenants.
@@ -319,6 +326,15 @@ func New(opt Options) *Handler {
 		s.localAccess = auth.AccessOf(s.local)
 	}
 	s.settings.SetClock(s.now)
+	s.domains = opt.Domains
+	if s.domains == nil {
+		s.domains = domains.New(domains.Options{Store: opt.Store, Settings: s.settings, SiteHost: SiteHostOf(opt.PublicURL), Now: now, Logger: s.log})
+	}
+	if !s.single {
+		if err := s.domains.Load(context.Background()); err != nil {
+			s.log.Error("could not read the verified email domains", "error", err)
+		}
+	}
 	s.vault = secrets.Of(opt.Store, boxOf(opt))
 	s.settings.SetFileCeiling(opt.MaxUpload)
 	s.bindRecycle()
@@ -658,6 +674,8 @@ type errorBody struct {
 	Field  string `json:"field,omitempty"`
 	// Accounts is how many accounts a refused provider deletion would have left without a way in.
 	Accounts *int `json:"accounts,omitempty"`
+	// Organization is the organisation that manages an email domain (domain_managed).
+	Organization *auth.OrgRef `json:"organization,omitempty"`
 	// What a refused group request is about: how many spaces and provider
 	// entries keep a group, the ids of people that do not exist.
 	Spaces *int `json:"spaces,omitempty"`
@@ -1017,7 +1035,7 @@ func (s *server) failAuth(w http.ResponseWriter, e *auth.Error) {
 		if e.Status == http.StatusTooManyRequests {
 			w.Header().Set("Retry-After", strconv.Itoa(max(int((e.RetryAfter+time.Second-1)/time.Second), 1)))
 		}
-		writeJSON(w, e.Status, errorBody{Error: e.Code, Message: e.Msg, Accounts: e.Accounts})
+		writeJSON(w, e.Status, errorBody{Error: e.Code, Message: e.Msg, Accounts: e.Accounts, Organization: e.Organization})
 	case auth.Invalid:
 		writeError(w, http.StatusBadRequest, "invalid", e.Msg)
 	case auth.Unauthenticated:

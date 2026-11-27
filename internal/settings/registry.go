@@ -140,6 +140,11 @@ const (
 	OrgCreationPlan      = "orgCreation.plan"
 	orgCreationWhy       = "a tenant does not exist yet; creating one takes the site's resources"
 
+	// DomainsChecksPerMinute is how many checks of a claimed email domain's
+	// DNS record people may ask for in a minute on the whole server ("Check
+	// now"; each tenant has its own hour and each domain its own minute too).
+	DomainsChecksPerMinute = "domains.checksPerMinute"
+
 	// The sign-in policy, the same for every tenant: the sign-in page comes
 	// before any tenant is known.
 	SigninMode           = "signin.mode" // dual, sso_first, sso_redirect or local_only
@@ -258,6 +263,10 @@ func baseDefinitions() []*Def {
 		{Key: OrgCreationPerPerson, Kind: Limit, Layers: []Layer{Site}, Default: int64(3), Min: 0, Max: 100, Lower: Lower{Mode: Allow}, ServerWide: orgCreationWhy},
 		{Key: OrgCreationPerHour, Kind: Limit, Layers: []Layer{Site}, Default: nil, Min: 1, Max: 100000, Nullable: true, Lower: Lower{Mode: Allow}, ServerWide: orgCreationWhy},
 		{Key: OrgCreationPlan, Kind: Text, Layers: []Layer{Site}, Default: "", Lower: Lower{Mode: Allow}, ServerWide: orgCreationWhy},
+
+		// The checks of claimed email domains people ask for.
+		{Key: DomainsChecksPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(60), Min: 1, Max: 100000, Lower: Lower{Mode: Allow},
+			ServerWide: "the server's own resolver asks DNS for every tenant"},
 
 		// The sign-in policy.
 		{Key: SigninMode, Kind: Choice, Layers: []Layer{Site}, Default: "dual", Choices: []string{"dual", "sso_first", "sso_redirect", "local_only"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},

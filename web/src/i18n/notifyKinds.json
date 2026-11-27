@@ -10,5 +10,6 @@
   "password_set",
   "email_released",
   "viewed_as",
-  "link_reauth"
+  "link_reauth",
+  "domain_lapsed"
 ]
