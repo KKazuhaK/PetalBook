@@ -139,7 +139,7 @@ describe("an organisation's own single sign-on", () => {
     expect(JSON.parse(patch.body!)).toEqual({ provider: pid })
   })
 
-  it('says the feature is off, and asks nothing of the providers', async () => {
+  it('says the feature is off, and lists none of its own providers', async () => {
     await open(
       (id) => `/admin/tenants/${id}/signin`,
       (d, id) => {
@@ -150,7 +150,8 @@ describe("an organisation's own single sign-on", () => {
     await settle(() => section()?.querySelector('[data-slot="feature-off"]') != null, 'the notice')
     expect(section()!.textContent).toContain(tp.org.featureOff)
     expect(buttonIn(section(), tp.add)).toBeNull()
-    expect(m!.requests.some((r) => r.url === `/api/admin/tenants/${tenant}/providers`)).toBe(false)
+    // The list is still read for the site's SSO offered to the organisation (3.6 d4), but its own are not shown.
+    expect(section()!.textContent).not.toContain('Acme SSO')
   })
 
   it('switching features.ownSso off while a tenant has providers shows them and asks for the count first', async () => {

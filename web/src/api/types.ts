@@ -910,6 +910,8 @@ export type ErrorCode =
   | 'email_taken'
   | 'email_not_ascii'
   | 'sso_only_with_registration'
+  | 'sso_provider_required'
+  | 'sso_required'
   | 'bad_language'
   | 'api_not_found'
   | 'builtin'
@@ -1224,6 +1226,32 @@ export interface AuthProviders {
   forgot?: boolean
   // A person may register an organisation of their own (features.orgCreation).
   orgCreation?: boolean
+  // 3.6 d4: a verified domain routes sign-in to a single sign-on, so the page asks for the address (or username)
+  // first, and offers the "Sign in with SSO" entry (/login/sso).
+  identifierFirst?: boolean
+  ssoEntry?: boolean
+}
+
+// A site SSO provider offered to a tenant, as its administrators see it (read only): a domain of the tenant may be
+// routed to it (3.6 d4).
+export interface OfferedSSO {
+  id: string
+  slug: string
+  kind: ProviderKind
+  name: string
+  icon: string
+  enabled: boolean
+}
+
+// Where an address signs in (POST /api/auth/discover): the provider its domain is routed to, and whether the
+// domain's organisation requires it.
+export interface DiscoveredSSO {
+  slug: string
+  kind: ProviderKind
+  name: string
+  icon: string
+  start: string
+  enforced: boolean
 }
 
 // --- mail, registration, email verification and password reset (3.3) ---

@@ -18,6 +18,19 @@ export const signinEn: SigninMessages = {
     noProviders: 'There is no way to sign in. Ask an administrator.',
     loadFailed: 'Could not load the sign-in methods',
     ssoRetry: 'Try again',
+    identifier: 'Email or username',
+    next: 'Continue',
+    finding: 'Finding how you sign in…',
+    change: 'Change',
+    ssoRequired: (name: string) => `Your organisation signs you in with ${name}.`,
+    ssoEntry: 'Sign in with SSO',
+  },
+  ssoEntry: {
+    title: 'Single sign-on',
+    intro: 'Enter your work email address and we will take you to your organisation’s sign-in page.',
+    email: 'Work email',
+    notFound: 'No single sign-on is set up for this address. Sign in another way.',
+    needAddress: 'Enter a whole email address, with the @.',
   },
   // Coming back after a session ended (docs/api.md, "Why a session ended").
   ended: {
@@ -48,6 +61,7 @@ export const signinEn: SigninMessages = {
     invite_invalid: 'The invite is invalid, expired or already used.',
     setup_invalid: 'The setup token is wrong, or there is an administrator already.',
     rate_limited: 'Too many requests. Wait a moment and try again.',
+    sso_required: 'Your organisation requires its own single sign-on: sign in with it.',
     saml_destination: 'The SAML response has no destination, or one that is not this server.',
     saml_weak_signature:
       'The SAML response is signed or digested with something weaker than SHA-256. Ask the identity provider to use a stronger algorithm.',

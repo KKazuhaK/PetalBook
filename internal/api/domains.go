@@ -299,17 +299,24 @@ func (s *server) adminPatchDomain(c *call) {
 			writeError(c.w, http.StatusForbidden, "forbidden", "Routing a domain to a sign-in provider takes tenant.signin.manage.")
 			return
 		}
-		if on, err := s.settings.Feature(c.r.Context(), t, settings.FeatureOwnSSO); err != nil {
-			s.fail(c.w, err)
-			return
-		} else if !on {
-			writeError(c.w, http.StatusForbidden, "feature_off", "This organisation does not have its own single sign-on (features.ownSso).")
-			return
-		}
+		// The tenant's own provider needs features.ownSso; a site SSO provider
+		// offered to the tenant (3.6 d4) does not. Clearing the route is held
+		// to the feature as in d3.
+		own := true
 		if provider != nil {
 			pid = *provider
-			if pid == "" || s.auth.ProviderOwner(pid) != t {
+			var site bool
+			if own, site = s.auth.RoutableFor(c.r.Context(), pid, t); pid == "" || !own && !site {
 				writeError(c.w, http.StatusNotFound, "not_found", "No such provider.")
+				return
+			}
+		}
+		if own {
+			if on, err := s.settings.Feature(c.r.Context(), t, settings.FeatureOwnSSO); err != nil {
+				s.fail(c.w, err)
+				return
+			} else if !on {
+				writeError(c.w, http.StatusForbidden, "feature_off", "This organisation does not have its own single sign-on (features.ownSso).")
 				return
 			}
 		}

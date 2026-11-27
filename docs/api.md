@@ -272,6 +272,10 @@ memory, without a database query.
   none of them the mode is still the site's, as the server enforces it (an
   `sso_redirect` site keeps `local: false`). Without `?tenant` they are the
   site's enabled providers, as before; a tenant's own are never listed there.
+- From 3.6 d4, `identifierFirst` and `ssoEntry`: whether the page asks for the
+  address (or username) first and offers "Sign in with SSO"; see "Email
+  domains and the SSO entry". A tenant that requires its own single sign-on
+  (`signin.ssoOnly`) is listed without the site's social providers.
 
 Whether password sign-in is refused (`ssoOnly`) is never in this answer, nor
 anything about a particular account: neither may help someone choose which
@@ -624,7 +628,8 @@ own.
 | `saml_no_email` | SAML: the assertion has no address, neither in the attribute the provider names for it (`mail` by default) nor, with a `NameID` in the `emailAddress` format, as the `NameID`; the administrator maps an email attribute |
 | `invite_invalid` | `invite`: the invite is unknown, used or expired |
 | `setup_invalid` | `setup`: setup is done, or the token is wrong |
-| `rate_limited` | the address made too many requests (SAML ACS, starts) |
+| `rate_limited` | the address made too many requests (SAML ACS, starts); from 3.6 d4 also a tenant's provider whose outbound share (`rate.outboundPerMinute`) is used up |
+| `sso_required` | from 3.6 d4: the site's social sign-in, for a person whose tenant requires its own single sign-on (`signin.ssoOnly`) |
 | `saml_destination` | the response has no `Destination`, or another one |
 | `saml_weak_signature` | the response is signed or digested with something weaker than SHA-256 |
 | `saml_encrypted` | the response carries an encrypted assertion, which the provider does not allow |
@@ -10010,9 +10015,11 @@ bound by it):
   **verified** domain to one of the tenant's own sign-in providers (its id;
   `null` for none): it needs `tenant.signin.manage` and the feature
   `features.ownSso` too (`403 forbidden`, `403 feature_off`), a provider of
-  another tenant or of the site is `404 not_found`, and an unverified domain
-  `409 domain_required`. Only the routing is stored in d3; the sign-in page's
-  discovery that reads it is d4. Deleting the provider clears it. `join` is
+  another tenant, a site social provider or a site SSO not offered to the
+  tenant is `404 not_found`, and an unverified domain `409 domain_required`.
+  From d4 it may also name a site SSO provider offered to the tenant (then
+  `features.ownSso` is not needed), and the sign-in page's discovery reads the
+  route (below). Deleting the provider clears it. `join` is
   refused (`400 invalid`) until d5;
 - `DELETE …/domains/{domain}`: `204`.
 
@@ -10147,14 +10154,24 @@ domain (exactly that domain) answer `409 domain_managed` with
 in-memory map, before anything is written. It says nothing of whether the
 address has an account. Joining the tenant is d5.
 
-**The sign-in page asks for the email or username first** when the server has
-any verified domain with SSO (`GET /api/auth/providers` gains `"identifierFirst": true`
-and `"ssoEntry": true`). Then:
+**The sign-in page asks for the email or username first** (built in 3.6 d4)
+when some verified domain is routed to a provider that can sign in now.
+`GET /api/auth/providers` says so with two fields:
+
+- `identifierFirst`: a routed domain exists and the stored `signin.mode` is
+  `dual` or `sso_first` (a mode of `sso_redirect` does not ask first). The
+  stored mode counts, not the effective one: a server whose only single
+  sign-on is an organisation's own has no site provider, so its effective mode
+  is `local_only`, and its page still asks for the address first.
+- `ssoEntry`: a routed domain exists and the stored mode is not `local_only`.
+  The page then links to the "Sign in with SSO" entry (`/login/sso`).
+
+Both are `false` when no domain is routed. They are answered from memory, as
+the rest of that answer.
 
 #### `POST /api/auth/discover`
 
-Public. `{"identifier": "tang@acme.example", "tenant": "acme"}` (`tenant`, the
-page's slug, optional).
+Public. `{"email": "tang@acme.example"}`.
 
 ```json
 {"sso": {"slug": "acme-entra", "kind": "oidc", "name": "Acme", "icon": "preset:microsoft",
@@ -10163,42 +10180,101 @@ page's slug, optional).
 
 or `{"sso": null}`.
 
-- It looks only at the **domain** of an identifier that contains `@`: whether a
-  verified claim routes it to an enabled provider. It never looks up an account
-  and its answer is the same whether one exists (a username, without `@`,
-  always gets `null`). So it tells only what the DNS of that domain tells
-  anyone: that the domain has SSO here.
-- `enforced` is the routed tenant's effective `auth.ssoOnly`. The page then
-  hides the password field and shows only "Continue with <name>" (and "Use a
-  password instead", which opens the form: administrators keep 2.8's password
-  back door, and `ssoOnly` still refuses everyone else after the password).
-  Without `enforced`, the page shows the button above the password field.
-- The start carries the address as `login_hint` (OpenID Connect) or the SAML
-  `Subject`'s `NameID` hint when the provider supports it. The address is only
-  a hint: **the account is decided by the identity the provider returns**, with
-  the rules above, so routing can never sign anyone into an account outside the
-  provider's tenant.
-- It counts against the address's per-minute allowance of 2.8, like
-  `POST /api/login`; answered from memory.
+- It looks only at the **domain** of a value that contains `@`: whether a
+  verified claim routes it to a provider that can sign in now. It never looks
+  up an account, so the answer is the same, byte for byte, whether one exists.
+  A username (no `@`) always gets `null`, as do a subdomain of a claimed domain,
+  a domain routed nowhere, and a domain whose tenant lost `features.domains`.
+  So it tells only what the DNS of that domain tells anyone: that the domain
+  has single sign-on here.
+- **Routing.** `PATCH …/domains/{domain}` with `provider` routes a verified
+  domain to one of the tenant's own providers (d3; needs `features.ownSso`) or,
+  from d4, to a **site SSO provider offered to the tenant** (offered to every
+  tenant, or to a list that names it; `features.ownSso` is not needed). A site
+  social provider, another tenant's, or a site SSO not offered to the tenant is
+  `404 not_found`. The route counts only while the provider can sign in (it is
+  enabled; a tenant's own also needs `features.ownSso` and a verified domain; a
+  site one must still be offered to the tenant): otherwise the answer is
+  `null`. `GET /api/admin/tenants/{tenant}/providers` lists, besides
+  `providers`, the site's SSO offered to the tenant as `offered`
+  (`[{id, slug, kind, name, icon, enabled}]`, read only), for the route's list.
+- `enforced` is whether the routed tenant itself requires single sign-on (its
+  `signin.ssoOnly`, below). The page then shows only "Continue with <name>",
+  focused, and "Use a password instead", which opens the password step:
+  administrators keep the password back door, and the server refuses everyone
+  else after the password (`403 local_login_refused`). Without `enforced`, the
+  password step shows the button above the password field.
+- The start carries the address as the hint: the page adds `login_hint` to
+  `start` (`GET …/start?login_hint=`, at most 254 bytes, one line). An OpenID
+  Connect provider gets it as `login_hint`. A SAML provider gets it as the
+  AuthnRequest's `<Subject><NameID>` (format `emailAddress`), and only when its
+  `nameIdFormat` is `emailAddress`: an identity provider that honours a
+  `Subject` authenticates that subject alone, so it is sent only where the
+  NameID is the address. The address is only a hint: **the account is decided
+  by the identity the provider returns**, with the rules above, so routing can
+  never sign anyone into an account outside the provider's tenant.
+- It counts against the address's per-minute allowance of 2.8
+  (`signin.perMinute`), the same allowance as `POST /api/login`: over it,
+  `429 rate_limited` with `Retry-After`. Answered from memory: the verified
+  domains' map (with each domain's route), the providers in memory and the
+  settings' cache; no query.
 
-A separate **"Sign in with SSO"** entry (`/login/sso`) asks only for an email
-and does the same.
+The **"Sign in with SSO"** entry (`/login/sso`) asks only for a work address
+and sends the browser to `start` with the hint; an address that routes nowhere
+is told so ("no single sign-on is set up for this address").
 
 **Usernames still sign in with a password** as before, in every mode.
 
-**With the 2.8 login modes**: `auth.loginMode` is now layered; a page with
-`?tenant=` uses the tenant's, a page without uses the site's. `local_only` turns
-off the buttons and the SSO entry, not the password back door. `sso_redirect`
-on a tenant's page goes straight to the tenant's one SSO provider (or lists
-them when it has several). `identifierFirst` is added to `dual` and
-`sso_first`; `sso_redirect` does not need it. `GET /api/auth/providers?tenant=`
-lists the site's social providers the tenant allows, the site SSO providers
-offered to it, and the tenant's own SSO providers.
+**With the 2.8 login modes**: `signin.mode` stays the site's (d4 keeps it so;
+a tenant layer for it is later work). `local_only` turns off the buttons and the
+SSO entry, not the password back door. `GET /api/auth/providers?tenant=` lists
+the site's social providers the tenant allows, the site SSO providers offered
+to it, and the tenant's own SSO providers; a tenant that requires its single
+sign-on is listed without the social ones.
 
-Joining a tenant by its verified domain is in "Joining an organisation" below.
-With the tenant's `auth.ssoOnly` in effect, registering with a password for an
-address of its verified domain answers `409 sso_required` with the provider's
-`start`.
+**An organisation's `signin.ssoOnly`** (3.6 d4). The key has a tenant layer
+that only tightens (the lower mode `tighten` of "Settings by layer", for this
+key): a tenant may turn it on (`PUT /api/admin/tenants/{tenant}/settings/signin.ssoOnly`
+with `true`, `tenant.settings.write`), never off under a site that has it on.
+Writing `false` while the value above it (the site's, or the site's rule for
+the tenant) is `true` is `409 setting_restricted`; a `false` stored before the
+site turned it on is kept, `inEffect: false`. The site may also set it for one
+tenant with a rule, as for any key.
+
+- **Turning it on** needs a single sign-on the tenant's people can use now (one
+  of its own, or a site SSO offered to it): `400 sso_provider_required`
+  otherwise; and an enabled administrator of the tenant with a password:
+  `400 local_admin_required` otherwise. The same checks hold for the site's
+  rule.
+- **In effect** while it is on (in the tenant's own layer, or by the site's
+  rule for the tenant) and the tenant has such a single sign-on; it is read
+  from the cached settings by the account's tenant. It then refuses to the
+  tenant's people, as the site's `ssoOnly` does: a password and a passkey
+  (`403 local_login_refused`), accepting a member's invite with a password
+  (`403 local_login_refused`), a password reset link, and **the site's social
+  sign-in** (`?sso_error=sso_required`; the social buttons are left off the
+  tenant's page). It is met by the tenant's own SSO and by a site SSO offered to
+  the tenant.
+- **The back door.** The tenant's administrators and the site's administrators
+  are never refused by it: they keep the password (and a site administrator the
+  site's social sign-in) until 3.7's emergency accounts. *Decision recorded for
+  the owner to confirm (2026-11-27): this is 2.8's rule carried to the tenant;
+  the alternative would refuse a tenant administrator too and rely on the site's
+  administrators alone.*
+- Another tenant's people are not touched: the setting is per tenant.
+- **Registration.** Registering with a password answers `409 sso_required`
+  with `sso` (the answer of `discover` for the address, or absent when the
+  address routes nowhere): for an address of a domain whose tenant requires
+  its single sign-on (whichever tenant the registration is for, or an
+  organisation of one's own), and for any address in a tenant that requires
+  it. The link of a registration made before the tenant turned it on answers
+  the same when followed. It is about the domain only, never the account.
+- **The sign-in calls of a tenant's provider** (discovery, keys, tokens, user
+  information, SAML metadata) count against the tenant's outbound share
+  (`rate.outboundPerMinute`), one per request, the same share its domain checks
+  spend. Used up, the call is not made: a start answers `429 rate_limited`
+  with `Retry-After`, a callback returns to `/login?sso_error=rate_limited`.
+  The site's providers have no share.
 
 #### Mail: `GET/PUT /api/admin/tenants/{tenant}/mail`, `POST …/mail/test`
 
@@ -11040,7 +11116,8 @@ exist, a `before` that is not a time, or a `dry_run` that is not a boolean.
 | `rate_limited` | 429 | as today, also a domain check within its cooldown, with `Retry-After` |
 | `domain_claimed` | 409 | another tenant holds the verified claim |
 | `domain_limit`, `provider_limit` | 409 | a tenant's 20 domains, 10 providers |
-| `sso_required` | 409 | registering with a password for an address of a tenant that enforces SSO; with `start` |
+| `sso_required` | 409 | registering with a password for an address of a domain whose tenant requires its single sign-on, or in such a tenant; with `sso` (the `discover` answer, absent when the address routes nowhere) |
+| `sso_provider_required` | 400 | a tenant's `signin.ssoOnly` to `true` while it has no single sign-on its people can use (its own, or a site SSO offered to it) |
 | `address_not_public` | 400 | a tenant's issuer, metadata, SMTP host or interface resolves to an address that is not public |
 | `unavailable` | 503 | as today, also when the outbound cap is reached |
 | `quota_exceeded` | 409 | `quota: "pinnedBytes"` |
@@ -11763,7 +11840,7 @@ written with `PUT /api/admin/settings/{key}` and read with
 | Key | Kind | Default | |
 |---|---|---|---|
 | `signin.mode` | choice | `dual` | `dual`, `sso_first`, `sso_redirect` or `local_only` |
-| `signin.ssoOnly` | boolean | `false` | refuse password and passkey sign-in for everyone who is not an administrator |
+| `signin.ssoOnly` | boolean | `false` | refuse password and passkey sign-in for everyone who is not an administrator; from 3.6 d4 a tenant may also turn it on for its own people (a tenant layer that only tightens, see "Email domains and the SSO entry") |
 | `features.passkeys` | boolean | `true` | passkeys on for the whole server |
 | `signin.passkeyRoles` | list | `[]` | the roles a passkey is required of: `admin`, `member` |
 | `captcha.provider` | choice | `image` | `image`, `turnstile`, `recaptcha` or `hcaptcha` |

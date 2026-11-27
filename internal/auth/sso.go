@@ -247,9 +247,10 @@ type BeginParams struct {
 	Return string
 	// User is the signed-in user, for link.
 	User *store.User
-	// LoginHint is the address of the person who is coming back (the sign-in page
-	// after a session ended). An OpenID Connect provider gets it as `login_hint`;
-	// SAML and GitHub have no such parameter, so it is not sent to them.
+	// LoginHint is the address the person gave (the sign-in page after a
+	// session ended, or the address typed first, 3.6 d4). An OpenID Connect
+	// provider gets it as `login_hint`, a SAML provider whose NameID is the
+	// address as the request's Subject; GitHub has no such parameter.
 	LoginHint string
 }
 
@@ -365,6 +366,7 @@ func (s *Service) LinkBegin(ctx context.Context, providerID string, u *store.Use
 
 // SSOBegin starts a sign-in with a provider.
 func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams, ip string) (*BeginResult, error) {
+	ctx, note := noteOutbound(ctx)
 	rt := s.provs.get(slug)
 	if rt == nil || rt.row.Kind != kind {
 		return nil, errf(NotFound, "Single sign-on is not configured.")
@@ -413,6 +415,9 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 		e.userID = p.User.ID
 	}
 	unavailable := func(err error) error {
+		if wait, capped := outboundOf(note, err); capped {
+			return retryAfter(wait)
+		}
 		s.log.Error("sign-in provider unavailable", "provider", rt.row.Slug, "kind", kind, "reason", providerReason(err))
 		return errf(Unavailable, "The single sign-on provider cannot be reached right now.")
 	}
@@ -457,7 +462,14 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 			return nil, unavailable(err)
 		}
 		binding := randomToken()
-		req, err := prov.NewAuthnRequest(binding)
+		// The address goes as the request's Subject only to a provider whose
+		// NameID is the address (emailAddress): an identity provider that
+		// honours a Subject authenticates that subject alone (3.6 d4).
+		var opts authsaml.AuthnOptions
+		if p.LoginHint != "" && rt.cfg.NameIDFormat == string(crewjamsaml.EmailAddressNameIDFormat) {
+			opts.SubjectHint = p.LoginHint
+		}
+		req, err := prov.NewAuthnRequestWith(binding, opts)
 		if err != nil {
 			return nil, unavailable(err)
 		}
@@ -543,6 +555,7 @@ func (s *Service) ssoFail(kind, slug, intent, code, ip string, clear ...*http.Co
 // link). It never returns an error: every failure is a redirect to a page that
 // can explain it.
 func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken string, q url.Values, ip string) Outcome {
+	ctx, note := noteOutbound(ctx)
 	rt := s.provs.get(slug)
 	kind := KindOIDC
 	if rt != nil {
@@ -629,11 +642,18 @@ func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken 
 		} else {
 			prov, err := s.oidcFor(ctx, rt)
 			if err != nil {
+				if _, capped := outboundOf(note, err); capped {
+					return fail("rate_limited")
+				}
 				s.log.Error("OpenID Connect provider unavailable", "provider", slug, "reason", oidcReason(err))
 				return fail("provider_unavailable")
 			}
 			a, err := prov.Complete(ctx, state, code, e.state)
 			if err != nil {
+				// The organisation's outbound share is used up: nothing was asked.
+				if _, capped := outboundOf(note, err); capped {
+					return fail("rate_limited")
+				}
 				s.log.Warn("sign-in failed: the code or ID token was rejected", "provider", slug, "reason", oidcReason(err))
 				return fail("idp_error")
 			}

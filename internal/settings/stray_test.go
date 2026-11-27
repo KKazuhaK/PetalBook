@@ -14,11 +14,12 @@ import (
 // The stray site settings (sign-in policy, storage policy, machine access,
 // tenancy, the daily text's switches) are ordinary keys: a site value, no
 // tenant layer where the policy is the server's.
+// (signin.ssoOnly is the exception: an organisation may require its own SSO.)
 func TestTheStraySettingsAreSiteWideKeys(t *testing.T) {
 	t.Parallel()
 	s := settings.New(nil)
 	for _, k := range []string{
-		settings.FeatureTenancy, settings.FeaturePasskeys, settings.SigninMode, settings.SigninSSOOnly, settings.SigninPasskeyRoles,
+		settings.FeatureTenancy, settings.FeaturePasskeys, settings.SigninMode, settings.SigninPasskeyRoles,
 		settings.SigninLockoutEnabled, settings.SigninLockoutMinutes, settings.SigninLockoutScope, settings.SigninPerMinute,
 		settings.SigninMaxFailures, settings.SigninWindowMinutes, settings.SessionsIdleDays, settings.SessionsMaxDays,
 		settings.CaptchaProvider, settings.CaptchaContexts, settings.StorageRemotesRequire, settings.StorageRemotesScope,

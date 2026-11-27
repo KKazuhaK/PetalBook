@@ -2113,6 +2113,7 @@
   "message": "string"
  },
  "GET /api/admin/tenants/{}/providers 200": {
+  "offered": [],
   "providers": []
  },
  "GET /api/admin/tenants/{}/providers/{} 404": {
@@ -2319,13 +2320,15 @@
  },
  "GET /api/auth/providers 200": {
   "forgot": "boolean",
+  "identifierFirst": "boolean",
   "local": "boolean",
   "loginMode": "string",
   "orgCreation": "boolean",
   "passkey": "boolean",
   "providers": [],
   "register": "boolean",
-  "sso": "boolean"
+  "sso": "boolean",
+  "ssoEntry": "boolean"
  },
  "GET /api/auth/providers 404": {
   "error": "string",
@@ -5142,6 +5145,13 @@
   "until": "string"
  },
  "POST /api/admin/users/{}/view-as 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/auth/discover 200": {
+  "sso": "null"
+ },
+ "POST /api/auth/discover 404": {
   "error": "string",
   "message": "string"
  },

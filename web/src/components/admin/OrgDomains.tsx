@@ -25,7 +25,8 @@ export function TenantSignin({ tenant }: { tenant: string }) {
   const feature = (key: string) => settings.data?.settings.find((s) => s.key === key)?.effective
   const ssoOff = feature('features.ownSso') === false
   // Both share their cache with the sections' own: no request of their own.
-  const providers = useTenantProviders(tenant, settings.isSuccess && !ssoOff)
+  // The list also carries the site's SSO offered to the tenant, which its domains may use without its own (3.6 d4).
+  const providers = useTenantProviders(tenant, settings.isSuccess)
   const domains = useTenantDomains(tenant)
   const verified = domains.data?.domains.some((d) => d.state === 'verified' || d.state === 'missing') ?? true
   return (
@@ -41,7 +42,11 @@ export function TenantSignin({ tenant }: { tenant: string }) {
           )}
         </ProvidersSection>
       )}
-      <DomainsSection tenant={tenant} providers={ssoOff ? undefined : providers.data?.providers} />
+      <DomainsSection
+        tenant={tenant}
+        providers={ssoOff ? undefined : providers.data?.providers}
+        offered={providers.data?.offered}
+      />
     </div>
   )
 }

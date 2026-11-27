@@ -109,6 +109,8 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   auto_create_needs_org: '自动创建账号需要先指定组织。',
   local_admin_required: '要先有一个能用密码登录的管理员，才能这样设置。',
   sso_only_with_registration: '关闭密码登录后没人能完成注册，请先关闭开放注册。',
+  sso_provider_required: '请先为这个组织开启单点登录（自己的，或站点提供给它的），否则它的成员无法登录。',
+  sso_required: '这个组织的成员要通过单点登录进入，不能用密码注册或登录。',
   captcha_failed: '人机验证没有通过，请再试一次。',
   captcha_needs_public_url: '第三方验证码按公开地址校验，请用 --public-url 启动服务器。',
   captcha_secret_required: '请填写验证码服务的密钥。',

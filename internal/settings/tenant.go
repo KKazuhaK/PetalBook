@@ -285,7 +285,7 @@ func tenantEffective(d *Def, site SiteView, rules []*RuleView, tv *TenantView, n
 		}
 	}
 	if tv.Value != nil {
-		tv.InEffect = e.Above.Allows(d, tv.Value)
+		tv.InEffect = e.Above.Allows(d, tv.Value) && !d.looser(tv.Value, e.Value)
 		if tv.InEffect {
 			e.Value, e.Source = tv.Value, Tenant
 		}
@@ -452,6 +452,20 @@ func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, 
 
 	// The tenant's own layer, held to the rule above it as it will be.
 	above := eff.Above
+	// aboveValue is the value the tenant's layer sits on (the site's, or its
+	// rule's for the tenant): what a TightenOnly value may not be looser than.
+	var aboveValue any
+	if d.TightenOnly && !ch.HasSiteRule {
+		var views []*RuleView
+		if eff.Tenant != nil {
+			for i := range eff.Tenant.Rules {
+				r := eff.Tenant.Rules[i]
+				views = append(views, &r)
+			}
+		}
+		e, _ := tenantEffective(d, eff.Site, views, nil, s.now())
+		aboveValue = e.Value
+	}
 	if ch.HasSiteRule {
 		var nv *RuleView
 		if ruleRow.Value != "" || ruleRow.Lower != "" {
@@ -461,7 +475,7 @@ func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, 
 		}
 		views := append([]*RuleView{nv}, others...)
 		e, _ := tenantEffective(d, eff.Site, views, nil, s.now())
-		above = e.Above
+		above, aboveValue = e.Above, e.Value
 		// The rule's value is held to the restriction it sets for the tenant.
 		if nv != nil && nv.Value != nil {
 			lim := above
@@ -484,6 +498,9 @@ func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, 
 		}
 		if !above.Allows(d, val) {
 			return res, nil, &Error{Code: CodeRestricted, Msg: key + ": " + describe(d, above)}
+		}
+		if d.looser(val, aboveValue) {
+			return res, nil, &Error{Code: CodeRestricted, Msg: key + ": an organisation may make it stricter than the site's, never looser"}
 		}
 		raw, err := json.Marshal(val)
 		if err != nil {

@@ -58,6 +58,7 @@ var heldForPasskey = map[string]bool{
 // signinRoutes are the routes of milestone 2.8, joined to the table at start-up.
 var signinRoutes = []route{
 	{"GET", "/api/auth/providers", public.always(), true, false, false, (*server).getAuthProviders},
+	{"POST", "/api/auth/discover", public.always(), true, false, false, (*server).discoverSSO},
 	{"GET", "/api/captcha", public.always(), true, false, false, (*server).getCaptcha},
 
 	{"GET", "/api/auth/{kind}/{slug}/start", public.always(), true, false, false, (*server).ssoStartGET},
@@ -119,7 +120,34 @@ func (s *server) getAuthProviders(c *call) {
 		Forgot    bool                  `json:"forgot"`
 		// OrgCreation: a person may register an organisation of their own.
 		OrgCreation bool `json:"orgCreation"`
-	}{info.Providers, info.Mode, info.Local, info.SSO, info.Passkey, rules.Open, s.auth.MailEnabled(), s.auth.OrgCreation(c.r.Context()).Open})
+		// IdentifierFirst: the page asks for the address (or username) first,
+		// and POST /api/auth/discover says where it signs in; SSOEntry: the
+		// "Sign in with SSO" entry (/login/sso) is offered (3.6 d4).
+		IdentifierFirst bool `json:"identifierFirst"`
+		SSOEntry        bool `json:"ssoEntry"`
+	}{info.Providers, info.Mode, info.Local, info.SSO, info.Passkey, rules.Open, s.auth.MailEnabled(), s.auth.OrgCreation(c.r.Context()).Open,
+		info.IdentifierFirst, info.SSOEntry})
+}
+
+// discoverSSO is POST /api/auth/discover {"email"}: where the domain of the
+// address routes its sign-in, or null. It never looks at an account, so the
+// answer is the same whether one exists; something without an @ (a
+// username) is null.
+func (s *server) discoverSSO(c *call) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
+		return
+	}
+	d, err := s.auth.Discover(c.r.Context(), req.Email, s.auth.ClientAddr(c.r))
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		SSO *auth.Discovered `json:"sso"`
+	}{d})
 }
 
 func (s *server) getCaptcha(c *call) {

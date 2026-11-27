@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, ApiError } from '@/api/client'
+import { api, ApiError, providerStartUrl } from '@/api/client'
 import { applySignIn, useSession } from '@/api/hooks'
 import { AuthLayout } from '@/components/auth/AuthLayout'
 import { CaptchaField, useCaptcha } from '@/components/auth/Captcha'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { forgetFragmentToken, fragmentToken } from '@/lib/auth'
-import type { RegisteredOrg, RegisterInfo } from '@/api/types'
+import type { DiscoveredSSO, RegisteredOrg, RegisterInfo } from '@/api/types'
 import { lang, t } from '@/i18n'
 import { tm } from '@/i18n/mail'
 import { ts } from '@/i18n/signin'
@@ -106,6 +106,8 @@ function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: Regis
   const [error, setError] = useState('')
   const [fields, setFields] = useState<Record<string, string>>({})
   const [sent, setSent] = useState('')
+  // Where an address of an organisation that requires its single sign-on signs in instead (409 sso_required).
+  const [ssoFor, setSsoFor] = useState<{ sso: DiscoveredSSO; email: string } | null>(null)
   const messageRef = useRef<HTMLParagraphElement>(null)
   const domains = info.domains ?? []
   const termsUrl = info.termsUrl ?? ''
@@ -120,6 +122,7 @@ function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: Regis
     e.preventDefault()
     if (busy) return
     setError('')
+    setSsoFor(null)
     const problems: Record<string, string> = {}
     if (pass.length < min) problems.password = tm.register.tooShort(min)
     else if (pass !== again) problems.password = tm.register.mismatch
@@ -164,7 +167,11 @@ function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: Regis
       else if (err instanceof ApiError && err.code === 'email_domain_not_allowed')
         setFields({ email: tm.register.domainNotAllowed })
       else if (err instanceof ApiError && err.code === 'terms_required') setFields({ terms: tm.register.termsRequired })
-      else if (err instanceof ApiError && err.code === 'invalid') setError(err.message)
+      else if (err instanceof ApiError && err.code === 'sso_required') {
+        setError(err.message)
+        const sso = (err.body as { sso?: DiscoveredSSO } | undefined)?.sso
+        if (sso) setSsoFor({ sso, email: email.trim() })
+      } else if (err instanceof ApiError && err.code === 'invalid') setError(err.message)
       else setError(err instanceof ApiError ? err.message : t.auth.failed)
     }
   }
@@ -194,6 +201,14 @@ function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: Regis
       intro={org ? tm.register.orgIntro : tm.register.intro(info.tenant?.name ?? '')}
     >
       <FormMessage focusRef={messageRef}>{error}</FormMessage>
+      {ssoFor && (
+        <a
+          href={providerStartUrl(ssoFor.sso.kind, ssoFor.sso.slug, '/', ssoFor.email)}
+          className={`${buttonVariants({ variant: 'outline' })} h-10 min-w-0`}
+        >
+          <span className="min-w-0 truncate">{ts.ended.continueWith(ssoFor.sso.name)}</span>
+        </a>
+      )}
       <form className="grid gap-4" onSubmit={(e) => void submit(e)} noValidate>
         {joinOpen && orgOpen && (
           <div role="radiogroup" aria-label={tm.register.choiceLabel} className="grid gap-2 sm:grid-cols-2">

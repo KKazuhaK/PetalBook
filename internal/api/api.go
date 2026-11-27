@@ -685,6 +685,9 @@ type errorBody struct {
 	Plan []any `json:"plan,omitempty"`
 	// Organization is the organisation that manages an email domain (domain_managed).
 	Organization *auth.OrgRef `json:"organization,omitempty"`
+	// SSO is where an sso_required answer sends the person: the answer of
+	// POST /api/auth/discover for the address (absent when it routes nowhere).
+	SSO *auth.Discovered `json:"sso,omitempty"`
 	// What a refused group request is about: how many spaces and provider
 	// entries keep a group, the ids of people that do not exist.
 	Spaces *int `json:"spaces,omitempty"`
@@ -1044,7 +1047,7 @@ func (s *server) failAuth(w http.ResponseWriter, e *auth.Error) {
 		if e.Status == http.StatusTooManyRequests {
 			w.Header().Set("Retry-After", strconv.Itoa(max(int((e.RetryAfter+time.Second-1)/time.Second), 1)))
 		}
-		writeJSON(w, e.Status, errorBody{Error: e.Code, Message: e.Msg, Accounts: e.Accounts, Organization: e.Organization})
+		writeJSON(w, e.Status, errorBody{Error: e.Code, Message: e.Msg, Accounts: e.Accounts, Organization: e.Organization, SSO: e.SSO})
 	case auth.Invalid:
 		writeError(w, http.StatusBadRequest, "invalid", e.Msg)
 	case auth.Unauthenticated:

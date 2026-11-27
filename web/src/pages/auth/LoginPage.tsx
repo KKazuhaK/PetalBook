@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, providerStartUrl } from '@/api/client'
 import { applySignIn, useAuthProviders, useSession } from '@/api/hooks'
-import type { AuthProviders, EndedReason, SignInAnswer } from '@/api/types'
+import type { AuthProviders, DiscoveredSSO, EndedReason, SignInAnswer } from '@/api/types'
 import { AccountCard } from '@/components/auth/AccountCard'
 import { AuthLayout, OrDivider } from '@/components/auth/AuthLayout'
 import { CaptchaField, useCaptcha } from '@/components/auth/Captcha'
@@ -173,8 +173,20 @@ function LoginForm({
   const messageRef = useRef<HTMLParagraphElement>(null)
   const remaining = Math.max(0, Math.ceil((until - now) / 1000))
   const returningPassword = returning?.method.type === 'password'
-  // Someone who is back is asked about by name from the start.
-  const captcha = useCaptcha('login', { auto: formOpen && !redirecting && !returningPassword })
+  // Identifier first (3.6 d4): the address or username, then the password step or the organisation's sign-in. The
+  // server says so when some verified domain routes to a single sign-on.
+  const identifierFirst = !!providers.identifierFirst
+  const [step, setStep] = useState<'identify' | 'sso' | 'password'>(identifierFirst ? 'identify' : 'password')
+  // Where the address signs in, when its domain has a single sign-on.
+  const [found, setFound] = useState<DiscoveredSSO | null>(null)
+  const [finding, setFinding] = useState(false)
+  // The "Continue with" of the SSO step takes focus, as a field would: it is the step's one action.
+  const ssoLinkRef = useRef<HTMLAnchorElement>(null)
+  useEffect(() => {
+    if (step === 'sso') ssoLinkRef.current?.focus()
+  }, [step])
+  // Someone who is back is asked about by name from the start; with the address first, the captcha waits for the name.
+  const captcha = useCaptcha('login', { auto: formOpen && !redirecting && !returningPassword && !identifierFirst })
   const askCaptcha = captcha.refresh
   useEffect(() => {
     if (returningPassword) void askCaptcha(username.trim().toLowerCase())
@@ -205,6 +217,53 @@ function LoginForm({
     void captcha.refresh(name)
   }
 
+  // A refusal to wait: the countdown and the message.
+  const waitFor = (err: ApiError) => {
+    const wait = err.retryAfter ?? 60
+    setNow(Date.now())
+    setUntil(Date.now() + wait * 1000)
+    setError(ts.login.rateLimited(t.auth.wait(wait)))
+  }
+
+  const toPassword = () => {
+    setStep('password')
+    usernameLeft()
+  }
+
+  // The first step: a username goes to the password; an address asks where its domain signs in.
+  const identify = async (e: FormEvent) => {
+    e.preventDefault()
+    const id = username.trim()
+    if (!id || finding || remaining > 0) return
+    setError('')
+    setFound(null)
+    if (!id.includes('@')) {
+      toPassword()
+      return
+    }
+    setFinding(true)
+    try {
+      const { sso } = await api.discover(id)
+      setFound(sso)
+      if (sso?.enforced) setStep('sso')
+      else toPassword()
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'rate_limited') waitFor(err)
+      else setError(err instanceof ApiError ? err.message : t.login.failed)
+    } finally {
+      setFinding(false)
+    }
+  }
+
+  // Back to the first step, to give another address or username.
+  const changeIdentifier = () => {
+    setStep('identify')
+    setFound(null)
+    setPass('')
+    setError('')
+    setPasskeyOnly(false)
+  }
+
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (busy || remaining > 0) return
@@ -223,12 +282,8 @@ function LoginForm({
       navigate(ret, { replace: true })
     } catch (err) {
       setBusy(false)
-      if (err instanceof ApiError && err.code === 'rate_limited') {
-        const wait = err.retryAfter ?? 60
-        setNow(Date.now())
-        setUntil(Date.now() + wait * 1000)
-        setError(ts.login.rateLimited(t.auth.wait(wait)))
-      } else if (err instanceof ApiError && err.code === 'captcha_failed') {
+      if (err instanceof ApiError && err.code === 'rate_limited') waitFor(err)
+      else if (err instanceof ApiError && err.code === 'captcha_failed') {
         // A new challenge, and say whether the old one was missing or wrong.
         setError(sent ? ts.captcha.failed : ts.captcha.required)
         void captcha.refresh(username.trim().toLowerCase())
@@ -390,34 +445,98 @@ function LoginForm({
       {formOpen && (
         <>
           {passkeyOnly && passkey}
-          <form className="grid gap-4" onSubmit={(e) => void submit(e)}>
-            <Field
-              label={t.auth.username}
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              onBlur={usernameLeft}
-              autoComplete="username webauthn"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              className="h-10"
-              autoFocus
-              required
-            />
-            <Field
-              label={t.auth.password}
-              type="password"
-              value={pass}
-              onChange={(e) => setPass(e.target.value)}
-              autoComplete="current-password"
-              className="h-10"
-              required
-            />
-            <CaptchaField captcha={captcha} disabled={busy} />
-            <Button type="submit" className="h-10" disabled={busy || waiting || !username || !pass || captcha.missing}>
-              {busy ? t.login.submitting : t.login.submit}
-            </Button>
-          </form>
+          {step === 'identify' && (
+            <form className="grid gap-4" onSubmit={(e) => void identify(e)}>
+              <Field
+                label={ts.login.identifier}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username webauthn"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="h-10"
+                autoFocus
+                required
+              />
+              <Button type="submit" className="h-10" disabled={finding || waiting || !username.trim()}>
+                {finding ? ts.login.finding : ts.login.next}
+              </Button>
+            </form>
+          )}
+          {step !== 'identify' && identifierFirst && (
+            <IdentifierRow value={username.trim()} onChange={changeIdentifier} />
+          )}
+          {step !== 'identify' && found && (
+            <div className="grid gap-2">
+              {found.enforced && <p className="text-sm text-muted-foreground">{ts.login.ssoRequired(found.name)}</p>}
+              <a
+                href={providerStartUrl(found.kind, found.slug, ret, username.trim())}
+                onClick={() => note(found)}
+                className={`${buttonVariants({ variant: step === 'sso' ? 'default' : 'outline' })} ${WIDE}`}
+                ref={ssoLinkRef}
+              >
+                <ProviderIcon icon={found.icon} />
+                <span className="min-w-0 truncate">{ts.ended.continueWith(found.name)}</span>
+              </a>
+            </div>
+          )}
+          {step === 'sso' && (
+            // The administrators' way in while the identity provider fails; the server refuses everyone else.
+            <button type="button" className={LINK} onClick={toPassword}>
+              {ts.login.usePassword}
+            </button>
+          )}
+          {step === 'password' && found && !found.enforced && <OrDivider />}
+          {step === 'password' && (
+            <form className="grid gap-4" onSubmit={(e) => void submit(e)}>
+              {identifierFirst ? (
+                // For the browser's password manager: whose password this is.
+                <input
+                  type="text"
+                  name="username"
+                  value={username}
+                  autoComplete="username"
+                  readOnly
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  className="sr-only"
+                />
+              ) : (
+                <Field
+                  label={t.auth.username}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  onBlur={usernameLeft}
+                  autoComplete="username webauthn"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className="h-10"
+                  autoFocus
+                  required
+                />
+              )}
+              <Field
+                label={t.auth.password}
+                type="password"
+                value={pass}
+                onChange={(e) => setPass(e.target.value)}
+                autoComplete="current-password"
+                className="h-10"
+                autoFocus={identifierFirst}
+                required
+              />
+              <CaptchaField captcha={captcha} disabled={busy} />
+              <Button
+                type="submit"
+                className="h-10"
+                disabled={busy || waiting || !username || !pass || captcha.missing}
+              >
+                {busy ? t.login.submitting : t.login.submit}
+              </Button>
+            </form>
+          )}
           {(providers.forgot || providers.register || providers.orgCreation) && (
             <div className="flex flex-wrap justify-between gap-x-4 text-sm">
               {providers.forgot && (
@@ -464,6 +583,30 @@ function LoginForm({
           )}
         </>
       )}
+      {providers.ssoEntry && (
+        <Link to={ret === '/' ? '/login/sso' : `/login/sso?return=${encodeURIComponent(ret)}`} className={LINK}>
+          {ts.login.ssoEntry}
+        </Link>
+      )}
     </AuthLayout>
+  )
+}
+
+// The address or username of the first step, with the way back to change it.
+function IdentifierRow({ value, onChange }: { value: string; onChange: () => void }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border bg-muted/40 px-3 py-1">
+      <span className="min-w-0 truncate text-sm" title={value}>
+        {value}
+      </span>
+      <button
+        type="button"
+        className={`${LINK} shrink-0`}
+        onClick={onChange}
+        aria-label={`${ts.login.change}: ${value}`}
+      >
+        {ts.login.change}
+      </button>
+    </div>
   )
 }

@@ -3,7 +3,7 @@ import { Copy, Plus, RefreshCw, ShieldCheck, Trash2, TriangleAlert } from 'lucid
 import { toast } from 'sonner'
 import { useDomainChange, useTenantDomains, useTenantSettings } from '@/api/admin'
 import { ApiError } from '@/api/client'
-import type { AuthProvider, DomainCheck, TenantDomain } from '@/api/types'
+import type { AuthProvider, DomainCheck, OfferedSSO, TenantDomain } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -52,8 +52,17 @@ function useNowUntil(deadline: number): [number, () => void] {
 }
 
 // `providers`: the tenant's own sign-in providers a verified domain may be routed to (3.6 d3); left out while the
-// organisation has no single sign-on of its own, and then no routing is shown.
-export function DomainsSection({ tenant, providers }: { tenant: string; providers?: AuthProvider[] }) {
+// organisation has no single sign-on of its own. `offered`: the site's SSO offered to the tenant, which a domain may be
+// routed to as well (3.6 d4). With neither, no routing is shown.
+export function DomainsSection({
+  tenant,
+  providers,
+  offered,
+}: {
+  tenant: string
+  providers?: AuthProvider[]
+  offered?: OfferedSSO[]
+}) {
   const q = useTenantDomains(tenant)
   const settings = useTenantSettings(tenant)
   const off = settings.data?.settings.find((s) => s.key === 'features.domains')?.effective === false
@@ -86,6 +95,7 @@ export function DomainsSection({ tenant, providers }: { tenant: string; provider
               tenant={tenant}
               d={d}
               providers={providers}
+              offered={offered}
               wait={cool(d)}
               onCooldown={(at) => {
                 setCooldown((c) => ({ ...c, [d.domain]: at }))
@@ -282,12 +292,14 @@ function DomainCard({
   tenant,
   d,
   providers,
+  offered,
   wait,
   onCooldown,
 }: {
   tenant: string
   d: TenantDomain
   providers?: AuthProvider[]
+  offered?: OfferedSSO[]
   wait: number
   onCooldown: (until: number) => void
 }) {
@@ -385,7 +397,7 @@ function DomainCard({
         </label>
         <p className="text-xs text-muted-foreground">{td.restrict.help}</p>
       </div>
-      {held && providers && providers.length > 0 && (
+      {held && ((providers?.length ?? 0) > 0 || (offered?.length ?? 0) > 0) && (
         <div className="grid min-w-0 gap-1.5" data-slot="domain-route">
           <Label htmlFor={routeId}>{td.route.short}</Label>
           <NativeSelect
@@ -397,11 +409,32 @@ function DomainCard({
             onChange={(e) => route(e.target.value === '' ? null : e.target.value)}
           >
             <option value="">{td.route.none}</option>
-            {providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
+            {offered && offered.length > 0 ? (
+              <>
+                {providers && providers.length > 0 && (
+                  <optgroup label={td.route.own}>
+                    {providers.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                <optgroup label={td.route.site}>
+                  {offered.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+              </>
+            ) : (
+              providers?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))
+            )}
           </NativeSelect>
           <p className="text-xs text-muted-foreground">{td.route.help}</p>
         </div>

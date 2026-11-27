@@ -322,7 +322,14 @@ func (s *Service) bindSettings() {
 		}
 		return v, nil
 	}})
-	bind(settings.SigninSSOOnly, settings.SiteBinding{Check: func(ctx context.Context, _ string, v any) (any, error) {
+	bind(settings.SigninSSOOnly, settings.SiteBinding{Check: func(ctx context.Context, tenant string, v any) (any, error) {
+		if tenant != "" {
+			// A tenant's own layer, or the site's rule for it (3.6 d4).
+			if v != true {
+				return v, nil
+			}
+			return v, s.checkTenantSSOOnly(ctx, tenant)
+		}
 		if v != true || s.sec(ctx).Login.SSOOnly {
 			return v, nil
 		}

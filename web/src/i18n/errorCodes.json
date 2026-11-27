@@ -125,6 +125,8 @@
   "space_disabled",
   "space_full",
   "sso_only_with_registration",
+  "sso_provider_required",
+  "sso_required",
   "status",
   "takeover_required",
   "template_fixed",

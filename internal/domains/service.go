@@ -91,11 +91,16 @@ type Options struct {
 type owner struct {
 	tenant   string
 	restrict bool
+	// provider is the sign-in provider the domain is routed to (3.6 d3; ""
+	// for none).
+	provider string
 }
 
 type book struct {
 	byDomain map[string]owner
 	byTenant map[string][]string
+	// routed is every provider some verified domain is routed to.
+	routed []string
 }
 
 // Service is safe for concurrent use.
@@ -157,10 +162,16 @@ func (s *Service) Load(ctx context.Context) error {
 		return err
 	}
 	b := &book{byDomain: make(map[string]owner, len(rows)), byTenant: map[string][]string{}}
+	seen := map[string]bool{}
 	for _, r := range rows {
-		b.byDomain[r.Domain] = owner{r.TenantID, r.RestrictOrgs}
+		b.byDomain[r.Domain] = owner{r.TenantID, r.RestrictOrgs, r.ProviderID}
 		b.byTenant[r.TenantID] = append(b.byTenant[r.TenantID], r.Domain)
+		if r.ProviderID != "" && !seen[r.ProviderID] {
+			seen[r.ProviderID] = true
+			b.routed = append(b.routed, r.ProviderID)
+		}
 	}
+	sort.Strings(b.routed)
 	s.book.Store(b)
 	return nil
 }
@@ -215,6 +226,23 @@ func (s *Service) Managed(ctx context.Context, email string) string {
 	}
 	return ""
 }
+
+// Route is where the domain of an address sends its sign-in (3.6 d4): the
+// tenant that holds the domain verified and the provider the domain is routed
+// to; ok false when no tenant does (or its tenant does not have the feature
+// now), or the domain is routed nowhere. From memory: no query. Whether the
+// provider can be used now is the caller's to say.
+func (s *Service) Route(ctx context.Context, email string) (tenant, provider string, ok bool) {
+	o, found := s.book.Load().byDomain[EmailDomain(email)]
+	if !found || o.provider == "" || !s.on(ctx, o.tenant) {
+		return "", "", false
+	}
+	return o.tenant, o.provider, true
+}
+
+// RoutedProviders is every provider a verified domain is routed to, sorted
+// (whether the sign-in page asks for the address first).
+func (s *Service) RoutedProviders() []string { return s.book.Load().routed }
 
 // Count is how many domains the map holds (tests, status).
 func (s *Service) Count() int { return len(s.book.Load().byDomain) }
@@ -324,6 +352,10 @@ func (s *Service) SetProvider(ctx context.Context, tenant, input, providerID str
 	if _, err := store.SetDomainProvider(ctx, s.opt.Store.Q(), tenant, r.Domain, providerID, s.opt.Now()); err != nil {
 		return r, err
 	}
+	if r.Verified() {
+		// The map routes the sign-in (Route).
+		s.Changed(ctx)
+	}
 	return store.GetDomain(ctx, s.opt.Store.Q(), tenant, r.Domain)
 }
 
@@ -403,6 +435,25 @@ func (s *Service) takeManual(ctx context.Context, tenant, domain string) error {
 		return &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "This organization has checked its domains 20 times this hour: try again later.", RetryAfter: wait}
 	}
 	return nil
+}
+
+// TakeOutbound spends one outgoing request of the tenant's outbound share
+// (rate.outboundPerMinute), the same share the checks of its domains spend:
+// the sign-in calls of its own providers (3.6 d4). It answers how long to
+// wait when the share is used up (ok false); a tenant without a limit always
+// may.
+func (s *Service) TakeOutbound(ctx context.Context, tenant string) (wait time.Duration, ok bool, err error) {
+	c, limited, err := s.outboundCost(ctx, tenant)
+	if err != nil || !limited {
+		return 0, err == nil, err
+	}
+	if c.Limit <= 0 {
+		return time.Minute, false, nil
+	}
+	s.takeMu.Lock()
+	defer s.takeMu.Unlock()
+	wait, ok = s.minute.TakeAll(c)
+	return wait, ok, nil
 }
 
 // outboundCost is the tenant's outbound share (rate.outboundPerMinute) as a
