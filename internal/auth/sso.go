@@ -113,24 +113,43 @@ func (s *Service) discover(ctx context.Context, cfg provCfg, secret, redirect st
 func (s *Service) oidcFor(ctx context.Context, rt *providerRT) (*authoidc.Provider, error) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	if rt.oidc != nil {
+	if rt.secretErr != nil {
+		return nil, rt.secretErr
+	}
+	secret, cached := rt.secret, rt.row.Cache
+	if rt.row.Template != "" {
+		// The addresses are the row's, copied from the template: nothing is
+		// discovered.
+		cached = templateDoc(rt.cfg)
+	}
+	if rt.row.Template == TemplateApple {
+		// Apple's secret is signed here, and replaced as it nears its end:
+		// a new one makes a new client (the state of an attempt under way
+		// does not depend on the secret, so it still completes).
+		if rt.apple == nil {
+			return nil, errors.New("sign in with Apple has no key")
+		}
+		v, _, err := rt.apple.at(s.now())
+		if err != nil {
+			return nil, err
+		}
+		secret = v
+	}
+	if rt.oidc != nil && secret == rt.oidcSecret {
 		return rt.oidc, nil
 	}
 	if rt.err != nil && s.now().Sub(rt.tried) < 5*time.Second {
 		return nil, rt.err
 	}
-	if rt.secretErr != nil {
-		return nil, rt.secretErr
-	}
-	p, doc, err := s.buildOIDC(ctx, rt.cfg, rt.secret, s.redirectURL(rt), rt.row.Cache)
+	p, doc, err := s.buildOIDC(ctx, rt.cfg, secret, s.redirectURL(rt), cached)
 	rt.tried = s.now()
 	if err != nil {
 		rt.err = err
 		rt.statusOK, rt.statusChecked, rt.statusMessage = false, s.now().UTC(), oidcReason(err)
 		return nil, err
 	}
-	rt.oidc, rt.err = p, nil
-	if doc != "" {
+	rt.oidc, rt.oidcSecret, rt.err = p, secret, nil
+	if doc != "" && rt.row.Template == "" {
 		// Reached the provider just now: keep what it said for the next start.
 		rt.statusOK, rt.statusChecked, rt.statusMessage = true, s.now().UTC(), ""
 		go s.storeDiscovery(rt.row.ID, doc, rt.statusChecked)
@@ -250,6 +269,25 @@ func withLoginHint(authURL, hint string) string {
 	return u.String()
 }
 
+// withParam sets one parameter of an authorization address.
+func withParam(authURL, k, v string) string {
+	u, err := url.Parse(authURL)
+	if err != nil {
+		return authURL
+	}
+	q := u.Query()
+	q.Set(k, v)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// TakesFormPost says whether the site provider with the slug answers by a
+// form posted to its callback (Apple): only then is that post taken.
+func (s *Service) TakesFormPost(slug string) bool {
+	rt := s.provs.get(slug)
+	return rt != nil && rt.row.Kind == KindOIDC && rt.cfg.ResponseMode == "form_post"
+}
+
 // BeginResult is where to send the browser and the cookie that ties the
 // attempt to it.
 type BeginResult struct {
@@ -353,16 +391,32 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 	}
 	switch kind {
 	case KindOIDC:
-		prov, err := s.oidcFor(ctx, rt)
-		if err != nil {
-			return nil, unavailable(err)
-		}
-		az, err := prov.Begin()
-		if err != nil {
-			return nil, unavailable(err)
+		var az authoidc.Authorization
+		if multiTenant(rt.cfg.Issuer) {
+			tf, err := s.tenantFlowFor(rt)
+			if err != nil {
+				return nil, unavailable(err)
+			}
+			if az, err = tf.begin(); err != nil {
+				return nil, unavailable(err)
+			}
+		} else {
+			prov, err := s.oidcFor(ctx, rt)
+			if err != nil {
+				return nil, unavailable(err)
+			}
+			if az, err = prov.Begin(); err != nil {
+				return nil, unavailable(err)
+			}
 		}
 		e.state, e.stateValue = az.State, az.State.Value
-		return &BeginResult{URL: withLoginHint(az.URL, p.LoginHint), Cookie: s.ssoCookie(s.pending.put(e))}, nil
+		u := withLoginHint(az.URL, p.LoginHint)
+		if rt.cfg.ResponseMode == "form_post" {
+			// Apple posts its answer (it must, when the name or the address
+			// is asked for); the post is turned back into the callback here.
+			u = withParam(u, "response_mode", "form_post")
+		}
+		return &BeginResult{URL: u, Cookie: s.ssoCookie(s.pending.put(e))}, nil
 	case KindGitHub:
 		if rt.secretErr != nil {
 			return nil, unavailable(rt.secretErr)
@@ -508,19 +562,51 @@ func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken 
 	var c claimed
 	switch kind {
 	case KindOIDC:
-		prov, err := s.oidcFor(ctx, rt)
-		if err != nil {
-			s.log.Error("OpenID Connect provider unavailable", "provider", slug, "reason", oidcReason(err))
-			return fail("provider_unavailable")
+		var sub string
+		var raw map[string]json.RawMessage
+		if multiTenant(rt.cfg.Issuer) {
+			tf, err := s.tenantFlowFor(rt)
+			if err != nil {
+				s.log.Error("OpenID Connect provider unavailable", "provider", slug, "reason", oidcReason(err))
+				return fail("provider_unavailable")
+			}
+			v, err := tf.complete(ctx, state, code, e.state)
+			if err != nil {
+				reason := oidcReason(err)
+				if errors.Is(err, errTenantIssuer) {
+					reason = "the token's issuer is not the one of its tenant (tid)"
+				}
+				s.log.Warn("sign-in failed: the code or ID token was rejected", "provider", slug, "reason", reason)
+				return fail("idp_error")
+			}
+			sub, raw = v.subject, v.claims
+		} else {
+			prov, err := s.oidcFor(ctx, rt)
+			if err != nil {
+				s.log.Error("OpenID Connect provider unavailable", "provider", slug, "reason", oidcReason(err))
+				return fail("provider_unavailable")
+			}
+			a, err := prov.Complete(ctx, state, code, e.state)
+			if err != nil {
+				s.log.Warn("sign-in failed: the code or ID token was rejected", "provider", slug, "reason", oidcReason(err))
+				return fail("idp_error")
+			}
+			if a.Claims(&raw) != nil {
+				s.log.Warn("sign-in failed: unusable claims", "provider", slug, "reason", "the claims are not a JSON object")
+				return fail("idp_error")
+			}
+			sub = a.Subject
 		}
-		a, err := prov.Complete(ctx, state, code, e.state)
-		if err != nil {
-			s.log.Warn("sign-in failed: the code or ID token was rejected", "provider", slug, "reason", oidcReason(err))
-			return fail("idp_error")
-		}
-		if c, err = identityFromAssertion(rt, a); err != nil {
+		var err error
+		if c, err = identityFromClaims(rt, sub, raw); err != nil {
 			s.log.Warn("sign-in failed: unusable claims", "provider", slug, "reason", err.Error())
 			return fail("idp_error")
+		}
+		if c.name == "" && rt.row.Template == TemplateApple {
+			// Apple sends the name once, beside the token (the form's user).
+			if u, ok := oneParam(q, "user"); ok {
+				c.name = appleUserName(u)
+			}
 		}
 	case KindGitHub:
 		var errCode string
@@ -739,9 +825,10 @@ func (c claimed) params() *IdentityParams {
 	return &IdentityParams{ProviderID: c.providerID, Subject: c.subject, Label: c.label(), Email: c.email, EmailTrusted: c.emailVerified}
 }
 
-func identityFromAssertion(rt *providerRT, a *authoidc.Assertion) (claimed, error) {
-	var raw map[string]json.RawMessage
-	if err := a.Claims(&raw); err != nil {
+// identityFromClaims reads who signed in from a verified ID token's subject
+// and claims.
+func identityFromClaims(rt *providerRT, subject string, raw map[string]json.RawMessage) (claimed, error) {
+	if raw == nil {
 		return claimed{}, errors.New("the claims are not a JSON object")
 	}
 	str := func(k string) string {
@@ -758,15 +845,19 @@ func identityFromAssertion(rt *providerRT, a *authoidc.Assertion) (claimed, erro
 	} else if str("email_verified") == "true" {
 		verified = true
 	}
-	sub := strings.TrimSpace(a.Subject)
+	sub := strings.TrimSpace(subject)
 	if sub == "" || len(sub) > 255 || !utf8.ValidString(sub) || strings.ContainsFunc(sub, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return claimed{}, errors.New("the sub claim is empty or not usable")
 	}
-	// The library checked the token's issuer against the configured one; the
-	// account is found by the provider's id and sub, not by the issuer.
+	// The token's issuer was checked against the configured one (a
+	// multi-tenant provider's against its tid); the account is found by the
+	// provider's id and sub, not by the issuer.
 	email := clip(str("email"), 254)
 	c := claimed{subject: sub, name: str("name"), preferred: str("preferred_username"), email: email,
-		src: emailSource{template: tmplOIDC, verified: verified, claims: raw}}
+		src: emailSource{template: trustTemplate(rt.row), verified: verified, claims: raw}}
+	if rt.row.Template == TemplateApple {
+		c.src.relay = isAppleRelay(email) || claimTrue(raw, "is_private_email")
+	}
 	if g, on := rt.groupsOn(); on {
 		c.groups = oidcGroupClaim(g, raw)
 	}
@@ -877,7 +968,7 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	// not count) sends the person to sign in to that account and link the
 	// provider there (email_in_use). Making an account is opt-in, and never
 	// the first: that is the administrator's, made with the setup token.
-	if e, err := s.cleanEmailFor(ctx, c.email); err == nil && e != "" && c.emailVerified {
+	if e, err := s.cleanEmailFor(ctx, c.email); err == nil && e != "" && c.emailVerified && matchesByAddress(c.src) {
 		if row, err := store.EmailOwner(ctx, s.st.Q(), e); err == nil && row.Holds() {
 			return nil, false, ssoErr("email_in_use")
 		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -1007,7 +1098,7 @@ func (s *Service) createFromClaims(ctx context.Context, c claimed, role, inviteI
 		}
 	}
 	u, err := s.CreateUser(ctx, CreateParams{Username: base, Name: name, Role: role, Email: email, EmailVerified: verified, VerifiedBy: by,
-		TakeUnverified: verified, DropTakenEmail: true,
+		TakeUnverified: verified && matchesByAddress(c.src), DropTakenEmail: true,
 		Identity: c.params(), InviteID: inviteID, Setup: setup, RetryUsername: true, TenantID: tenantID, SiteAdmin: siteAdmin})
 	var ae *Error
 	if errors.As(err, &ae) && ae.Kind == Conflict && ae == errInUse {

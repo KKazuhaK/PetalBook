@@ -23,6 +23,10 @@ type ProviderRow struct {
 	// Owner is ProviderSite or the id of the tenant that owns the row.
 	Owner                  string
 	Slug, Kind, Name, Icon string
+	// Class is "social" or "sso", and Template the preset the row was made
+	// from ("" for none): both are written when the row is made and never
+	// again (UpdateProvider leaves them).
+	Class, Template string
 	Enabled                bool
 	Position               int
 	AutoCreate             bool
@@ -51,12 +55,12 @@ type ProviderRow struct {
 // written with it, and repos.
 const providerRead = providerCols + `, repos`
 
-const providerCols = `id, owner, slug, kind, name, icon, enabled, position, auto_create, trust_email_optin, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated, groups_version, jit_tenant`
+const providerCols = `id, owner, slug, kind, class, template, name, icon, enabled, position, auto_create, trust_email_optin, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated, groups_version, jit_tenant`
 
 func scanProvider(sc interface{ Scan(...any) error }) (*ProviderRow, error) {
 	var p ProviderRow
 	var en, pos, ac, mv, ok, chk, cr, up, repos int64
-	if err := sc.Scan(&p.ID, &p.Owner, &p.Slug, &p.Kind, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion, &p.TenantID, &repos); err != nil {
+	if err := sc.Scan(&p.ID, &p.Owner, &p.Slug, &p.Kind, &p.Class, &p.Template, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion, &p.TenantID, &repos); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -95,21 +99,29 @@ func GetProvider(ctx context.Context, q Q, id string) (*ProviderRow, error) {
 	return scanProvider(q.QueryRow(ctx, `SELECT `+providerRead+` FROM providers WHERE id = ? AND signin = 1`, id))
 }
 
-// InsertProvider adds a sign-in provider; a taken id, or a slug taken by the
-// owner, is a unique violation.
+// InsertProvider adds a sign-in provider; a taken id, or a slug taken by any
+// provider of the server, is a unique violation.
 func InsertProvider(ctx context.Context, q Q, p ProviderRow) error {
 	owner := p.Owner
 	if owner == "" {
 		owner = ProviderSite
 	}
-	_, err := q.Exec(ctx, `INSERT INTO providers(`+providerCols+`, signin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-		p.ID, owner, p.Slug, p.Kind, p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), p.Issuer,
+	if p.Class == "" {
+		// A row made without one (tests, the GitHub row) gets its kind's:
+		// GitHub is social, anything else enterprise sign-in.
+		p.Class = "sso"
+		if p.Kind == "github" {
+			p.Class = "social"
+		}
+	}
+	_, err := q.Exec(ctx, `INSERT INTO providers(`+providerCols+`, signin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+		p.ID, owner, p.Slug, p.Kind, p.Class, p.Template, p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), p.Issuer,
 		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Created), ms(p.Updated), p.GroupsVersion, tenantOrDefault(p.TenantID))
 	return err
 }
 
-// UpdateProvider replaces everything but the id, the owner, the slug, the kind
-// and the creation time, and bumps the groups version. What the GitHub App
+// UpdateProvider replaces everything but the id, the owner, the slug, the kind,
+// the class, the template and the creation time, and bumps the groups version. What the GitHub App
 // owns in a config (its record and its client id: see PutGitHubApp) is kept as
 // it is stored now, not as the caller read it: the one who sets the App up is
 // the only one who changes them.

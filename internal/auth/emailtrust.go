@@ -17,9 +17,10 @@ import (
 //
 // The rule is here and nowhere else.
 
-// Templates of the providers. The built-in social ones (google, apple,
-// microsoft) arrive with 3.6's templates; github is the built-in kind of
-// today; oidc and saml are a provider the administrators configured.
+// Which rules a provider's addresses follow: the built-in social ones
+// (google, apple, microsoft: a provider made from that template), github (the
+// built-in kind), and oidc and saml for a provider the administrators
+// configured (GitLab.com's template too: see trustTemplate).
 const (
 	tmplGoogle    = "google"
 	tmplApple     = "apple"
@@ -53,6 +54,11 @@ type emailSource struct {
 	verified bool
 	// claims are an OIDC token's claims (Microsoft's xms_edov is read).
 	claims map[string]json.RawMessage
+	// relay: the address is one Apple relays to the person's own (Hide My
+	// Email). It is verified, but it is the person's for this site only:
+	// it never finds, displaces or takes from another account by address
+	// (matchesByAddress), and it routes to no organisation's domain.
+	relay bool
 }
 
 // trustsEmail says whether the sign-in vouches for the address.
@@ -61,6 +67,8 @@ func trustsEmail(src emailSource) bool {
 		return false
 	}
 	if src.org {
+		// An organisation's own single sign-on: only its verified domains,
+		// each exactly (a subdomain is claimed by itself).
 		return inDomains(src.email, src.orgDomains)
 	}
 	switch src.template {
@@ -69,11 +77,13 @@ func trustsEmail(src emailSource) bool {
 	case tmplGitHub:
 		return src.verified && (src.publicGitHub || src.trustOptIn)
 	case tmplMicrosoft:
-		// Never the plain email claim: any Entra tenant can put any address
-		// in it ("nOAuth"). Only xms_edov (the address's domain is verified
-		// by the tenant that issued the token), or an address on a domain
-		// verified here.
-		return claimTrue(src.claims, "xms_edov") || inDomains(src.email, src.orgDomains)
+		// Only xms_edov: the tenant that issued the token owns the domain of
+		// the address. Never the plain email claim, whatever its domain, a
+		// domain verified here included: any Entra tenant can put any address
+		// in it ("nOAuth"), and the person's tenant is not the one that
+		// verified the domain here. (Recorded decision, 2026-11-27: the safe
+		// rule; the owner may loosen it later.)
+		return claimTrue(src.claims, "xms_edov")
 	case tmplOIDC:
 		return src.trustOptIn && src.verified
 	case tmplSAML:
@@ -83,6 +93,34 @@ func trustsEmail(src emailSource) bool {
 	default:
 		return false
 	}
+}
+
+// matchesByAddress says whether the sign-in's address may meet another
+// account's: send the person to the account that holds it verified
+// (email_in_use), or take it from one that holds it unverified. An Apple
+// relay address never does.
+func matchesByAddress(src emailSource) bool { return !src.relay }
+
+// trustTemplate is the rule a provider's addresses follow: its template's
+// for Google, Apple and Microsoft; a configured provider's for any other
+// OpenID Connect provider, GitLab.com's template included (its addresses are
+// trusted only with the administrators' opt-in, as a configured provider's).
+func trustTemplate(row store.ProviderRow) string {
+	switch row.Template {
+	case TemplateGoogle:
+		return tmplGoogle
+	case TemplateApple:
+		return tmplApple
+	case TemplateMicrosoft:
+		return tmplMicrosoft
+	}
+	return tmplOIDC
+}
+
+// isAppleRelay says whether an address is one of Apple's relays.
+func isAppleRelay(email string) bool {
+	key, ok := store.EmailKey(email)
+	return ok && key[strings.LastIndex(key, "@")+1:] == appleRelayDomain
 }
 
 // samlDefaultEmailAttr is the attribute a SAML provider's address is read
@@ -160,8 +198,9 @@ func claimTrue(claims map[string]json.RawMessage, name string) bool {
 	return json.Unmarshal(raw, &s) == nil && s == "true"
 }
 
-// inDomains says whether the address's domain is one of domains (or below
-// one), compared in store.EmailKey form.
+// inDomains says whether the address's domain is one of domains, exactly,
+// compared in store.EmailKey form. A subdomain is not covered by its parent:
+// each is claimed and verified by itself.
 func inDomains(email string, domains []string) bool {
 	if len(domains) == 0 {
 		return false
@@ -178,7 +217,7 @@ func inDomains(email string, domains []string) bool {
 		if ak, ok := store.EmailKey("x@" + a); ok {
 			a = ak[2:]
 		}
-		if d == a || strings.HasSuffix(d, "."+a) {
+		if d == a {
 			return true
 		}
 	}

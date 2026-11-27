@@ -454,6 +454,9 @@ type RouteInfo struct {
 	MemberOnly   bool
 	AccountsOnly bool
 	Upload       bool // the body is a file, sent as application/octet-stream
+	// Form: the body is a form an identity provider posts (a SAML ACS, an
+	// OpenID Connect form_post), sent as application/x-www-form-urlencoded.
+	Form bool
 	// Viewable: a view as a person reaches it (viewableRoutes).
 	Viewable bool
 }
@@ -464,7 +467,7 @@ func Routes() []RouteInfo {
 	for i, r := range routeTable {
 		a := r.access
 		out[i] = RouteInfo{Method: r.method, Pattern: r.pattern, Feature: a.feature, AlsoFeature: a.also, AlwaysOn: a.alwaysOn, Public: a.kind == kindPublic, Space: a.kind == kindSpace, Perm: a.need, OrSelf: a.orSelf,
-			MemberOnly: a.memberOnly, AccountsOnly: r.accountsOnly, Upload: r.upload, Viewable: viewableRoutes[r.method+" "+r.pattern]}
+			MemberOnly: a.memberOnly, AccountsOnly: r.accountsOnly, Upload: r.upload, Form: formRoute(r.method + " " + r.pattern), Viewable: viewableRoutes[r.method+" "+r.pattern]}
 		if a.kind == kindKey {
 			out[i].Key = a.key.Name()
 			for _, k := range a.orKeys {
