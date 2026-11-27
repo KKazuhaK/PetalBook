@@ -1207,6 +1207,7 @@
      ]
     },
     "missingSince": "null",
+    "mixedScript": "boolean",
     "nextCheckAllowedAt": "null|string",
     "nextCheckAt": "null",
     "provider": "null",
@@ -2093,6 +2094,7 @@
      ]
     },
     "missingSince": "null",
+    "mixedScript": "boolean",
     "nextCheckAllowedAt": "null|string",
     "nextCheckAt": "null",
     "provider": "null",
@@ -4263,6 +4265,7 @@
    "via": "string"
   },
   "missingSince": "null",
+  "mixedScript": "boolean",
   "nextCheckAllowedAt": "string",
   "nextCheckAt": "null",
   "provider": "null",
@@ -5017,6 +5020,7 @@
   "lapsedAt": "null",
   "lastCheck": "null",
   "missingSince": "null",
+  "mixedScript": "boolean",
   "nextCheckAllowedAt": "null",
   "nextCheckAt": "null",
   "provider": "null",
@@ -5059,6 +5063,7 @@
    "via": "string"
   },
   "missingSince": "null",
+  "mixedScript": "boolean",
   "nextCheckAllowedAt": "string",
   "nextCheckAt": "null",
   "provider": "null",
@@ -5093,6 +5098,7 @@
    "via": "string"
   },
   "missingSince": "null",
+  "mixedScript": "boolean",
   "nextCheckAllowedAt": "string",
   "nextCheckAt": "null",
   "provider": "null",
