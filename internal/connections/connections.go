@@ -67,9 +67,10 @@ const (
 	// CodeInstallationTaken: the installation is connected to another owner on
 	// this server (a person or an organisation).
 	CodeInstallationTaken = "installation_taken"
-	// CodeNotOrgAdmin: the person is not an active owner of the GitHub
-	// organisation they asked to connect an installation of.
-	CodeNotOrgAdmin = "not_org_admin"
+	// CodeNotInstaller: the person is not the GitHub user who installed the
+	// organisation's installation (as GitHub's signed webhook said), or no
+	// webhook said who did.
+	CodeNotInstaller = "not_installer"
 )
 
 // SpaceScope is whose a space is, for the credentials it may sync with: a
@@ -105,6 +106,14 @@ type Scoped interface {
 type InstallHooks struct {
 	Allow   func(ctx context.Context, o store.InstallOwner) error
 	Claimed func(ctx context.Context, o store.InstallOwner, id int64, account string)
+	// NewInstalls (GitHub's webhook) says whether a new installation's event is
+	// taken now: refused while the site has GitHub connections off. An
+	// uninstall is always taken. nil: refused.
+	NewInstalls func(ctx context.Context) error
+	// Recheck (GitHub's webhook) says whether the person who made a pending
+	// claim may still claim for its owner when the event completes it. nil:
+	// refused.
+	Recheck func(ctx context.Context, o store.InstallOwner, userID string) error
 }
 
 type installHooksKey struct{}

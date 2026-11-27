@@ -91,13 +91,13 @@ func (s *Service) StartManifest(ctx context.Context, userID string, req connecti
 	m := githubapp.Manifest{
 		Name:               name,
 		URL:                s.opt.PublicURL,
-		HookAttributes:     githubapp.ManifestHook{URL: s.opt.PublicURL, Active: false},
+		HookAttributes:     githubapp.ManifestHook{URL: s.opt.PublicURL + WebhookPath, Active: true},
 		RedirectURL:        ret,
 		CallbackURLs:       []string{s.CallbackURL(), s.SigninCallbackURL()},
 		SetupURL:           ret,
 		Public:             true,
 		RequestOAuthOnInst: true,
-		DefaultPermissions: map[string]string{"administration": "write", "contents": "write", "metadata": "read", "members": "read"},
+		DefaultPermissions: map[string]string{"administration": "write", "contents": "write", "metadata": "read"},
 	}
 	return &connections.ManifestStart{URL: s.c.ManifestURL(org, state), Manifest: m, Binding: binding}, nil
 }

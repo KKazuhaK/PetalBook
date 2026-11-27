@@ -164,7 +164,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   connection_missing: 'This connection no longer exists.',
   installation_gone: 'The app has been uninstalled from that account.',
   installation_taken: 'That GitHub installation is already connected to another organisation or person on this server.',
-  not_org_admin: 'Only an owner of the GitHub organisation can connect its installation.',
+  not_installer: 'Only the person who installed the App on the GitHub organisation can connect its installation.',
 
   // The daily text.
   bad_language: 'That is not a valid language tag.',

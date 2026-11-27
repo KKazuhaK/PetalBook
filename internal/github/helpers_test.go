@@ -71,7 +71,7 @@ func newHarness(t *testing.T, st *store.Store) *harness {
 func (h *harness) configure() *github.AppView {
 	h.t.Helper()
 	id := h.f.ClientID
-	v, err := h.svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &id, ClientSecret: h.f.ClientSecret})
+	v, err := h.svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &id, ClientSecret: h.f.ClientSecret, WebhookSecret: h.f.WebhookSecret})
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -172,6 +172,15 @@ func allowAll(c context.Context) context.Context {
 	return connections.WithInstallHooks(c, connections.InstallHooks{Allow: func(context.Context, store.InstallOwner) error { return nil }})
 }
 
+// receiving lends the hooks of GitHub's webhook: new installations are taken
+// (the switch on) and every claimer may still claim.
+func receiving(c context.Context) context.Context {
+	return connections.WithInstallHooks(c, connections.InstallHooks{
+		NewInstalls: func(context.Context) error { return nil },
+		Recheck:     func(context.Context, store.InstallOwner, string) error { return nil },
+	})
+}
+
 // installFor plays a browser of userID that installs the App for owner o
 // (account: the GitHub organisation named for a tenant): GitHub login installs
 // it on the account on, authorising during installation when authorize. It
@@ -184,8 +193,23 @@ func (h *harness) installFor(userID string, o store.InstallOwner, account, login
 		h.t.Fatal(err)
 	}
 	back, _ := url.Parse(h.f.InstallAppOn(u, login, on, h.svc.CallbackURL(), authorize))
+	h.deliver() // GitHub's event came before the browser, as it mostly does
 	to, _ := h.svc.CompleteAuthorization(hc, binding, userID, back.Query())
 	return to
+}
+
+// deliver hands the service the webhook events GitHub would have sent.
+func (h *harness) deliver() []*github.WebhookResult {
+	h.t.Helper()
+	var out []*github.WebhookResult
+	for _, e := range h.f.Events() {
+		r, err := h.svc.Webhook(receiving(ctx), e.Name, e.Signature, e.Body)
+		if err != nil {
+			h.t.Fatalf("a delivery was refused: %v", err)
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // installMine installs the App on the person's own GitHub account (login) and
@@ -198,11 +222,18 @@ func (h *harness) installMine(userID, login string) int64 {
 	return h.claimed(store.InstallOwner{UserID: userID}, login)
 }
 
-// installOrg has admin (GitHub login, a member of org) install the App on
+// installOrg has admin (GitHub login, an owner of org) install the App on
 // the organisation org for tenant; it answers the installation's id.
 func (h *harness) installOrg(admin, tenant, org, login string) int64 {
 	h.t.Helper()
-	h.f.MakeAdmin(org, login) // an owner of the organisation installs it
+	h.f.AddMember(org, login) // an owner of the organisation installs it
+	if id := h.f.InstallationOn(org); id != 0 {
+		// Installed before (the world's setup): by login, GitHub says.
+		e := h.f.InstallationEvent("created", id, login)
+		if _, err := h.svc.Webhook(receiving(ctx), e.Name, e.Signature, e.Body); err != nil {
+			h.t.Fatal(err)
+		}
+	}
 	if to := h.installFor(admin, store.InstallOwner{TenantID: tenant}, org, login, org, true); to != "/back" {
 		h.t.Fatalf("installing on %s: %s", org, to)
 	}

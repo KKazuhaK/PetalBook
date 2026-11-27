@@ -763,7 +763,7 @@ export interface CreateSpaceInput {
 
 // The settings of the server's one GitHub App as an administrator sees them: never a secret.
 export type AdminGitHub =
-  | { configured: false; callbackUrl: string; signinCallbackUrl?: string; provider?: AuthProvider }
+  | { configured: false; callbackUrl: string; signinCallbackUrl?: string; webhookUrl?: string; provider?: AuthProvider }
   | {
       configured: true
       // Where GitHub sends people who sign in with the App's client: the App's callback URLs list it too.
@@ -779,6 +779,10 @@ export type AdminGitHub =
       installUrl: string
       privateKey: { set: boolean; fingerprint: string }
       clientSecret: { set: boolean }
+      // The secret GitHub signs the App's webhook deliveries with: without it an organisation cannot connect its
+      // installation. webhookUrl is where GitHub sends them ("" without the server's public address).
+      webhookSecret: { set: boolean }
+      webhookUrl: string
       callbackUrl: string
       permissions: Record<string, string>
       // Of administration, contents and metadata: what the App lacks. A warning only.
@@ -820,6 +824,21 @@ export interface GitHubInstallation {
   // The installation's settings on GitHub: its repositories are chosen there, and it is uninstalled there.
   manageUrl: string
 }
+// An organisation's claim of an installation that waits for GitHub's signed event to say who installed it (error
+// ""), or that failed when it came (not_installer, installation_taken), until it expires (10 minutes).
+export interface GitHubPendingClaim {
+  id: number
+  account: string
+  claimedBy: string
+  started: string
+  expires: string
+  error: string
+}
+// The owner's installations, and their claims still waiting for GitHub.
+export interface GitHubInstallationList {
+  items: GitHubInstallation[]
+  pending: GitHubPendingClaim[]
+}
 // The spaces that sync through an installation (at most 200 by name), and how many there are in all.
 export interface GitHubInstallationSpaces {
   items: { id: string; name: string }[]
@@ -834,6 +853,7 @@ export interface PutAdminGitHubInput {
   // "" removes the client id and the secret.
   clientId?: string
   clientSecret?: string
+  webhookSecret?: string
 }
 
 // A refusal of the daily-text endpoints says why with a stable code in `error`, next to `message`, and the
@@ -928,7 +948,7 @@ export type ErrorCode =
   | 'provider_refused'
   | 'repo_not_in_installation'
   | 'installation_taken'
-  | 'not_org_admin'
+  | 'not_installer'
   | 'push_failed'
   | 'key_invalid'
   | 'app_rejected'

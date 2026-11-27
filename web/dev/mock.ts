@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
 import { seedAdminDemo } from '../src/api/fixtures/data/adminDemo.ts'
 import { addNotification, addProblems, approveApp, withAuthorizationServer } from '../src/api/fixtures/data/area.ts'
-import { githubInstallations, githubProvider } from '../src/api/fixtures/data/connections.ts'
+import { githubInstallations, githubPendingClaims, githubProvider } from '../src/api/fixtures/data/connections.ts'
 import { sharedSpace, type FixtureData, type FixtureOptions } from '../src/api/fixtures/data/model.ts'
 import { INVITE_TOKEN, MOCK_ADMIN, SETUP_TOKEN } from '../src/api/fixtures/data/people.ts'
 import { addGroup, addPerson } from '../src/api/fixtures/data/scenes.ts'
@@ -67,6 +67,7 @@ function seedAccounts(d: FixtureData) {
   githubProvider(d, 'app')
   // The App installed on the administrator's own account, and on two GitHub organisations of an organisation.
   githubInstallations(d)
+  githubPendingClaims(d)
 
   const remote = process.env.MOCK_REMOTE
   if (remote) {

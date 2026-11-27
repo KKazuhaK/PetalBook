@@ -2118,6 +2118,7 @@ Every error of a connection has `provider` (the id) next to `error` and
 | `provider_in_use` | the provider cannot be changed or removed while spaces or people use it |
 | `provider_host_mismatch` | the GitHub App is on another host than the GitHub sign-in provider people linked their accounts on |
 | `account_in_use` | the platform account is connected to another person (any tenant) |
+| `not_installer` | (a callback's `connection_error`, or a pending claim's `error`) the claimer of an organisation's installation is not the GitHub user who installed it, as GitHub's signed webhook said, or no webhook said who did |
 
 ### Storage
 
@@ -2128,7 +2129,9 @@ one row of `providers` (id `github`, `signin` and `repos`; the App's record is
 secret are in `secrets`), a person's account at it one row of `linked_accounts`
 (tokens on the same row as the sign-in), its installations rows of
 `provider_installations`, each with its one owner here (`owner_user` or
-`owner_tenant`), and the reminders of empty repositories rows of
+`owner_tenant`), who installed each one (from the webhook) a row of
+`github_installers`, an organisation's claim that waits for the webhook a row
+of `github_pending_claims` (expires after 10 minutes), and the reminders of empty repositories rows of
 `repo_leftovers`.
 
 ### Audit
@@ -2136,9 +2139,11 @@ secret are in `secrets`), a person's account at it one row of `linked_accounts`
 `connection_provider_changed` (a provider configured, changed or removed:
 `provider`, `type`, secrets as `"changed"`), `account_connected` and
 `account_disconnected` (`provider`, `user`, `login`),
-`github_installation_connected` (`installation`, `account`) and
+`github_installation_connected` (`installation`, `account`; `via: "webhook"`
+when GitHub's event completed a pending claim, the claimer the actor) and
 `github_installation_disconnected` (`installation`, `spaces`: how many lost
-access), the last two in the owner's tenant (a person's, or the
+access; `by: "github"`, with no actor, when the App was uninstalled on GitHub),
+the last two in the owner's tenant (a person's, or the
 organisation's). `connection_provider_changed` is the server's own kind: a
 tenant administrator's `GET /api/admin/audit` does not list it.
 
@@ -2229,13 +2234,33 @@ administrator who installed it; any of its administrators manages it).
   4. it is on the account asked for: the person's own GitHub account (type
      `User`, the id of the token's user) or the organisation named at the start
      (type `Organization`): `wrong_account`; for an organisation, the claimer
-     must also be an active owner of it (`GET /user/memberships/orgs/{org}`
-     with their token answers `state: active`, `role: admin`): GitHub lists an
-     organisation's installation for any member who reaches one of its
-     repositories, so a plain member gets `not_org_admin`. GitHub answers that
-     only when the App has the organisation permission Members: read; without
-     it the claim is refused with `app_missing_permission` (an administrator
-     adds the permission to the App and the installation accepts it);
+     must also be the GitHub user who installed it: the id of their token's
+     user equals the `sender` of GitHub's signed `installation` event
+     (`created`; see "Webhook" below). GitHub lists an organisation's
+     installation for any member who reaches one of its repositories, but only
+     the organisation's owners install an App on it (a member's request needs
+     an owner's approval, and the approver is then the sender), so this proves
+     an owner's act without the organisation's member list. Anyone else gets
+     `not_installer` ("the person who installed the App on GitHub connects
+     it"), and so does a claim of an installation no event said the installer
+     of. GitHub's redirect may come before its event: when no event has come
+     and GitHub says the installation was just made (`setup_action=install`),
+     the claim **waits** (a pending claim: the attempt, the claimer, their
+     GitHub id and the owner, kept 10 minutes like an attempt) and the browser
+     goes to `return?connection_pending=<account>`; the event completes it
+     when it comes, if its sender is the claimer (else the pending claim
+     shows `not_installer`) and the claimer may still claim for that owner,
+     asked again then: an active account, GitHub connections on for the
+     owner's tenant (the site's switch and the tenant's rule) and, for an
+     organisation, `tenant.github.manage` in that tenant (else it shows
+     `forbidden`). The
+     server never polls GitHub for it. Any other
+     `setup_action` with no event is `not_installer` at once (or
+     `installation_taken` when another owner here has it). An organisation's
+     claim needs the App to ask for Repository administration (only then do
+     an organisation's owners alone install it there; GitHub lets a member
+     install an App that does not): without it, on the callback and when the
+     event completes a claim, `app_missing_permission`;
   5. no other person or organisation on this server has it (one statement; of
      two at once one wins): `installation_taken`, "already connected to another
      organisation or person on this server".
@@ -2247,8 +2272,14 @@ administrator who installed it; any of its administrators manages it).
   owners must approve first) is `requested`.
 - `GET …/installations` (`/api/account/github` or `/api/admin/github`):
   `{"items": [{"id", "account", "accountType", "owner": {"kind": "person" |
-  "organization", "id"}, "claimedBy", "connected", "spaces", "manageUrl"}]}`,
-  from the database (at most 100). `manageUrl` is the installation's settings
+  "organization", "id"}, "claimedBy", "connected", "spaces", "manageUrl"}],
+  "pending": [{"id", "account", "claimedBy", "started", "expires", "error"}]}`,
+  from the database (at most 100 items and 20 pending). `pending` are the
+  owner's claims waiting for GitHub's event (`error: ""`), or that failed when
+  it came (`not_installer`, `forbidden`, `installation_taken`), until they
+  expire. A client shows them as "connecting" and polls nothing: it reads the
+  list again a few times right after GitHub sends the browser back (at 1, 2
+  and 4 seconds), when the window gets the focus, and on "Refresh". `manageUrl` is the installation's settings
   on GitHub, where its repositories are chosen and where it is uninstalled.
 - `GET …/installations/{id}/repos[?cursor=]`: one page of the repositories it
   reaches, with its own token. `GET …/installations/{id}/spaces`:
@@ -2266,9 +2297,40 @@ administrator who installed it; any of its administrators manages it).
   began, whichever is later, so a space whose grace
   has already run out is `Overdue` (read only) at once, and the others keep what
   is left of theirs. Connecting the same installation again by the same owner
-  restores them. The spaces listed, counted and marked are the owner's only: a
+  restores them; for an organisation that needs the App uninstalled on GitHub
+  and installed again from here, since who installed it proved one claim (the
+  record is used up when the claim succeeds). The spaces listed, counted and marked are the owner's only: a
   space of an earlier owner that still names the installation is not.
 - Another owner's installation is as good as not there: `404 not_found`.
+
+### Webhook
+
+`POST /api/github/webhook` is where GitHub sends the App's events (the App's
+webhook URL, `webhookUrl` in `GET /api/admin/providers/github`; the manifest
+turns it on). It is public (no session, no token) and answers GitHub only:
+
+- The body is capped at 2 MiB (`413 too_large`) and read whole; its
+  `X-Hub-Signature-256` (`sha256=` and the hex HMAC-SHA256 of the body with the
+  App's webhook secret) is compared in constant time **before anything of the
+  body is parsed**: a missing or wrong signature is `401 unauthenticated` and
+  records nothing. No App or no webhook secret kept: `409
+  provider_not_configured`. While the site's own `features.githubConnect` is
+  off, a new installation's event (`created`, and so the claims it would
+  complete) is refused with `403 feature_off`; an uninstall (`deleted`) is
+  always taken: recording one is always safe.
+- `X-GitHub-Event: installation`, `action: created`: who installed it
+  (`installation.id`, `installation.account`, `sender`) is recorded, the same
+  again when GitHub redelivers, and the pending claims of that installation
+  are completed (each by one request: the event, or a callback that saw it;
+  a second callback of the same person does not reset a claim being
+  completed). The record proves one claim: it is removed when a claim
+  succeeds, and an event for an installation connected here records nothing.
+  `action: deleted`: the installation is disconnected from whoever has it here,
+  as `DELETE …/installations/{id}` does (its spaces show `access_lost`), and
+  who installed it, and the claims waiting for it, are forgotten.
+- Any other event or action: `204`, nothing done. Every handled one: `204`.
+  A delivery is a few statements on the state database; GitHub is not asked
+  anything.
 
 ### Tokens, and how they reach Git
 
@@ -19844,8 +19906,9 @@ The server's one GitHub App (see "The GitHub provider"). It is in the state data
 in a flag or a file, and a change takes effect at once, without a restart. The
 private key and the client secret are sealed with the server's key
 (`DATA/secret.key`, or `PETALBOOK_SECRET_KEY`), are **never returned**, and
-never reach a log or an error message. There is no webhook in 2.7 (the server
-finds out about an uninstalled App when GitHub refuses a token), and the
+never reach a log or an error message. The App's webhook (see "The GitHub
+provider", "Webhook") tells the server who installed each installation, and
+when one is uninstalled; its secret is sealed like the others. The
 administrator either makes the App on GitHub from here in one click (the
 manifest flow below) or makes it by hand and copies its details here.
 
@@ -19856,7 +19919,10 @@ without it, spaces can only be connected to repositories that exist).
 that installing on one's own account and authorising it are one step, and the
 App must be installable on **any account** (public), or a person cannot install
 it on their own account: `anyAccount` below says which it is. Its callback URL
-is the `callbackUrl` below.
+is the `callbackUrl` below. Its webhook is active, at `webhookUrl` below, with a
+secret entered here too (`webhookSecret`), and subscribes to nothing more than
+GitHub sends every App (the installation events); without it an organisation's
+installation cannot be connected.
 
 #### `GET /api/admin/providers/github`
 
@@ -19866,27 +19932,21 @@ is the `callbackUrl` below.
  "htmlUrl": "https://github.com/apps/petalbook-notes",
  "installUrl": "https://github.com/apps/petalbook-notes/installations/new",
  "privateKey": {"set": true, "fingerprint": "SHA256:…"}, "clientSecret": {"set": true},
+ "webhookSecret": {"set": true}, "webhookUrl": "https://notes.example.com/api/github/webhook",
  "callbackUrl": "https://notes.example.com/api/account/links/github/callback",
- "permissions": {"administration": "write", "contents": "write", "members": "read", "metadata": "read"},
+ "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
  "missing": [], "gaps": [], "anyAccount": true,
  "userAuthorization": true, "checked": "2026-11-23T08:30:00Z",
  "spaces": 4, "authorizations": 3}
 ```
 
-Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
+Before anything is saved: `{"configured": false, "callbackUrl": "…", "webhookUrl": "…"}`.
 
 - `slug`, `name`, `owner` and `permissions` are what GitHub said about the App
   (`GET /app`) when it was last saved, at `checked`. `htmlUrl` is the App's
   public page; `installUrl` is where an organisation or a user installs it.
 - `privateKey.fingerprint` is the SHA-256 fingerprint of the public half, to
   compare with what GitHub shows for the App's keys.
-- The App needs the organisation permission **Members: read** (since
-  2026-11-26): GitHub answers `GET /user/memberships/orgs/{org}`, which an
-  organisation's claim of an installation reads, only with it. An App made
-  before then adds it in its settings on GitHub, and each installation accepts
-  the change (an organisation's claim is refused with `app_missing_permission`
-  until then); a re-check shows it in `missing` and `gaps`. There is no
-  migration: pre-release.
 - `missing` lists the permissions above that the App lacks (`"administration"`,
   `"contents"`, `"metadata"`). It is a warning: saving is not refused.
 - `gaps` lists, from the last check, the installations that lack one of them
@@ -19903,8 +19963,9 @@ Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
   saved, by `POST /api/admin/providers/github/check`, and, at most once a minute, when a
   token GitHub refuses (for a permission the App or an installation lacks)
   shows the stored view is old. A plain `GET` never asks GitHub.
-- `callbackUrl` is `<public-url>/api/account/links/github/callback`, `""`
-  without `--public-url`. `userAuthorization` is as in `GET /api/account/links`.
+- `callbackUrl` is `<public-url>/api/account/links/github/callback` and
+  `webhookUrl` `<public-url>/api/github/webhook`, `""` without
+  `--public-url`. `webhookSecret.set` says whether the webhook's secret is kept. `userAuthorization` is as in `GET /api/account/links`.
 - `spaces` counts the spaces with a `github` credential; `authorizations` the
   users connected.
 
@@ -19912,13 +19973,15 @@ Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
 
 ```json
 {"appId": "1234567", "privateKey": "-----BEGIN RSA PRIVATE KEY-----\n…",
- "clientId": "Iv23liAbCdEfGhIjKlMn", "clientSecret": "…"}
+ "clientId": "Iv23liAbCdEfGhIjKlMn", "clientSecret": "…", "webhookSecret": "…"}
 ```
 
-The first save needs `appId` and `privateKey`. Later, a `privateKey` or a
-`clientSecret` that is left out keeps the one stored. `clientId` and
+The first save needs `appId` and `privateKey`. Later, a `privateKey`, a
+`clientSecret` or a `webhookSecret` that is left out keeps the one stored (the
+webhook secret is not checked with GitHub: a wrong one makes every delivery
+`401`). `clientId` and
 `clientSecret` go together; without them users cannot connect their GitHub
-accounts, and only installations shared with a tenant can be used. `"clientId": ""` removes
+accounts or install the App here. `"clientId": ""` removes
 both (`409 provider_in_use` while a user is connected; spaces that sync
 through an installation do not stand in the way).
 
@@ -19972,19 +20035,19 @@ unique, so the administrator may need another). `200`:
 ```json
 {"url": "https://github.com/organizations/kazuhahub/settings/apps/new?state=…",
  "manifest": {"name": "PetalBook Notes", "url": "https://notes.example.com",
-   "hook_attributes": {"url": "https://notes.example.com", "active": false},
+   "hook_attributes": {"url": "https://notes.example.com/api/github/webhook", "active": true},
    "redirect_url": "https://notes.example.com/api/providers/github/manifest/callback",
    "callback_urls": ["https://notes.example.com/api/account/links/github/callback"],
    "setup_url": "https://notes.example.com/api/providers/github/manifest/callback",
    "public": true, "request_oauth_on_install": true,
-   "default_permissions": {"administration": "write", "contents": "write", "metadata": "read", "members": "read"}}}
+   "default_permissions": {"administration": "write", "contents": "write", "metadata": "read"}}}
 ```
 
 and a short-lived cookie that ties the attempt to this browser. The client
 posts the manifest to `url` from the administrator's browser, as a form with one
 field, `manifest`, holding the JSON (`/settings/apps/new` without
 `organization`). The App is public ("Any account"), asks for user authorisation
-during installation, and has no webhook.
+during installation, and has its webhook on, at `/api/github/webhook`.
 
 The `state` in `url` is 32 random bytes, held in memory for ten minutes, used
 once, bound to the cookie and to the signed-in site administrator. `409
@@ -20003,7 +20066,7 @@ The server trades the code (`POST /app-manifests/{code}/conversions`, which need
 no other credential and works once) for the App's id, slug, client id, client
 secret, private key and webhook secret, then saves them as `PUT
 /api/admin/providers/github` does (checked with GitHub, secrets sealed with the server's
-key; the webhook secret is only kept, sealed, since there is no webhook), and
+key; the webhook secret too, which signs the webhook's deliveries), and
 sends the browser to `/admin/storage/connections?connection_app=created`. A failure goes to
 `/admin/storage/connections?connection_app_error=<code>`: `expired` (no such attempt, used, older
 than ten minutes, another browser or user), `provider_error` (GitHub did not turn

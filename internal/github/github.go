@@ -210,8 +210,8 @@ func (s *Service) changed(userID string) {
 // appRecord is what is stored of the App in the config of the provider row
 // (store.GetGitHubApp). Its secrets
 // are not in it: the private key, the client secret and the webhook secret
-// (which GitHub gives with an App made from a manifest; no webhook is used, so
-// it is only kept) are secrets of the site (internal/secrets). The fingerprint
+// (which GitHub gives with an App made from a manifest, and signs its webhook
+// deliveries with) are secrets of the site (internal/secrets). The fingerprint
 // of the key says which key the record was made with.
 type appRecord struct {
 	AppID       string            `json:"appId"`
@@ -245,6 +245,9 @@ type appState struct {
 	app    *githubapp.App
 	key    *rsa.PrivateKey
 	secret string
+	// hook is the webhook secret GitHub signs its deliveries with ("" when
+	// none is kept: no delivery is believed).
+	hook string
 }
 
 // state is the App as it is saved, or nil when there is none.
@@ -308,6 +311,11 @@ func (s *Service) build(ctx context.Context, raw string) (*appState, error) {
 		if ok {
 			st.secret = v
 		}
+	}
+	if v, ok, err := s.vault.Open(ctx, q, "", secrets.GitHubWebhookSecret); err != nil {
+		return nil, fmt.Errorf("the GitHub webhook secret: %w", err)
+	} else if ok {
+		st.hook = v
 	}
 	return st, nil
 }

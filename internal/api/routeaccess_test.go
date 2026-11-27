@@ -80,6 +80,7 @@ var routeAccessAdded = map[string][4]string{
 	"POST /api/admin/providers/{id}/manifest/retry":     {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 	"GET /api/providers/github/manifest/callback":       {"ok", "ok", "ok", "403 token_scope"},
 	"GET /api/account/links/{provider}/callback":        {"ok", "ok", "ok", "403 token_scope"},
+	"POST /api/github/webhook":                          {"ok", "ok", "ok", "403 token_scope"},
 	"GET /api/account/links/{provider}/owners":          {"ok", "ok", "ok", "403 token_scope"},
 	"GET /api/account/links/{provider}/repos":           {"ok", "ok", "ok", "403 token_scope"},
 	"DELETE /api/account/links/{id}/repos":              {"ok", "ok", "ok", "403 token_scope"},

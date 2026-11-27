@@ -112,7 +112,7 @@ func newGHEnv(t *testing.T, st *store.Store, mod ...func(*Options)) *ghEnv {
 	t.Cleanup(func() { e.m.Close() })
 	svc.OnChange(e.m.ConnectionFixed)
 	id := f.ClientID
-	if _, err := svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: f.KeyPEM(), ClientID: &id, ClientSecret: f.ClientSecret}); err != nil {
+	if _, err := svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: f.KeyPEM(), ClientID: &id, ClientSecret: f.ClientSecret, WebhookSecret: f.WebhookSecret}); err != nil {
 		t.Fatal(err)
 	}
 	e.user = addUser(t, st, "U1", "kazuha")
@@ -634,7 +634,8 @@ func TestConnectingAnotherTenantsSpaceChecksTheSpacesTenant(t *testing.T) {
 // App's callback.
 func (e *ghEnv) claimOrg(tenant, org string) int64 {
 	e.t.Helper()
-	e.f.MakeAdmin(org, "tang") // an owner of the organisation installs it
+	e.f.AddMember(org, "tang") // an owner of the organisation installs it
+	before := e.f.InstallationOn(org)
 	hc := connections.WithInstallHooks(ctx, connections.InstallHooks{Allow: func(context.Context, store.InstallOwner) error { return nil }})
 	o := store.InstallOwner{TenantID: tenant}
 	u, binding, err := e.svc.StartInstallFor(hc, e.user.ID, o, org, "/back")
@@ -642,6 +643,19 @@ func (e *ghEnv) claimOrg(tenant, org string) int64 {
 		e.t.Fatal(err)
 	}
 	back, _ := url.Parse(e.f.InstallAppOn(u, "tang", org, e.svc.CallbackURL(), true))
+	events := e.f.Events()
+	if before != 0 {
+		events = append(events, e.f.InstallationEvent("created", before, "tang")) // installed by tang before
+	}
+	for _, ev := range events {
+		wh := connections.WithInstallHooks(ctx, connections.InstallHooks{
+			NewInstalls: func(context.Context) error { return nil },
+			Recheck:     func(context.Context, store.InstallOwner, string) error { return nil },
+		})
+		if _, err := e.svc.Webhook(wh, ev.Name, ev.Signature, ev.Body); err != nil {
+			e.t.Fatal(err)
+		}
+	}
 	if to, _ := e.svc.CompleteAuthorization(hc, binding, e.user.ID, back.Query()); to != "/back" {
 		e.t.Fatalf("installing on %s: %s", org, to)
 	}

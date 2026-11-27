@@ -13,12 +13,14 @@ package githubapptest
 
 import (
 	"crypto"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -112,24 +114,17 @@ type Account struct {
 	NoCreate bool
 	// NoPrivate: private repositories cannot be created.
 	NoPrivate bool
-	// Admins: logins of the organisation's owners (GET /user/memberships/orgs/{org}
-	// answers role "admin" for them, "member" for the other members).
-	Admins map[string]bool
 }
 
-// MakeAdmin makes login a member and an owner of the organisation org.
-func (f *Fake) MakeAdmin(org, login string) {
+// AddMember makes login a member of the organisation org.
+func (f *Fake) AddMember(org, login string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	a := f.accounts[strings.ToLower(org)]
 	if a.Members == nil {
 		a.Members = map[string]bool{}
 	}
-	if a.Admins == nil {
-		a.Admins = map[string]bool{}
-	}
 	a.Members[strings.ToLower(login)] = true
-	a.Admins[strings.ToLower(login)] = true
 }
 
 // Install is one installation of the App.
@@ -250,6 +245,9 @@ type Fake struct {
 	// BreakRefreshReply makes the answer to a renewal one the client cannot use
 	// (after the old refresh token was spent), to test that a pair is kept.
 	BreakRefreshReply bool
+	// WebhookSecret signs the webhook events the fake delivers; an App made
+	// from a manifest is given it.
+	WebhookSecret string
 
 	mu       sync.Mutex
 	nextID   int64
@@ -262,6 +260,7 @@ type Fake struct {
 	codes    map[string]*code
 	mcodes   map[string]*manifestCode
 	manifest []map[string]any // every manifest posted, newest last
+	events   []Event          // webhook events not delivered yet, oldest first
 	limitTo  time.Time
 	reqs     []Request
 	gitRoot  string
@@ -279,8 +278,9 @@ func New(t testing.TB, clock Clocker) *Fake {
 	yes := true
 	f := &Fake{t: t, Clock: clock, Public: &yes, AppID: 424242, Slug: "petalbook-notes", Name: "PetalBook Notes",
 		ClientID: "Iv23liFakeClientId", ClientSecret: "fake-client-secret-0123456789", Key: sharedKey(), nextID: 1000,
-		AppPerms: map[string]string{"administration": "write", "contents": "write", "members": "read", "metadata": "read"},
-		accounts: map[string]*Account{}, installs: map[int64]*Install{}, repos: map[string]*Repo{},
+		AppPerms:      map[string]string{"administration": "write", "contents": "write", "metadata": "read"},
+		WebhookSecret: "fake-webhook-secret-0123456789",
+		accounts:      map[string]*Account{}, installs: map[int64]*Install{}, repos: map[string]*Repo{},
 		inst: map[string]*instToken{}, users: map[string]*userToken{}, refresh: map[string]*refreshToken{}, codes: map[string]*code{}, mcodes: map[string]*manifestCode{},
 		gitRoot: t.TempDir()}
 	if gitBin, err := gitstore.Path(); err == nil {
@@ -467,6 +467,8 @@ func (f *Fake) InstallAppOn(installURL, login, account, callback string, authori
 		in := &Install{ID: f.id(), Account: account, Selection: "all", Repos: map[int64]bool{}}
 		f.installs[in.ID] = in
 		inst, action = in.ID, "install"
+		// GitHub tells the App, on its own time: the event waits for Events.
+		f.events = append(f.events, f.installationEventLocked("created", in, login))
 	}
 	c := ""
 	if authorize {
@@ -541,7 +543,7 @@ func (f *Fake) convertManifest(w http.ResponseWriter, c string) {
 		name = f.Name
 	}
 	writeJSON(w, 201, map[string]any{"id": f.AppID, "slug": f.Slug, "name": name, "client_id": f.ClientID,
-		"client_secret": f.ClientSecret, "webhook_secret": "fake-webhook-secret-0123456789", "pem": f.KeyPEM(),
+		"client_secret": f.ClientSecret, "webhook_secret": f.WebhookSecret, "pem": f.KeyPEM(),
 		"html_url": "https://github.com/apps/" + f.Slug, "owner": map[string]any{"login": "kazuhahub", "id": 1, "type": "Organization"},
 		"permissions": f.AppPerms})
 }
@@ -1000,30 +1002,6 @@ func (f *Fake) serveAPI(w http.ResponseWriter, r *http.Request) {
 		a := f.accounts[strings.ToLower(p.login)]
 		f.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"id": a.ID, "login": a.Login, "name": a.Name})
-	case r.Method == "GET" && strings.HasPrefix(path, "/user/memberships/orgs/") && p.kind == "user":
-		org := strings.ToLower(strings.TrimPrefix(path, "/user/memberships/orgs/"))
-		f.mu.Lock()
-		// GitHub answers this to an App's user token only when the App has the
-		// organisation's Members permission.
-		if f.AppPerms["members"] == "" {
-			f.mu.Unlock()
-			apiError(w, 403, "Resource not accessible by integration")
-			return
-		}
-		a := f.accounts[org]
-		me := strings.ToLower(p.login)
-		member := a != nil && a.Org && a.Members[me]
-		admin := member && a.Admins[me]
-		f.mu.Unlock()
-		if !member {
-			apiError(w, 404, "Not Found")
-			return
-		}
-		role := "member"
-		if admin {
-			role = "admin"
-		}
-		writeJSON(w, 200, map[string]any{"state": "active", "role": role, "organization": map[string]any{"login": a.Login, "id": a.ID}})
 	case r.Method == "GET" && path == "/user/emails" && p.kind == "user":
 		f.mu.Lock()
 		a := f.accounts[strings.ToLower(p.login)]
@@ -1520,4 +1498,92 @@ func (f *Fake) serveGit(w http.ResponseWriter, r *http.Request) {
 	r2 := r.Clone(r.Context())
 	r2.URL.Path = "/" + repoPath + r.URL.Path[idx:]
 	f.git.ServeHTTP(w, r2)
+}
+
+// --- webhook events -----------------------------------------------------------------
+
+// Event is one webhook delivery: its X-GitHub-Event, its body and its
+// X-Hub-Signature-256.
+type Event struct {
+	Name      string
+	Body      []byte
+	Signature string
+}
+
+// Forged is the event signed with another secret than the App's.
+func (e Event) Forged() Event {
+	e.Signature = sign("not-the-webhook-secret", e.Body)
+	return e
+}
+
+// Unsigned is the event without a signature.
+func (e Event) Unsigned() Event {
+	e.Signature = ""
+	return e
+}
+
+func sign(secret string, body []byte) string {
+	m := hmac.New(sha256.New, []byte(secret))
+	m.Write(body)
+	return "sha256=" + hex.EncodeToString(m.Sum(nil))
+}
+
+func (f *Fake) installationEventLocked(action string, in *Install, sender string) Event {
+	s := f.accounts[strings.ToLower(sender)]
+	var sid int64
+	if s != nil {
+		sid = s.ID
+	}
+	repos := []map[string]any{}
+	for _, r := range f.repos {
+		if f.reaches(in, r) {
+			repos = append(repos, map[string]any{"id": r.ID, "name": r.Name, "full_name": r.Owner + "/" + r.Name, "private": r.Private})
+		}
+	}
+	body, _ := json.Marshal(map[string]any{"action": action, "installation": f.installJSON(in), "repositories": repos,
+		"sender": map[string]any{"id": sid, "login": sender, "type": "User"}})
+	return Event{Name: "installation", Body: body, Signature: sign(f.WebhookSecret, body)}
+}
+
+// InstallationEvent is the event GitHub sends when sender does action
+// ("created", "deleted", ...) to the installation, signed with WebhookSecret.
+// It is not queued.
+func (f *Fake) InstallationEvent(action string, id int64, sender string) Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	in := f.installs[id]
+	if in == nil {
+		f.t.Fatalf("no installation %d", id)
+	}
+	return f.installationEventLocked(action, in, sender)
+}
+
+// Uninstall removes the App from the installation, as sender on GitHub: the
+// deleted event waits for Events.
+func (f *Fake) Uninstall(id int64, sender string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	in := f.installs[id]
+	in.Deleted = true
+	f.events = append(f.events, f.installationEventLocked("deleted", in, sender))
+}
+
+// InstallationOn is the App's installation on an account (0: none).
+func (f *Fake) InstallationOn(account string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if in := f.installOfLocked(account); in != nil {
+		return in.ID
+	}
+	return 0
+}
+
+// Events takes the webhook events GitHub would have sent since the last call,
+// oldest first; the test delivers them when it chooses.
+func (f *Fake) Events() []Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.events
+	f.events = nil
+	return out
 }

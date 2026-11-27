@@ -635,7 +635,8 @@
   "message": "string"
  },
  "GET /api/account/github/installations 200": {
-  "items": []
+  "items": [],
+  "pending": []
  },
  "GET /api/account/grants 404": {
   "error": "string",

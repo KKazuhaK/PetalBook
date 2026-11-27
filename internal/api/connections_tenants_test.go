@@ -19,7 +19,7 @@ func ghTenFx(t *testing.T, a *acc) *tenFx {
 	t.Helper()
 	f := newTenFx(t, a)
 	f.root.do("PUT", "/api/admin/providers/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
-		"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
+		"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret, "webhookSecret": a.fake.WebhookSecret}).want(t, 200, "")
 	a.fake.AddUser("mem-b-gh")
 	a.fake.AddOrg("acme-gh", "mem-b-gh")
 	a.fake.Install("acme-gh", "all")
@@ -46,7 +46,7 @@ func TestASpaceWithARepositoryIsItsCreatorsTenantsAndCounts(t *testing.T) {
 		ctx := context.Background()
 		// B's own installation on acme-gh, which its administrator connects.
 		a.fake.AddUser("adm-b-gh")
-		a.fake.MakeAdmin("acme-gh", "adm-b-gh")
+		a.fake.AddMember("acme-gh", "adm-b-gh")
 		installGitHub(t, a, f.admB, "/api/admin/github/install", map[string]any{"account": "acme-gh"}, "adm-b-gh", "acme-gh")
 		before := f.memB.do("GET", "/api/account/usage", nil).want(t, 200, "")
 		r := f.memB.do("POST", "/api/spaces", map[string]any{"name": "Acme notes", "storage": ghSync(map[string]any{"owner": "acme-gh", "name": "notes"})}).want(t, 201, "")

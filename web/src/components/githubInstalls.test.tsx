@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act } from 'react'
 import { Route, Routes } from 'react-router'
-import { githubApp, githubInstallations, githubProvider } from '@/api/fixtures/data/connections'
+import {
+  githubApp,
+  githubInstallations,
+  githubPendingClaims,
+  githubProvider,
+  installation,
+} from '@/api/fixtures/data/connections'
 import { tc } from '@/i18n/console'
 import { tg } from '@/i18n/github'
 import { AdminGate } from '@/components/admin/AdminGate'
@@ -197,5 +204,50 @@ describe("an organisation's GitHub installations, in its console", () => {
   it('shows what GitHub sent back when it was not connected', async () => {
     await openOrg((id) => `/admin/t/${id}/storage/github?connection_error=installation_taken`)
     await settle(() => text().includes(tg.installs.returned.installation_taken), 'the explanation')
+  })
+
+  it('says only the person who installed it on GitHub connects it', async () => {
+    await openOrg((id) => `/admin/t/${id}/storage/github?connection_error=not_installer`)
+    await settle(() => text().includes(tg.installs.returned.not_installer), 'the explanation')
+  })
+
+  it('shows a claim waiting for GitHub as connecting, and one GitHub refused with why', async () => {
+    await openOrg((id) => `/admin/t/${id}/storage/github?connection_pending=acme-labs`, githubPendingClaims)
+    const pending = (id: number) => document.querySelector<HTMLElement>(`[data-pending="${id}"]`)
+    await settle(() => pending(5003) !== null, 'the waiting claim')
+    expect(pending(5003)!.textContent).toContain('acme-labs')
+    expect(pending(5003)!.textContent).toContain(tg.installs.pending)
+    expect(pending(5003)!.querySelector('[role="status"]')).not.toBeNull()
+    expect(pending(5004)!.textContent).toContain(tg.installs.pendingFailed)
+    expect(pending(5004)!.textContent).toContain(tg.installs.returned.not_installer)
+    // The connected ones are listed below as before.
+    expect(row(5001)).not.toBeNull()
+  })
+
+  const listReads = () => m!.requests.filter((r) => r.method === 'GET' && r.url === '/api/admin/github/installations')
+  // GitHub's event connects the waiting claim on the server.
+  const eventCame = () => {
+    const c = m!.fx.data.area.connections
+    c.pendingClaims = c.pendingClaims.filter((p) => p.id !== 5003)
+    c.installations.push(installation(5003, 'acme-labs'))
+  }
+
+  it('re-reads the list a few times after GitHub sends the browser back, so the claim shows connected', async () => {
+    await openOrg((id) => `/admin/t/${id}/storage/github?connection_pending=acme-labs`, githubPendingClaims)
+    await settle(() => document.querySelector('[data-pending="5003"]') !== null, 'the waiting claim')
+    eventCame()
+    await settle(() => row(5003) !== null, 'the claim connected, without a reload')
+    expect(document.querySelector('[data-pending="5003"]')).toBeNull()
+  })
+
+  it('does not poll while a claim waits: it re-reads on request', async () => {
+    await openOrg((id) => `/admin/t/${id}/storage/github`, githubPendingClaims)
+    await settle(() => document.querySelector('[data-pending="5003"]') !== null, 'the waiting claim')
+    await act(() => new Promise((r) => setTimeout(r, 1500)))
+    expect(listReads()).toHaveLength(1)
+    eventCame()
+    await click(button(tg.installs.refresh, document.querySelector('[data-pending="5003"]')!))
+    await settle(() => row(5003) !== null, 'the claim connected')
+    expect(listReads()).toHaveLength(2)
   })
 })

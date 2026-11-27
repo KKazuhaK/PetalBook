@@ -156,6 +156,18 @@ type installationResp struct {
 	ManageURL string `json:"manageUrl"`
 }
 
+// pendingClaimResp is an organisation's claim that waits for GitHub's webhook
+// to say who installed the installation (error ""), or that failed when it
+// came (error not_installer or installation_taken), until it expires.
+type pendingClaimResp struct {
+	ID        int64  `json:"id"`
+	Account   string `json:"account"`
+	ClaimedBy string `json:"claimedBy"`
+	Started   string `json:"started"`
+	Expires   string `json:"expires"`
+	Error     string `json:"error"`
+}
+
 func (s *server) githubList(c *call, o store.InstallOwner) {
 	svc, ok := s.githubService(c)
 	if !ok {
@@ -177,9 +189,19 @@ func (s *server) githubList(c *call, o store.InstallOwner) {
 		}
 		out[i] = r
 	}
+	pend, err := svc.PendingClaims(c.r.Context(), o)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	pending := make([]pendingClaimResp, len(pend))
+	for i, p := range pend {
+		pending[i] = pendingClaimResp(p)
+	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Items []installationResp `json:"items"`
-	}{out})
+		Items   []installationResp `json:"items"`
+		Pending []pendingClaimResp `json:"pending"`
+	}{out, pending})
 }
 
 func (s *server) githubListMine(c *call) { s.githubList(c, store.InstallOwner{UserID: c.user().ID}) }

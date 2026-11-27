@@ -6,7 +6,7 @@ import { enc, request } from './client'
 import type {
   ConnectionRepo,
   CursorPage,
-  GitHubInstallation,
+  GitHubInstallationList,
   GitHubInstallationsOf,
   GitHubInstallationSpaces,
 } from './types'
@@ -22,7 +22,7 @@ export const githubInstallsApi = {
       body: { return: ret, ...(account ? { account } : {}) },
     }),
   list: (of: GitHubInstallationsOf, signal?: AbortSignal) =>
-    request<{ items: GitHubInstallation[] }>(`${base(of)}/installations`, { signal }),
+    request<GitHubInstallationList>(`${base(of)}/installations`, { signal }),
   spaces: (of: GitHubInstallationsOf, id: number, signal?: AbortSignal) =>
     request<GitHubInstallationSpaces>(`${base(of)}/installations/${id}/spaces`, { signal }),
   repos: (of: GitHubInstallationsOf, id: number, cursor?: string, signal?: AbortSignal) =>
@@ -36,12 +36,18 @@ export const githubInstallsApi = {
 
 export const githubInstallsKey = (of: GitHubInstallationsOf) => ['github', 'installations', of] as const
 
+// Nothing polls (the owner's rule): a claim waiting for GitHub's event is read again a few times right after GitHub
+// sends the browser back (PENDING_RETRY_MS), when the window gets the focus again, and on request.
+export const PENDING_RETRY_MS = [1_000, 2_000, 4_000] as const
+
 export function useGitHubInstallations(of: GitHubInstallationsOf, enabled = true) {
   return useQuery({
     queryKey: githubInstallsKey(of),
     queryFn: ({ signal }) => githubInstallsApi.list(of, signal),
     enabled,
     staleTime: 15_000,
+    // A claim that waits is shown as it is now when the person comes back to the window.
+    refetchOnWindowFocus: (q) => (q.state.data?.pending.some((p) => p.error === '') ? 'always' : true),
   })
 }
 

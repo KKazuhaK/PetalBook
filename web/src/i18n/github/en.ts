@@ -96,6 +96,8 @@ export const githubEn = {
       wrong_account:
         'The App was installed on an organisation, not on your own account. An administrator of your organisation on this server connects an organisation’s installation.',
       installation_taken: 'That installation is already connected to another organisation or person on this server.',
+      not_installer:
+        'GitHub does not say that you installed the App there. The person who installed it on GitHub connects it.',
       forbidden: 'Connecting GitHub is turned off for you.',
       not_connected:
         'GitHub did not authorize you in the same step. Use “Already installed? Authorize only”, then install again.',
@@ -225,6 +227,12 @@ export const githubEn = {
     ownerPerson: 'Yours',
     ownerOrg: 'The organisation’s',
     connectedAt: (when: string) => `Connected ${when}`,
+    pending: 'Connecting…',
+    pendingFailed: 'Not connected',
+    pendingHelp: (until: string) =>
+      `Waiting for GitHub to confirm who installed it. This usually takes a few seconds: refresh to see it; if nothing comes by ${until}, uninstall the App on GitHub, then install it again from here.`,
+    refresh: 'Refresh',
+    refreshFor: (account: string) => `Refresh ${account}`,
     spaces: (n: number) => (n === 1 ? '1 space syncs through it' : `${n} spaces sync through it`),
     manage: 'Manage on GitHub',
     repos: 'Repositories',
@@ -237,7 +245,7 @@ export const githubEn = {
     disconnectFor: (account: string) => `Disconnect ${account}`,
     disconnectTitle: (account: string) => `Disconnect ${account}?`,
     disconnectBody:
-      'It stays installed on GitHub (uninstall it there). The spaces below lose GitHub access: their notes are kept, and they stop syncing until GitHub is connected again or they are connected to another repository.',
+      'It stays installed on GitHub (uninstall it there). The spaces below lose GitHub access: their notes are kept, and they stop syncing until GitHub is connected again or they are connected to another repository. To connect an organisation’s installation again later, uninstall the App on GitHub, then install it again from here.',
     disconnectGrace:
       'Where this server requires every space to sync to a repository, they count as having none: a space whose time to get one has already run out (it counts from when the space was made or when the requirement began, whichever is later) becomes read only at once; the others keep what is left of theirs.',
     disconnectSpaces: (n: number) => (n === 1 ? '1 space syncs through it:' : `${n} spaces sync through it:`),
@@ -261,10 +269,8 @@ export const githubEn = {
         'GitHub does not list that installation for your GitHub account, so it was not connected. Install it again from here.',
       wrong_account: 'The App was installed on another account than the one asked for, so it was not connected.',
       installation_taken: 'That installation is already connected to another organisation or person on this server.',
-      app_missing_permission:
-        'The site’s GitHub App lacks the Members permission it needs to check that you own the organisation. A site administrator adds it to the App on GitHub, and the installation accepts it; then install again.',
-      not_org_admin:
-        'Only an owner of the GitHub organisation can connect its installation. GitHub says your account is a member there, not an owner; ask an owner to install it from here.',
+      not_installer:
+        'GitHub does not say that you installed the App on that organisation, so it was not connected. The person who installed it there (an owner of the organisation) connects it from here, with their own GitHub account.',
       not_connected:
         'GitHub did not authorize you in the same step. Connect your GitHub account first, then install again.',
       unknown: 'Something went wrong.',
@@ -277,7 +283,7 @@ export const githubEn = {
     loadFailed: 'Could not load the GitHub App',
     title: 'GitHub App',
     intro:
-      'One GitHub App for the whole server. The easiest way is the button below, which makes it on GitHub for you. Or make it yourself on GitHub (Settings, Developer settings), installable on any account, with “Request user authorization (OAuth) during installation” ticked and with the Contents (read and write), Metadata (read) and Administration (read and write) permissions and the organisation permission Members (read), then copy its details here. An App made before Members was asked for needs it added on GitHub, and each installation must accept it, before organisations can connect theirs. The key and secret are kept encrypted and never shown again.',
+      'One GitHub App for the whole server. The easiest way is the button below, which makes it on GitHub for you. Or make it yourself on GitHub (Settings, Developer settings), installable on any account, with “Request user authorization (OAuth) during installation” ticked and with the Contents (read and write), Metadata (read) and Administration (read and write) permissions and its webhook active at the address below, with a secret, then copy its details here. The key and the secrets are kept encrypted and never shown again.',
     openApp: 'Open on GitHub',
     fingerprint: 'Key fingerprint',
     permissions: 'Permissions',
@@ -341,6 +347,11 @@ export const githubEn = {
     secretKept: 'A secret is saved. Enter one only to replace it.',
     secretHelp: 'Made on the App’s settings page, with the client id.',
     callbackHelp: 'Set this as the App’s callback URL on GitHub:',
+    webhookSecret: 'Webhook secret',
+    webhookSecretKept: 'A webhook secret is saved. Enter one only to replace it.',
+    webhookSecretHelp:
+      'The secret of the App’s webhook on GitHub. GitHub signs its events with it; without it an organisation cannot connect its installation.',
+    webhookHelp: 'Set this as the App’s webhook URL on GitHub (webhook active):',
     signinCallbackHelp: 'And this one too, for signing in with GitHub (turn it on under Sign-in providers):',
     noPublicUrl: 'The server has no public address (--public-url).',
     needIds: 'Give the App ID and, the first time, the private key.',

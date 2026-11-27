@@ -41,9 +41,10 @@ const (
 	// attempt was for (an organisation instead of the person's own account,
 	// another organisation, or a person's account for an organisation).
 	cbWrongAccount = "wrong_account"
-	// cbNotOrgAdmin: the claimer is not an active owner of the GitHub
-	// organisation (a member who merely reaches one of its repositories).
-	cbNotOrgAdmin = connections.CodeNotOrgAdmin
+	// cbNotInstaller: the claimer of an organisation's installation is not the
+	// GitHub user who installed it, as GitHub's signed webhook said (a member
+	// who merely reaches one of its repositories), or no webhook said who did.
+	cbNotInstaller = connections.CodeNotInstaller
 	// cbTaken: another person or organisation on this server has it.
 	cbTaken = connections.CodeInstallationTaken
 	// cbNotConnected: the App asked for no authorisation and the person has no
@@ -220,40 +221,32 @@ func (s *Service) completeInstall(ctx context.Context, a *attempt, code string, 
 			return fail(cbWrongAccount)
 		}
 		// GitHub lists an organisation's installation for any member who reaches
-		// one of its repositories: only the organisation's owners may connect it.
-		m, err := s.c.UserOrgMembership(ctx, tok, in.Account.Login)
-		switch {
-		case githubapp.IsPermissionRefusal(err):
-			// The App (or this installation) lacks the organisation's Members
-			// permission, which GitHub needs to answer: an administrator's fix,
-			// not the person's standing.
-			s.autoRecheck(ctx, st)
-			return fail(CodeMissingPermission)
-		case githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden) && !limited(err):
-			return fail(cbNotOrgAdmin)
-		case err != nil:
-			s.log.Warn("could not read the person's membership of the organisation", "reason", reason(err))
+		// one of its repositories: only the GitHub user who installed it (an
+		// owner of the organisation) may connect it.
+		if who.ID == 0 {
 			return fail(cbError)
-		case !m.ActiveOwner():
-			return fail(cbNotOrgAdmin)
 		}
+		to, c := s.claimOrg(ctx, a, in, who, action)
+		if c != "" {
+			return fail(c)
+		}
+		if to != "" {
+			return to, true // waits for GitHub's webhook
+		}
+		s.claimedHook(ctx, a.owner, in)
+		return a.ret, true
 	}
-	now := s.opt.Now()
-	err = store.ClaimGitHubInstallation(ctx, s.opt.Store.Q(), store.GitHubInstallation{ID: in.ID, Account: in.Account.Login, AccountID: in.Account.ID,
-		AccountType: in.Account.Type, OwnerUser: a.owner.UserID, OwnerTenant: a.owner.TenantID, ClaimedBy: a.userID, Created: now, Updated: now})
-	switch {
-	case errors.Is(err, store.ErrInstallationTaken):
-		return fail(cbTaken)
-	case err != nil:
-		s.log.Error("could not connect a GitHub installation", "error", err)
-		return fail(cbError)
+	if c := s.claim(ctx, a.owner, a.userID, in.ID, in.Account); c != "" {
+		return fail(c)
 	}
-	if h := connections.InstallHooksOf(ctx); h.Claimed != nil {
-		h.Claimed(ctx, a.owner, in.ID, in.Account.Login)
-	}
-	s.forgetNoApp(in.Account.Login)
-	s.changed("") // spaces that lost access through it are fetched again
+	s.claimedHook(ctx, a.owner, in)
 	return a.ret, true
+}
+
+func (s *Service) claimedHook(ctx context.Context, o store.InstallOwner, in *githubapp.Installation) {
+	if h := connections.InstallHooksOf(ctx); h.Claimed != nil {
+		h.Claimed(ctx, o, in.ID, in.Account.Login)
+	}
 }
 
 // userInstallation finds an installation among those GitHub lists for a user
@@ -393,6 +386,13 @@ func (s *Service) DisconnectInstallation(ctx context.Context, o store.InstallOwn
 	if _, err := s.owned(ctx, o, id); err != nil {
 		return nil, err
 	}
+	return s.disconnect(ctx, o, id)
+}
+
+// disconnect removes the owner's claim of an installation, as
+// DisconnectInstallation does, without asking first whether it is theirs (the
+// statement does).
+func (s *Service) disconnect(ctx context.Context, o store.InstallOwner, id int64) ([]string, error) {
 	ids, err := store.DisconnectGitHubInstallation(ctx, s.opt.Store.Q(), id, o, lostMessage, s.opt.Now())
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, errf(http.StatusNotFound, CodeNotFound, "No such installation.")

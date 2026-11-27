@@ -23,6 +23,7 @@ function githubView(c: Ctx): AdminGitHub {
       configured: false,
       callbackUrl: 'https://notes.example.test/api/account/links/github/callback',
       signinCallbackUrl: 'https://notes.example.test/api/auth/github/github/callback',
+      webhookUrl: 'https://notes.example.test/api/github/webhook',
     }
   )
 }
@@ -97,6 +98,8 @@ export const connectionRoutes: Route[] = [
           ? { set: true, fingerprint: 'SHA256:fixtureFingerprint0123456789abcdefghijklmnopq' }
           : (cur?.privateKey ?? { set: false, fingerprint: '' }),
         clientSecret: { set: b.clientSecret ? true : (cur?.clientSecret.set ?? false) },
+        webhookSecret: { set: b.webhookSecret ? true : (cur?.webhookSecret.set ?? false) },
+        webhookUrl: cur?.webhookUrl ?? 'https://notes.example.test/api/github/webhook',
         callbackUrl: cur?.callbackUrl ?? 'https://notes.example.test/api/account/links/github/callback',
         signinCallbackUrl: cur?.signinCallbackUrl ?? 'https://notes.example.test/api/auth/github/github/callback',
         permissions: cur?.permissions ?? {},
@@ -118,6 +121,7 @@ export const connectionRoutes: Route[] = [
     (c) => {
       conn(c).github = null
       conn(c).installations = []
+      conn(c).pendingClaims = []
     },
   ],
   [
@@ -157,7 +161,7 @@ export const connectionRoutes: Route[] = [
     '/api/account/github/install',
     () => ({ url: 'https://github.com/apps/petalbook-notes/installations/new?state=fixture' }),
   ],
-  ['GET', '/api/account/github/installations', (c) => ({ items: owned(c, 'person') })],
+  ['GET', '/api/account/github/installations', (c) => ({ items: owned(c, 'person'), pending: [] })],
   [
     'GET',
     '/api/account/github/installations/:id/spaces',
@@ -190,7 +194,11 @@ export const connectionRoutes: Route[] = [
     '/api/admin/github/install',
     () => ({ url: 'https://github.com/apps/petalbook-notes/installations/new?state=fixture' }),
   ],
-  ['GET', '/api/admin/github/installations', (c) => ({ items: owned(c, 'organization') })],
+  [
+    'GET',
+    '/api/admin/github/installations',
+    (c) => ({ items: owned(c, 'organization'), pending: conn(c).pendingClaims }),
+  ],
   [
     'GET',
     '/api/admin/github/installations/:id/spaces',
