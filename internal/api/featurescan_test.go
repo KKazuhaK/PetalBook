@@ -47,10 +47,11 @@ func TestEveryRouteDeclaresItsFeatureOrIsAlwaysOn(t *testing.T) {
 func TestNoHandlerChecksAFeatureTheTableCouldDeclare(t *testing.T) {
 	t.Parallel()
 	allowed := map[string]string{
-		"routes.go":   "the declarations of the table",
-		"features.go": "the words of the refusals",
-		"settings.go": "features.registration is a setting with checks of its own on a change; the list of what the web may read",
-		"tenants.go":  "a tenant is shown with its effective registration, which is also held to mail being ready",
+		"routes.go":          "the declarations of the table",
+		"features.go":        "the words of the refusals",
+		"settings.go":        "features.registration is a setting with checks of its own on a change; the list of what the web may read",
+		"tenants.go":         "a tenant is shown with its effective registration, which is also held to mail being ready",
+		"github_installs.go": "an installation's callback is a public route: the feature is asked again there for the owner it is connected to",
 	}
 	isKey := func(s string) bool { return strings.HasPrefix(s, "features.") || s == settings.MailOwnSender }
 	consts := []string{"RegistrationOpen", "OfflineCopies", "MailOwnSender"}

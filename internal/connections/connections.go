@@ -59,7 +59,63 @@ const (
 	CodeConnectionExpired = "connection_expired"
 	CodeConnectionMissing = "connection_missing"
 	CodeInstallationGone  = "installation_gone"
+	// CodeAccessLost: the space's owner (its organisation, or the person) no
+	// longer has the installation it synced through connected on this server,
+	// or the credential is not one of the owner's own (store.AccessLost).
+	CodeAccessLost = store.AccessLost
+
+	// CodeInstallationTaken: the installation is connected to another owner on
+	// this server (a person or an organisation).
+	CodeInstallationTaken = "installation_taken"
 )
+
+// SpaceScope is whose a space is, for the credentials it may sync with: a
+// person's (Personal: a space of the default tenant, or someone's personal
+// space) syncs only through that person's own link or installation; an
+// organisation's (a space of TenantID) only through the organisation's own
+// installation, never through a member's personal token.
+type SpaceScope struct {
+	TenantID string
+	Personal bool
+}
+
+// ScopeOfSpace is the scope of a space of a tenant; personalOf says it is
+// someone's personal space.
+func ScopeOfSpace(tenantID string, personalOf bool) SpaceScope {
+	return SpaceScope{TenantID: tenantID, Personal: personalOf || tenantID == store.DefaultTenantID}
+}
+
+// Scoped is a provider that tells the spaces of a person from those of an
+// organisation (GitHub): the spaces use these in place of PlanCreate and
+// ResolveExistingIn when a provider has them.
+type Scoped interface {
+	PlanCreateFor(ctx context.Context, sc SpaceScope, userID, owner string) (*Plan, error)
+	ResolveExistingFor(ctx context.Context, sc SpaceScope, userID, owner, name, via string) (*Cred, *Repo, error)
+}
+
+// InstallHooks are what the caller of an installation's start or callback
+// lends the provider: Allow says whether the signed-in person may connect an
+// installation for that owner now (the feature is on, and for an
+// organisation they hold its key there), asked at the start and again on the
+// callback; Claimed is told an installation was connected (for the audit).
+// Without hooks nothing is allowed.
+type InstallHooks struct {
+	Allow   func(ctx context.Context, o store.InstallOwner) error
+	Claimed func(ctx context.Context, o store.InstallOwner, id int64, account string)
+}
+
+type installHooksKey struct{}
+
+// WithInstallHooks lends the hooks to the calls made with the context.
+func WithInstallHooks(ctx context.Context, h InstallHooks) context.Context {
+	return context.WithValue(ctx, installHooksKey{}, h)
+}
+
+// InstallHooksOf is what the context was lent; Allow is nil without any.
+func InstallHooksOf(ctx context.Context) InstallHooks {
+	h, _ := ctx.Value(installHooksKey{}).(InstallHooks)
+	return h
+}
 
 // Via says whose token acts for a space or creates a repository.
 const (
@@ -509,12 +565,6 @@ type Administered interface {
 	AdminDelete(ctx context.Context) error
 	// AdminCounts is how many people are connected and spaces sync through it.
 	AdminCounts(ctx context.Context) (connections, spaces int, err error)
-}
-
-// Installable is a provider whose App is installed on accounts (GitHub).
-type Installable interface {
-	InstallationsView(ctx context.Context, cursor string) (items any, next string, err error)
-	SetInstallationTenants(ctx context.Context, id int64, tenants []string) (any, error)
 }
 
 // ManifestRequest asks to make the provider's App on the platform in one click.

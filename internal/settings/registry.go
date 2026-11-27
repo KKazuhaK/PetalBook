@@ -80,6 +80,10 @@ const (
 	FeatureOwnCaptcha      = "features.ownCaptcha"
 	FeatureOwnConnections  = "features.ownConnections"
 	FeatureOwnDaily        = "features.ownDaily"
+	// FeatureGitHubConnect is whether people and organisations may install the
+	// site's GitHub App on their own GitHub account and sync with it: a site
+	// switch, turned off for one tenant by a rule.
+	FeatureGitHubConnect = "features.githubConnect"
 
 	// StorageMode is where a tenant's new spaces may sync: on the server's
 	// storage, on a target of the person's own, or on a target of the tenant's.
@@ -286,6 +290,7 @@ func baseDefinitions() []*Def {
 		{Key: FeatureOwnCaptcha, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
 		{Key: FeatureOwnConnections, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
 		{Key: FeatureOwnDaily, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureGitHubConnect, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
 
 		// Where new spaces may sync; restrict is the modes allowed.
 		{Key: StorageMode, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: "server", Choices: []string{"server", "own", "tenant"}, Lower: Lower{Mode: Allow}},

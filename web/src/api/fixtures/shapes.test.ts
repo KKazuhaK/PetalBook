@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { misfits, routeOf, type Shape } from '../contractShapes'
 import { addNotification, addToken, approveApp, withAuthorizationServer } from './data/area'
-import { githubProvider, leaveRepository } from './data/connections'
+import { githubInstallations, githubProvider, leaveRepository } from './data/connections'
 import { addGroup, addPerson } from './data/scenes'
 import { match } from './kit'
 import { ADMIN_UNRECORDED, adminProbes } from './probesAdmin'
@@ -196,8 +196,17 @@ function probes(fx: FixtureServer): Call[] {
     ['POST', '/api/admin/providers/github/check', {}],
     ['POST', '/api/admin/providers/github/manifest', { organization: 'acme' }],
     ['POST', '/api/admin/providers/github/manifest/retry', {}],
-    ['GET', '/api/admin/providers/github/installations'],
-    ['PUT', '/api/admin/providers/github/installations/5001', { tenants: [] }],
+    // the GitHub installations of their owners: the person's own and the organisation's
+    ['GET', '/api/account/github/installations'],
+    ['POST', '/api/account/github/install', { return: '/' }],
+    ['GET', '/api/account/github/installations/5101/spaces'],
+    ['GET', '/api/account/github/installations/5101/repos'],
+    ['DELETE', '/api/account/github/installations/5101'],
+    ['GET', '/api/admin/github/installations'],
+    ['POST', '/api/admin/github/install', { account: 'kazuhahub', return: '/' }],
+    ['GET', '/api/admin/github/installations/5001/spaces'],
+    ['GET', '/api/admin/github/installations/5001/repos'],
+    ['DELETE', '/api/admin/github/installations/5001'],
     ['DELETE', '/api/admin/providers/github'],
     [
       'POST',
@@ -319,8 +328,16 @@ const UNRECORDED: Record<string, string> = {
   'POST /api/admin/providers/github/check 200': 'needs a platform',
   'POST /api/admin/providers/github/manifest 200': 'needs a platform',
   'POST /api/admin/providers/github/manifest/retry 200': 'needs a platform',
-  'GET /api/admin/providers/github/installations 200': 'needs a platform',
-  'PUT /api/admin/providers/github/installations/{} 200': 'needs a platform',
+  'POST /api/account/github/install 200': 'needs a platform',
+  'GET /api/account/github/installations/{}/spaces 200': 'needs a platform',
+  'GET /api/account/github/installations/{}/repos 200': 'needs a platform',
+  'DELETE /api/account/github/installations/{} 200': 'needs a platform',
+  'GET /api/admin/github/installations 200':
+    'needs an organisation, which the contract suite administers only through the site',
+  'POST /api/admin/github/install 200': 'needs a platform',
+  'GET /api/admin/github/installations/{}/spaces 200': 'needs a platform',
+  'GET /api/admin/github/installations/{}/repos 200': 'needs a platform',
+  'DELETE /api/admin/github/installations/{} 200': 'needs a platform',
   'POST /api/admin/providers 201': 'needs a platform',
   'GET /api/admin/providers/gl 200': 'needs a platform',
   'PATCH /api/admin/providers/gl 200': 'needs a platform',
@@ -349,6 +366,7 @@ describe('the fixtures against the recorded shapes', () => {
       }
       d.spaces[0].types.push({ name: 'memo', title: '备忘', rev: 'r', fields: [] })
       githubProvider(d, 'connected')
+      githubInstallations(d)
       // The server lists a plain address first, as a provider that holds nothing: that is the recorded shape of an entry.
       d.area.connections.providers.unshift({
         id: 'git',

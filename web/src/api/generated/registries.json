@@ -274,6 +274,13 @@
       "builtInOnly": false
     },
     {
+      "name": "tenant.github.manage",
+      "scope": "tenant",
+      "feature": "",
+      "description": "Install the site's GitHub App on the organisation's GitHub account, and see, change or disconnect the organisation's installations",
+      "builtInOnly": false
+    },
+    {
       "name": "space.read",
       "scope": "space",
       "feature": "",
@@ -343,6 +350,14 @@
         },
         {
           "name": "email_verified",
+          "site": false
+        },
+        {
+          "name": "github_installation_connected",
+          "site": false
+        },
+        {
+          "name": "github_installation_disconnected",
           "site": false
         },
         {
@@ -771,6 +786,7 @@
     "features.ownCaptcha",
     "features.ownConnections",
     "features.ownDaily",
+    "features.githubConnect",
     "storage.mode",
     "storage.pinnedBytes",
     "quota.people",

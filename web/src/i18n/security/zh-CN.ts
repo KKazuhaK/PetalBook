@@ -328,6 +328,8 @@ export const securityZhCN = {
       email_released: '邮箱被释放',
       account_connected: '连接账号',
       account_disconnected: '断开账号',
+      github_installation_connected: '连接 GitHub 安装',
+      github_installation_disconnected: '断开 GitHub 安装',
       connection_provider_changed: '修改连接提供方',
       mail_changed: '修改邮件设置',
       mail_test: '测试邮件',

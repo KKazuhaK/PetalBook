@@ -173,7 +173,7 @@ func (s *server) connectCallback(c *call) {
 	if c.p != nil {
 		userID = c.user().ID
 	}
-	to, clear := p.CompleteConnect(c.r.Context(), binding, userID, c.r.URL.Query())
+	to, clear := p.CompleteConnect(connections.WithInstallHooks(c.r.Context(), s.githubHooks(c)), binding, userID, c.r.URL.Query())
 	if clear {
 		http.SetCookie(c.w, s.auth.ClearFlowCookie(connCookieBase+id))
 	}
@@ -288,22 +288,28 @@ func (s *server) connectRepos(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	type repoResp struct {
-		ID            int64  `json:"id"`
-		FullName      string `json:"fullName"`
-		Private       bool   `json:"private"`
-		DefaultBranch string `json:"defaultBranch"`
-		HTMLURL       string `json:"htmlUrl"`
-		CanPush       bool   `json:"canPush"`
-	}
 	out := make([]repoResp, len(items))
 	for i, r := range items {
-		out[i] = repoResp{r.ID, r.FullName, r.Private, r.DefaultBranch, r.HTMLURL, r.CanPush}
+		out[i] = repoRespOf(r)
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Items []repoResp `json:"items"`
 		Next  string     `json:"next"`
 	}{out, next})
+}
+
+// repoResp is a repository a space can be connected to, as the lists show it.
+type repoResp struct {
+	ID            int64  `json:"id"`
+	FullName      string `json:"fullName"`
+	Private       bool   `json:"private"`
+	DefaultBranch string `json:"defaultBranch"`
+	HTMLURL       string `json:"htmlUrl"`
+	CanPush       bool   `json:"canPush"`
+}
+
+func repoRespOf(r connections.RepoItem) repoResp {
+	return repoResp{r.ID, r.FullName, r.Private, r.DefaultBranch, r.HTMLURL, r.CanPush}
 }
 
 // --- administration -------------------------------------------------------------------
@@ -371,17 +377,4 @@ func (s *server) connectManifestCallback(c *call) {
 		s.spaces.ConnectionFixed("") // spaces that were waiting for the App are fetched again at once
 	}
 	http.Redirect(c.w, c.r, to, http.StatusSeeOther)
-}
-
-func (s *server) installable(c *call) (connections.Installable, bool) {
-	p, ok := s.adminRepoProvider(c)
-	if !ok {
-		return nil, false
-	}
-	in, ok := p.(connections.Installable)
-	if !ok {
-		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "This provider has no installations.")
-		return nil, false
-	}
-	return in, true
 }

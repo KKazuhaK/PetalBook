@@ -31,6 +31,7 @@ var featureNames = map[string]string{
 	settings.FeatureOwnCaptcha:      "own CAPTCHA",
 	settings.FeatureOwnConnections:  "own repository providers",
 	settings.FeatureOwnDaily:        "own daily text",
+	settings.FeatureGitHubConnect:   "GitHub connections",
 	settings.FeaturePasskeys:        "passkeys",
 	settings.MailOwnSender:          "own mail sender",
 	settings.AccountsMultipleEmails: "multiple email addresses",

@@ -63,7 +63,13 @@ export const consoleEn: ConsoleMessages = {
   tabs: {
     users: { all: 'All users', invites: 'Invites', deleted: 'Deleted' },
     spaces: { all: 'All spaces', deleted: 'Deleted' },
-    storage: { manage: 'Storage management', usage: 'Usage', rules: 'Rules', connections: 'Connections' },
+    storage: {
+      manage: 'Storage management',
+      usage: 'Usage',
+      rules: 'Rules',
+      connections: 'Connections',
+      github: 'GitHub',
+    },
     security: { signin: 'Sign-in', providers: 'Providers', access: 'Machine access' },
     tenants: { tenants: 'Tenants', plans: 'Plans' },
     status: { status: 'Status' },

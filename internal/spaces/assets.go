@@ -541,7 +541,7 @@ func (m *Manager) ConnectAssets(ctx context.Context, h *Handle, req ConnectReque
 				return nil, err
 			}
 		}
-		if remote, ghCred, err = m.resolveConnection(ctx, sp.TenantID, req); err != nil {
+		if remote, ghCred, err = m.resolveConnection(ctx, connections.ScopeOfSpace(sp.TenantID, sp.Personal), req); err != nil {
 			return nil, err
 		}
 	} else if remote, err = gitstore.ParseURL(req.URL, m.hostPolicy()); err != nil {
@@ -894,7 +894,7 @@ func (m *Manager) ConnectAssetsSync(ctx context.Context, h *Handle, userID, via 
 	var repo *connections.Repo
 	created := false
 	if g.Create {
-		plan, err := gh.PlanCreate(ctx, userID, g.Owner)
+		plan, err := planCreate(ctx, gh, connections.ScopeOfSpace(sp.TenantID, sp.Personal), userID, g.Owner)
 		if err != nil {
 			return nil, err
 		}
@@ -905,7 +905,7 @@ func (m *Manager) ConnectAssetsSync(ctx context.Context, h *Handle, userID, via 
 		if cred, err = gh.ChooseCredential(ctx, plan, repo); err != nil {
 			return nil, m.markRepo(ctx, gh, userID, h.Info.Name, err, repo, created)
 		}
-	} else if cred, repo, err = gh.ResolveExistingIn(ctx, sp.TenantID, userID, g.Owner, g.Name, via); err != nil {
+	} else if cred, repo, err = resolveExisting(ctx, gh, connections.ScopeOfSpace(sp.TenantID, sp.Personal), userID, g.Owner, g.Name, via); err != nil {
 		return nil, err
 	}
 	u := gh.RepoURL(repo.Owner, repo.Name)

@@ -19,7 +19,7 @@ export const githubEn = {
     organisation: 'organisation',
     moreOwners: 'More accounts',
     viaUser: 'Made with your own GitHub account, so GitHub’s rules for you apply.',
-    viaApp: 'Made through the server’s GitHub App, in an organisation an administrator shared.',
+    viaApp: 'Made through your organisation’s own GitHub installation.',
     repoName: 'Name on GitHub',
     repoNameHelp: 'Letters, digits, “.”, “_” and “-”, up to 100 characters.',
     repoInvalid: 'Use 1 to 100 letters, digits, “.”, “_” or “-”, not ending in .git.',
@@ -91,6 +91,14 @@ export const githubEn = {
         'Spaces here sync through the GitHub account you connected before. Disconnect it first, or switch those spaces to another credential.',
       last_method:
         'You sign in with the GitHub account linked to you, and it is your only way in. Set a password or link another sign-in method first, or authorize with that same account.',
+      installation_not_yours:
+        'GitHub does not list that installation for your GitHub account, so it was not connected. Install it again from here.',
+      wrong_account:
+        'The App was installed on an organisation, not on your own account. An administrator of your organisation on this server connects an organisation’s installation.',
+      installation_taken: 'That installation is already connected to another organisation or person on this server.',
+      forbidden: 'Connecting GitHub is turned off for you.',
+      not_connected:
+        'GitHub did not authorize you in the same step. Use “Already installed? Authorize only”, then install again.',
       unknown: 'Something went wrong.',
     },
     account: 'Account',
@@ -132,7 +140,7 @@ export const githubEn = {
     viaLabel: 'Which GitHub access',
     viaApp: 'The GitHub App',
     viaAppHelp:
-      'Uses the App’s installation on this sync location, so it does not depend on anyone being connected. You must be able to write there, or an administrator has shared the installation.',
+      'Uses the App’s installation on this sync location, so it does not depend on anyone being connected. A personal space takes your own installation on your account; an organisation’s space only the organisation’s own.',
     viaUser: 'My GitHub connection',
     viaUserHelp:
       'Syncs as you. It stops if you disconnect, lose the right to manage this space, or your connection expires.',
@@ -165,6 +173,11 @@ export const githubEn = {
         body: () =>
           'GitHub refuses a token because the App or its installation lacks the Contents permission. An administrator gives it to the App on GitHub, accepts the change in the installation’s settings and presses Re-check in the administration.',
       },
+      access_lost: {
+        title: 'This space lost GitHub access',
+        body: () =>
+          'The GitHub installation it synced through is no longer connected to its owner here (it was disconnected), or it is not the space owner’s own. The notes are kept. Connect GitHub again, or connect the space to another repository.',
+      },
       provider_not_configured: {
         title: 'The server’s GitHub App does not work',
         body: () => 'The App is not set up, or GitHub no longer accepts its key. An administrator must fix it.',
@@ -174,7 +187,7 @@ export const githubEn = {
       provider_not_configured: 'This server has no GitHub App set up.',
       not_connected: 'Connect your GitHub account first (Settings, Connected accounts).',
       owner_not_allowed:
-        'You cannot use this sync location: the installation is not shared with your tenant and your GitHub account cannot write there.',
+        'You cannot use this sync location: the installation that reaches it is not this space’s owner’s own, and an organisation’s space never syncs through a person’s own account.',
       repo_not_in_installation:
         'The App is not installed on this sync location, or its installation does not reach it.',
       provider_refused: 'GitHub refused.',
@@ -191,6 +204,67 @@ export const githubEn = {
     public: 'public',
     readOnly: 'read only',
     moreRepos: 'More locations',
+  },
+  installs: {
+    titleMine: 'GitHub on your own account',
+    introMine:
+      'Install the site’s GitHub App on your own GitHub account. Your own spaces can then sync through it, without depending on your connection staying fresh; nobody else’s spaces can use it.',
+    titleOrg: 'GitHub for the organisation',
+    introOrg:
+      'Install the site’s GitHub App on the organisation’s GitHub organisation. The organisation’s spaces sync only through it, never through a member’s own GitHub account. It belongs to the organisation: any of its administrators can manage or disconnect it.',
+    install: 'Install on GitHub',
+    installing: 'Opening GitHub…',
+    account: 'GitHub organisation',
+    accountHelp:
+      'Its name on GitHub, as in github.com/name. GitHub then asks you to confirm, and this server checks that you can reach it.',
+    accountInvalid: 'Give the organisation’s name on GitHub: letters, digits and “-”.',
+    off: 'Connecting GitHub is turned off on this server.',
+    notConfigured: 'This server has no GitHub App set up yet.',
+    loadFailed: 'Could not load the installations',
+    none: 'Nothing is installed yet.',
+    ownerPerson: 'Yours',
+    ownerOrg: 'The organisation’s',
+    connectedAt: (when: string) => `Connected ${when}`,
+    spaces: (n: number) => (n === 1 ? '1 space syncs through it' : `${n} spaces sync through it`),
+    manage: 'Manage on GitHub',
+    repos: 'Repositories',
+    hideRepos: 'Hide repositories',
+    reposFailed: 'Could not load the repositories',
+    noRepos: 'It reaches no repositories yet. Choose them in its settings on GitHub.',
+    moreRepos: 'More repositories',
+    private: 'private',
+    disconnect: 'Disconnect',
+    disconnectFor: (account: string) => `Disconnect ${account}`,
+    disconnectTitle: (account: string) => `Disconnect ${account}?`,
+    disconnectBody:
+      'It stays installed on GitHub (uninstall it there). The spaces below lose GitHub access: their notes are kept, and they stop syncing until GitHub is connected again or they are connected to another repository.',
+    disconnectGrace:
+      'Where this server requires every space to sync to a repository, they then have the usual time to get one.',
+    disconnectSpaces: (n: number) => (n === 1 ? '1 space syncs through it:' : `${n} spaces sync through it:`),
+    disconnectMore: (n: number) => `and ${n} more`,
+    disconnectNone: 'No space syncs through it.',
+    loadingSpaces: 'Looking up the spaces…',
+    spacesFailed: 'Could not look up the spaces that sync through it',
+    cancel: 'Cancel',
+    disconnectConfirm: 'Disconnect',
+    disconnected: (account: string) => `${account} is disconnected`,
+    disconnectFailed: 'Could not disconnect',
+    startFailed: 'Could not start installing',
+    returned: {
+      denied: 'You did not allow it on GitHub.',
+      expired: 'The attempt took too long, or was not started from this browser. Try again.',
+      provider_error: 'GitHub refused the request or could not be reached. Try again.',
+      requested: 'The organisation’s owners must approve the installation on GitHub first. Try again once they have.',
+      forbidden:
+        'You may not connect an installation here: connecting GitHub is off, or you are not the organisation’s administrator.',
+      installation_not_yours:
+        'GitHub does not list that installation for your GitHub account, so it was not connected. Install it again from here.',
+      wrong_account: 'The App was installed on another account than the one asked for, so it was not connected.',
+      installation_taken: 'That installation is already connected to another organisation or person on this server.',
+      not_connected:
+        'GitHub did not authorize you in the same step. Connect your GitHub account first, then install again.',
+      unknown: 'Something went wrong.',
+    },
   },
   admin: {
     connectionsTitle: 'Connections',
@@ -293,32 +367,5 @@ export const githubEn = {
         public_url_needed: 'The server has no public address (--public-url), so GitHub cannot send you back.',
       },
     },
-    installations: 'Installations',
-    installationsHelp:
-      'Where the App is installed. Sharing an organisation’s installation with a tenant lets that tenant’s members create repositories there and connect spaces to its repositories without a GitHub account of their own; GitHub then does not know who asked.',
-    installationsFailed: 'Could not load the installations',
-    noInstallations: 'The App is not installed anywhere yet.',
-    loadMore: 'Load more',
-    organisation: 'organisation',
-    user: 'user',
-    selectionAll: 'all repositories',
-    selectionSelected: 'selected repositories',
-    suspended: 'suspended',
-    spacesUsing: (n: number) => `${n} space${n === 1 ? '' : 's'} sync through it`,
-    notShared: 'Not shared',
-    sharedWith: (names: string) => `Shared with ${names}`,
-    choose: 'Choose tenants',
-    chooseFor: (login: string) => `Choose the tenants the installation on ${login} is shared with`,
-    chooseTitle: (login: string) => `Share ${login}`,
-    chooseHelp:
-      'The members of the tenants you tick can create repositories here and connect spaces to its repositories. Everyone else needs a GitHub connection that reaches the organisation.',
-    chooseNone: 'There are no tenants to share with.',
-    chooseLoading: 'Loading the tenants…',
-    shareSave: 'Save',
-    shareCancel: 'Cancel',
-    sharedSaved: (login: string) => `Sharing of ${login} is saved`,
-    sharedHelpOn: 'The members of these tenants can create repositories here and connect spaces to its repositories.',
-    sharedHelpOff: 'Only members whose own GitHub connection reaches this organisation can use it.',
-    notShareable: 'Only an organisation’s installation can be shared.',
   },
 }

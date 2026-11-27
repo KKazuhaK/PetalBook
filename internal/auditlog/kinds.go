@@ -31,6 +31,8 @@ var registered = []Kind{
 	{Name: "email_released", Category: Security, AddressFields: []string{"email"}},
 	{Name: "account_connected", Category: Security},
 	{Name: "account_disconnected", Category: Security},
+	{Name: "github_installation_connected", Category: Security},
+	{Name: "github_installation_disconnected", Category: Security},
 	{Name: "provider_created", Category: Security, Visibility: Site},
 	{Name: "provider_changed", Category: Security, Visibility: Site},
 	{Name: "provider_deleted", Category: Security, Visibility: Site},

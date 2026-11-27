@@ -33,6 +33,7 @@ import { administers } from '@/lib/access'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/github'
 import { tf } from '@/i18n/forge'
+import { GitHubInstallations } from './GitHubInstallations'
 import { SettingsNote, SettingsRow, SettingsRows, SettingsSection } from './SettingsParts'
 
 // The words of one platform's row. A platform with installations (an App people install) has its own words; the
@@ -182,6 +183,7 @@ function ProviderRow({ provider, admin }: { provider: Provider; admin: boolean }
           </p>
         )}
       </SettingsSection>
+      {provider.capabilities.installations && <GitHubInstallations of="mine" returnTo="/settings/connections" />}
     </div>
   )
 }

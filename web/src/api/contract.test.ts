@@ -586,6 +586,14 @@ function suite(target: Target) {
           const links = (await call(m.browser, 'GET', '/api/account/links')).json
           expect(links.links).toEqual([])
           expect(Array.isArray(links.providers)).toBe(true)
+          // The GitHub installations connected to them: none yet. Installing needs the App (none on this server).
+          const mine = await call(m.browser, 'GET', '/api/account/github/installations')
+          expect([mine.status, mine.json.items]).toEqual([200, []])
+          const start = await call(m.browser, 'POST', '/api/account/github/install', { return: '/' })
+          expect([start.status, start.json.error]).toEqual([409, 'provider_not_configured'])
+          // The organisation's are its administrators' only.
+          const org = await call(m.browser, 'GET', '/api/admin/github/installations')
+          expect([org.status, org.json.error]).toEqual([403, 'forbidden'])
         })
 
         it('PATCH changes the name and the email, each optional', async () => {

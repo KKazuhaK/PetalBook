@@ -46,23 +46,29 @@ const owner = (login: string, type: ConnectionOwner['type'], via: ConnectionOwne
   needsInstall: false,
 })
 
+// An installation connected to its owner: an organisation's (the tenant's) unless a person is named.
 export const installation = (
   id: number,
-  login: string,
+  account: string,
   over: Partial<GitHubInstallation> = {},
-): GitHubInstallation => ({
-  id,
-  account: { login, type: 'Organization', id: id + 1000 },
-  repositorySelection: 'all',
-  suspended: false,
-  permissions: { administration: 'write', contents: 'write', metadata: 'read' },
-  htmlUrl: `https://github.com/organizations/${login}/settings/installations/${id}`,
-  tenants: [],
-  spaces: 0,
-  ...over,
-})
+): GitHubInstallation => {
+  const person = over.owner?.kind === 'person'
+  return {
+    id,
+    account,
+    accountType: person ? 'User' : 'Organization',
+    owner: { kind: 'organization', id: '0000000001' },
+    claimedBy: 'admin-id',
+    connected: SETTLED,
+    spaces: 0,
+    manageUrl: person
+      ? `https://github.com/settings/installations/${id}`
+      : `https://github.com/organizations/${account}/settings/installations/${id}`,
+    ...over,
+  }
+}
 
-// The server's GitHub App as the administrators see it, with the installations it has.
+// The server's GitHub App as the administrators see it. Its installations are their owners' (githubInstallations).
 export function githubApp(d: Scene) {
   const c = d.area.connections
   c.github = {
@@ -84,11 +90,7 @@ export function githubApp(d: Scene) {
     gaps: [],
     anyAccount: true,
   }
-  c.installations = [
-    installation(5001, 'kazuhahub'),
-    installation(5002, 'petal-team', { repositorySelection: 'selected' }),
-    installation(5003, 'tang-poetry'),
-  ]
+  c.installations = []
 }
 
 // GitHub as the person sees it: no App on the server, an App and no connection, a connection, or one that expired.
@@ -211,4 +213,24 @@ export function connectForge(
   p.connection = connection(login, expired ? 'expired' : 'ok', '9001', rest)
   const f = c.forges.find((x) => x.id === id)
   if (f) f.connections = 1
+}
+
+// The App installed where its owners connected it: the person's own account ("tang-gh", with two spaces on it), and
+// the organisation's GitHub organisations ("kazuhahub" with one space, "petal-team" with none).
+export function githubInstallations(d: Scene) {
+  const c = d.area.connections
+  c.installations = [
+    installation(5101, 'tang-gh', { owner: { kind: 'person', id: 'admin-id' }, spaces: 2 }),
+    installation(5001, 'kazuhahub', { spaces: 1 }),
+    installation(5002, 'petal-team'),
+  ]
+  c.installationSpaces = {
+    5101: [
+      { id: 'SPACE0001', name: 'Tang poems' },
+      { id: 'SPACE0002', name: 'Reading list' },
+    ],
+    5001: [{ id: 'SPACE0003', name: 'Team handbook' }],
+  }
+  c.repos['github:5101'] = [repo(880101, 'tang-gh/poems'), repo(880102, 'tang-gh/reading', false)]
+  c.repos['github:5001'] = [repo(880103, 'kazuhahub/handbook')]
 }

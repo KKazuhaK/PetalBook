@@ -589,6 +589,7 @@ export type ConnectionErrorCode =
   | 'connection_expired'
   | 'connection_missing'
   | 'installation_gone'
+  | 'access_lost'
   | 'provider_not_configured'
   | 'app_missing_permission'
 
@@ -804,17 +805,28 @@ export interface GitHubManifestStart {
   manifest: Record<string, unknown>
 }
 
+// An installation of the site's GitHub App on a GitHub account, connected to its one owner on this server: a person
+// (their own account) or an organisation (docs/api.md, "The GitHub provider", "Installations"). Each one's spaces sync
+// only through what is their own.
 export interface GitHubInstallation {
   id: number
-  account: { login: string; type: 'User' | 'Organization'; id: number }
-  repositorySelection: 'all' | 'selected'
-  suspended: boolean
-  permissions: Record<string, string>
-  htmlUrl: string
-  // The ids of the tenants it is shared with, sorted; none: not shared.
-  tenants: string[]
+  account: string
+  accountType: 'User' | 'Organization'
+  owner: { kind: 'person' | 'organization'; id: string }
+  // The user who connected it (for an organisation, one of its administrators; the installation is the tenant's).
+  claimedBy: string
+  connected: string
   spaces: number
+  // The installation's settings on GitHub: its repositories are chosen there, and it is uninstalled there.
+  manageUrl: string
 }
+// The spaces that sync through an installation (at most 200 by name), and how many there are in all.
+export interface GitHubInstallationSpaces {
+  items: { id: string; name: string }[]
+  total: number
+}
+// Whose installations a list is: the person's own, or the organisation's of the console.
+export type GitHubInstallationsOf = 'mine' | 'org'
 
 export interface PutAdminGitHubInput {
   appId?: string
@@ -915,6 +927,7 @@ export type ErrorCode =
   | 'name_taken'
   | 'provider_refused'
   | 'repo_not_in_installation'
+  | 'installation_taken'
   | 'push_failed'
   | 'key_invalid'
   | 'app_rejected'
@@ -2212,6 +2225,7 @@ export type FeatureKey =
   | 'features.ownCaptcha'
   | 'features.ownConnections'
   | 'features.ownDaily'
+  | 'features.githubConnect'
   | 'mail.ownSender'
   | 'accounts.multipleEmails'
   | 'features.orgCreation'

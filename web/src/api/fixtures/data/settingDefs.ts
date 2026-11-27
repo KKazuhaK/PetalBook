@@ -142,6 +142,12 @@ export const SETTING_DEFS: SiteSetting[] = [
   },
   { key: 'features.ownDaily', kind: 'boolean', layers: ['site'], site: { value: true, lower: { mode: 'allow' } } },
   {
+    key: 'features.githubConnect',
+    kind: 'boolean',
+    layers: ['site'],
+    site: { value: true, lower: { mode: 'allow' } },
+  },
+  {
     key: 'storage.mode',
     kind: 'choice',
     layers: ['site', 'tenant'],
@@ -429,6 +435,7 @@ export const TENANT_KEYS: string[] = [
   'features.ownCaptcha',
   'features.ownConnections',
   'features.ownDaily',
+  'features.githubConnect',
   'storage.mode',
   'storage.pinnedBytes',
   'quota.people',

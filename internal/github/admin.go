@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -369,26 +368,12 @@ func (s *Service) Delete(ctx context.Context) error {
 	return nil
 }
 
-// --- installations ----------------------------------------------------------------
+// --- the lists' cursors -------------------------------------------------------------
 
-// Installation is an installation as the administrator sees it.
-type Installation struct {
-	ID                  int64
-	Account             githubapp.Account
-	RepositorySelection string
-	Suspended           bool
-	Permissions         map[string]string
-	HTMLURL             string
-	Tenants             []string // the tenants it is shared with, sorted
-	Spaces              int
-}
-
-// cursor is opaque to clients: a page number, or a position among shared installations.
+// cursor is opaque to clients: a page number of GitHub's list.
 type cursor struct {
-	Kind  string  `json:"k"`           // "p": a page of GitHub's list; "s": shared installations after ID
-	Page  int     `json:"p,omitempty"` // "p"
-	After int64   `json:"a,omitempty"` // "s"
-	Seen  []int64 `json:"x,omitempty"` // "s": installations already listed
+	Kind string `json:"k"`           // "p": a page of GitHub's list
+	Page int    `json:"p,omitempty"` // "p"
 }
 
 func encodeCursor(c cursor) string {
@@ -402,53 +387,10 @@ func decodeCursor(s string) (cursor, error) {
 	}
 	b, err := base64.RawURLEncoding.DecodeString(s)
 	var c cursor
-	if err != nil || json.Unmarshal(b, &c) != nil || c.Page < 0 || c.After < 0 || len(c.Seen) > 400 {
+	if err != nil || json.Unmarshal(b, &c) != nil || c.Page < 0 {
 		return cursor{}, errf(http.StatusBadRequest, CodeInvalid, "The cursor is not one this server made.")
 	}
 	return c, nil
-}
-
-// Installations lists the App's installations, one page of GitHub's list (one
-// request) and one query of the database.
-func (s *Service) Installations(ctx context.Context, cur string) ([]Installation, string, error) {
-	st, err := s.need(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	c, err := decodeCursor(cur)
-	if err != nil {
-		return nil, "", err
-	}
-	if c.Kind != "" && c.Kind != "p" {
-		return nil, "", errf(http.StatusBadRequest, CodeInvalid, "The cursor is not one this server made.")
-	}
-	list, next, err := st.app.Installations(ctx, c.Page)
-	if err != nil {
-		return nil, "", s.listError(err)
-	}
-	ids := make([]int64, len(list))
-	for i, in := range list {
-		ids[i] = in.ID
-	}
-	q := s.opt.Store.Q()
-	shared, err := store.GitHubInstallationTenants(ctx, q, ids)
-	if err != nil {
-		return nil, "", err
-	}
-	counts, err := store.GitHubSpaceCounts(ctx, q, ids)
-	if err != nil {
-		return nil, "", err
-	}
-	out := make([]Installation, len(list))
-	for i, in := range list {
-		out[i] = Installation{ID: in.ID, Account: in.Account, RepositorySelection: in.RepositorySelection, Suspended: in.Suspended(),
-			Permissions: in.Permissions, HTMLURL: in.HTMLURL, Tenants: shared[in.ID], Spaces: counts[in.ID]}
-	}
-	nc := ""
-	if next > 0 {
-		nc = encodeCursor(cursor{Kind: "p", Page: next})
-	}
-	return out, nc, nil
 }
 
 func (s *Service) listError(err error) error {
@@ -456,64 +398,6 @@ func (s *Service) listError(err error) error {
 		return errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App.")
 	}
 	return s.unreachable(err)
-}
-
-// maxShareTenants bounds how many tenants one installation is shared with in a request.
-const maxShareTenants = 500
-
-// SetTenants shares an installation of an organisation with exactly these
-// tenants (none: stop sharing). Every tenant must exist.
-func (s *Service) SetTenants(ctx context.Context, id int64, tenants []string) (*Installation, error) {
-	st, err := s.need(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if len(tenants) > maxShareTenants {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "Share with at most %d tenants.", maxShareTenants)
-	}
-	set := make([]string, 0, len(tenants))
-	seen := map[string]bool{}
-	for _, t := range tenants {
-		if t != "" && !seen[t] {
-			seen[t] = true
-			set = append(set, t)
-		}
-	}
-	sort.Strings(set)
-	in, err := st.app.Installation(ctx, id)
-	if err != nil {
-		if githubapp.IsStatus(err, http.StatusNotFound) {
-			return nil, errf(http.StatusNotFound, CodeNotFound, "GitHub does not know that installation.")
-		}
-		return nil, s.listError(err)
-	}
-	if len(set) > 0 && in.Account.Type != "Organization" {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "Only the installation of an organisation can be shared.")
-	}
-	err = s.opt.Store.Tx(ctx, func(q store.Q) error {
-		for _, t := range set {
-			if _, err := store.GetTenant(ctx, q, t); err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					return errf(http.StatusBadRequest, CodeInvalid, "No such tenant: %s.", t)
-				}
-				return err
-			}
-		}
-		if err := store.PutGitHubInstallation(ctx, q, store.GitHubInstallation{ID: id, Account: in.Account.Login,
-			AccountType: in.Account.Type, Updated: s.opt.Now()}); err != nil {
-			return err
-		}
-		return store.SetGitHubInstallationTenants(ctx, q, id, set)
-	})
-	if err != nil {
-		return nil, err
-	}
-	counts, err := store.GitHubSpaceCounts(ctx, s.opt.Store.Q(), []int64{id})
-	if err != nil {
-		return nil, err
-	}
-	return &Installation{ID: in.ID, Account: in.Account, RepositorySelection: in.RepositorySelection, Suspended: in.Suspended(),
-		Permissions: in.Permissions, HTMLURL: in.HTMLURL, Tenants: set, Spaces: counts[id]}, nil
 }
 
 // --- re-checking the App ------------------------------------------------------------

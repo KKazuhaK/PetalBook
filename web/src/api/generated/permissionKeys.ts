@@ -41,6 +41,7 @@ export type PermissionKey =
   | 'tenant.tokens.read'
   | 'tenant.tokens.revoke'
   | 'tenant.permissions.read'
+  | 'tenant.github.manage'
   | 'space.read'
   | 'space.write'
   | 'space.members.manage'

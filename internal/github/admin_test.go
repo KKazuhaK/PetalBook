@@ -2,7 +2,6 @@ package github_test
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -149,82 +148,6 @@ func TestAnotherAppIsRefusedWhileInUse(t *testing.T) {
 
 func githubapptestKeyPEM(h *harness) string { return h.f.KeyPEM() }
 
-func TestInstallationsListAndSharing(t *testing.T) {
-	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		h := newHarness(t, st)
-		if _, _, err := h.svc.Installations(ctx, ""); code(err) != "provider_not_configured" || status(err) != 409 {
-			t.Fatalf("%v", err)
-		}
-		h.configure()
-		h.f.AddUser("tang")
-		var orgInst int64
-		for i := 0; i < 40; i++ {
-			login := "org" + strings.Repeat("a", i+1)
-			h.f.AddOrg(login)
-			id := h.f.Install(login, "all")
-			if i == 35 {
-				orgInst = id
-			}
-		}
-		userInst := h.f.Install("tang", "all")
-		p1, next, err := h.svc.Installations(ctx, "")
-		if err != nil || len(p1) != 30 || next == "" {
-			t.Fatalf("%d %q %v", len(p1), next, err)
-		}
-		before := h.f.Count("GET", "/app/installations")
-		p2, next2, err := h.svc.Installations(ctx, next)
-		if err != nil || len(p2) != 11 || next2 != "" || h.f.Count("GET", "/app/installations") != before+1 {
-			t.Fatalf("%d %q %v", len(p2), next2, err)
-		}
-		if _, _, err := h.svc.Installations(ctx, "garbage"); code(err) != "invalid" {
-			t.Fatalf("%v", err)
-		}
-		// Share one organisation; a user's account cannot be shared; GitHub must know the installation.
-		it, err := h.svc.SetTenants(ctx, orgInst, []string{store.DefaultTenantID})
-		if err != nil || fmt.Sprint(it.Tenants) != "["+store.DefaultTenantID+"]" {
-			t.Fatalf("%+v %v", it, err)
-		}
-		if _, err := h.svc.SetTenants(ctx, userInst, []string{store.DefaultTenantID}); code(err) != "invalid" {
-			t.Fatalf("%v", err)
-		}
-		if _, err := h.svc.SetTenants(ctx, 12345, []string{store.DefaultTenantID}); code(err) != "not_found" || status(err) != 404 {
-			t.Fatalf("%v", err)
-		}
-		list, _, _ := h.svc.Installations(ctx, next)
-		shared := 0
-		all, _, _ := h.svc.Installations(ctx, "")
-		for _, x := range append(all, list...) {
-			if len(x.Tenants) > 0 {
-				shared++
-			}
-		}
-		if shared != 1 {
-			t.Fatalf("%d shared", shared)
-		}
-		// Sharing with a tenant that does not exist, or twice with one, or with none.
-		if _, err := h.svc.SetTenants(ctx, orgInst, []string{"no-such-tenant"}); code(err) != "invalid" || status(err) != 400 {
-			t.Fatalf("%v", err)
-		}
-		if err := st.CreateTenant(ctx, store.Tenant{ID: "T2", Slug: "two", Name: "Two", Created: h.now}); err != nil {
-			t.Fatal(err)
-		}
-		it, err = h.svc.SetTenants(ctx, orgInst, []string{"T2", store.DefaultTenantID, "T2"})
-		if err != nil || fmt.Sprint(it.Tenants) != "["+store.DefaultTenantID+" T2]" {
-			t.Fatalf("%+v %v", it, err)
-		}
-		if _, err := h.svc.SetTenants(ctx, userInst, nil); err != nil {
-			t.Fatalf("stopping to share a user's account is allowed: %v", err)
-		}
-		// A space counts toward its installation.
-		h.user("U1", "kazuha")
-		h.space("S1", store.Remote{Via: "app", InstallationID: orgInst, RepoID: 1})
-		it, err = h.svc.SetTenants(ctx, orgInst, nil)
-		if err != nil || len(it.Tenants) != 0 || it.Spaces != 1 {
-			t.Fatalf("%+v %v", it, err)
-		}
-	})
-}
-
 // Removing the client id only ends users' connections: spaces that sync
 // through the App's installations do not need it, so only connected users
 // stand in the way.
@@ -318,7 +241,8 @@ func TestAPermissionRefusalRechecksTheAppByItself(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		w := newWorld(t, st)
 		repo := w.f.AddRepo("kazuhahub", "wiki", true)
-		w.space("S1", store.Remote{Via: "app", InstallationID: w.kazuhahub, RepoID: repo.ID})
+		w.asOrg("kazuhahub")
+		w.spaceIn("T1", "S1", "", store.Remote{Via: "app", InstallationID: w.kazuhahub, RepoID: repo.ID})
 		rem, _ := store.GetRemote(ctx, st.Q(), "S1", store.RoleContent)
 		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
 		if v, _ := w.svc.View(ctx); len(v.Missing) != 0 {

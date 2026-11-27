@@ -604,8 +604,6 @@ func TestEveryProviderErrorNamesItsProvider(t *testing.T) {
 		}{
 			{member, "GET", "/api/account/links/" + kind + "/repos?installation=3", nil, 400, "invalid"},
 			{member, "DELETE", "/api/account/leftovers/" + kind + "/abc", nil, 404, "not_found"},
-			{admin, "GET", "/api/admin/providers/" + kind + "/installations", nil, 404, "not_found"},
-			{admin, "PUT", "/api/admin/providers/" + kind + "/installations/1", map[string]any{"tenants": []string{}}, 404, "not_found"},
 			{admin, "POST", "/api/admin/providers/" + kind + "/manifest", nil, 404, "not_found"},
 			{admin, "PATCH", "/api/admin/providers/" + kind, map[string]any{"clientSecret": "wrong"}, 400, "invalid"},
 		}

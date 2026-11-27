@@ -421,6 +421,14 @@ func (f *Fake) Authorize(authURL, login string) string {
 // gives none to an installation.
 func (f *Fake) InstallApp(installURL, login, callback string) string {
 	f.t.Helper()
+	return f.InstallAppOn(installURL, login, login, callback, true)
+}
+
+// InstallAppOn is InstallApp on another account than the person's own (an
+// organisation login may install on), and, with authorize false, an App that
+// does not ask for authorisation during installation: no code comes back.
+func (f *Fake) InstallAppOn(installURL, login, account, callback string, authorize bool) string {
+	f.t.Helper()
 	u, err := url.Parse(installURL)
 	if err != nil || !strings.HasSuffix(u.Path, "/installations/new") {
 		f.t.Fatalf("not an installation URL: %q", installURL)
@@ -432,24 +440,30 @@ func (f *Fake) InstallApp(installURL, login, callback string) string {
 	f.mu.Lock()
 	var inst int64
 	for _, in := range f.installs {
-		if !in.Deleted && strings.EqualFold(in.Account, login) {
+		if !in.Deleted && strings.EqualFold(in.Account, account) {
 			inst = in.ID
 		}
 	}
+	action := "update"
 	if inst == 0 {
-		in := &Install{ID: f.id(), Account: login, Selection: "all", Repos: map[int64]bool{}}
+		in := &Install{ID: f.id(), Account: account, Selection: "all", Repos: map[int64]bool{}}
 		f.installs[in.ID] = in
-		inst = in.ID
+		inst, action = in.ID, "install"
 	}
-	c := randHex(10)
-	f.codes[c] = &code{login: login, redirect: callback}
+	c := ""
+	if authorize {
+		c = randHex(10)
+		f.codes[c] = &code{login: login, redirect: callback}
+	}
 	f.mu.Unlock()
 	back, _ := url.Parse(callback)
 	q := back.Query()
-	q.Set("code", c)
+	if c != "" {
+		q.Set("code", c)
+	}
 	q.Set("state", state)
 	q.Set("installation_id", strconv.FormatInt(inst, 10))
-	q.Set("setup_action", "install")
+	q.Set("setup_action", action)
 	back.RawQuery = q.Encode()
 	return back.String()
 }

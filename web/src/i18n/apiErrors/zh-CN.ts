@@ -151,6 +151,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   connection_expired: '你和这个平台的连接已失效，请重新连接。',
   connection_missing: '这个连接已经不存在了。',
   installation_gone: '应用已从该账号上卸载。',
+  installation_taken: '这个 GitHub 安装已经连接到这台服务器上的另一个组织或个人了。',
 
   // The daily text.
   bad_language: '这不是有效的语言标记。',

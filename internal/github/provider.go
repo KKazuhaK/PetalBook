@@ -18,8 +18,8 @@ var (
 	_ connections.Provider      = (*Service)(nil)
 	_ connections.Refresher     = (*Service)(nil)
 	_ connections.Administered  = (*Service)(nil)
-	_ connections.Installable   = (*Service)(nil)
 	_ connections.ManifestMaker = (*Service)(nil)
+	_ connections.Scoped        = (*Service)(nil)
 )
 
 // Descriptor says what this provider is.
@@ -177,54 +177,4 @@ func (s *Service) AdminCounts(ctx context.Context) (int, int, error) {
 	}
 	spaces, err := store.CountGitHubSpaces(ctx, q)
 	return auths, spaces, err
-}
-
-type installationView struct {
-	ID      int64 `json:"id"`
-	Account struct {
-		Login string `json:"login"`
-		Type  string `json:"type"`
-		ID    int64  `json:"id"`
-	} `json:"account"`
-	RepositorySelection string            `json:"repositorySelection"`
-	Suspended           bool              `json:"suspended"`
-	Permissions         map[string]string `json:"permissions"`
-	HTMLURL             string            `json:"htmlUrl"`
-	Tenants             []string          `json:"tenants"`
-	Spaces              int               `json:"spaces"`
-}
-
-func toInstallationView(i Installation) installationView {
-	r := installationView{ID: i.ID, RepositorySelection: i.RepositorySelection, Suspended: i.Suspended, Permissions: i.Permissions,
-		HTMLURL: i.HTMLURL, Tenants: i.Tenants, Spaces: i.Spaces}
-	r.Account.Login, r.Account.Type, r.Account.ID = i.Account.Login, i.Account.Type, i.Account.ID
-	if r.Permissions == nil {
-		r.Permissions = map[string]string{}
-	}
-	if r.Tenants == nil {
-		r.Tenants = []string{}
-	}
-	return r
-}
-
-// InstallationsView is Installations in the shape the API shows.
-func (s *Service) InstallationsView(ctx context.Context, cursor string) (any, string, error) {
-	items, next, err := s.Installations(ctx, cursor)
-	if err != nil {
-		return nil, "", err
-	}
-	out := make([]installationView, len(items))
-	for i, it := range items {
-		out[i] = toInstallationView(it)
-	}
-	return out, next, nil
-}
-
-// SetInstallationTenants shares an installation with exactly these tenants.
-func (s *Service) SetInstallationTenants(ctx context.Context, id int64, tenants []string) (any, error) {
-	it, err := s.SetTenants(ctx, id, tenants)
-	if err != nil {
-		return nil, err
-	}
-	return toInstallationView(*it), nil
 }

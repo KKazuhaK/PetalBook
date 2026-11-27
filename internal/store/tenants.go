@@ -471,8 +471,12 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		if _, err := BumpSettingsRev(ctx, q); err != nil {
 			return err
 		}
-		// Installations shared with it are not any more.
+		// Providers shared with it are not any more, and the GitHub
+		// installations it connected are no one's.
 		if _, err := q.Exec(ctx, `DELETE FROM provider_shares WHERE tenant_id = ?`, id); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM provider_installations WHERE owner_tenant = ?`, id); err != nil {
 			return err
 		}
 		// Its custom roles, and the grants of any role held in it, go with it.

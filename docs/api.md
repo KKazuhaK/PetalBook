@@ -1822,7 +1822,7 @@ allows any).
   (the SSH host key changed), `clone` (the clone is not as the server left
   it), `rescued` (commits that could not be pushed were kept aside), and for a
   `connection` credential `connection_expired`, `connection_missing`,
-  `installation_gone`, `app_missing_permission`, `provider_not_configured` (see
+  `installation_gone`, `access_lost`, `app_missing_permission`, `provider_not_configured` (see
   "The GitHub provider", "When a GitHub credential stops working"). The error
   has `provider` too. A client shows `error` and uses `errorCode` only to choose what
   to offer (reconnect GitHub, open the installation's settings, ...). Codes
@@ -2103,6 +2103,7 @@ Every error of a connection has `provider` (the id) next to `error` and
 | `connection_missing` | the person it names has no connection (any more) (as a remote's `errorCode`) |
 | `not_connected` | the request needs the caller's connection and there is none, or it is expired |
 | `installation_gone` | the App was uninstalled or suspended, or the repository left its selection |
+| `access_lost` | the installation is no longer connected to the space's owner here (disconnected), or the credential is not the owner's own (a person's token for an organisation's space) |
 | `repo_not_in_installation` | no installation reaches the repository and it could not be added |
 | `app_not_installed` | the App is not installed where the caller wants a repository (`installUrl`): their own account, or an organisation the App was removed from |
 | `app_missing_permission` | the App or its installation lacks a permission (`permission` names the first, `missing` all) |
@@ -2126,17 +2127,20 @@ one row of `providers` (id `github`, `signin` and `repos`; the App's record is
 `config.app`, its client id `config.clientId`, its key, client secret and webhook
 secret are in `secrets`), a person's account at it one row of `linked_accounts`
 (tokens on the same row as the sign-in), its installations rows of
-`provider_installations`, the tenants each is shared with rows of
-`provider_shares`, and the reminders of empty repositories rows of
+`provider_installations`, each with its one owner here (`owner_user` or
+`owner_tenant`), and the reminders of empty repositories rows of
 `repo_leftovers`.
 
 ### Audit
 
 `connection_provider_changed` (a provider configured, changed or removed:
 `provider`, `type`, secrets as `"changed"`), `account_connected` and
-`account_disconnected` (`provider`, `user`, `login`). All three are the
-server's own kinds: a tenant administrator's `GET /api/admin/audit` does not
-list `connection_provider_changed`.
+`account_disconnected` (`provider`, `user`, `login`),
+`github_installation_connected` (`installation`, `account`) and
+`github_installation_disconnected` (`installation`, `spaces`: how many lost
+access), the last two in the owner's tenant (a person's, or the
+organisation's). `connection_provider_changed` is the server's own kind: a
+tenant administrator's `GET /api/admin/audit` does not list it.
 
 ## The GitHub provider
 
@@ -2145,9 +2149,11 @@ Accounts mode; single-user mode answers `404` here, as it does for the whole of
 too). The server has at most one
 GitHub App, which an administrator configures (see "Administration", "Connections", "The GitHub App"); only `github.com` is supported. Three things come from it:
 
-- **Installations**: where the App is installed (organisations, accounts). An
-  installation token pushes and fetches a space's repository, and creates
-  repositories in an organisation an administrator has shared.
+- **Installations**: where the App is installed. Anyone installs it on their own
+  GitHub account, and an organisation's administrators on the organisation's
+  GitHub organisation ("Installations" below); each installation belongs to that
+  one owner here. An installation token pushes and fetches a space's repository,
+  and creates repositories in an organisation's own installation.
 - **GitHub authorisation**: a PetalBook user connects their GitHub account to
   the App. The user token creates repositories in the user's own account and
   in the organisations GitHub lets that user create them in, and syncs a space
@@ -2156,15 +2162,27 @@ GitHub App, which an administrator configures (see "Administration", "Connection
 - **Spaces made with a new repository** (`POST /api/spaces` with `storage.sync`),
   and existing spaces switched to the App (`PUT …/remote`).
 
-**Tenants (3.3).** The App and its installations are the server's: only site
-administrators reach `/api/admin/providers/github…` (a tenant administrator gets
-`403 forbidden`, as for the other site-only routes), and an installation a site
-administrator shares is shared with the people of **every** tenant (see
-`PUT /api/admin/providers/github/installations/{id}`). A GitHub connection is its user's,
-so it is in the user's tenant: it syncs only spaces of that tenant. One GitHub
-account links to one PetalBook user on the whole server, whatever their
-tenants; `account_in_use` says only that it is taken. A space made with a
-repository is the creator's tenant's and counts toward its quotas.
+**Whose spaces sync through what (owner decision 2026-11-26).** The App is the
+server's: only site administrators reach `/api/admin/providers/github…` (a
+tenant administrator gets `403 forbidden`, as for the other site-only routes).
+Its installations are not: each has one owner here.
+
+- A **person's space** (a space of the default tenant, or someone's personal
+  space) syncs only through that person's own GitHub link (`via: "user"`) or an
+  installation connected to that person (`via: "app"`, the remote naming the
+  person, who must still be able to manage the space).
+- An **organisation's space** (a space of any other tenant) syncs only through
+  an installation connected to that tenant (`via: "app"`), never through a
+  member's own token: `via: "user"` is `403 owner_not_allowed`, and a remote
+  that has one anyway fails with `access_lost`.
+- One GitHub account links to one PetalBook user on the whole server, whatever
+  their tenants; `account_in_use` says only that it is taken. A space made with
+  a repository is the creator's tenant's (the default tenant: the creator's own)
+  and counts toward its quotas.
+- `features.githubConnect` (site, with a rule per tenant; on by default) says
+  whether people and organisations may install the App: off, the install routes
+  answer `403 feature_off` and the app offers no button; what is connected stays
+  listed and can be disconnected.
 
 Every route here is a person's, not a token's: with an API token, `/api/connections/github/…`
 and `/api/admin/providers/github…` answer `403 token_scope` (see "API tokens"), and so
@@ -2175,10 +2193,70 @@ do `POST /api/spaces` and `PUT …/remote`.
 | Fetching and pushing a space with `via: "app"` | installation token, narrowed to the one repository, `contents: write` |
 | Fetching and pushing a space with `via: "user"` | the user token of the PetalBook user the remote names |
 | Creating a repository in the user's account | user token (`POST /user/repos`) |
-| Creating a repository in an organisation the user's authorisation lists | user token (`POST /orgs/{org}/repos`) |
-| Creating a repository in an organisation an administrator shared with the caller's tenant | installation token, `administration: write` (`POST /orgs/{org}/repos`) |
-| Listing installations (administrators) | the App's JWT |
-| Listing the caller's owners and repositories | user token; installation token for an installation shared with the caller's tenant |
+| Creating a repository in an organisation the user's authorisation lists (a person's space) | user token (`POST /orgs/{org}/repos`) |
+| Creating a repository in the organisation's own installation (an organisation's space) | installation token, `administration: write` (`POST /orgs/{org}/repos`) |
+| Checking a claimed installation on the setup callback | the claimer's user token (`GET /user/installations`) |
+| Listing the caller's owners and repositories | user token (a person); the organisation's installations from the database and their installation tokens (an organisation's member) |
+
+### Installations
+
+Anyone may install the server's App on their own GitHub account, and an
+organisation's administrators (key `tenant.github.manage`, held by every tenant
+administrator) on the organisation's GitHub organisation. The installation is
+then connected to that one owner: the person, or the tenant (not the
+administrator who installed it; any of its administrators manages it).
+
+- `POST /api/account/github/install` `{return?}` (the person's own account) and
+  `POST /api/admin/github/install` `{account, return?}` (the acting tenant;
+  `account` is the GitHub organisation's login): `200 {"url": …}`, the App's
+  installation page with a `state`, and a cookie that binds the attempt to the
+  browser (10 minutes). Both need `features.githubConnect`
+  (`403 feature_off`); the default tenant has no organisation installations
+  (`403 forbidden`). `POST /api/account/links/github/start` with
+  `install: true` is the person's install too.
+- The callback is `GET /api/account/links/github/callback` (the App's callback
+  URL; GitHub sends `installation_id` and `setup_action`, and a `code` when the
+  App asks for authorisation during installation). The installation is
+  connected only when every check holds, in this order:
+  1. the attempt is this browser's and this person's (`expired` otherwise);
+  2. the person may still connect one for that owner (the feature, and for an
+     organisation the key there): `forbidden`;
+  3. GitHub lists the installation for the person's **own** user token
+     (`GET /user/installations`; the token of the `code`, or the person's link
+     when there is none: `not_connected` without either). The
+     `installation_id` of the query string alone is never trusted:
+     `installation_not_yours`;
+  4. it is on the account asked for: the person's own GitHub account (type
+     `User`, the id of the token's user) or the organisation named at the start
+     (type `Organization`): `wrong_account`;
+  5. no other person or organisation on this server has it (one statement; of
+     two at once one wins): `installation_taken`, "already connected to another
+     organisation or person on this server".
+  A person's install also stores their link, as connecting does (its own
+  refusals apply); an organisation's stores nothing of the administrator's. The
+  browser is sent back to `return` (failures: the person's to
+  `/settings?provider=github&connection_error=<code>`, an organisation's to
+  `return?connection_error=<code>`). `setup_action=request` (an organisation's
+  owners must approve first) is `requested`.
+- `GET …/installations` (`/api/account/github` or `/api/admin/github`):
+  `{"items": [{"id", "account", "accountType", "owner": {"kind": "person" |
+  "organization", "id"}, "claimedBy", "connected", "spaces", "manageUrl"}]}`,
+  from the database (at most 100). `manageUrl` is the installation's settings
+  on GitHub, where its repositories are chosen and where it is uninstalled.
+- `GET …/installations/{id}/repos[?cursor=]`: one page of the repositories it
+  reaches, with its own token. `GET …/installations/{id}/spaces`:
+  `{"items": [{"id", "name"}], "total"}`, the spaces that sync through it (at
+  most 200 named): what disconnecting it affects, for the client to list before
+  it asks to confirm.
+- `DELETE …/installations/{id}`: `200 {"spaces": n}`. The installation is no
+  longer connected here (it stays installed on GitHub). Every remote that synced
+  through it keeps its row and the space its notes; they show `state: "error"`
+  and `errorCode: "access_lost"` at once, and a later sync fails the same way.
+  Under a storage requirement of a remote, such a space counts as having none
+  and is in the requirement's grace like any space without one (`InGrace`, then
+  `Overdue`; exemptions of spaces and people as always); no other grace period
+  applies. Connecting the same installation again by the same owner restores them.
+- Another owner's installation is as good as not there: `404 not_found`.
 
 ### Tokens, and how they reach Git
 
@@ -2331,11 +2409,12 @@ The accounts the caller can create a repository in, one page at a time:
  "next": "…"}
 ```
 
-In this order: the caller's own GitHub account, when connected; the
-organisations among the installations GitHub lists for the caller's
-connection (`GET /user/installations`, 30 to a page); the organisations whose
-installation a site administrator shared with the caller's tenant and that are not
-already listed. `needsInstall` is `true` on the caller's own account when the
+For a person (whose new spaces are their own): the caller's own GitHub account,
+when connected, then the organisations among the installations GitHub lists for
+the caller's connection (`GET /user/installations`, 30 to a page), all
+`via: "user"`. For a member of an organisation (whose new spaces are the
+organisation's): the organisation's own installations on this server only, from
+the database, all `via: "app"`; never the member's own account. `needsInstall` is `true` on the caller's own account when the
 App is not installed there: GitHub lets a user token create repositories only
 in accounts the App is installed on, so a repository in that account is refused
 with `409 app_not_installed` until the person installs it (the web app
@@ -2343,20 +2422,22 @@ offers "Install on my account": `installUrl` of `GET /api/account/links`, or the
 `install` start above). It is found with one call to GitHub on the first page
 (`GET /users/{login}/installation`, remembered while the App is there; the answer "not installed there" is remembered for a minute per person, so a person without the App does not cost a call or a log line at every visit). `recheck=true`, on the first page, forgets that memory for the caller first: a person who has just installed the App asks again instead of waiting the minute (the web app's "check again"). It is honoured at most once a minute per person: within the minute `recheck=true` is an ordinary call that uses the remembered answer, with no call to GitHub and no error, so looping it cannot use up the App's shared rate limit. Creating a space is never refused by the client on this flag; the server answers `409 app_not_installed`.
 `via` says which token creates the repository there. Each page is at most one call
-to GitHub. `cursor` is opaque; `next` is `""` after the last page. Without a
-connection only the installations shared with the caller's tenant are listed. A repository is created with
-the caller's own token wherever it can be, so GitHub's rules for that person
-in that organisation (who may create repositories, whether private ones are
-allowed) apply.
+to GitHub. `cursor` is opaque; `next` is `""` after the last page. A person
+without a connection has none. A person's repository is created with their own
+token, so GitHub's rules for that person in that organisation (who may create
+repositories, whether private ones are allowed) apply; an organisation's with
+its installation's token.
 
 ### `GET /api/account/links/github/repos?installation={id}&cursor={cursor}` or `?mine=true`
 
 Repositories the caller can connect a space to, 30 to a page, for choosing one
 in `PUT …/remote` or `POST /api/spaces` with `create: false`. `installation`:
-the repositories of that installation the caller's connection reaches
-(`GET /user/installations/{id}/repositories`), or for an installation shared with the caller's tenant
-all of its repositories (installation token). `mine=true`: the caller's own
-repositories (`GET /user/repos?affiliation=owner`).
+all the repositories of an installation of the space owner's own (the person's,
+or for a member the organisation's; installation token), or for a person those of
+another installation their connection reaches
+(`GET /user/installations/{id}/repositories`). `mine=true`: the caller's own
+repositories (`GET /user/repos?affiliation=owner`); a member of an organisation
+gets `403 owner_not_allowed`.
 
 ```json
 {"items": [{"id": 881234567, "fullName": "kazuhahub/tang-notes", "private": true,
@@ -2364,8 +2445,7 @@ repositories (`GET /user/repos?affiliation=owner`).
  "next": "…"}
 ```
 
-`404 not_found` for an installation the caller can neither reach nor use as
-shared with their tenant. GitHub cannot filter these lists by name, so there is no `q`: a client
+`404 not_found` for an installation the caller can neither reach nor has. GitHub cannot filter these lists by name, so there is no `q`: a client
 filters the page it has, and the user can type `owner/name` instead.
 
 ### Creating a space with a repository
@@ -2383,10 +2463,9 @@ filters the page it has, and the user can type `owner/name` instead.
   that exists already, under the rules of `PUT …/remote`: an empty repository
   gets the space's history; one with content gives it to the new space, which
   is pristine. The credential is chosen as `PUT …/remote` would with no `via`
-  given: the App when the caller may use its installation on that repository
-  (their connection can push there, or the installation is shared with their
-  tenant), otherwise
-  the caller's own connection.
+  given: the App when the installation on that repository is the space owner's
+  own (the person's, or the organisation's), otherwise, for a person's space
+  only, the caller's own connection.
 
 The repository is created empty (`auto_init: false`), so the space's first
 commit is the repository's first commit, on `main`. The order:
@@ -2511,11 +2590,13 @@ already follows that repository with a deploy key or a token keeps its history
 token is deleted.
 
 - `via: "app"`: the installation that reaches the repository
-  (`GET /repos/{owner}/{name}/installation`). The caller must be allowed to
-  use it: their connection can push to the repository, or the installation is
-  shared. Otherwise anyone with `manage` in a space could tie it to any
+  (`GET /repos/{owner}/{name}/installation`). It must be connected to the
+  space's owner here: for an organisation's space the organisation's, for a
+  person's space the caller's own (the remote then names the caller, who must
+  keep `manage`). Otherwise anyone with `manage` in a space could tie it to any
   repository the App reaches.
-- `via: "user"`: the caller's connection, which must be able to push. The
+- `via: "user"` (a person's space only; an organisation's is `403
+  owner_not_allowed`): the caller's connection, which must be able to push. The
   space then syncs as the caller on GitHub. Someone else with `manage` who
   `PUT`s it again ties it to themself. It keeps working only while that user
   can sign in, still has `manage` in the space (directly or through a group:
@@ -2531,8 +2612,8 @@ Errors, besides those of `PUT …/remote`: `409 provider_not_configured`;
 `409 not_connected` (the caller has no connection, or it is
 `expired`); `409 repo_not_in_installation` (`via: "app"` and no
 installation reaches the repository); `403 owner_not_allowed` (the
-installation is not shared with the caller's tenant and the caller's connection
-cannot push there);
+installation is not the space owner's own, `via: "user"` for an organisation's
+space, or the caller's connection cannot push there);
 `403 forbidden` (`via: "user"` and the caller is not in the space's tenant).
 
 ### When a GitHub credential stops working
@@ -2545,6 +2626,7 @@ the server next mints or renews a token, or when Git is refused:
 | `connection_expired` | the refresh token expired or was revoked | the user the remote names connects again |
 | `connection_missing` | that user disconnected, was disabled or deleted, or lost `manage` in the space (directly and through every group) | they connect again, or someone with `manage` switches the credential |
 | `installation_gone` | the App was uninstalled or suspended there, or the repository was taken out of its selection | install it again, or add the repository |
+| `access_lost` | the installation it synced through was disconnected from its owner here, or is not the space owner's own | connect GitHub again (the same installation restores it), or connect another repository |
 | `app_missing_permission` | GitHub refuses the installation's token because the App or its installation lacks Contents | an administrator gives the App Contents (write) and accepts the change in the installation's settings; then re-check in the administration |
 | `provider_not_configured` | the server's App is not configured, or its key no longer works | an administrator fixes the App |
 
@@ -2562,7 +2644,8 @@ fixed (a user connects again, an administrator saves the App).
 |---|---|---|
 | `provider_not_configured` | 409 | no App, or (for user flows) no client id and secret or no `--public-url` |
 | `not_connected` | 409 | the request needs the caller's GitHub connection and there is none, or it is `expired` |
-| `owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation is not shared with the caller's tenant and the caller's connection does not reach the repository |
+| `owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation that reaches the repository is not the space owner's own; an organisation's space through a person's own connection |
+| `installation_taken` | — | (a callback's `connection_error`) the installation is connected to another person or organisation on this server |
 | `name_taken` | 409 | the owner has a repository of that name |
 | `provider_refused` | 403 | GitHub refused to create the repository (`message` says what GitHub said) |
 | `app_missing_permission` | 403 | the App, or its installation, lacks a permission the call needs (a token GitHub refused with a 403 or 422 that talks about permissions); `missing` lists the names (`administration`, `contents`), `repo` is set when the server had made a repository. It is not the same as the next one: the permission is the problem, not the repository. As the `errorCode` of a space's remote it says syncing needs a permission |
@@ -9347,7 +9430,7 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | Keys | Kind | Layers |
 |---|---|---|
 | `features.tokens`, `features.mcp`, `features.offline`, `features.registration` | boolean | S, T |
-| `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`; `mail.ownSender` | boolean (features) | S + rule |
+| `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`, `.githubConnect`; `mail.ownSender` | boolean (features) | S + rule |
 | `features.passkeys`, `features.tenancy` | boolean | S! |
 | `audit.signins`, `.reads`, `.downloads`, `.api` | boolean | S, T |
 | `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` 0 for no age limit), choice `or`, `and` | S! |
@@ -9824,9 +9907,9 @@ The tenant's own providers (2.7b). For GitHub:
   Needs the feature `features.ownConnections`. From 3.8 a tenant may also
   add its own GitLab and Gitea providers here (see "Connections to GitLab and
   Gitea").
-- **The site's App** stays the site's. Sharing one of its installations is per
-  tenant, as built in 2.7: `PUT /api/admin/providers/github/installations/{id}`
-  takes `{"tenants": [ids]}` (`{"shared": true}` stays `400 invalid`); 3.6 adds
+- **The site's App** stays the site's. Its installations are not shared by the
+  site any more (2026-11-26): each person and each organisation installs it on
+  their own GitHub account ("The GitHub provider", "Installations"); 3.6 adds
   `{"tenants": "all"}` (every tenant, those made later included).
   `GET /api/admin/tenants/{tenant}/connections/github` also lists, read only, the site
   installations shared with the tenant.
@@ -10310,6 +10393,7 @@ held by the built-in site administrator only: no custom role may hold it.
 | `tenant.tokens.read` | tenant | — | List people's API tokens and app authorizations |
 | `tenant.tokens.revoke` | tenant | — | Revoke people's API tokens and app authorizations |
 | `tenant.permissions.read` | tenant | — | List the permission keys |
+| `tenant.github.manage` | tenant | — | Install the site's GitHub App on the organisation's GitHub account, and see, change or disconnect the organisation's installations |
 | `space.read` | space | — | See pages, history, attachments and search |
 | `space.write` | space | — | Create, change, move and delete pages and folders |
 | `space.members.manage` | space | — | Add, change and remove the members of the space |
@@ -10576,7 +10660,7 @@ exist, a `before` that is not a time, or a `dry_run` that is not a boolean.
 |---|---|---|
 | `provider_not_configured` | 409 | no App, or (for user flows) no client id and secret or no `--public-url` |
 | `not_connected` | 409 | the request needs the caller's GitHub connection and there is none, or it is `expired` |
-| `owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation is not shared with the caller's tenant and the caller's connection does not reach the repository |
+| `owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation that reaches the repository is not the space owner's own; an organisation's space through a person's own connection |
 | `name_taken` | 409 | the owner has a repository of that name |
 | `provider_refused` | 403 | GitHub refused to create the repository (`message` says what GitHub said) |
 | `app_missing_permission` | 403 | the App, or its installation, lacks a permission the call needs (a token GitHub refused with a 403 or 422 that talks about permissions); `missing` lists the names (`administration`, `contents`), `repo` is set when the server had made a repository. It is not the same as the next one: the permission is the problem, not the repository. As the `errorCode` of a space's remote it says syncing needs a permission |
@@ -17361,7 +17445,7 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | Keys | Kind | Layers |
 |---|---|---|
 | `features.tokens`, `features.mcp`, `features.offline`, `features.registration` | boolean | S, T |
-| `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`; `mail.ownSender` | boolean (features) | S + rule |
+| `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`, `.githubConnect`; `mail.ownSender` | boolean (features) | S + rule |
 | `features.passkeys`, `features.tenancy` | boolean | S! |
 | `audit.signins`, `.reads`, `.downloads`, `.api` | boolean | S, T |
 | `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` 0 for no age limit), choice `or`, `and` | S! |
@@ -18324,6 +18408,7 @@ held by the built-in site administrator only: no custom role may hold it.
 | `tenant.tokens.read` | tenant | — | List people's API tokens and app authorizations |
 | `tenant.tokens.revoke` | tenant | — | Revoke people's API tokens and app authorizations |
 | `tenant.permissions.read` | tenant | — | List the permission keys |
+| `tenant.github.manage` | tenant | — | Install the site's GitHub App on the organisation's GitHub account, and see, change or disconnect the organisation's installations |
 | `space.read` | space | — | See pages, history, attachments and search |
 | `space.write` | space | — | Create, change, move and delete pages and folders |
 | `space.members.manage` | space | — | Add, change and remove the members of the space |
@@ -19935,39 +20020,11 @@ credential (`message` says how many): switch or disconnect those first. Also
 provider (`message` says to change the requirement first), because nobody could
 meet the requirement without it.
 
-#### `GET /api/admin/providers/github/installations?cursor={cursor}`
+#### Installations
 
-The App's installations, one page at a time; each page is one call to GitHub
-(`GET /app/installations`, 30 to a page) and one query of the state database.
-
-```json
-{"items": [{"id": 51234567, "account": {"login": "kazuhahub", "type": "Organization", "id": 98765},
-            "repositorySelection": "selected", "suspended": false,
-            "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
-            "htmlUrl": "https://github.com/organizations/kazuhahub/settings/installations/51234567",
-            "tenants": ["01J8Z3X5K2"], "spaces": 3}],
- "next": "…"}
-```
-
-`repositorySelection` is `all` or `selected`. `tenants` are the ids of the
-tenants the installation is shared with, sorted (`[]`: none), set below. `spaces`
-counts the spaces syncing through that installation. `409 provider_not_configured`
-when there is no App.
-
-#### `PUT /api/admin/providers/github/installations/{id}`
-
-`{"tenants": ["01J8Z3X5K2", "01J8Z3X5K3"]}`. Sharing is per tenant: the
-installation is shared with exactly these tenants, replacing what it was shared
-with before (`[]` stops sharing; it is the default). The people of a tenant it is shared
-with can create repositories in that organisation and connect spaces to its
-repositories with the installation token, without a GitHub account of their
-own; GitHub then does not know who asked (the commits still name the PetalBook
-user as author). People of any other tenant can use the organisation only when
-their own GitHub connection reaches it, and the installation does not appear
-in their owners or repositories. `tenants` is required; the old `{"shared":
-true}` is `400 invalid`. A tenant that does not exist is `400 invalid`, and
-more than 500 tenants too. A tenant that is deleted stops being shared with.
-Spaces already connected are not affected either way. Only organisations can be
-shared: `400 invalid` for a user's account. `404 not_found` when GitHub does not
-know the installation. `200` with the item.
+The site's administrators do not list or share the App's installations (the
+routes `GET /api/admin/providers/github/installations` and `PUT …/{id}` are gone,
+2026-11-26): each person and each organisation installs the App on their own
+GitHub account and manages it (see "The GitHub provider", "Installations"). The
+site keeps the App and the switch `features.githubConnect`.
 

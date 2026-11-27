@@ -4,7 +4,7 @@ import { Route, Routes } from 'react-router'
 import { useState } from 'react'
 import type { SpaceInfo } from '@/api/types'
 import type { Remote } from '@/api/types'
-import { byLabel, click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
+import { click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { githubApp, githubProvider, leaveRepository, type GitHubState } from '@/api/fixtures/data/connections'
 import type { FixtureServer } from '@/api/fixtures/server'
 import { t } from '@/i18n'
@@ -732,59 +732,6 @@ describe('the GitHub section of the administration', () => {
     m.fx.fail('PUT', '/api/admin/providers/github', 400, { code: 'client_rejected' }, { times: 1 })
     await click(button(tg.admin.save))
     await settle(() => text().includes(tg.admin.errors.codes.client_rejected), 'the secret refusal')
-  })
-
-  it("lists the installations and shares an organisation's with the tenants picked", async () => {
-    m = await mount(routes, {
-      entries: ['/admin/storage/connections'],
-      signIn: true,
-      fixtures: {
-        mode: 'accounts',
-        data: (d) => {
-          githubApp(d)
-          // The tenants the site has: the default one and Acme.
-          d.admin.tenants.push({
-            ...structuredClone(d.admin.tenants[0]),
-            id: 'acme-id',
-            slug: 'acme',
-            name: 'Acme',
-            default: false,
-            origin: 'admin',
-          })
-        },
-      },
-    })
-    await settle(() => document.querySelectorAll('li [data-testid="share-choose"]').length === 3, 'the installations')
-    const choose = (login: string) => byLabel(tg.admin.chooseFor(login))!
-    expect(text()).toContain(tg.admin.notShared)
-    await click(choose('kazuhahub'))
-    await settle(
-      () => dialog() !== null && dialog()!.querySelectorAll('input[type="checkbox"]').length === 2,
-      'the tenants to pick from',
-    )
-    const box = (name: string) =>
-      [...dialog()!.querySelectorAll('label')]
-        .find((l) => l.textContent?.includes(name))!
-        .querySelector<HTMLInputElement>('input[type="checkbox"]')!
-    expect(box('Acme').checked).toBe(false)
-    await click(box('Acme'))
-    await click(button(tg.admin.shareSave, dialog()!)!)
-    await settle(() => dialog() === null, 'the dialog closing')
-    const puts = () =>
-      m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/providers/github/installations/5001')
-    expect(puts().map((r) => r.body)).toEqual([JSON.stringify({ tenants: ['acme-id'] })])
-    await settle(() => text().includes(tg.admin.sharedWith('Acme')), 'the row naming the tenant')
-    // Opened again, the dialog shows what is shared; saving replaces the whole set.
-    await click(choose('kazuhahub'))
-    await settle(
-      () => dialog() !== null && dialog()!.querySelectorAll('input[type="checkbox"]').length === 2,
-      'the tenants again',
-    )
-    expect(box('Acme').checked).toBe(true)
-    await click(box('Default'))
-    await click(button(tg.admin.shareSave, dialog()!)!)
-    await settle(() => dialog() === null, 'the dialog closing again')
-    expect(puts().map((r) => JSON.parse(r.body!).tenants)).toEqual([['acme-id'], ['acme-id', '0000000000']])
   })
 
   it('refuses to remove the App while a space syncs through it', async () => {

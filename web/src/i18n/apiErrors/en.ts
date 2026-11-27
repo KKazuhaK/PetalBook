@@ -163,6 +163,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   connection_expired: 'Your connection to this platform has ended. Connect again.',
   connection_missing: 'This connection no longer exists.',
   installation_gone: 'The app has been uninstalled from that account.',
+  installation_taken: 'That GitHub installation is already connected to another organisation or person on this server.',
 
   // The daily text.
   bad_language: 'That is not a valid language tag.',

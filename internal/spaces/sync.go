@@ -59,7 +59,7 @@ func (m *Manager) HostAllowed(host string) error {
 
 // resolveConnection reads the address of a space's repository and decides how
 // it syncs: the address is stored in https form on the provider's host.
-func (m *Manager) resolveConnection(ctx context.Context, tenantID string, req ConnectRequest) (gitstore.Remote, *connections.Cred, error) {
+func (m *Manager) resolveConnection(ctx context.Context, sc connections.SpaceScope, req ConnectRequest) (gitstore.Remote, *connections.Cred, error) {
 	if req.Provider == "" {
 		return gitstore.Remote{}, nil, invalidAt("", "credential.provider is required for a connection")
 	}
@@ -78,7 +78,7 @@ func (m *Manager) resolveConnection(ctx context.Context, tenantID string, req Co
 	if err := m.hostAllowed(p); err != nil {
 		return gitstore.Remote{}, nil, err
 	}
-	cred, repo, err := p.ResolveExistingIn(ctx, tenantID, req.UserID, owner, name, req.Via)
+	cred, repo, err := resolveExisting(ctx, p, sc, req.UserID, owner, name, req.Via)
 	if err != nil {
 		return gitstore.Remote{}, nil, err
 	}
@@ -176,6 +176,8 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 		return Info{}, err
 	}
 	tenantID := u.TenantID
+	// Whose space it is: the creator's own in the default tenant, else their organisation's.
+	sc := connections.ScopeOfSpace(tenantID, false)
 	m.reserved[userID]++
 	m.reservedT[tenantID]++
 	m.createMu.Unlock()
@@ -233,11 +235,11 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 	var cred *connections.Cred
 	var repo *connections.Repo
 	if g.Create {
-		if plan, err = gh.PlanCreate(ctx, userID, g.Owner); err != nil {
+		if plan, err = planCreate(ctx, gh, sc, userID, g.Owner); err != nil {
 			return Info{}, err
 		}
 	} else {
-		if cred, repo, err = gh.ResolveExistingIn(ctx, tenantID, userID, g.Owner, g.Name, ""); err != nil {
+		if cred, repo, err = resolveExisting(ctx, gh, sc, userID, g.Owner, g.Name, ""); err != nil {
 			return Info{}, err
 		}
 	}
@@ -329,7 +331,7 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 				}
 				arepo, acred, acreated, assetsName = nil, nil, false, ""
 			}
-		} else if acred, arepo, err = gh.ResolveExistingIn(ctx, tenantID, userID, g.Owner, assetsName, ""); err != nil && assetsOptional && withoutSecondRepo(err) {
+		} else if acred, arepo, err = resolveExisting(ctx, gh, sc, userID, g.Owner, assetsName, ""); err != nil && assetsOptional && withoutSecondRepo(err) {
 			arepo, acred, assetsName = nil, nil, "" // there is none beside the space's repository: the attachments stay in the space
 		} else if err != nil {
 			// The space's repository is there; say which one is not (a retry
@@ -492,6 +494,10 @@ func (m *Manager) ConnectionFixed(userID string) {
 	if m.single != nil {
 		return
 	}
+	// A GitHub installation connected again restores the spaces that lost it: what
+	// the storage requirement knows of them is read again (one cache, rebuilt
+	// lazily).
+	m.dropFacts("")
 	var due []*opening
 	m.mu.Lock()
 	if m.closed {
@@ -665,4 +671,68 @@ func (m *Manager) CreateWithRemote(ctx context.Context, userID, name, inbox stri
 	m.markCache(id, stg.sp)
 	m.schedulePull(id)
 	return Info{ID: id, Name: stg.Name(), Role: perm.Owner, DirectRole: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: row.State}, nil
+}
+
+// planCreate and resolveExisting ask a provider for a space of the scope: one
+// that tells a person's spaces from an organisation's (connections.Scoped) is
+// given the scope, any other the tenant.
+func planCreate(ctx context.Context, p connections.Provider, sc connections.SpaceScope, userID, owner string) (*connections.Plan, error) {
+	if sp, ok := p.(connections.Scoped); ok {
+		return sp.PlanCreateFor(ctx, sc, userID, owner)
+	}
+	return p.PlanCreate(ctx, userID, owner)
+}
+
+func resolveExisting(ctx context.Context, p connections.Provider, sc connections.SpaceScope, userID, owner, name, via string) (*connections.Cred, *connections.Repo, error) {
+	if sp, ok := p.(connections.Scoped); ok {
+		return sp.ResolveExistingFor(ctx, sc, userID, owner, name, via)
+	}
+	return p.ResolveExistingIn(ctx, sc.TenantID, userID, owner, name, via)
+}
+
+// AccessLost tells the manager that these spaces lost the GitHub access they
+// synced with (their installation was disconnected): what the storage
+// requirement knows of them is read again, and the open ones are fetched now,
+// so they show it at once rather than at their next turn.
+func (m *Manager) AccessLost(ids []string) {
+	if m.single != nil {
+		return
+	}
+	for _, id := range ids {
+		m.dropFacts(id)
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	var due []*opening
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	for id, e := range m.open {
+		if !want[id] {
+			continue
+		}
+		select {
+		case <-e.done:
+		default:
+			continue
+		}
+		if e.closing != nil || e.sp == nil {
+			continue
+		}
+		e.refs++
+		due = append(due, e)
+	}
+	m.mu.Unlock()
+	for _, e := range due {
+		go func() {
+			defer func() { m.mu.Lock(); e.refs--; m.mu.Unlock() }()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			_ = e.sp.Pull(ctx, true) // it fails with access_lost, which the space records
+		}()
+	}
 }

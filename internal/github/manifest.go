@@ -124,7 +124,7 @@ func (s *Service) CompleteManifest(ctx context.Context, binding, userID string, 
 	if binding == "" || state == "" || len(q["code"]) > 1 || len(q["state"]) > 1 {
 		return manifestFail + "expired", false
 	}
-	_, res := s.manifests.take(manifestKind, binding, state, userID)
+	_, res := s.manifests.take(binding, state, userID, manifestKind)
 	if res != takeOK {
 		return manifestFail + "expired", res == takeUnknown
 	}
