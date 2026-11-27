@@ -363,8 +363,12 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 		if p.User == nil {
 			return nil, errf(Unauthenticated, "Sign in to link an account.")
 		}
-		if _, err := store.FindUserLink(ctx, s.st.Q(), rt.row.ID, p.User.ID); err == nil {
-			return nil, errAlreadyLinked
+		// A link that only connects repositories (the GitHub row's) may be made
+		// to sign in too, with the same account.
+		if l, err := store.FindUserLink(ctx, s.st.Q(), rt.row.ID, p.User.ID); err == nil {
+			if l.SignIn {
+				return nil, errAlreadyLinked
+			}
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return nil, err
 		}
@@ -886,6 +890,10 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip string) (*store.User, bool, error) {
 	ident, err := store.FindLink(ctx, s.st.Q(), rt.row.ID, c.subject)
 	switch {
+	case err == nil && !ident.SignIn:
+		// The account is connected for repositories only: signing in with it was
+		// never turned on, by the person, for this link ("use to sign in").
+		return nil, false, ssoErr("not_for_signin")
 	case err == nil:
 		u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), ident.UserID) // a link signs in to its account, whatever tenant
 		if errors.Is(err, store.ErrNotFound) {
@@ -984,10 +992,19 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 		return ssoErr("expired")
 	}
 	if ident, err := store.FindLink(ctx, s.st.Q(), rt.row.ID, c.subject); err == nil {
-		if ident.UserID == userID {
+		if ident.UserID != userID {
+			return ssoErr("identity_in_use")
+		}
+		if ident.SignIn {
 			return nil
 		}
-		return ssoErr("identity_in_use")
+		// The person's own account, connected for repositories: it signs them in
+		// now too, on the same link (no second link at the provider).
+		if err := store.EnableLinkSignin(ctx, s.st.Q(), ident.ID, userID, c.email, c.emailVerified, c.label(), s.now()); err != nil {
+			return err
+		}
+		s.Audit(AuditEvent{Kind: "identity_linked", User: userID, Username: p.User.Username, IP: ip, Detail: map[string]any{"provider": rt.row.Slug, "by": "user"}})
+		return nil
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}

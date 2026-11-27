@@ -424,16 +424,14 @@ func (p *Provider) setState(ctx context.Context, seen store.ConnProviderRow, sta
 func (p *Provider) AdminDelete(ctx context.Context) error {
 	p.m.mu.Lock()
 	defer p.m.mu.Unlock()
-	n, sp, err := p.AdminCounts(ctx)
-	if err != nil {
-		return err
-	}
-	if n > 0 || sp > 0 {
-		e := p.errf(http.StatusConflict, connections.CodeInUse, "%d people are connected and %d spaces sync through %s: disconnect them and move the spaces first.", n, sp, p.name())
-		e.Counts = map[string]int{"connections": n, "spaces": sp}
+	// Who is connected and what syncs through it are counted in the deleting
+	// transaction, the row locked (a remote put on it locks it too).
+	var iu *store.ProviderInUseError
+	if err := store.DeleteUnusedConnProviderRow(ctx, p.m.opt.Store.Q(), p.id); errors.As(err, &iu) {
+		e := p.errf(http.StatusConflict, connections.CodeInUse, "%d people are connected and %d spaces sync through %s: disconnect them and move the spaces first.", iu.Connections, iu.Spaces, p.name())
+		e.Counts = map[string]int{"connections": iu.Connections, "spaces": iu.Spaces}
 		return e
-	}
-	if err := store.DeleteConnProviderRow(ctx, p.m.opt.Store.Q(), p.id); err != nil {
+	} else if err != nil {
 		return err
 	}
 	delete(p.m.provs, p.id)

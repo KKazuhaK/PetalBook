@@ -573,7 +573,7 @@ func TestGitHubFlagsAndTheAppThroughTheServer(t *testing.T) {
 	f := githubapptest.New(t, githubapptest.SystemClock())
 	data := filepath.Join(tempDir(t), "data")
 	srv := start(t, serveConfig{data: data, committer: "Svc <svc@example.test>", commitIdle: time.Hour, commitMax: time.Hour,
-		githubAPI: f.URL, githubWeb: f.URL, githubRenewEvery: 50 * time.Millisecond})
+		githubAPI: f.URL, githubWeb: f.URL})
 	m := regexp.MustCompile(`link=\S*/setup#(\S+)`).FindStringSubmatch(srv.log.String())
 	if m == nil {
 		t.Fatalf("no set-up link in the log:\n%s", srv.log)
@@ -582,10 +582,10 @@ func TestGitHubFlagsAndTheAppThroughTheServer(t *testing.T) {
 	if code, r := b.do("POST", "/api/setup", map[string]any{"token": strings.Trim(m[1], `"`), "username": "kazuha", "password": "a long enough password"}); code != 201 {
 		t.Fatalf("%d %v", code, r)
 	}
-	if code, r := b.do("GET", "/api/admin/connections/github", nil); code != 200 || r["configured"] != false {
+	if code, r := b.do("GET", "/api/admin/providers/github", nil); code != 200 || r["configured"] != false {
 		t.Fatalf("%d %v", code, r)
 	}
-	code, r := b.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": f.KeyPEM()})
+	code, r := b.do("PUT", "/api/admin/providers/github", map[string]any{"appId": "424242", "privateKey": f.KeyPEM()})
 	if code != 200 || r["configured"] != true || r["slug"] != "petalbook-notes" {
 		t.Fatalf("%d %v", code, r)
 	}
@@ -598,7 +598,7 @@ func TestGitHubFlagsAndTheAppThroughTheServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	raw, ok, err := store.GetSiteRecord(context.Background(), st.Q(), "github_app")
+	raw, ok, err := store.GetGitHubApp(context.Background(), st.Q())
 	if err != nil || !ok || strings.Contains(raw, "PRIVATE KEY") || strings.Contains(raw, "424242\\n") {
 		t.Fatalf("%v %v %s", ok, err, raw)
 	}

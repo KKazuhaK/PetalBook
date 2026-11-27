@@ -26,6 +26,7 @@ import (
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/dailyfetch"
 	"petalbook.app/server/internal/drafts"
+	"petalbook.app/server/internal/github"
 	"petalbook.app/server/internal/gitstore"
 	"petalbook.app/server/internal/index"
 	"petalbook.app/server/internal/jobs"
@@ -250,6 +251,20 @@ func New(opt Options) *Handler {
 	if _, ok := opt.Connections.Get(connections.GitID); !ok {
 		ps := opt.Connections.List()
 		opt.Connections = connections.NewRegistry(append(ps, connections.NewGit())...)
+	}
+	// The GitHub row is both a sign-in provider and where repositories are
+	// connected: sign-in reads it again when the App changes, and connecting
+	// repositories with another account never takes a person's last way in.
+	if gh, ok := opt.Connections.Get(github.ProviderID); ok && opt.Auth != nil {
+		if svc, ok := gh.(*github.Service); ok {
+			au := opt.Auth
+			svc.SetProvidersChanged(func(ctx context.Context) {
+				if err := au.ReloadProviders(ctx); err != nil && opt.Logger != nil {
+					opt.Logger.Error("could not read the sign-in providers again", "error", err)
+				}
+			})
+			svc.SetSigninGuard(au.SigninLinkRemovable)
+		}
 	}
 	s := &server{opt: opt, log: opt.Logger, settings: settings.Of(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1),

@@ -49,7 +49,7 @@ func fgBody(kind string, f *forgetest.Fake, extra map[string]any) map[string]any
 func fgSetup(t *testing.T, a *acc, kind string, f *forgetest.Fake) (admin, member *client) {
 	t.Helper()
 	admin = a.setup("root", pw)
-	admin.do("POST", "/api/admin/connections", fgBody(kind, f, nil)).want(t, 201, "")
+	admin.do("POST", "/api/admin/providers", fgBody(kind, f, nil)).want(t, 201, "")
 	member = a.addUser("tang", pw, "member")
 	f.AddUser("tang-h")
 	f.AddGroup("acme", map[string]int{"tang-h": forgetest.Owner})
@@ -60,7 +60,7 @@ func fgSetup(t *testing.T, a *acc, kind string, f *forgetest.Fake) (admin, membe
 // connectForge plays the browser through the whole authorisation.
 func connectForge(t *testing.T, a *acc, c *client, kind string, f *forgetest.Fake, login string) {
 	t.Helper()
-	r := c.do("POST", "/api/connections/"+kind+"/authorization/start", map[string]any{"return": "/s/ABC/settings"}).want(t, 200, "")
+	r := c.do("POST", "/api/account/links/"+kind+"/start", map[string]any{"purpose": "repos", "return": "/s/ABC/settings"}).want(t, 200, "")
 	back, _ := url.Parse(f.Authorize(r.body["url"].(string), login))
 	cb := c.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site")
 	if cb.code != 303 || cb.resp.Header.Get("Location") != "/s/ABC/settings" {
@@ -76,10 +76,10 @@ func fgSync(kind string, fields map[string]any) map[string]any {
 	return map[string]any{"sync": f}
 }
 
-// fgProvider is the provider's entry in GET /api/connections.
+// fgProvider is the provider's entry in GET /api/account/links.
 func fgProvider(t *testing.T, c *client, id string) map[string]any {
 	t.Helper()
-	r := c.do("GET", "/api/connections", nil).want(t, 200, "")
+	r := c.do("GET", "/api/account/links", nil).want(t, 200, "")
 	for _, p := range r.body["providers"].([]any) {
 		if m := p.(map[string]any); m["id"] == id {
 			return m
@@ -95,19 +95,19 @@ func TestAnAdministratorSetsAHostUp(t *testing.T) {
 		admin := a.setup("root", pw)
 		member := a.addUser("tang", pw, "member")
 		// Only a site administrator.
-		member.do("POST", "/api/admin/connections", fgBody(kind, f, nil)).want(t, 403, "forbidden")
-		member.do("PATCH", "/api/admin/connections/x", map[string]any{}).want(t, 403, "forbidden")
+		member.do("POST", "/api/admin/providers", fgBody(kind, f, nil)).want(t, 403, "forbidden")
+		member.do("PATCH", "/api/admin/providers/x", map[string]any{}).want(t, 403, "forbidden")
 
 		for _, bad := range []map[string]any{{"id": "GitHub"}, {"id": "github"}, {"type": "bitbucket"}, {"host": "a/b"}, {"clientSecret": "nope"}, {"clientId": "nope"}} {
-			r := admin.do("POST", "/api/admin/connections", fgBody(kind, f, bad)).want(t, 400, "invalid")
+			r := admin.do("POST", "/api/admin/providers", fgBody(kind, f, bad)).want(t, 400, "invalid")
 			if bad["clientSecret"] != nil || bad["clientId"] != nil {
 				if r.body["reason"] != "client_rejected" {
 					t.Fatalf("%s", r.raw)
 				}
 			}
 		}
-		r := admin.do("POST", "/api/admin/connections", fgBody(kind, f, nil)).want(t, 201, "")
-		if r.resp.Header.Get("Location") != "/api/admin/connections/"+kind {
+		r := admin.do("POST", "/api/admin/providers", fgBody(kind, f, nil)).want(t, 201, "")
+		if r.resp.Header.Get("Location") != "/api/admin/providers/"+kind {
 			t.Fatalf("%q", r.resp.Header.Get("Location"))
 		}
 		for _, v := range []string{"id", "type", "host", "name", "clientId", "hasSecret", "callbackUrl", "scopes", "configured", "version", "partialSync", "connections", "spaces"} {
@@ -115,21 +115,21 @@ func TestAnAdministratorSetsAHostUp(t *testing.T) {
 				t.Fatalf("no %s in %s", v, r.raw)
 			}
 		}
-		if r.body["hasSecret"] != true || r.body["callbackUrl"] != "https://notes.example.test/api/connections/"+kind+"/authorization/callback" ||
+		if r.body["hasSecret"] != true || r.body["callbackUrl"] != "https://notes.example.test/api/account/links/"+kind+"/callback" ||
 			r.body["configured"] != true || r.body["owner"] != "site" || r.body["partialSync"] != "unknown" {
 			t.Fatalf("%s", r.raw)
 		}
-		got := admin.do("GET", "/api/admin/connections/"+kind, nil).want(t, 200, "")
-		for _, res := range []result{r, got, admin.do("GET", "/api/admin/connections", nil).want(t, 200, "")} {
+		got := admin.do("GET", "/api/admin/providers/"+kind, nil).want(t, 200, "")
+		for _, res := range []result{r, got, admin.do("GET", "/api/admin/providers", nil).want(t, 200, "")} {
 			if strings.Contains(res.raw, f.ClientSecret) {
 				t.Fatalf("the secret is shown: %s", res.raw)
 			}
 		}
 		// A second one on the same host, and the same id again.
-		admin.do("POST", "/api/admin/connections", fgBody(kind, f, map[string]any{"id": "again"})).want(t, 409, "exists")
+		admin.do("POST", "/api/admin/providers", fgBody(kind, f, map[string]any{"id": "again"})).want(t, 409, "exists")
 		// The list for administrators has it with its counts and partial sync.
 		var row map[string]any
-		for _, p := range admin.do("GET", "/api/admin/connections", nil).body["providers"].([]any) {
+		for _, p := range admin.do("GET", "/api/admin/providers", nil).body["providers"].([]any) {
 			if m := p.(map[string]any); m["id"] == kind {
 				row = m
 			}
@@ -138,28 +138,28 @@ func TestAnAdministratorSetsAHostUp(t *testing.T) {
 			t.Fatalf("%v", row)
 		}
 		// Changing it; the secret is checked with the host before it is kept.
-		admin.do("PATCH", "/api/admin/connections/"+kind, map[string]any{"name": "Renamed"}).want(t, 200, "")
-		admin.do("PATCH", "/api/admin/connections/"+kind, map[string]any{"clientSecret": "nope"}).want(t, 400, "invalid")
-		admin.do("PATCH", "/api/admin/connections/"+kind, map[string]any{"host": "elsewhere.example.com"}).want(t, 400, "invalid")
-		admin.do("PUT", "/api/admin/connections/"+kind, map[string]any{"clientSecret": f.ClientSecret}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/"+kind, map[string]any{"name": "Renamed"}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/"+kind, map[string]any{"clientSecret": "nope"}).want(t, 400, "invalid")
+		admin.do("PATCH", "/api/admin/providers/"+kind, map[string]any{"host": "elsewhere.example.com"}).want(t, 400, "invalid")
+		admin.do("PUT", "/api/admin/providers/"+kind, map[string]any{"clientSecret": f.ClientSecret}).want(t, 200, "")
 		if p := fgProvider(t, member, kind); p["name"] != "Renamed" {
 			t.Fatalf("%v", p)
 		}
-		admin.do("POST", "/api/admin/connections/"+kind+"/check", nil).want(t, 200, "")
+		admin.do("POST", "/api/admin/providers/"+kind+"/check", nil).want(t, 200, "")
 		f.NotThisPlatform = true
-		admin.do("POST", "/api/admin/connections/"+kind+"/check", nil).want(t, 400, "invalid")
+		admin.do("POST", "/api/admin/providers/"+kind+"/check", nil).want(t, 400, "invalid")
 		if p := fgProvider(t, member, kind); p["configured"] != false {
 			t.Fatalf("a provider whose host fails its check is configured: %v", p)
 		}
-		member.do("POST", "/api/connections/"+kind+"/authorization/start", map[string]any{}).want(t, 409, "provider_not_configured")
+		member.do("POST", "/api/account/links/"+kind+"/start", map[string]any{"purpose": "repos"}).want(t, 409, "provider_not_configured")
 		f.NotThisPlatform = false
-		admin.do("POST", "/api/admin/connections/"+kind+"/check", nil).want(t, 200, "")
+		admin.do("POST", "/api/admin/providers/"+kind+"/check", nil).want(t, 200, "")
 		// No installations, no manifest: those are GitHub's.
-		admin.do("GET", "/api/admin/connections/"+kind+"/installations", nil).want(t, 404, "not_found")
-		admin.do("POST", "/api/admin/connections/"+kind+"/manifest", nil).want(t, 404, "not_found")
+		admin.do("GET", "/api/admin/providers/"+kind+"/installations", nil).want(t, 404, "not_found")
+		admin.do("POST", "/api/admin/providers/"+kind+"/manifest", nil).want(t, 404, "not_found")
 		// Removed.
-		admin.do("DELETE", "/api/admin/connections/"+kind, nil).want(t, 204, "")
-		admin.do("GET", "/api/admin/connections/"+kind, nil).want(t, 404, "not_found")
+		admin.do("DELETE", "/api/admin/providers/"+kind, nil).want(t, 204, "")
+		admin.do("GET", "/api/admin/providers/"+kind, nil).want(t, 404, "not_found")
 		// The audit has each change and no secret.
 		a.auth.FlushAudit(context.Background())
 		rows := auditKinds(t, admin, "connection_provider_changed")
@@ -174,12 +174,12 @@ func TestTheStorageHostsDecideWhichHostsAProviderMayBeOn(t *testing.T) {
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		admin := a.setup("root", pw)
 		admin.do("PUT", "/api/admin/settings/storage.hosts", map[string]any{"value": []string{"git.example.test"}}).want(t, 200, "")
-		r := admin.do("POST", "/api/admin/connections", fgBody(kind, f, nil))
+		r := admin.do("POST", "/api/admin/providers", fgBody(kind, f, nil))
 		if r.code < 400 || f.Count("GET", "/api/") != 0 {
 			t.Fatalf("a host that is not allowed was accepted or asked: %d %s", r.code, r.raw)
 		}
 		admin.do("PUT", "/api/admin/settings/storage.hosts", map[string]any{"value": []string{"*"}}).want(t, 200, "")
-		admin.do("POST", "/api/admin/connections", fgBody(kind, f, nil)).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", fgBody(kind, f, nil)).want(t, 201, "")
 	})
 }
 
@@ -202,19 +202,19 @@ func TestProvidersAreListedByCapability(t *testing.T) {
 		}
 		// GitHub (when there is one), the hosts, then plain Git, in a stable order.
 		var ids []string
-		for _, q := range member.do("GET", "/api/connections", nil).body["providers"].([]any) {
+		for _, q := range member.do("GET", "/api/account/links", nil).body["providers"].([]any) {
 			ids = append(ids, q.(map[string]any)["id"].(string))
 		}
 		if strings.Join(ids, ",") != kind+",git" {
 			t.Fatalf("%v", ids)
 		}
 		// Their routes: installations are GitHub's.
-		member.do("GET", "/api/connections/"+kind+"/repos?installation=1", nil).want(t, 400, "invalid")
+		member.do("GET", "/api/account/links/"+kind+"/repos?installation=1", nil).want(t, 400, "invalid")
 		// Whatever it says: a host has no installations to name.
 		for _, v := range []string{"x", "0", "-3", ""} {
-			member.do("GET", "/api/connections/"+kind+"/repos?installation="+v, nil).want(t, 400, "invalid")
+			member.do("GET", "/api/account/links/"+kind+"/repos?installation="+v, nil).want(t, 400, "invalid")
 		}
-		member.do("GET", "/api/connections/"+kind+"/repos?mine=true", nil).want(t, 200, "")
+		member.do("GET", "/api/account/links/"+kind+"/repos?mine=true", nil).want(t, 200, "")
 	})
 }
 
@@ -228,7 +228,7 @@ func TestConnectingAnAccountOnAHostThroughTheApi(t *testing.T) {
 		}
 		// Not signed in, a return that is not ours, the wrong cookie.
 		stranger := a.newClient("")
-		r := member.do("POST", "/api/connections/"+kind+"/authorization/start", map[string]any{}).want(t, 200, "")
+		r := member.do("POST", "/api/account/links/"+kind+"/start", map[string]any{"purpose": "repos"}).want(t, 200, "")
 		back, _ := url.Parse(f.Authorize(r.body["url"].(string), "tang-h"))
 		cb := stranger.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site")
 		if cb.code != 303 || !strings.Contains(cb.resp.Header.Get("Location"), "connection_error=expired") {
@@ -244,24 +244,25 @@ func TestConnectingAnAccountOnAHostThroughTheApi(t *testing.T) {
 		}
 		// One account links to one person.
 		wu := a.addUser("wu2", pw, "member")
-		rr := wu.do("POST", "/api/connections/"+kind+"/authorization/start", map[string]any{}).want(t, 200, "")
+		rr := wu.do("POST", "/api/account/links/"+kind+"/start", map[string]any{"purpose": "repos"}).want(t, 200, "")
 		back2, _ := url.Parse(f.Authorize(rr.body["url"].(string), "tang-h"))
 		cb = wu.do("GET", back2.Path+"?"+back2.RawQuery, nil, "Sec-Fetch-Site", "cross-site")
 		if !strings.Contains(cb.resp.Header.Get("Location"), "connection_error=account_in_use") {
 			t.Fatalf("%q", cb.resp.Header.Get("Location"))
 		}
-		// Disconnecting.
-		member.do("DELETE", "/api/connections/"+kind+"/authorization", nil).want(t, 204, "")
+		// Disconnecting; a second time there is no link left.
+		gone := linkAt(t, member, kind)["id"].(string)
+		disconnectRepos(t, member, kind)
 		if p := fgProvider(t, member, kind); p["connection"] != nil {
 			t.Fatalf("%v", p)
 		}
-		member.do("DELETE", "/api/connections/"+kind+"/authorization", nil).want(t, 204, "")
+		member.do("DELETE", "/api/account/links/"+gone+"/repos", nil).want(t, 404, "not_found")
 		a.auth.FlushAudit(context.Background())
 		if rows := auditKinds(t, admin, "account_disconnected"); len(rows) != 1 {
 			t.Fatalf("%v", rows)
 		}
 		// Without a connection the lists are not_connected, and say which provider.
-		r2 := member.do("GET", "/api/connections/"+kind+"/owners", nil).want(t, 409, "not_connected")
+		r2 := member.do("GET", "/api/account/links/"+kind+"/owners", nil).want(t, 409, "not_connected")
 		if r2.body["provider"] != kind {
 			t.Fatalf("%s", r2.raw)
 		}
@@ -294,16 +295,16 @@ func TestOwnersAndRepositoriesThroughTheApi(t *testing.T) {
 		f.AddRepo("tang-h", "mine", true)
 		f.AddRepo("acme", "team-notes", true)
 		f.AddRepo("boss", "theirs", true)
-		r := member.do("GET", "/api/connections/"+kind+"/owners", nil).want(t, 200, "")
+		r := member.do("GET", "/api/account/links/"+kind+"/owners", nil).want(t, 200, "")
 		items := r.body["items"].([]any)
 		if len(items) != 2 || items[0].(map[string]any)["login"] != "tang-h" || items[0].(map[string]any)["type"] != "User" || items[1].(map[string]any)["login"] != "acme" ||
 			items[0].(map[string]any)["installationId"] != nil || items[0].(map[string]any)["needsInstall"] != false || r.body["next"] != "" {
 			t.Fatalf("%s", r.raw)
 		}
-		if q := member.do("GET", "/api/connections/"+kind+"/owners?q=ac", nil).want(t, 200, "").body["items"].([]any); len(q) != 1 {
+		if q := member.do("GET", "/api/account/links/"+kind+"/owners?q=ac", nil).want(t, 200, "").body["items"].([]any); len(q) != 1 {
 			t.Fatalf("%v", q)
 		}
-		rr := member.do("GET", "/api/connections/"+kind+"/repos", nil).want(t, 200, "")
+		rr := member.do("GET", "/api/account/links/"+kind+"/repos", nil).want(t, 200, "")
 		if got := len(rr.body["items"].([]any)); got != 2 {
 			t.Fatalf("%s", rr.raw)
 		}
@@ -311,11 +312,11 @@ func TestOwnersAndRepositoriesThroughTheApi(t *testing.T) {
 		if first["canPush"] != true || first["htmlUrl"] == "" || first["fullName"] == "" || first["id"] == nil {
 			t.Fatalf("%v", first)
 		}
-		if q := member.do("GET", "/api/connections/"+kind+"/repos?mine=true&q=team", nil).want(t, 200, "").body["items"].([]any); len(q) != 1 {
+		if q := member.do("GET", "/api/account/links/"+kind+"/repos?mine=true&q=team", nil).want(t, 200, "").body["items"].([]any); len(q) != 1 {
 			t.Fatalf("%v", q)
 		}
 		for _, bad := range []string{"owners?cursor=zz", "repos?cursor=-1"} {
-			member.do("GET", "/api/connections/"+kind+"/"+bad, nil).want(t, 400, "invalid")
+			member.do("GET", "/api/account/links/"+kind+"/"+bad, nil).want(t, 400, "invalid")
 		}
 	})
 }
@@ -374,13 +375,13 @@ func TestCreatingASpaceWithANewRepositoryOnAHost(t *testing.T) {
 		if p := fgProvider(t, member, kind); p["connection"].(map[string]any)["spaces"] != float64(2) {
 			t.Fatalf("%v", p["connection"])
 		}
-		admin.do("DELETE", "/api/admin/connections/"+kind, nil).want(t, 409, "provider_in_use")
-		del := admin.do("DELETE", "/api/admin/connections/"+kind, nil)
+		admin.do("DELETE", "/api/admin/providers/"+kind, nil).want(t, 409, "provider_in_use")
+		del := admin.do("DELETE", "/api/admin/providers/"+kind, nil)
 		if del.body["connections"] != float64(1) || del.body["spaces"] != float64(2) {
 			t.Fatalf("%s", del.raw)
 		}
 		// Nothing of a token anywhere the API shows.
-		for _, res := range []result{rem, r, member.do("GET", "/api/connections", nil), admin.do("GET", "/api/admin/connections", nil)} {
+		for _, res := range []result{rem, r, member.do("GET", "/api/account/links", nil), admin.do("GET", "/api/admin/providers", nil)} {
 			for _, tok := range f.AllTokens() {
 				if strings.Contains(res.raw, tok) {
 					t.Fatalf("a token is in a response: %s", res.raw)
@@ -500,7 +501,7 @@ func TestAnotherPersonsConnectionIsNeverBorrowed(t *testing.T) {
 		f.AddGroup("bobs", map[string]int{"bob-h": forgetest.Owner})
 		connectForge(t, a, bob, kind, f, "bob-h")
 		// Bob cannot use tang's account: his own lists show his own.
-		owners := bob.do("GET", "/api/connections/"+kind+"/owners", nil).want(t, 200, "").body["items"].([]any)
+		owners := bob.do("GET", "/api/account/links/"+kind+"/owners", nil).want(t, 200, "").body["items"].([]any)
 		if len(owners) != 2 || owners[0].(map[string]any)["login"] != "bob-h" {
 			t.Fatalf("%v", owners)
 		}
@@ -550,7 +551,7 @@ func TestATenantsProviderIsInvisibleToOtherTenants(t *testing.T) {
 			t.Fatal(err)
 		}
 		has := func(c *client) bool {
-			for _, p := range c.do("GET", "/api/connections", nil).want(t, 200, "").body["providers"].([]any) {
+			for _, p := range c.do("GET", "/api/account/links", nil).want(t, 200, "").body["providers"].([]any) {
 				if p.(map[string]any)["id"] == "acme-"+kind {
 					return true
 				}
@@ -569,19 +570,19 @@ func TestATenantsProviderIsInvisibleToOtherTenants(t *testing.T) {
 		}
 		id := "acme-" + kind
 		for _, c := range []*client{fx.memA, fx.admA, fx.root} {
-			c.do("GET", "/api/connections/"+id+"/owners", nil).want(t, 404, "not_found")
-			c.do("GET", "/api/connections/"+id+"/repos", nil).want(t, 404, "not_found")
-			c.do("POST", "/api/connections/"+id+"/authorization/start", map[string]any{}).want(t, 404, "not_found")
-			c.do("DELETE", "/api/connections/"+id+"/authorization", nil).want(t, 404, "not_found")
+			c.do("GET", "/api/account/links/"+id+"/owners", nil).want(t, 404, "not_found")
+			c.do("GET", "/api/account/links/"+id+"/repos", nil).want(t, 404, "not_found")
+			c.do("POST", "/api/account/links/"+id+"/start", map[string]any{"purpose": "repos"}).want(t, 404, "not_found")
+			c.do("DELETE", "/api/account/links/"+id+"/repos", nil).want(t, 404, "not_found")
 			c.do("POST", "/api/spaces", map[string]any{"name": "X", "storage": fgSync(id, map[string]any{"owner": "a", "name": "b"})}).want(t, 404, "not_found")
 		}
 		// Its own people connect and use it.
 		f.AddUser("mem-b-h")
 		connectForge(t, a, fx.memB, id, f, "mem-b-h")
-		fx.memB.do("GET", "/api/connections/"+id+"/owners", nil).want(t, 200, "")
+		fx.memB.do("GET", "/api/account/links/"+id+"/owners", nil).want(t, 200, "")
 		// The server's administrators' list shows it (a site administrator sees them all).
 		var found bool
-		for _, p := range fx.root.do("GET", "/api/admin/connections", nil).want(t, 200, "").body["providers"].([]any) {
+		for _, p := range fx.root.do("GET", "/api/admin/providers", nil).want(t, 200, "").body["providers"].([]any) {
 			found = found || p.(map[string]any)["id"] == id
 		}
 		if !found {
@@ -601,12 +602,12 @@ func TestEveryProviderErrorNamesItsProvider(t *testing.T) {
 			status       int
 			code         string
 		}{
-			{member, "GET", "/api/connections/" + kind + "/repos?installation=3", nil, 400, "invalid"},
-			{member, "DELETE", "/api/connections/" + kind + "/leftovers/abc", nil, 404, "not_found"},
-			{admin, "GET", "/api/admin/connections/" + kind + "/installations", nil, 404, "not_found"},
-			{admin, "PUT", "/api/admin/connections/" + kind + "/installations/1", map[string]any{"tenants": []string{}}, 404, "not_found"},
-			{admin, "POST", "/api/admin/connections/" + kind + "/manifest", nil, 404, "not_found"},
-			{admin, "PATCH", "/api/admin/connections/" + kind, map[string]any{"clientSecret": "wrong"}, 400, "invalid"},
+			{member, "GET", "/api/account/links/" + kind + "/repos?installation=3", nil, 400, "invalid"},
+			{member, "DELETE", "/api/account/leftovers/" + kind + "/abc", nil, 404, "not_found"},
+			{admin, "GET", "/api/admin/providers/" + kind + "/installations", nil, 404, "not_found"},
+			{admin, "PUT", "/api/admin/providers/" + kind + "/installations/1", map[string]any{"tenants": []string{}}, 404, "not_found"},
+			{admin, "POST", "/api/admin/providers/" + kind + "/manifest", nil, 404, "not_found"},
+			{admin, "PATCH", "/api/admin/providers/" + kind, map[string]any{"clientSecret": "wrong"}, 400, "invalid"},
 		}
 		for _, p := range probes {
 			r := p.who.do(p.method, p.path, p.body)

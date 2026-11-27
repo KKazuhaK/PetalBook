@@ -102,8 +102,14 @@ func ListLinks(ctx context.Context, q Q, userID string) ([]Link, error) {
 // DeleteLink removes one of the person's links; ErrNotFound when it is not
 // theirs or does not exist.
 func DeleteLink(ctx context.Context, q Q, id, userID string) error {
-	res, err := q.Exec(ctx, `DELETE FROM linked_accounts WHERE id = ? AND user_id = ? AND signin = 1`, id, userID)
-	return oneRow(res, err)
+	return atomically(ctx, q, func(q Q) error {
+		res, err := q.Exec(ctx, `DELETE FROM linked_accounts WHERE id = ? AND user_id = ? AND signin = 1`, id, userID)
+		if err := oneRow(res, err); err != nil {
+			return err
+		}
+		// Its tokens, if it held any, went with it.
+		return settleConnected(ctx, q, userID)
+	})
 }
 
 // TouchLink records a sign-in through a link: the time, and the address the
@@ -117,4 +123,69 @@ func TouchLink(ctx context.Context, q Q, l *Link, email string, trusted bool, la
 	_, err := q.Exec(ctx, `UPDATE linked_accounts SET email = ?, email_trusted = ?, label = ?, last_used = ?, updated = ? WHERE id = ?`,
 		email, b2i(trusted), label, ms(now), ms(now), l.ID)
 	return err
+}
+
+// UserLink is a link with what its repositories part says: a link is a sign-in,
+// a repository connection, or both (the GitHub row's).
+type UserLink struct {
+	Link
+	// Repos: the link holds tokens, or held them and lost them (State "expired").
+	Repos bool
+	// State is "ok", or "expired": the person authorises again.
+	State          string
+	RefreshExpires time.Time
+	Admin          bool
+}
+
+const userLinkCols = linkCols + `, CASE WHEN access_enc <> '' OR state <> 'ok' THEN 1 ELSE 0 END, state, refresh_expires, is_admin`
+
+func scanUserLink(sc interface{ Scan(...any) error }) (*UserLink, error) {
+	var l UserLink
+	var tr, si, cr, lu, repos, re, admin int64
+	if err := sc.Scan(&l.ID, &l.ProviderID, &l.UserID, &l.Subject, &l.Login, &l.Email, &tr, &si, &l.Label, &cr, &lu, &repos, &l.State, &re, &admin); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	l.EmailTrusted, l.SignIn, l.Created, l.Repos, l.Admin = tr != 0, si != 0, fromMS(cr), repos != 0, admin != 0
+	if lu != 0 {
+		l.LastUsed = fromMS(lu)
+	}
+	if re > 0 {
+		l.RefreshExpires = fromMS(re)
+	}
+	return &l, nil
+}
+
+// ListUserLinks returns every link a person has, whatever it is for, oldest first.
+func ListUserLinks(ctx context.Context, q Q, userID string) ([]UserLink, error) {
+	rows, err := q.Query(ctx, `SELECT `+userLinkCols+` FROM linked_accounts WHERE user_id = ? ORDER BY created, id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserLink
+	for rows.Next() {
+		l, err := scanUserLink(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *l)
+	}
+	return out, rows.Err()
+}
+
+// GetUserLink returns one of the person's links by its id, or ErrNotFound.
+func GetUserLink(ctx context.Context, q Q, id, userID string) (*UserLink, error) {
+	return scanUserLink(q.QueryRow(ctx, `SELECT `+userLinkCols+` FROM linked_accounts WHERE id = ? AND user_id = ?`, id, userID))
+}
+
+// EnableLinkSignin lets a link that was made to connect repositories sign the
+// person in too, with the address the provider gave when they proved the
+// account. ErrNotFound when it is not the person's.
+func EnableLinkSignin(ctx context.Context, q Q, id, userID, email string, trusted bool, label string, now time.Time) error {
+	res, err := q.Exec(ctx, `UPDATE linked_accounts SET signin = 1, email = ?, email_trusted = ?, label = ?, last_used = ?, updated = ? WHERE id = ? AND user_id = ?`,
+		email, b2i(trusted), label, ms(now), ms(now), id, userID)
+	return oneRow(res, err)
 }

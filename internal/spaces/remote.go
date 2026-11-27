@@ -328,7 +328,7 @@ func (m *Manager) connectionView(r *store.Remote) *ConnectionView {
 			if u, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(sp.TenantID), r.CredUserID); err == nil {
 				g.Username = u.Username
 				if r.Provider == store.ProviderGitHub || r.Provider == "" {
-					if a, err := store.GetGitHubAuthorization(ctx, m.opt.Store.Q(), r.CredUserID); err == nil {
+					if a, err := store.GetRepoLink(ctx, m.opt.Store.Q(), store.ProviderGitHub, r.CredUserID); err == nil {
 						g.Login = a.Login
 					}
 				} else if p, ok := m.opt.Connections.Get(r.Provider); ok {

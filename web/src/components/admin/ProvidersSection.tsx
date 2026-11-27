@@ -1074,34 +1074,41 @@ function SamlFields({ f, set, initial }: Sub) {
 function GithubFields({ f, set, initial }: Sub) {
   const g = f.github
   const up = (p: Partial<F['github']>) => set({ github: { ...g, ...p } })
+  // The row of the GitHub App: its client is the App's, set where the App is.
+  const app = initial?.github?.app === true
   return (
     <fieldset className="grid min-w-0 grid-cols-1 gap-4">
       <legend className="pb-1 text-sm font-semibold">{tp.kinds.github}</legend>
+      {app && <p className="text-xs text-muted-foreground">{tp.github.appClient}</p>}
       <Field
         label={tp.github.baseUrl}
         help={tp.github.baseUrlHelp}
         value={g.baseUrl}
         onChange={(e) => up({ baseUrl: e.target.value })}
+        disabled={app}
         autoComplete="off"
         spellCheck={false}
         className="break-all"
       />
       <Field
         label={tp.github.clientId}
-        requiredMark
+        requiredMark={!app}
         value={g.clientId}
         onChange={(e) => up({ clientId: e.target.value })}
+        disabled={app}
         autoComplete="off"
         spellCheck={false}
         className="break-all"
       />
-      <WriteOnly
-        label={tp.github.clientSecret}
-        required
-        stored={initial?.github?.hasSecret === true}
-        value={g.secret}
-        onChange={(v) => up({ secret: v })}
-      />
+      {!app && (
+        <WriteOnly
+          label={tp.github.clientSecret}
+          required
+          stored={initial?.github?.hasSecret === true}
+          value={g.secret}
+          onChange={(v) => up({ secret: v })}
+        />
+      )}
       <div className="grid gap-1.5">
         <Label htmlFor="github-orgs">{tp.github.organizations}</Label>
         <Textarea

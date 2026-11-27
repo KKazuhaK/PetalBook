@@ -126,13 +126,13 @@ func TestARecheckNeverOverwritesANewlySavedApp(t *testing.T) {
 		raw, _ := json.Marshal(other)
 		// The App is saved again between the re-check's read and its write.
 		github.SetRefreshWriteHook(func() {
-			if err := store.SetSiteRecord(ctx, st.Q(), "github_app", string(raw), h.clk.Now()); err != nil {
+			if err := store.PutGitHubApp(ctx, st.Q(), store.GitHubApp{App: string(raw), ClientID: h.f.ClientID, BaseURL: h.f.URL}, h.clk.Now()); err != nil {
 				t.Error(err)
 			}
 		})
 		defer github.SetRefreshWriteHook(nil)
 		h.svc.Check(ctx)
-		got, _, err := store.GetSiteRecord(ctx, st.Q(), "github_app")
+		got, _, err := store.GetGitHubApp(ctx, st.Q())
 		if err != nil || got != string(raw) {
 			t.Fatalf("the newer App was overwritten: %s %v", got, err)
 		}

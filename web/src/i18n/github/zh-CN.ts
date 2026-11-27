@@ -84,6 +84,8 @@ export const githubZhCN: GitHubMessages = {
       requested: '要先由组织的所有者在 GitHub 上批准这次安装。批准后再连接一次。',
       account_in_use: '这个 GitHub 账号已经连到这台服务器的另一个用户了。',
       different_account: '这里有空间在用你之前连的那个 GitHub 账号同步。请先断开它，或者把那些空间换成别的凭据。',
+      last_method:
+        '你用关联的那个 GitHub 账号登录，而它是你唯一的登录方式。请先设置密码或关联另一种登录方式，或者用同一个账号授权。',
       unknown: '出了点问题。',
     },
     account: '账号',
@@ -245,6 +247,7 @@ export const githubZhCN: GitHubMessages = {
     secretKept: '已经保存了一个 secret。只有要替换它时才输入。',
     secretHelp: '在 App 的设置页上与 client id 一起生成。',
     callbackHelp: '把它填到 GitHub 上 App 的回调地址（Callback URL）：',
+    signinCallbackHelp: '还要加上这一个，用于“用 GitHub 登录”（在“登录提供方”里开启）：',
     noPublicUrl: '服务器没有公开地址（--public-url）。',
     needIds: '请填 App ID，第一次还要填私钥。',
     needSecret: 'client id 和 client secret 要一起填。',
@@ -266,6 +269,8 @@ export const githubZhCN: GitHubMessages = {
         app_rejected: 'GitHub 不接受这个密钥配这个 App ID。',
         client_rejected: 'GitHub 不接受这对 client id 和 secret。',
         provider_in_use: '还有空间通过这个 App 同步，或有用户已连接。请先换掉或断开它们。',
+        provider_host_mismatch:
+          '“用 GitHub 登录”配置的是另一个 GitHub 主机，并且已有人关联了那里的账号。请先删除那个登录提供方，或移除它已关联的账号。',
         unavailable: '连不上 GitHub，什么也没有保存。',
         provider_not_configured: 'GitHub 不再接受已保存的密钥。请重新保存 App。',
         public_url_needed: '服务器没有公开地址（--public-url），GitHub 没法把你送回来。',

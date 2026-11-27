@@ -4,7 +4,6 @@ DELETE /api/account/grants/{id}	ok	ok	ok	403 token_scope
 DELETE /api/account/links/{id}	ok	ok	ok	403 token_scope
 DELETE /api/account/passkeys/{id}	ok	ok	ok	403 token_scope
 DELETE /api/account/tokens/{id}	ok	ok	ok	403 token_scope
-DELETE /api/admin/connections/{provider}	ok	403 forbidden	403 forbidden	403 token_scope
 DELETE /api/admin/daily/apis/{id}	ok	403 forbidden	403 forbidden	403 token_scope
 DELETE /api/admin/daily/lines	ok	403 forbidden	403 forbidden	403 token_scope
 DELETE /api/admin/exports/{id}	ok	ok	403 forbidden	403 token_scope
@@ -21,8 +20,6 @@ DELETE /api/admin/tenants/{tenant}	ok	403 forbidden	403 forbidden	403 token_scop
 DELETE /api/admin/tenants/{tenant}/secrets/{name}	ok	ok	403 forbidden	403 token_scope
 DELETE /api/admin/tokens/{id}	ok	ok	403 forbidden	403 token_scope
 DELETE /api/admin/users/{id}/view-as	ok	ok	403 forbidden	403 token_scope
-DELETE /api/connections/{provider}/authorization	ok	ok	ok	403 token_scope
-DELETE /api/connections/{provider}/leftovers/{repoId}	ok	ok	ok	403 token_scope
 DELETE /api/invites/{id}	ok	ok	403 forbidden	403 token_scope
 DELETE /api/spaces/{space}/favorites	403 no_permission	403 no_permission	ok	ok
 DELETE /api/spaces/{space}/folders	403 no_permission	403 no_permission	ok	ok
@@ -48,9 +45,6 @@ GET /api/account/usage	ok	ok	ok	403 token_scope
 GET /api/admin/audit	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/audit/download	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/audit/kinds	ok	ok	403 forbidden	403 token_scope
-GET /api/admin/connections	ok	403 forbidden	403 forbidden	403 token_scope
-GET /api/admin/connections/{provider}	ok	403 forbidden	403 forbidden	403 token_scope
-GET /api/admin/connections/{provider}/installations	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/daily	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/daily/lines	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/exports	ok	ok	403 forbidden	403 token_scope
@@ -94,11 +88,6 @@ GET /api/auth/providers	ok	ok	ok	403 token_scope
 GET /api/auth/saml/{slug}/metadata	ok	ok	ok	403 token_scope
 GET /api/auth/{kind}/{slug}/start	ok	ok	ok	403 token_scope
 GET /api/captcha	ok	ok	ok	403 token_scope
-GET /api/connections	ok	ok	ok	403 token_scope
-GET /api/connections/github/manifest/callback	ok	ok	ok	403 token_scope
-GET /api/connections/{provider}/authorization/callback	ok	ok	ok	403 token_scope
-GET /api/connections/{provider}/owners	ok	ok	ok	403 token_scope
-GET /api/connections/{provider}/repos	ok	ok	ok	403 token_scope
 GET /api/groups	ok	ok	ok	403 token_scope
 GET /api/invites	ok	ok	403 forbidden	403 token_scope
 GET /api/meta	ok	ok	ok	ok
@@ -149,7 +138,6 @@ GET /api/users/{id}/passkeys	ok	ok	403 forbidden	403 token_scope
 GET /api/users/{id}/sessions	ok	ok	403 forbidden	403 token_scope
 PATCH /api/account	ok	ok	ok	403 token_scope
 PATCH /api/account/passkeys/{id}	ok	ok	ok	403 token_scope
-PATCH /api/admin/connections/{provider}	ok	403 forbidden	403 forbidden	403 token_scope
 PATCH /api/admin/groups/{group}	ok	ok	403 forbidden	403 token_scope
 PATCH /api/admin/plans/{slug}	ok	403 forbidden	403 forbidden	403 token_scope
 PATCH /api/admin/providers/{id}	ok	403 forbidden	403 forbidden	403 token_scope
@@ -171,10 +159,6 @@ POST /api/account/password	ok	ok	ok	403 token_scope
 POST /api/account/tokens	ok	ok	ok	403 token_scope
 POST /api/admin/bulk	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/confirm	ok	ok	403 forbidden	403 token_scope
-POST /api/admin/connections	ok	403 forbidden	403 forbidden	403 token_scope
-POST /api/admin/connections/{provider}/check	ok	403 forbidden	403 forbidden	403 token_scope
-POST /api/admin/connections/{provider}/manifest	ok	403 forbidden	403 forbidden	403 token_scope
-POST /api/admin/connections/{provider}/manifest/retry	ok	403 forbidden	403 forbidden	403 token_scope
 POST /api/admin/daily/lines/preview	ok	403 forbidden	403 forbidden	403 token_scope
 POST /api/admin/daily/try	ok	403 forbidden	403 forbidden	403 token_scope
 POST /api/admin/exports	ok	ok	403 forbidden	403 token_scope
@@ -202,7 +186,6 @@ POST /api/auth/passkey/begin	ok	ok	ok	403 token_scope
 POST /api/auth/passkey/finish	ok	ok	ok	403 token_scope
 POST /api/auth/saml/{slug}/acs	ok	ok	ok	403 token_scope
 POST /api/auth/{kind}/{slug}/start	ok	ok	ok	403 token_scope
-POST /api/connections/{provider}/authorization/start	ok	ok	ok	403 token_scope
 POST /api/email/confirm	ok	ok	ok	403 token_scope
 POST /api/invites	ok	ok	403 forbidden	403 token_scope
 POST /api/invites/accept	ok	ok	ok	403 token_scope
@@ -240,8 +223,6 @@ POST /api/spaces/{space}/remote/sync	ok	ok	403 no_permission	403 token_scope
 POST /api/spaces/{space}/types/{name}/rename-field	ok	ok	403 no_permission	403 token_scope
 POST /api/users/{id}/password	ok	ok	403 forbidden	403 token_scope
 POST /api/users/{id}/password-reset	ok	ok	403 forbidden	403 token_scope
-PUT /api/admin/connections/{provider}	ok	403 forbidden	403 forbidden	403 token_scope
-PUT /api/admin/connections/{provider}/installations/{id}	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/daily/apis/{id}	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/daily/lines	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/daily/providers/{id}	ok	403 forbidden	403 forbidden	403 token_scope

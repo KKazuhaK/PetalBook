@@ -2,7 +2,16 @@
 // addresses, API tokens and connected apps. No limit, no recency of the sign-in and no check of a password: a test that
 // needs a refusal says so with `fx.fail`.
 
-import type { AccountEmail, AccountInfo, AccountUsage, ApiToken, CreatedToken, Grant, Passkey } from '../../types.ts'
+import type {
+  AccountEmail,
+  AccountInfo,
+  AccountUsage,
+  ApiToken,
+  CreatedToken,
+  Grant,
+  Link,
+  Passkey,
+} from '../../types.ts'
 import { rfc3339, newId, Refusal, reply, type Ctx, type Route } from '../kit.ts'
 import { current, view } from './auth.ts'
 
@@ -31,6 +40,61 @@ function emailsOf(c: Ctx): AccountEmail[] {
 function tokenView(c: Ctx, t: ApiToken): ApiToken {
   const expired = t.expires !== null && Date.parse(t.expires) <= c.now()
   return { ...t, state: t.revoked ? 'revoked' : expired ? 'expired' : 'active' }
+}
+
+// The id of the link a person's connection at a provider is: one per provider, made when they connect.
+const connectionLinkId = (provider: string) => `link-${provider}`
+
+// The person's links as the list says them: the sign-ins they linked, and an account at each provider they connected
+// repositories at (the same link when it also signs them in).
+function linksOf(c: Ctx): Link[] {
+  const sign = c.data.area.account.links.map((l) => ({
+    login: '',
+    repos: false,
+    state: 'ok' as const,
+    spaces: 0,
+    ...l,
+  }))
+  for (const p of c.data.area.connections.providers) {
+    if (!p.connection) continue
+    const repos = {
+      login: p.connection.login,
+      repos: true,
+      state: p.connection.state,
+      spaces: p.connection.spaces,
+      ...(p.connection.refreshExpires ? { refreshExpires: p.connection.refreshExpires } : {}),
+    }
+    const own = sign.find((l) => l.providerId === p.id)
+    if (own) Object.assign(own, repos)
+    else
+      sign.push({
+        id: connectionLinkId(p.id),
+        providerId: p.id,
+        provider: p.name,
+        slug: p.id,
+        kind: p.type as Link['kind'],
+        label: p.connection.login,
+        signin: false,
+        created: p.connection.connected,
+        ...repos,
+      })
+  }
+  return sign
+}
+
+// The provider a link is the person's account at: a link made by connecting, or a sign-in link that also holds repositories.
+function providerOfLink(c: Ctx, id: string) {
+  const own = c.data.area.account.links.find((l) => l.id === id)
+  return c.data.area.connections.providers.find((p) => connectionLinkId(p.id) === id || p.id === own?.providerId)
+}
+
+// Drops the tokens of the link at a provider.
+function disconnect(c: Ctx, id: string) {
+  const p = providerOfLink(c, id)
+  if (!p?.connection) throw new Refusal(404, 'not_found', 'No repositories are connected through this link.')
+  p.connection = null
+  const f = c.data.area.connections.forges.find((x) => x.id === p.id)
+  if (f) f.connections = 0
 }
 
 export const accountRoutes: Route[] = [
@@ -75,17 +139,31 @@ export const accountRoutes: Route[] = [
   ['POST', '/api/account/password', () => undefined],
   [
     'DELETE',
+    '/api/account/links/:id/repos',
+    (c) => {
+      disconnect(c, c.params.id)
+    },
+  ],
+  [
+    'DELETE',
     '/api/account/links/:id',
     (c) => {
       const a = c.data.area.account
+      const p = providerOfLink(c, c.params.id)
+      if (p?.connection) disconnect(c, c.params.id)
       a.links = a.links.filter((l) => l.id !== c.params.id)
     },
   ],
-  ['GET', '/api/account/links', (c) => ({ links: c.data.area.account.links })],
+  ['GET', '/api/account/links', (c) => ({ links: linksOf(c), providers: c.data.area.connections.providers })],
   [
     'POST',
     '/api/account/links/:provider/start',
     (c) => {
+      if (c.body.purpose === 'repos') {
+        const p = c.data.area.connections.providers.find((x) => x.id === c.params.provider)
+        if (!p) throw new Refusal(404, 'not_found', 'no such provider')
+        return { url: `/api/account/links/${p.id}/callback?state=fixture` }
+      }
       if (c.data.area.account.links.some((l) => l.providerId === c.params.provider))
         throw new Refusal(409, 'already_linked', 'already linked at this provider')
       return { url: `/api/auth/oidc/${c.params.provider}/callback?link=1` }

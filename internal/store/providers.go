@@ -146,6 +146,33 @@ func DeleteConnProviderRow(ctx context.Context, q Q, id string) error {
 	return deleteProviderRows(ctx, q, `id = ? AND repos = 1`, id)
 }
 
+// DeleteUnusedConnProviderRow removes a provider of a host only while nobody is
+// connected to it and no space syncs through it, counted with its row locked
+// in the deleting transaction (ProviderInUseError otherwise): a connection or
+// a remote made since an earlier count keeps it.
+func DeleteUnusedConnProviderRow(ctx context.Context, q Q, id string) error {
+	return atomically(ctx, q, func(q Q) error {
+		if err := LockProvider(ctx, q, id); err != nil {
+			if errors.Is(err, ErrProviderGone) {
+				return ErrNotFound
+			}
+			return err
+		}
+		n, err := CountProviderLinks(ctx, q, id)
+		if err != nil {
+			return err
+		}
+		sp, err := CountProviderSpaces(ctx, q, id)
+		if err != nil {
+			return err
+		}
+		if n > 0 || sp > 0 {
+			return &ProviderInUseError{Spaces: sp, Connections: n}
+		}
+		return deleteProviderRows(ctx, q, `id = ? AND repos = 1`, id)
+	})
+}
+
 // DeleteTenantConnProviderRows removes the providers of a tenant (it is being deleted).
 func DeleteTenantConnProviderRows(ctx context.Context, q Q, tenantID string) error {
 	return deleteProviderRows(ctx, q, `owner = ?`, tenantID)

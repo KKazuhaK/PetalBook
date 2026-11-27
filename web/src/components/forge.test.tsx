@@ -74,7 +74,7 @@ describe('the hosts in the administration', () => {
     await settle(() => text().includes(tf.admin.none), 'the empty list')
     await addHost({ name: 'Acme GitLab' })
     await settle(() => text().includes('Acme GitLab') && text().includes(tf.admin.usage(0, 0)), 'the card')
-    const post = m.requests.find((r) => r.method === 'POST' && r.url === '/api/admin/connections')!
+    const post = m.requests.find((r) => r.method === 'POST' && r.url === '/api/admin/providers')!
     expect(JSON.parse(post.body!)).toEqual({
       id: 'gitlab-acme',
       type: 'gitlab',
@@ -84,10 +84,26 @@ describe('the hosts in the administration', () => {
       clientSecret: 'a-secret',
     })
     expect(text()).not.toContain('a-secret')
-    expect(text()).toContain('/api/connections/gitlab-acme/authorization/callback')
+    expect(text()).toContain('/api/account/links/gitlab-acme/callback')
     expect(text()).toContain(tf.admin.partialUnknown)
     expect(text()).toContain(tf.admin.scopes(['api']))
     expect(text()).not.toContain(tf.admin.none)
+  })
+
+  it('shows the callback address the server gives for the id being typed', async () => {
+    m = await mount(adminRoutes, {
+      entries: ['/admin/storage/connections'],
+      signIn: true,
+      fixtures: { mode: 'accounts' },
+    })
+    await settle(() => button(tf.admin.add) !== undefined, 'the add button')
+    await click(button(tf.admin.add))
+    const hint = () => document.querySelector('[data-testid="forge-add-callback"]')?.textContent
+    await settle(() => hint() !== undefined, 'the hint')
+    expect(hint()).toBe('https://notes.example.test/api/account/links/<id>/callback')
+    await type(field(tf.admin.id), 'gitlab-acme')
+    // The same address the provider is given once it exists (its view's callbackUrl).
+    expect(hint()).toBe('https://notes.example.test/api/account/links/gitlab-acme/callback')
   })
 
   it('offers the two kinds of host and sends the one chosen', async () => {
@@ -108,7 +124,7 @@ describe('the hosts in the administration', () => {
     await type(field(tf.admin.clientSecret), 's')
     await click(save())
     await settle(() => text().includes('codeberg.org') && text().includes(tf.admin.scopes([])), 'the card')
-    const post = m.requests.find((r) => r.method === 'POST' && r.url === '/api/admin/connections')!
+    const post = m.requests.find((r) => r.method === 'POST' && r.url === '/api/admin/providers')!
     expect(JSON.parse(post.body!)).toMatchObject({ id: 'codeberg', type: 'gitea', host: 'codeberg.org' })
   })
 
@@ -123,18 +139,18 @@ describe('the hosts in the administration', () => {
     await settle(() => document.querySelector('[data-testid="forge-add-form"]') !== null, 'the form')
     await click(save())
     await settle(() => text().includes(tf.admin.needFields), 'the hint')
-    expect(m.requests.some((r) => r.method === 'POST' && r.url === '/api/admin/connections')).toBe(false)
+    expect(m.requests.some((r) => r.method === 'POST' && r.url === '/api/admin/providers')).toBe(false)
     await type(field(tf.admin.host), 'gitlab.acme.example')
     await type(field(tf.admin.id), 'x')
     await type(field(tf.admin.clientId), 'c')
     await type(field(tf.admin.clientSecret), 'wrong')
-    m.fx.fail('POST', '/api/admin/connections', 400, { code: 'invalid', reason: 'client_rejected' }, { times: 1 })
+    m.fx.fail('POST', '/api/admin/providers', 400, { code: 'invalid', reason: 'client_rejected' }, { times: 1 })
     await click(save())
     await settle(() => text().includes(tf.admin.errors.reasons.client_rejected), 'the client refusal')
-    m.fx.fail('POST', '/api/admin/connections', 400, { code: 'invalid', reason: 'host_not_public' }, { times: 1 })
+    m.fx.fail('POST', '/api/admin/providers', 400, { code: 'invalid', reason: 'host_not_public' }, { times: 1 })
     await click(save())
     await settle(() => text().includes(tf.admin.errors.reasons.host_not_public), 'the public-address refusal')
-    m.fx.fail('POST', '/api/admin/connections', 400, { code: 'invalid', reason: 'host_unreachable' }, { times: 1 })
+    m.fx.fail('POST', '/api/admin/providers', 400, { code: 'invalid', reason: 'host_unreachable' }, { times: 1 })
     await click(save())
     await settle(() => text().includes(tf.admin.errors.reasons.host_unreachable), 'the unreachable host')
     // The form is still there with what was typed, and nothing was saved.
@@ -154,7 +170,7 @@ describe('the hosts in the administration', () => {
     await type(field(tf.admin.clientSecret), 'wrong')
     m.fx.fail(
       'PATCH',
-      '/api/admin/connections/gitlab-acme',
+      '/api/admin/providers/gitlab-acme',
       400,
       { code: 'invalid', reason: 'client_rejected' },
       { times: 1 },
@@ -164,7 +180,7 @@ describe('the hosts in the administration', () => {
     await type(field(tf.admin.clientSecret), 'a-new-secret')
     await click(save())
     await settle(() => text().includes('Renamed') && button(tf.admin.edit) !== undefined, 'the saved card')
-    const patches = m.requests.filter((r) => r.method === 'PATCH' && r.url === '/api/admin/connections/gitlab-acme')
+    const patches = m.requests.filter((r) => r.method === 'PATCH' && r.url === '/api/admin/providers/gitlab-acme')
     expect(patches.map((r) => JSON.parse(r.body!))).toEqual([
       { name: 'Renamed', clientSecret: 'wrong' },
       { name: 'Renamed', clientSecret: 'a-new-secret' },
@@ -181,7 +197,7 @@ describe('the hosts in the administration', () => {
     await settle(() => button(tf.admin.check) !== undefined, 'the card')
     await click(button(tf.admin.check))
     await settle(
-      () => m!.requests.some((r) => r.method === 'POST' && r.url === '/api/admin/connections/gitlab-acme/check'),
+      () => m!.requests.some((r) => r.method === 'POST' && r.url === '/api/admin/providers/gitlab-acme/check'),
       'the check',
     )
     // Someone connects: the host cannot be removed.
@@ -195,7 +211,7 @@ describe('the hosts in the administration', () => {
     await click(button(tf.admin.cancel, dialog()!))
     await settle(() => dialog() === null, 'the dialog closing')
     // When nobody is connected it goes.
-    m.fx.call('DELETE', '/api/connections/gitlab-acme/authorization')
+    m.fx.call('DELETE', '/api/account/links/link-gitlab-acme/repos')
     await m.qc.invalidateQueries()
     await settle(() => text().includes(tf.admin.usage(0, 0)), 'the count back to none')
   })
@@ -229,13 +245,10 @@ describe('the connected accounts of the account page', () => {
     await open()
     await settle(() => button(tf.account.connect('Acme GitLab'), panel()!) !== undefined, 'the button')
     await click(button(tf.account.connect('Acme GitLab'), panel()!))
-    await settle(
-      () => m!.requests.some((r) => r.url === '/api/connections/gitlab-acme/authorization/start'),
-      'the request',
-    )
-    const req = m!.requests.find((r) => r.url === '/api/connections/gitlab-acme/authorization/start')!
+    await settle(() => m!.requests.some((r) => r.url === '/api/account/links/gitlab-acme/start'), 'the request')
+    const req = m!.requests.find((r) => r.url === '/api/account/links/gitlab-acme/start')!
     // No installation page to go through: the flag is left out.
-    expect(JSON.parse(req.body!)).toEqual({ return: '/settings/connections' })
+    expect(JSON.parse(req.body!)).toEqual({ purpose: 'repos', return: '/settings/connections' })
   })
 
   it('shows a connection and disconnects it, with the host named in the words', async () => {
@@ -249,7 +262,7 @@ describe('the connected accounts of the account page', () => {
     expect(dialog()!.textContent).toContain(tf.account.disconnectTitle('Acme GitLab'))
     await click(button(tg.account.disconnectConfirm, dialog()!))
     await settle(
-      () => m!.requests.some((r) => r.method === 'DELETE' && r.url === '/api/connections/gitlab-acme/authorization'),
+      () => m!.requests.some((r) => r.method === 'DELETE' && r.url === '/api/account/links/link-gitlab-acme/repos'),
       'the request',
     )
   })

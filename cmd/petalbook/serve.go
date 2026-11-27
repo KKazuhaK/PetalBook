@@ -92,11 +92,9 @@ type serveConfig struct {
 	oidcHTTPClient *http.Client
 	// githubAPI and githubWeb are the base URLs of GitHub (the defaults are
 	// api.github.com and github.com; tests point them at a fake), githubHTTP
-	// reaches it, and githubRenewEvery is how often the GitHub connections are
-	// renewed (tests shorten it).
+	// and reaches it through githubHTTP.
 	githubAPI, githubWeb string
 	githubHTTP           *http.Client
-	githubRenewEvery     time.Duration
 }
 
 // passwordParams are the password hashing parameters; zero means the default.
@@ -394,14 +392,15 @@ func runServe(ctx context.Context, c serveConfig) error {
 	// The state database and the spaces. Each of these, once opened, is
 	// closed on every path out of here.
 	var (
-		st       *store.Store
-		mgr      *spaces.Manager
-		sp       *space.Space
-		svc      *auth.Service
-		ghs      *github.Service
-		fgs      *forge.Manager
-		conns    *connections.Registry
-		spClosed bool
+		st         *store.Store
+		mgr        *spaces.Manager
+		sp         *space.Space
+		svc        *auth.Service
+		ghs        *github.Service
+		fgs        *forge.Manager
+		conns      *connections.Registry
+		linkTokens *connections.Tokens
+		spClosed   bool
 	)
 	defer func() {
 		if sp != nil && !spClosed {
@@ -438,12 +437,16 @@ func runServe(ctx context.Context, c serveConfig) error {
 		if err != nil {
 			return err
 		}
-		if ghs, err = github.New(github.Options{Store: st, Secrets: box, Client: ghc, PublicURL: cfg.publicURL, Logger: log, RenewEvery: c.githubRenewEvery}); err != nil {
+		// One token service for every provider that holds people's tokens: the GitHub
+		// App and the GitLab and Gitea hosts below renew through its one loop.
+		conns = connections.NewRegistry(connections.NewGit())
+		linkTokens = connections.NewTokens(connections.TokenOptions{Store: st, Secrets: box, Registry: conns, Logger: log})
+		if ghs, err = github.New(github.Options{Store: st, Secrets: box, Client: ghc, PublicURL: cfg.publicURL, Logger: log, Tokens: linkTokens}); err != nil {
 			return err
 		}
-		conns = connections.NewRegistry(ghs, connections.NewGit())
+		conns.Add(ghs)
 		// The GitLab and Gitea hosts the administrators set up; --remote-unsafe also lets one be plain http.
-		if fgs, err = forge.NewManager(ctx, forge.Options{Store: st, Secrets: box, Registry: conns, PublicURL: cfg.publicURL, Logger: log, Unsafe: c.remoteUnsafe}); err != nil {
+		if fgs, err = forge.NewManager(ctx, forge.Options{Store: st, Secrets: box, Registry: conns, PublicURL: cfg.publicURL, Logger: log, Unsafe: c.remoteUnsafe, Tokens: linkTokens}); err != nil {
 			return err
 		}
 		if mgr, err = spaces.NewAccounts(spaces.Options{Store: st, DataDir: c.data, Serve: true, Committer: c.committer,
@@ -548,8 +551,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 	if cfg.accounts {
 		run(mgr.Run)
 		run(mgr.RunPull)
-		run(ghs.RunRenew)
-		run(fgs.Tokens().Run)
+		run(linkTokens.Run)
 		run(fgs.RunReload)
 	}
 	if svc != nil {

@@ -54,7 +54,7 @@ const puts = () =>
     .map((r) => [r.url.slice(SETTING.length), JSON.parse(r.body!).value])
 // The platforms people can connect an account to (their own page of connections lists them).
 const platforms = (fx: FixtureServer) =>
-  fx.reply('GET', '/api/connections', {
+  fx.reply('GET', '/api/account/links', {
     providers: [
       { id: 'github', type: 'github', host: 'github.com', name: 'GitHub', configured: true, connection: null },
     ],

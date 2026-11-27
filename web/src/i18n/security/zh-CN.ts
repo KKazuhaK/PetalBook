@@ -220,6 +220,7 @@ export const securityZhCN = {
     github: {
       baseUrl: 'GitHub 地址',
       baseUrlHelp: 'https://github.com，或 GitHub Enterprise Server 的地址。',
+      appClient: '这个提供方就是服务器的 GitHub 应用：它的客户端是应用的客户端。请在“仓库”下改应用的设置。',
       clientId: '客户端 ID',
       clientSecret: '客户端密钥',
       organizations: '组织',

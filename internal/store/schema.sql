@@ -356,7 +356,7 @@ CREATE INDEX remotes_cred_user ON remotes(cred_user_id) WHERE cred_user_id <> ''
 
 -- Server-wide records as text by key (most are JSON): what is not a setting.
 -- The daily text's interfaces and providers, the captcha's site key, the
--- storage policy's 'since', the mail sender, the GitHub App's record, the
+-- storage policy's 'since', the mail sender, the
 -- markers 'oidc_imported' and 'passkey_fake_key', and 'first_user', the time
 -- the first account was made (MarkFirstUser). Policy is in layered_settings and
 -- every secret in secrets; nothing here is a setting or a secret.
@@ -578,50 +578,6 @@ CREATE TABLE oauth_retired (
   at       BIGINT NOT NULL,
   PRIMARY KEY (grant_id, hash)
 );
-
--- The GitHub provider (2.7): users' authorisations (tokens sealed; version
--- counts replacements), the App's installations, the tenants each is shared
--- with, and reminders of empty repositories a failed attempt left.
-CREATE TABLE github_authorizations (
-  user_id         TEXT COLLATE "C" PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  github_id       BIGINT NOT NULL UNIQUE,
-  login           TEXT COLLATE "C" NOT NULL,
-  access_enc      TEXT COLLATE "C" NOT NULL DEFAULT '',
-  refresh_enc     TEXT COLLATE "C" NOT NULL DEFAULT '',
-  access_expires  BIGINT NOT NULL DEFAULT 0,
-  refresh_expires BIGINT NOT NULL DEFAULT 0,
-  state           TEXT COLLATE "C" NOT NULL DEFAULT 'ok',
-  version         BIGINT NOT NULL DEFAULT 1,
-  connected       BIGINT NOT NULL,
-  updated         BIGINT NOT NULL
-);
-CREATE INDEX github_authorizations_renew ON github_authorizations(state, refresh_expires, user_id);
-
-CREATE TABLE github_installations (
-  id           BIGINT PRIMARY KEY,
-  account      TEXT COLLATE "C" NOT NULL,
-  account_type TEXT COLLATE "C" NOT NULL DEFAULT 'Organization',
-  updated      BIGINT NOT NULL
-);
-
-CREATE TABLE github_installation_tenants (
-  installation_id BIGINT NOT NULL REFERENCES github_installations(id) ON DELETE CASCADE,
-  tenant_id       TEXT COLLATE "C" NOT NULL REFERENCES tenants(id),
-  PRIMARY KEY (installation_id, tenant_id)
-);
-CREATE INDEX github_installation_tenants_tenant ON github_installation_tenants(tenant_id, installation_id);
-
-CREATE TABLE github_leftovers (
-  user_id    TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  repo_id    BIGINT NOT NULL,
-  full_name  TEXT COLLATE "C" NOT NULL,
-  html_url   TEXT COLLATE "C" NOT NULL,
-  space_name TEXT COLLATE "C" NOT NULL DEFAULT '',
-  created    BIGINT NOT NULL,
-  PRIMARY KEY (user_id, repo_id)
-);
-CREATE INDEX github_leftovers_repo ON github_leftovers(repo_id);
-
 
 -- credential is the JSON of the WebAuthn credential; rp_id is the host the
 -- passkey was made for.
@@ -925,8 +881,19 @@ CREATE TABLE linked_accounts (
 CREATE INDEX linked_accounts_user ON linked_accounts(user_id);
 CREATE INDEX linked_accounts_renew ON linked_accounts(renew_at) WHERE refresh_enc <> '' AND state = 'ok';
 
--- Reserved (consolidation 5, 3.6): built empty, nothing reads or writes them yet.
--- A site provider shared with a tenant, or one of its installations.
+-- The installations of an App-kind provider (GitHub) an administrator has
+-- looked at: the account, to list it without asking the host.
+CREATE TABLE provider_installations (
+  provider_id  TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+  id           BIGINT NOT NULL,
+  account      TEXT COLLATE "C" NOT NULL,
+  account_type TEXT COLLATE "C" NOT NULL DEFAULT 'Organization',
+  updated      BIGINT NOT NULL,
+  PRIMARY KEY (provider_id, id)
+);
+
+-- A site provider shared with a tenant (installation_id 0), or one of its
+-- installations (its id): a tenant reaches only what is shared with it.
 CREATE TABLE provider_shares (
   provider_id     TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
   installation_id BIGINT NOT NULL DEFAULT 0,

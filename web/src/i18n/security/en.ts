@@ -251,6 +251,8 @@ export const securityEn: SecurityMessages = {
     github: {
       baseUrl: 'GitHub address',
       baseUrlHelp: 'https://github.com, or the address of a GitHub Enterprise Server.',
+      appClient:
+        'This provider is the GitHub App of the server: its client is the App’s. Change it with the App’s settings under Repositories.',
       clientId: 'Client ID',
       clientSecret: 'Client secret',
       organizations: 'Organisations',

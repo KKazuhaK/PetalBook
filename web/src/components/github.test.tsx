@@ -314,12 +314,17 @@ describe('the new-space dialog', () => {
     expect(posts()).toHaveLength(1)
     // "Check again" asks for the owners with the server's memory dropped.
     await click(button(tg.newSpace.checkAgain)!)
-    await settle(() => m!.requests.some((r) => r.url === '/api/connections/github/owners?recheck=true'), 'the recheck')
-    await click(button(tg.newSpace.installOnMine))
-    await settle(() => m!.requests.some((r) => r.url === '/api/connections/github/authorization/start'), 'the request')
-    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/connections/github/authorization/start')!.body!)).toEqual(
-      { return: '/', install: true },
+    await settle(
+      () => m!.requests.some((r) => r.url === '/api/account/links/github/owners?recheck=true'),
+      'the recheck',
     )
+    await click(button(tg.newSpace.installOnMine))
+    await settle(() => m!.requests.some((r) => r.url === '/api/account/links/github/start'), 'the request')
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/account/links/github/start')!.body!)).toEqual({
+      purpose: 'repos',
+      return: '/',
+      install: true,
+    })
   })
 
   it('offers other (by address): the space is made on the server and its sync settings open', async () => {
@@ -400,20 +405,21 @@ describe('the GitHub section of the account', () => {
     await openSettings('app')
     await settle(() => button(tg.account.connect, panel()!) !== undefined, 'the button')
     await click(button(tg.account.connect, panel()!))
-    await settle(() => m!.requests.some((r) => r.url === '/api/connections/github/authorization/start'), 'the request')
-    const req = m!.requests.find((r) => r.url === '/api/connections/github/authorization/start')!
+    await settle(() => m!.requests.some((r) => r.url === '/api/account/links/github/start'), 'the request')
+    const req = m!.requests.find((r) => r.url === '/api/account/links/github/start')!
     // Connecting goes through the App's installation page, which authorises in the same flow.
-    expect(JSON.parse(req.body!)).toEqual({ return: '/settings/connections', install: true })
+    expect(JSON.parse(req.body!)).toEqual({ purpose: 'repos', return: '/settings/connections', install: true })
   })
 
   it('can authorize alone when the App is installed already', async () => {
     await openSettings('app')
     await settle(() => button(tg.account.authorizeOnly, panel()!) !== undefined, 'the button')
     await click(button(tg.account.authorizeOnly, panel()!))
-    await settle(() => m!.requests.some((r) => r.url === '/api/connections/github/authorization/start'), 'the request')
-    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/connections/github/authorization/start')!.body!)).toEqual(
-      { return: '/settings/connections' },
-    )
+    await settle(() => m!.requests.some((r) => r.url === '/api/account/links/github/start'), 'the request')
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/account/links/github/start')!.body!)).toEqual({
+      purpose: 'repos',
+      return: '/settings/connections',
+    })
   })
 
   it("offers to install the App on the person's own account when it is not there, and connects in the same step", async () => {
@@ -423,10 +429,12 @@ describe('the GitHub section of the account', () => {
     await settle(() => panel()!.textContent!.includes(tg.account.needsInstallTitle('tang-gh')), 'the notice')
     expect(panel()!.textContent).toContain(tg.account.needsInstallBody)
     await click(button(tg.account.installOnMine, panel()!))
-    await settle(() => m!.requests.some((r) => r.url === '/api/connections/github/authorization/start'), 'the request')
-    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/connections/github/authorization/start')!.body!)).toEqual(
-      { return: '/settings/connections', install: true },
-    )
+    await settle(() => m!.requests.some((r) => r.url === '/api/account/links/github/start'), 'the request')
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/account/links/github/start')!.body!)).toEqual({
+      purpose: 'repos',
+      return: '/settings/connections',
+      install: true,
+    })
   })
 
   it('says nothing about installing when the App is on the account', async () => {
@@ -461,7 +469,7 @@ describe('the GitHub section of the account', () => {
       ),
     )
     await settle(
-      () => m!.requests.some((r) => r.method === 'DELETE' && r.url === '/api/connections/github/authorization'),
+      () => m!.requests.some((r) => r.method === 'DELETE' && r.url === '/api/account/links/link-github/repos'),
       'the request',
     )
     await settle(() => button(tg.account.connect, panel()!) !== undefined, 'not connected any more')
@@ -543,7 +551,7 @@ describe('the reminder of an empty repository a failed space left on GitHub', ()
     await click(button(tg.account.leftoverDismiss, panel()!))
     await settle(() => !panel()!.textContent!.includes(tg.account.leftoverTitle), 'the reminder going')
     expect(
-      m!.requests.some((r) => r.method === 'DELETE' && /^\/api\/connections\/github\/leftovers\/\d+$/.test(r.url)),
+      m!.requests.some((r) => r.method === 'DELETE' && /^\/api\/account\/leftovers\/github\/\d+$/.test(r.url)),
     ).toBe(true)
     expect(m!.fx.data.spaces.some((x) => x.info.name === 'Poems')).toBe(false)
   })
@@ -695,11 +703,11 @@ describe('the GitHub section of the administration', () => {
     // The second save sends no key and no secret.
     await click(button(tg.admin.save))
     await settle(
-      () => m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/connections/github').length === 2,
+      () => m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/providers/github').length === 2,
       'the second save',
     )
     const second = JSON.parse(
-      m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/connections/github')[1].body!,
+      m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/providers/github')[1].body!,
     )
     expect(second).toEqual({ appId: '1234567', clientId: 'Iv23liMockClientId' })
     expect(text()).toContain(tc.sections.storage)
@@ -715,13 +723,13 @@ describe('the GitHub section of the administration', () => {
     )
     await type(field(tg.admin.appId), '1234567')
     await type(field(tg.admin.privateKey), 'nonsense')
-    m.fx.fail('PUT', '/api/admin/connections/github', 400, { code: 'key_invalid' }, { times: 1 })
+    m.fx.fail('PUT', '/api/admin/providers/github', 400, { code: 'key_invalid' }, { times: 1 })
     await click(button(tg.admin.save))
     await settle(() => text().includes(tg.admin.errors.codes.key_invalid), 'the key refusal')
     await type(field(tg.admin.privateKey), '-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----')
     await type(field(tg.admin.clientId), 'Iv23liMockClientId')
     await type(field(tg.admin.clientSecret), 'wrong')
-    m.fx.fail('PUT', '/api/admin/connections/github', 400, { code: 'client_rejected' }, { times: 1 })
+    m.fx.fail('PUT', '/api/admin/providers/github', 400, { code: 'client_rejected' }, { times: 1 })
     await click(button(tg.admin.save))
     await settle(() => text().includes(tg.admin.errors.codes.client_rejected), 'the secret refusal')
   })
@@ -763,7 +771,7 @@ describe('the GitHub section of the administration', () => {
     await click(button(tg.admin.shareSave, dialog()!)!)
     await settle(() => dialog() === null, 'the dialog closing')
     const puts = () =>
-      m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/connections/github/installations/5001')
+      m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/providers/github/installations/5001')
     expect(puts().map((r) => r.body)).toEqual([JSON.stringify({ tenants: ['acme-id'] })])
     await settle(() => text().includes(tg.admin.sharedWith('Acme')), 'the row naming the tenant')
     // Opened again, the dialog shows what is shared; saving replaces the whole set.
@@ -827,7 +835,7 @@ describe('the App in the administration: re-checking, warnings and making it on 
     expect(text()).not.toContain(tg.admin.missing(['contents']))
     await click(button(tg.admin.recheck))
     await settle(
-      () => m!.requests.some((r) => r.method === 'POST' && r.url === '/api/admin/connections/github/check'),
+      () => m!.requests.some((r) => r.method === 'POST' && r.url === '/api/admin/providers/github/check'),
       'the request',
     )
     await settle(() => text().includes(tg.admin.missing(['contents'])), 'the missing permission')
@@ -858,7 +866,7 @@ describe('the App in the administration: re-checking, warnings and making it on 
         url: 'https://github.com/organizations/kazuhahub/settings/apps/new?state=s1',
         manifest: { name: 'PetalBook', public: true, redirect_url: 'https://notes.example.test/manifest/callback' },
       }
-      m.fx.reply('POST', '/api/admin/connections/github/manifest', start)
+      m.fx.reply('POST', '/api/admin/providers/github/manifest', start)
       await settle(() => button(tg.admin.createButton) !== undefined, 'the button')
       await type(
         [...document.querySelectorAll<HTMLInputElement>('input')].find(
@@ -868,7 +876,7 @@ describe('the App in the administration: re-checking, warnings and making it on 
       )
       await click(button(tg.admin.createButton))
       await settle(() => submit.mock.calls.length === 1, 'the form posted')
-      const req = m.requests.find((r) => r.method === 'POST' && r.url === '/api/admin/connections/github/manifest')!
+      const req = m.requests.find((r) => r.method === 'POST' && r.url === '/api/admin/providers/github/manifest')!
       expect(JSON.parse(req.body!)).toEqual({ organization: 'kazuhahub' })
       // What the server gave is what the browser posts, to the address the server gave.
       const form = submit.mock.contexts[0] as HTMLFormElement
@@ -946,12 +954,12 @@ describe('Storage & sync', () => {
     expect(text()).toContain(tg.admin.pendingBody)
     expect(text()).not.toContain('什么也没有保存')
     // The server kept nothing (ten minutes are over): the page says how to finish by hand.
-    m.fx.fail('POST', '/api/admin/connections/github/manifest/retry', 404, { code: 'not_found' })
+    m.fx.fail('POST', '/api/admin/providers/github/manifest/retry', 404, { code: 'not_found' })
     await click(button(tg.admin.pendingRetry))
     await settle(() => text().includes(tg.admin.pendingGone), 'the way to finish by hand')
-    expect(
-      m!.requests.some((r) => r.method === 'POST' && r.url === '/api/admin/connections/github/manifest/retry'),
-    ).toBe(true)
+    expect(m!.requests.some((r) => r.method === 'POST' && r.url === '/api/admin/providers/github/manifest/retry')).toBe(
+      true,
+    )
   })
 
   it('draws the GitHub mark from the page, and a plain mark for a platform without one', async () => {

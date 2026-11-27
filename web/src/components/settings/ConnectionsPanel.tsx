@@ -106,6 +106,7 @@ export function labelsFor(p: Provider): Labels {
       provider_error: f.errors.provider_error(n),
       account_in_use: f.errors.account_in_use(n),
       different_account: f.errors.different_account(n),
+      last_method: f.errors.last_method(n),
       unknown: f.errors.unknown(),
     },
   }

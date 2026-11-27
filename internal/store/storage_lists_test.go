@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -220,13 +221,13 @@ func TestDormantFollowsUseConnectionsAndRemotes(t *testing.T) {
 
 		// A connection of any provider, and its removal. Ub has not written anything.
 		wantCounters(t, st, store.UsageUser, "Ub", counters{dormant: 1})
-		if err := store.PutGitHubAuthorization(ctx, q, store.GitHubAuthorization{UserID: "Ub", GitHubID: 99, Login: "b", State: "ok", Connected: now, Updated: now}); err != nil {
+		if err := ghConnect(st, "Ub", 99, now); err != nil {
 			t.Fatal(err)
 		}
 		wantCounters(t, st, store.UsageUser, "Ub", counters{connected: 1})
 		wantCounters(t, st, store.UsageTenant, tenB, counters{spaces: 1, connected: 1})
 		consistent(t, st)
-		if err := store.DeleteGitHubAuthorization(ctx, q, "Ub"); err != nil {
+		if err := store.DeleteRepoLink(ctx, q, store.ProviderGitHub, "Ub"); err != nil {
 			t.Fatal(err)
 		}
 		wantCounters(t, st, store.UsageUser, "Ub", counters{dormant: 1})
@@ -1082,10 +1083,10 @@ func TestCountersStayWhereTheRecountPutsThemUnderMixedChanges(t *testing.T) {
 			case op == 12:
 				u := pick(users)
 				if rng.Intn(2) == 0 {
-					if err := store.PutGitHubAuthorization(ctx, q, store.GitHubAuthorization{UserID: u, GitHubID: int64(1000 + len(u)*7 + int(u[len(u)-1])), Login: "gh-" + u, State: "ok", Connected: now, Updated: now}); err != nil {
+					if err := ghConnect(st, u, int64(1000+len(u)*7+int(u[len(u)-1])), now); err != nil {
 						t.Fatal(err)
 					}
-				} else if err := store.DeleteGitHubAuthorization(ctx, q, u); err != nil {
+				} else if err := store.DeleteRepoLink(ctx, q, store.ProviderGitHub, u); err != nil {
 					t.Fatal(err)
 				}
 			case op == 13 && len(spaces) > 4:
@@ -1175,7 +1176,7 @@ func TestConnectedHoldsWhenADisconnectRacesAConnect(t *testing.T) {
 		twoTenants(t, st)
 		q := st.Q()
 		now := time.Now()
-		if err := store.PutGitHubAuthorization(ctx, q, store.GitHubAuthorization{UserID: "Ub", GitHubID: 99, Login: "b", State: "ok", Connected: now, Updated: now}); err != nil {
+		if err := ghConnect(st, "Ub", 99, now); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.InsertConnProviderRow(ctx, q, store.ConnProviderRow{ID: "gl", Type: "gitlab", Host: "gl.example.com", Scheme: "https", Name: "gl", Owner: store.ConnProviderSite,
@@ -1198,7 +1199,7 @@ func TestConnectedHoldsWhenADisconnectRacesAConnect(t *testing.T) {
 		}()
 		<-settled
 		disconnectDone := make(chan error, 1)
-		go func() { disconnectDone <- store.DeleteGitHubAuthorization(ctx, st.Q(), "Ub") }()
+		go func() { disconnectDone <- store.DeleteRepoLink(ctx, st.Q(), store.ProviderGitHub, "Ub") }()
 		select {
 		case err := <-disconnectDone: // it did not wait for the connect (the fault)
 			close(release)
@@ -1224,5 +1225,15 @@ func TestConnectedHoldsWhenADisconnectRacesAConnect(t *testing.T) {
 func putLink(ctx context.Context, q store.Q, provider, user, subject, login string, now time.Time) error {
 	_, err := store.PutRepoLink(ctx, q, store.RepoLink{ID: provider + "-" + user, ProviderID: provider, UserID: user, Subject: subject, Login: login,
 		AccessEnc: "sealed", State: store.LinkOK, Connected: now, Updated: now})
+	return err
+}
+
+// ghConnect connects a person to the GitHub provider (its row is made first).
+func ghConnect(st *store.Store, user string, subject int64, now time.Time) error {
+	if err := store.PutGitHubApp(ctx, st.Q(), store.GitHubApp{App: `{"appId":"1"}`, ClientID: "Iv1.x", BaseURL: "https://github.com"}, now); err != nil {
+		return err
+	}
+	_, err := store.PutRepoLink(ctx, st.Q(), store.RepoLink{ID: "L" + user, ProviderID: store.ProviderGitHub, UserID: user, Subject: strconv.FormatInt(subject, 10),
+		Login: "gh-" + user, AccessEnc: "ae", State: store.LinkOK, Connected: now, Updated: now})
 	return err
 }

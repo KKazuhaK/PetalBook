@@ -23,6 +23,13 @@ const (
 	LinkExpired = "expired"
 )
 
+func syncOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return ms(t)
+}
+
 // repoLinkSQL is the condition that a linked_accounts row is a repository link
 // and not only a sign-in: it holds tokens, or it had them and lost them.
 const repoLinkSQL = `(access_enc <> '' OR state <> 'ok')`
@@ -98,12 +105,38 @@ func GetRepoLink(ctx context.Context, q Q, providerID, userID string) (*RepoLink
 // has the account.
 // It returns the link's id.
 func PutRepoLink(ctx context.Context, q Q, a RepoLink) (string, error) {
+	return PutRepoLinkGuarded(ctx, q, a, nil)
+}
+
+// SigninMove is asked, in the transaction of PutRepoLinkGuarded, whether a
+// person's link that signs them in (prev) may move to another account of the
+// host (and lose its sign-in): an error refuses, and nothing is written.
+type SigninMove func(ctx context.Context, q Q, prev *Link) error
+
+// PutRepoLinkGuarded is PutRepoLink that asks move first when the link it
+// replaces signs the person in with another account: the person's link is
+// locked, so what move decides holds for the write.
+func PutRepoLinkGuarded(ctx context.Context, q Q, a RepoLink, move SigninMove) (string, error) {
 	var id string
 	err := atomically(ctx, q, func(q Q) error {
 		if other, err := FindLink(ctx, q, a.ProviderID, a.Subject); err == nil && other.UserID != a.UserID {
 			return ErrExists
 		} else if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
+		}
+		if move != nil {
+			if _, err := q.Exec(ctx, `UPDATE linked_accounts SET id = id WHERE provider_id = ? AND user_id = ?`, a.ProviderID, a.UserID); err != nil {
+				return err
+			}
+			prev, err := FindUserLink(ctx, q, a.ProviderID, a.UserID)
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+			if err == nil && prev.SignIn && prev.Subject != a.Subject {
+				if err := move(ctx, q, prev); err != nil {
+					return err
+				}
+			}
 		}
 		if err := q.QueryRow(ctx, `INSERT INTO linked_accounts(`+repoLinkCols+`, last_used) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,0)
 			ON CONFLICT (provider_id, user_id) DO UPDATE SET
@@ -329,6 +362,38 @@ func NextLinkRenewal(ctx context.Context, q Q, t time.Time) (time.Time, bool, er
 func CountProviderLinks(ctx context.Context, q Q, providerID string) (n int, err error) {
 	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM linked_accounts WHERE provider_id = ? AND `+repoLinkSQL, providerID).Scan(&n)
 	return
+}
+
+// ProviderInUseError refuses to delete a provider that spaces sync through
+// (Spaces of them), found in the deleting transaction.
+type ProviderInUseError struct {
+	Spaces int
+	// Connections is how many people are connected, when the deletion
+	// refuses those too (DeleteUnusedConnProviderRow).
+	Connections int
+}
+
+func (e *ProviderInUseError) Error() string { return "spaces sync through the provider" }
+
+// lockUnusedProvider locks a provider's row and refuses (ProviderInUseError)
+// when a space syncs through it. A remote put on the provider locks the row
+// too (PutRemote), so no space starts to sync through it between this check
+// and the deletion of the row in the same transaction.
+func lockUnusedProvider(ctx context.Context, q Q, id string) error {
+	// The lock comes before anything of usage the deletion writes (settling
+	// whether people are connected), as in every write that locks a provider
+	// (LockProvider).
+	if err := LockProvider(ctx, q, id); err != nil && !errors.Is(err, ErrProviderGone) {
+		return err
+	}
+	n, err := CountProviderSpaces(ctx, q, id)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return &ProviderInUseError{Spaces: n}
+	}
+	return nil
 }
 
 // CountProviderSpaces is how many spaces sync through a provider, for their

@@ -210,6 +210,10 @@ type Account struct {
 	ProviderID, UserID string
 	Subject, Login     string
 	Admin              bool
+	// SigninMove, when set, is asked in the write's transaction whether the
+	// person's link that signs them in with another account may move to this
+	// one (and lose its sign-in); an error refuses and is what Put returns.
+	SigninMove store.SigninMove
 }
 
 // Put stores a person's link at a provider with the pair a host just gave: the
@@ -232,7 +236,7 @@ func (t *Tokens) Put(ctx context.Context, a Account, p Pair) error {
 	} else {
 		l.RenewAt = time.Time{}
 	}
-	if _, err = store.PutRepoLink(ctx, t.opt.Store.Q(), l); err != nil {
+	if _, err = store.PutRepoLinkGuarded(ctx, t.opt.Store.Q(), l, a.SigninMove); err != nil {
 		return err
 	}
 	t.bump(a.ProviderID, a.UserID)
@@ -249,6 +253,10 @@ func (t *Tokens) Remove(ctx context.Context, providerID, userID string) error {
 	t.bump(providerID, userID)
 	return nil
 }
+
+// Forget drops what the cache holds of a person's link at a provider (the link
+// was removed with its row elsewhere: a sign-in unlinked with its tokens).
+func (t *Tokens) Forget(providerID, userID string) { t.bump(providerID, userID) }
 
 // OpenAccess is the access token a stored link holds, for a revocation.
 func (t *Tokens) OpenAccess(l *store.RepoLink) (string, error) {

@@ -39,6 +39,7 @@ export const signinZhCN = {
     disabled: '这个账号已被停用。',
     identity_in_use: '这个登录身份已经属于另一个账号。',
     already_linked: '你在这个提供方已经关联了一个账号；请先取消关联，再关联另一个。',
+    not_for_signin: '这个账号只连接了仓库，没有开启登录。请先用别的方式登录，再在账号设置里选择“关联用于登录”。',
     email_in_use: '另一个账号已经在用这个邮箱。请先登录那个账号，再在账号设置里关联这个登录方式。',
     invite_invalid: '邀请无效、已过期或已被用过。',
     setup_invalid: '设置令牌不对，或者已经有管理员了。',

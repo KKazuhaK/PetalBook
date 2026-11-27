@@ -329,6 +329,12 @@ function AppSettings({ app }: { app: AdminGitHub }) {
         <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground">
           <p>{tg.admin.callbackHelp}</p>
           <code className="font-mono break-all select-all">{app.callbackUrl || tg.admin.noPublicUrl}</code>
+          {app.signinCallbackUrl && (
+            <>
+              <p>{tg.admin.signinCallbackHelp}</p>
+              <code className="font-mono break-all select-all">{app.signinCallbackUrl}</code>
+            </>
+          )}
         </div>
         <FormMessage>{error}</FormMessage>
         <div className="flex flex-wrap gap-2">

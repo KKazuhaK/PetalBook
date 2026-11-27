@@ -23,7 +23,7 @@ func TestTheAppIsReloadedWhileItIsInUse(t *testing.T) {
 				defer wg.Done()
 				for i := 0; i < 50; i++ {
 					h.clk.Advance(time.Millisecond) // past SettingsTTL: every call reads the settings again
-					h.svc.RenewDue(ctx)
+					h.svc.Tokens().RenewDue(ctx)
 					if _, err := h.svc.View(ctx); err != nil {
 						t.Error(err)
 						return

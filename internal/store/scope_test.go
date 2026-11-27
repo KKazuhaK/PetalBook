@@ -109,29 +109,15 @@ var scopeAllowlist = map[string]string{
 	"CountTenantRows": "counts the rows of one tenant to refuse deleting it",
 	// --- 2.7: GitHub. A connection is its user's, a remote its space's; the App and
 	// its installations are the server's own (each is shared with chosen tenants, docs/design/milestones/phase-2-connections.md, 2.7) ---
-	"GetGitHubAuthorization":       "one person's connection, by the id of a user already found in scope",
-	"PutGitHubAuthorization":       "the caller's own connection; its GitHub account check is site-wide, as GitHubAccountUser's",
-	"GitHubAccountUser":            "a GitHub account links to one PetalBook user on the whole server (github_id is unique); callers learn only that it is taken (account_in_use), never by whom or in which tenant",
-	"ReplaceGitHubTokens":          "one person's connection, by the id of a user already found",
-	"ExpireGitHubAuthorization":    "one person's connection, by the id of a user already found",
-	"DeleteGitHubAuthorization":    "the caller's own connection, or that of a user being deleted",
-	"DeleteGitHubAuthorizations":   "the App was removed (site administrators only): every connection on the server goes with it",
-	"ListGitHubAuthorizations":     "the App was removed (site administrators only): every connection on the server is revoked",
-	"DueGitHubRenewals":            "background job: the daily renewal of the connections of every tenant",
-	"CountGitHubAuthorizations":    "the App's own count, shown to site administrators only",
-	"CountGitHubSpaces":            "the App's own count, shown to site administrators only",
-	"CountGitSpaces":               "the count of plain-address remotes, shown to site administrators only",
-	"GitHubSpaceCounts":            "the App's own count per installation, shown to site administrators only",
-	"CountUserGitHubSpaces":        "the spaces syncing through one person's connection: same-tenant, as connecting checks",
-	"GetGitHubInstallation":        "an installation of the server's App: the server's own",
-	"PutGitHubInstallation":        "an installation of the server's App, marked by a site administrator",
-	"UserTenant":                   "the tenant of a user already found, to scope what they may use of the App",
-	"PutGitHubLeftover":            "a reminder of the caller's own, by the id of a user already found",
-	"ListGitHubLeftovers":          "the caller's own reminders, by the id of a user already found",
-	"DeleteGitHubLeftover":         "the caller's own reminder, by the id of a user already found",
-	"SetGitHubInstallationTenants": "a site administrator chooses the tenants an installation is shared with; the tenants are checked by the caller",
-	"GitHubInstallationTenants":    "which tenants installations are shared with, shown to site administrators only",
-	"DeleteGitHubInstallations":    "the App was removed (site administrators only): the shares go with the installations",
+	"CountGitHubSpaces":      "the App's own count, shown to site administrators only",
+	"CountGitSpaces":         "the count of plain-address remotes, shown to site administrators only",
+	"GitHubSpaceCounts":      "the App's own count per installation, shown to site administrators only",
+	"CountUserGitHubSpaces":  "the spaces syncing through one person's connection: same-tenant, as connecting checks",
+	"GetGitHubApp":           "the GitHub App of the server: its record is the config of the GitHub provider row",
+	"PutGitHubApp":           "the GitHub App set up by a site administrator, on the GitHub provider row",
+	"CompareAndSetGitHubApp": "what a re-check of the GitHub App found, written only to the App it was made with",
+	"UserTenant":             "the tenant of a user already found, to scope what they may use of the App",
+	"LockProvider":           "a lock of a provider row by its id, taken by writes that already checked who may make them",
 	// --- 3.8: GitLab and Gitea providers. A provider is the server's own (or its
 	// tenant's: owner), set up by site administrators; a connection and a reminder are
 	// their user's; the account link is unique per provider on the whole server ---
@@ -237,7 +223,7 @@ func TestEveryStoreMethodThatTouchesTenantTablesTakesAScope(t *testing.T) {
 	sort.Strings(missing)
 	sort.Strings(stale)
 	for _, m := range missing {
-		t.Errorf("%s touches users, spaces, groups, invites, audit_log or a GitHub table (github_authorizations, github_installations, github_installation_tenants, github_leftovers, providers, repo_leftovers, remotes) or space_measure and takes no Scope: give it one, or put it on the allowlist with the reason", m)
+		t.Errorf("%s touches users, spaces, groups, invites, audit_log or a GitHub table (providers, repo_leftovers, remotes) or space_measure and takes no Scope: give it one, or put it on the allowlist with the reason", m)
 	}
 	for _, s := range stale {
 		t.Error(s)

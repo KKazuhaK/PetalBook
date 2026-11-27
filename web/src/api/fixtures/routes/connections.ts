@@ -13,7 +13,11 @@ const providerOf = (c: Ctx) => find(conn(c).providers, (p) => p.id === c.params.
 function githubView(c: Ctx): AdminGitHub {
   const g = conn(c).github
   return (
-    g ?? { configured: false, callbackUrl: 'https://notes.example.test/api/connections/github/authorization/callback' }
+    g ?? {
+      configured: false,
+      callbackUrl: 'https://notes.example.test/api/account/links/github/callback',
+      signinCallbackUrl: 'https://notes.example.test/api/auth/github/github/callback',
+    }
   )
 }
 
@@ -46,35 +50,19 @@ function rows(c: Ctx): AdminProviderRow[] {
 }
 
 export const connectionRoutes: Route[] = [
-  // --- the person's side ---
-  ['GET', '/api/connections', (c) => ({ providers: conn(c).providers })],
-  [
-    'POST',
-    '/api/connections/:provider/authorization/start',
-    (c) => (providerOf(c), { url: `/api/connections/${c.params.provider}/authorization/callback?state=fixture` }),
-  ],
+  // --- the person's side (the list and the start are the account's: routes/account.ts) ---
   [
     'DELETE',
-    '/api/connections/:provider/authorization',
-    (c) => {
-      const p = providerOf(c)
-      p.connection = null
-      const f = conn(c).forges.find((x) => x.id === p.id)
-      if (f) f.connections = 0
-    },
-  ],
-  [
-    'DELETE',
-    '/api/connections/:provider/leftovers/:repo',
+    '/api/account/leftovers/:provider/:repo',
     (c) => {
       const p = providerOf(c)
       p.leftovers = p.leftovers.filter((l) => String(l.repoId) !== c.params.repo)
     },
   ],
-  ['GET', '/api/connections/:provider/owners', (c) => paged(conn(c).owners[c.params.provider] ?? [], c.query)],
+  ['GET', '/api/account/links/:provider/owners', (c) => paged(conn(c).owners[c.params.provider] ?? [], c.query)],
   [
     'GET',
-    '/api/connections/:provider/repos',
+    '/api/account/links/:provider/repos',
     (c) => {
       const which = c.query.get('installation') ?? 'mine'
       return paged(conn(c).repos[`${c.params.provider}:${which}`] ?? [], c.query)
@@ -82,10 +70,10 @@ export const connectionRoutes: Route[] = [
   ],
 
   // --- the administrators: the GitHub App ---
-  ['GET', '/api/admin/connections/github', (c) => githubView(c)],
+  ['GET', '/api/admin/providers/github', (c) => githubView(c)],
   [
     'PUT',
-    '/api/admin/connections/github',
+    '/api/admin/providers/github',
     (c): AdminGitHub => {
       const a = conn(c)
       const cur = a.github
@@ -103,7 +91,8 @@ export const connectionRoutes: Route[] = [
           ? { set: true, fingerprint: 'SHA256:fixtureFingerprint0123456789abcdefghijklmnopq' }
           : (cur?.privateKey ?? { set: false, fingerprint: '' }),
         clientSecret: { set: b.clientSecret ? true : (cur?.clientSecret.set ?? false) },
-        callbackUrl: cur?.callbackUrl ?? 'https://notes.example.test/api/connections/github/authorization/callback',
+        callbackUrl: cur?.callbackUrl ?? 'https://notes.example.test/api/account/links/github/callback',
+        signinCallbackUrl: cur?.signinCallbackUrl ?? 'https://notes.example.test/api/auth/github/github/callback',
         permissions: cur?.permissions ?? {},
         missing: cur?.missing ?? [],
         userAuthorization: String(b.clientId ?? cur?.clientId ?? '') !== '',
@@ -119,7 +108,7 @@ export const connectionRoutes: Route[] = [
   ],
   [
     'DELETE',
-    '/api/admin/connections/github',
+    '/api/admin/providers/github',
     (c) => {
       conn(c).github = null
       conn(c).installations = []
@@ -127,7 +116,7 @@ export const connectionRoutes: Route[] = [
   ],
   [
     'POST',
-    '/api/admin/connections/github/check',
+    '/api/admin/providers/github/check',
     (c): AdminGitHub => {
       const g = conn(c).github
       if (!g) throw new Refusal(409, 'provider_not_configured', 'no App is set up')
@@ -137,10 +126,10 @@ export const connectionRoutes: Route[] = [
   ],
   [
     'POST',
-    '/api/admin/connections/github/manifest',
+    '/api/admin/providers/github/manifest',
     (c): GitHubManifestStart => {
       const org = typeof c.body.organization === 'string' ? c.body.organization : ''
-      const base = 'https://notes.example.test/api/connections/github'
+      const base = 'https://notes.example.test/api/providers/github'
       return {
         url: `https://github.com${org ? `/organizations/${org}` : ''}/settings/apps/new?state=fixture`,
         manifest: { name: 'PetalBook', url: 'https://notes.example.test', redirect_url: `${base}/manifest/callback` },
@@ -149,7 +138,7 @@ export const connectionRoutes: Route[] = [
   ],
   [
     'POST',
-    '/api/admin/connections/github/manifest/retry',
+    '/api/admin/providers/github/manifest/retry',
     (c): AdminGitHub => {
       const g = conn(c).github
       if (!g) throw new Refusal(404, 'not_found', 'nothing was kept')
@@ -158,87 +147,99 @@ export const connectionRoutes: Route[] = [
   ],
   [
     'GET',
-    '/api/admin/connections/github/installations',
+    '/api/admin/providers/github/installations',
     (c) => paged<GitHubInstallation>(conn(c).installations, c.query),
   ],
   [
     'PUT',
-    '/api/admin/connections/github/installations/:id',
+    '/api/admin/providers/github/installations/:id',
     (c): GitHubInstallation => {
       const i = find(conn(c).installations, (x) => String(x.id) === c.params.id, 'the installation')
       i.tenants = [...(c.body.tenants as string[])].sort()
       return i
     },
   ],
-
-  // --- the administrators: the hosts with an OAuth application ---
-  ['GET', '/api/admin/connections', (c) => ({ providers: rows(c) })],
-  [
-    'POST',
-    '/api/admin/connections',
-    (c) => {
-      const a = conn(c)
-      const b = c.body
-      const host = String(b.host ?? '')
-      const f = {
-        id: String(b.id ?? ''),
-        type: String(b.type ?? 'gitlab'),
-        host,
-        name: typeof b.name === 'string' && b.name.trim() ? b.name.trim() : host,
-        owner: 'site' as const,
-        configured: true,
-        clientId: String(b.clientId ?? ''),
-        hasSecret: true,
-        callbackUrl: `https://notes.example.test/api/connections/${b.id}/authorization/callback`,
-        scopes: b.type === 'gitlab' ? ['api'] : [],
-        userAuthorization: true,
-        version: b.type === 'gitlab' ? '' : '1.22.0',
-        checked: rfc3339(c.now()),
-        partialSync: 'unknown' as const,
-        connections: 0,
-        spaces: 0,
-        updated: rfc3339(c.now()),
-      }
-      a.forges.push(f)
-      a.providers.push(forgeProvider(f))
-      return reply(201, f)
-    },
-  ],
-  ['GET', '/api/admin/connections/:id', (c) => find(conn(c).forges, (f) => f.id === c.params.id, 'the host')],
-  [
-    'PATCH',
-    '/api/admin/connections/:id',
-    (c) => {
-      const a = conn(c)
-      const f = find(a.forges, (x) => x.id === c.params.id, 'the host')
-      if (typeof c.body.name === 'string' && c.body.name.trim()) f.name = c.body.name.trim()
-      if (typeof c.body.clientId === 'string' && c.body.clientId) f.clientId = c.body.clientId
-      if (typeof c.body.clientSecret === 'string' && c.body.clientSecret) f.hasSecret = true
-      f.updated = rfc3339(c.now())
-      const p = a.providers.find((x) => x.id === f.id)
-      if (p) p.name = f.name
-      return f
-    },
-  ],
-  [
-    'POST',
-    '/api/admin/connections/:id/check',
-    (c) => {
-      const f = find(conn(c).forges, (x) => x.id === c.params.id, 'the host')
-      f.checked = rfc3339(c.now())
-      return f
-    },
-  ],
-  [
-    'DELETE',
-    '/api/admin/connections/:id',
-    (c) => {
-      const a = conn(c)
-      remove(
-        a.forges,
-        find(a.forges, (x) => x.id === c.params.id, 'the host'),
-      )
-      a.providers = a.providers.filter((p) => p.id !== c.params.id)
-    },
-  ],
 ]
+
+// --- the administrators: the hosts with an OAuth application (the routes are the one list of providers: routes/admin.ts) ---
+
+// The hosts as the repository side of the list of providers says them.
+export function repoItems(c: Ctx) {
+  return rows(c).map((r) => ({
+    id: r.id,
+    slug: r.id,
+    kind: r.type,
+    type: r.type,
+    name: r.name,
+    owner: 'site' as const,
+    enabled: true,
+    signin: false,
+    repos: r.configured,
+    host: r.host,
+    configured: r.configured,
+    partialSync: r.partialSync,
+    connections: r.connections,
+    spaces: r.spaces,
+  }))
+}
+
+export const isForge = (c: Ctx, id: string) => conn(c).forges.some((f) => f.id === id)
+
+export function forgeCreate(c: Ctx) {
+  const a = conn(c)
+  const b = c.body
+  const host = String(b.host ?? '')
+  const type = String(b.type ?? b.kind ?? 'gitlab')
+  const id = String(b.id ?? b.slug ?? '')
+  const f = {
+    id,
+    type,
+    host,
+    name: typeof b.name === 'string' && b.name.trim() ? b.name.trim() : host,
+    owner: 'site' as const,
+    configured: true,
+    clientId: String(b.clientId ?? ''),
+    hasSecret: true,
+    callbackUrl: `https://notes.example.test/api/account/links/${id}/callback`,
+    scopes: type === 'gitlab' ? ['api'] : [],
+    userAuthorization: true,
+    version: type === 'gitlab' ? '' : '1.22.0',
+    checked: rfc3339(c.now()),
+    partialSync: 'unknown' as const,
+    connections: 0,
+    spaces: 0,
+    updated: rfc3339(c.now()),
+  }
+  a.forges.push(f)
+  a.providers.push(forgeProvider(f))
+  return reply(201, f)
+}
+
+export const forgeGet = (c: Ctx) => find(conn(c).forges, (f) => f.id === c.params.id, 'the host')
+
+export function forgePatch(c: Ctx) {
+  const a = conn(c)
+  const f = find(a.forges, (x) => x.id === c.params.id, 'the host')
+  if (typeof c.body.name === 'string' && c.body.name.trim()) f.name = c.body.name.trim()
+  if (typeof c.body.clientId === 'string' && c.body.clientId) f.clientId = c.body.clientId
+  if (typeof c.body.clientSecret === 'string' && c.body.clientSecret) f.hasSecret = true
+  f.updated = rfc3339(c.now())
+  const p = a.providers.find((x) => x.id === f.id)
+  if (p) p.name = f.name
+  return f
+}
+
+export function forgeCheck(c: Ctx) {
+  const f = find(conn(c).forges, (x) => x.id === c.params.id, 'the host')
+  f.checked = rfc3339(c.now())
+  return f
+}
+
+export function forgeDelete(c: Ctx) {
+  const a = conn(c)
+  remove(
+    a.forges,
+    find(a.forges, (x) => x.id === c.params.id, 'the host'),
+  )
+  a.providers = a.providers.filter((p) => p.id !== c.params.id)
+}

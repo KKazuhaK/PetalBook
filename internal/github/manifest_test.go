@@ -45,8 +45,8 @@ func TestMakingTheAppFromAManifest(t *testing.T) {
 			t.Fatalf("%s", s.URL)
 		}
 		m := s.Manifest.(githubapp.Manifest)
-		if m.Name == "" || len(m.Name) > 34 || m.URL != publicURL || m.RedirectURL != publicURL+"/api/connections/github/manifest/callback" || m.SetupURL != m.RedirectURL ||
-			len(m.CallbackURLs) != 1 || m.CallbackURLs[0] != publicURL+"/api/connections/github/authorization/callback" || !m.Public || !m.RequestOAuthOnInst ||
+		if m.Name == "" || len(m.Name) > 34 || m.URL != publicURL || m.RedirectURL != publicURL+"/api/providers/github/manifest/callback" || m.SetupURL != m.RedirectURL ||
+			len(m.CallbackURLs) != 2 || m.CallbackURLs[0] != publicURL+"/api/account/links/github/callback" || m.CallbackURLs[1] != publicURL+"/api/auth/github/github/callback" || !m.Public || !m.RequestOAuthOnInst ||
 			m.HookAttributes.Active || m.DefaultPermissions["administration"] != "write" || m.DefaultPermissions["contents"] != "write" ||
 			m.DefaultPermissions["metadata"] != "read" || len(m.DefaultPermissions) != 3 {
 			t.Fatalf("%+v", m)
@@ -75,7 +75,7 @@ func TestMakingTheAppFromAManifest(t *testing.T) {
 			t.Fatalf("%+v %v", v, err)
 		}
 		// Stored sealed, exactly as an App entered by hand, and the webhook secret too.
-		raw, _, _ := store.GetSiteRecord(ctx, st.Q(), "github_app")
+		raw, _, _ := store.GetGitHubApp(ctx, st.Q())
 		for _, plain := range []string{h.f.ClientSecret, "BEGIN RSA PRIVATE KEY", "MIIE", "fake-webhook-secret"} {
 			if strings.Contains(raw, plain) {
 				t.Fatalf("the stored settings hold %q", plain)

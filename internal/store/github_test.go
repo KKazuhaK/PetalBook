@@ -11,102 +11,13 @@ import (
 	"petalbook.app/server/internal/store/storetest"
 )
 
-func TestGitHubAuthorizations(t *testing.T) {
-	t.Parallel()
-	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		mkUser(t, st, "A", "a", "member")
-		mkUser(t, st, "B", "b", "member")
-		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
-		q := st.Q()
-		a := store.GitHubAuthorization{UserID: "A", GitHubID: 77, Login: "a-gh", AccessEnc: "ae", RefreshEnc: "re", State: "ok",
-			AccessExpires: now.Add(8 * time.Hour), RefreshExpires: now.Add(100 * 24 * time.Hour), Connected: now, Updated: now}
-		if err := store.PutGitHubAuthorization(ctx, q, a); err != nil {
-			t.Fatal(err)
-		}
-		got, err := store.GetGitHubAuthorization(ctx, q, "A")
-		if err != nil || got.Version != 1 || got.Login != "a-gh" || !got.RefreshExpires.Equal(a.RefreshExpires) {
-			t.Fatalf("%+v %v", got, err)
-		}
-		// One GitHub account, one user.
-		b := a
-		b.UserID = "B"
-		if err := store.PutGitHubAuthorization(ctx, q, b); !errors.Is(err, store.ErrExists) {
-			t.Fatalf("%v", err)
-		}
-		if u, err := store.GitHubAccountUser(ctx, q, 77); err != nil || u != "A" {
-			t.Fatalf("%q %v", u, err)
-		}
-		// Connecting again replaces the pair and raises the version.
-		a.AccessEnc = "ae2"
-		if err := store.PutGitHubAuthorization(ctx, q, a); err != nil {
-			t.Fatal(err)
-		}
-		got, _ = store.GetGitHubAuthorization(ctx, q, "A")
-		if got.Version != 2 || got.AccessEnc != "ae2" {
-			t.Fatalf("%+v", got)
-		}
-		// A renewal replaces only the pair it was made from.
-		ok, err := store.ReplaceGitHubTokens(ctx, q, "A", 1, "x", "y", now, now, now)
-		if err != nil || ok {
-			t.Fatalf("an old version replaced the pair: %v %v", ok, err)
-		}
-		ok, err = store.ReplaceGitHubTokens(ctx, q, "A", 2, "ae3", "re3", now.Add(8*time.Hour), now.Add(180*24*time.Hour), now)
-		if err != nil || !ok {
-			t.Fatalf("%v %v", ok, err)
-		}
-		got, _ = store.GetGitHubAuthorization(ctx, q, "A")
-		if got.Version != 3 || got.RefreshEnc != "re3" {
-			t.Fatalf("%+v", got)
-		}
-		// Due: refresh tokens ending before the given time, in good standing.
-		if due, _ := store.DueGitHubRenewals(ctx, q, now.Add(30*24*time.Hour), store.DueCursor{}, 10); len(due) != 0 {
-			t.Fatalf("%+v", due)
-		}
-		if due, _ := store.DueGitHubRenewals(ctx, q, now.Add(200*24*time.Hour), store.DueCursor{}, 10); len(due) != 1 {
-			t.Fatalf("%+v", due)
-		}
-		// Expiring drops the tokens, only for the version it was asked about.
-		if ok, _ := store.ExpireGitHubAuthorization(ctx, q, "A", 1, now); ok {
-			t.Fatal("expired an old version")
-		}
-		if ok, _ := store.ExpireGitHubAuthorization(ctx, q, "A", 3, now); !ok {
-			t.Fatal("did not expire")
-		}
-		got, _ = store.GetGitHubAuthorization(ctx, q, "A")
-		if got.State != "expired" || got.AccessEnc != "" || got.RefreshEnc != "" {
-			t.Fatalf("%+v", got)
-		}
-		if due, _ := store.DueGitHubRenewals(ctx, q, now.Add(400*24*time.Hour), store.DueCursor{}, 10); len(due) != 0 {
-			t.Fatalf("an expired connection is due: %+v", due)
-		}
-		if n, _ := store.CountGitHubAuthorizations(ctx, q); n != 1 {
-			t.Fatal(n)
-		}
-		if err := store.DeleteGitHubAuthorization(ctx, q, "A"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.GetGitHubAuthorization(ctx, q, "A"); !errors.Is(err, store.ErrNotFound) {
-			t.Fatal(err)
-		}
-		// Deleting the user deletes the connection.
-		if err := store.PutGitHubAuthorization(ctx, q, b); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := q.Exec(ctx, `DELETE FROM users WHERE id = 'B'`); err != nil {
-			t.Fatal(err)
-		}
-		if n, _ := store.CountGitHubAuthorizations(ctx, q); n != 0 {
-			t.Fatal("a deleted user's connection stayed")
-		}
-	})
-}
-
 func TestGitHubInstallationsAndSpaces(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
 		q := st.Q()
+		mkGitHubRow(t, st, now)
 		for _, i := range []store.GitHubInstallation{{ID: 30, Account: "Zeta", AccountType: "Organization"}, {ID: 10, Account: "Alpha", AccountType: "Organization"},
 			{ID: 20, Account: "Mid", AccountType: "Organization"}} {
 			i.Updated = now
@@ -259,72 +170,6 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 	})
 }
 
-// Due renewals page by (refresh end, user id), ties included.
-func TestDueGitHubRenewalsPageByKeyset(t *testing.T) {
-	t.Parallel()
-	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
-		q := st.Q()
-		ends := map[string]time.Duration{"A": 2, "B": 1, "C": 1, "D": 1, "E": 3}
-		var i int64
-		for _, id := range []string{"A", "B", "C", "D", "E"} {
-			i++
-			mkUser(t, st, id, "u"+id, "member")
-			err := store.PutGitHubAuthorization(ctx, q, store.GitHubAuthorization{UserID: id, GitHubID: i, Login: id, AccessEnc: "ae", RefreshEnc: "re",
-				State: "ok", RefreshExpires: now.Add(ends[id] * time.Hour), Connected: now, Updated: now})
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		var got []string
-		var cur store.DueCursor
-		for pages := 0; pages < 10; pages++ {
-			due, err := store.DueGitHubRenewals(ctx, q, now.Add(24*time.Hour), cur, 2)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, a := range due {
-				got = append(got, a.UserID)
-				cur = a.Next()
-			}
-			if len(due) < 2 {
-				break
-			}
-		}
-		if strings.Join(got, "") != "BCDAE" {
-			t.Fatalf("%v", got)
-		}
-	})
-}
-
-// Two users connecting one GitHub account at once: the one that loses the race
-// gets ErrExists from the unique index, not a database error.
-func TestConnectingAnAccountTakenMeanwhileIsErrExists(t *testing.T) {
-	// Not parallel: it sets a hook for the whole package.
-	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		mkUser(t, st, "A", "a", "member")
-		mkUser(t, st, "B", "b", "member")
-		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
-		q := st.Q()
-		a := store.GitHubAuthorization{UserID: "A", GitHubID: 77, Login: "gh", AccessEnc: "ae", State: "ok", Connected: now, Updated: now}
-		b := a
-		b.UserID = "B"
-		store.SetGitHubPutRaceHook(func() {
-			store.SetGitHubPutRaceHook(nil)
-			if err := store.PutGitHubAuthorization(ctx, q, a); err != nil {
-				t.Error(err)
-			}
-		})
-		t.Cleanup(func() { store.SetGitHubPutRaceHook(nil) })
-		if err := store.PutGitHubAuthorization(ctx, q, b); !errors.Is(err, store.ErrExists) {
-			t.Fatalf("%v", err)
-		}
-		if u, _ := store.GitHubAccountUser(ctx, q, 77); u != "A" {
-			t.Fatalf("%q", u)
-		}
-	})
-}
-
 // An attachment repository on GitHub depends on its installation or its user
 // as the space's own repository does: the counts include it, once per space.
 func TestGitHubSpaceCountsIncludeAttachmentRepositories(t *testing.T) {
@@ -332,6 +177,7 @@ func TestGitHubSpaceCountsIncludeAttachmentRepositories(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
 		q := st.Q()
+		mkGitHubRow(t, st, now)
 		for _, id := range []string{"S1", "S2", "S3"} {
 			if err := store.InsertSpace(ctx, q, store.DefaultTenantID, id, id, "", "", now); err != nil {
 				t.Fatal(err)
@@ -371,13 +217,14 @@ func TestGitHubSpaceCountsIncludeAttachmentRepositories(t *testing.T) {
 	})
 }
 
-// Forgetting the installations forgets who they were shared with; deleting a
-// tenant takes its shares.
+// Deleting the GitHub provider forgets its installations and who they were
+// shared with; deleting a tenant takes its shares.
 func TestGitHubInstallationSharesGoWithTheirOwners(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		q := st.Q()
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		mkGitHubRow(t, st, now)
 		for _, id := range []int64{1, 2} {
 			if err := store.PutGitHubInstallation(ctx, q, store.GitHubInstallation{ID: id, Account: fmt.Sprint("org", id), AccountType: "Organization", Updated: now}); err != nil {
 				t.Fatal(err)
@@ -398,76 +245,90 @@ func TestGitHubInstallationSharesGoWithTheirOwners(t *testing.T) {
 		if fmt.Sprint(m[1]) != "["+store.DefaultTenantID+"]" || len(m[2]) != 1 {
 			t.Fatalf("a deleted tenant is still shared with: %v", m)
 		}
-		if err := store.DeleteGitHubInstallations(ctx, q); err != nil {
+		if err := store.DeleteGitHubProvider(ctx, q); err != nil {
 			t.Fatal(err)
 		}
-		if n := count(t, st, `SELECT COUNT(*) FROM github_installation_tenants`); n != 0 {
-			t.Fatalf("%d shares outlived their installations", n)
+		if n := count(t, st, `SELECT COUNT(*) FROM provider_shares`); n != 0 {
+			t.Fatalf("%d shares outlived their provider", n)
+		}
+		if n := count(t, st, `SELECT COUNT(*) FROM provider_installations`); n != 0 {
+			t.Fatalf("%d installations outlived their provider", n)
 		}
 	})
 }
 
-func TestGitHubLeftovers(t *testing.T) {
+// mkGitHubRow sets an App up on the GitHub row, which makes the row.
+func mkGitHubRow(t *testing.T, st *store.Store, now time.Time) {
+	t.Helper()
+	if err := store.PutGitHubApp(ctx, st.Q(), store.GitHubApp{App: `{"appId":"1","fingerprint":"f"}`, ClientID: "Iv1.x", BaseURL: "https://github.com"}, now); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The App is the config of the GitHub row: setting it up makes the row (a sign-in
+// provider that is off, holding repositories), an administrator's changes of the
+// row never touch it, and it is replaced only by whoever read what is there.
+func TestTheGitHubAppIsTheConfigOfTheGitHubRow(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		mkUser(t, st, "A", "a", "member")
-		mkUser(t, st, "B", "b", "member")
 		q := st.Q()
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
-		put := func(user string, repo int64, at time.Time) {
-			t.Helper()
-			l := store.GitHubLeftover{UserID: user, RepoID: repo, FullName: fmt.Sprint("o/r", repo), HTMLURL: fmt.Sprint("https://github.com/o/r", repo), SpaceName: "Notes", Created: at}
-			if err := store.PutGitHubLeftover(ctx, q, l); err != nil {
-				t.Fatal(err)
-			}
+		if _, ok, err := store.GetGitHubApp(ctx, q); err != nil || ok {
+			t.Fatalf("an App from nothing: %v %v", ok, err)
 		}
-		put("A", 1, now)
-		put("A", 2, now.Add(time.Minute))
-		put("B", 1, now)
-		put("A", 1, now.Add(2*time.Minute)) // the same repository again: one reminder, the newer
-		list, err := store.ListGitHubLeftovers(ctx, q, "A")
-		if err != nil || len(list) != 2 || list[0].RepoID != 1 || list[1].RepoID != 2 || list[0].SpaceName != "Notes" || !list[0].Created.Equal(now.Add(2*time.Minute)) {
-			t.Fatalf("newest first: %+v %v", list, err)
+		mkGitHubRow(t, st, now)
+		row, err := store.GetProvider(ctx, q, store.ProviderGitHub)
+		if err != nil || row.Kind != "github" || row.Enabled || !row.Repos || row.Owner != store.ProviderSite {
+			t.Fatalf("%+v %v", row, err)
 		}
-		// Per user: A's dismissal leaves B's.
-		if ok, err := store.DeleteGitHubLeftover(ctx, q, "A", 1); err != nil || !ok {
-			t.Fatal(ok, err)
+		app, ok, err := store.GetGitHubApp(ctx, q)
+		if err != nil || !ok || app != `{"appId":"1","fingerprint":"f"}` {
+			t.Fatalf("%q %v %v", app, ok, err)
 		}
-		if ok, _ := store.DeleteGitHubLeftover(ctx, q, "A", 1); ok {
-			t.Fatal("dismissed twice")
-		}
-		if l, _ := store.ListGitHubLeftovers(ctx, q, "B"); len(l) != 1 {
-			t.Fatalf("%+v", l)
-		}
-		// A space connecting to the repository clears the reminder, for whoever has it.
-		for _, id := range []string{"S1"} {
-			if err := store.InsertSpace(ctx, q, store.DefaultTenantID, id, id, "", "", now); err != nil {
-				t.Fatal(err)
-			}
-		}
-		r := store.Remote{SpaceID: "S1", URL: "https://github.com/o/r1.git", Branch: "main", State: "ok", Updated: now, CredType: "connection", Via: "user", CredUserID: "A", RepoID: 1}
-		if err := store.PutRemote(ctx, q, r); err != nil {
+		// The sign-in side writes the whole config back, as it read it: the App's
+		// keys stay as stored, whatever it wrote for them.
+		row.Config = `{"organizations":["acme"],"clientId":"mine","baseUrl":"https://elsewhere.test","app":{"appId":"2"}}`
+		row.Enabled, row.Updated = true, now.Add(time.Minute)
+		if err := store.UpdateProvider(ctx, q, *row); err != nil {
 			t.Fatal(err)
 		}
-		if l, _ := store.ListGitHubLeftovers(ctx, q, "B"); len(l) != 0 {
-			t.Fatalf("a connected repository is still a leftover: %+v", l)
+		again, _ := store.GetProvider(ctx, q, store.ProviderGitHub)
+		if !again.Enabled || !strings.Contains(again.Config, `"organizations":["acme"]`) || !strings.Contains(again.Config, `"clientId":"Iv1.x"`) ||
+			!strings.Contains(again.Config, `"baseUrl":"https://github.com"`) || !strings.Contains(again.Config, `"appId":"1"`) || strings.Contains(again.Config, `"appId":"2"`) {
+			t.Fatalf("%s", again.Config)
 		}
-		if l, _ := store.ListGitHubLeftovers(ctx, q, "A"); len(l) != 1 || l[0].RepoID != 2 {
-			t.Fatalf("%+v", l)
+		// A change made on what an older read saw is not written over a newer App.
+		if ok, err := store.CompareAndSetGitHubApp(ctx, q, `{"appId":"0"}`, `{"appId":"9"}`, now); err != nil || ok {
+			t.Fatalf("an old read wrote: %v %v", ok, err)
 		}
-		// Only the newest ones are kept.
-		for i := int64(100); i < 140; i++ {
-			put("A", i, now.Add(time.Duration(i)*time.Hour))
+		if ok, err := store.CompareAndSetGitHubApp(ctx, q, app, `{"appId":"1","slug":"s"}`, now); err != nil || !ok {
+			t.Fatalf("%v %v", ok, err)
 		}
-		if l, _ := store.ListGitHubLeftovers(ctx, q, "A"); len(l) != store.MaxGitHubLeftovers || l[0].RepoID != 139 {
-			t.Fatalf("%d kept, first %+v", len(l), l[0])
+		if got, _, _ := store.GetGitHubApp(ctx, q); got != `{"appId":"1","slug":"s"}` {
+			t.Fatalf("%q", got)
 		}
-		// Deleting the user deletes their reminders.
-		if _, err := q.Exec(ctx, `DELETE FROM users WHERE id = 'B'`); err != nil {
+		if again, _ = store.GetProvider(ctx, q, store.ProviderGitHub); !strings.Contains(again.Config, `"organizations":["acme"]`) {
+			t.Fatalf("the sign-in settings were lost: %s", again.Config)
+		}
+		// A row an administrator made for signing in takes the App's client.
+		if err := store.DeleteGitHubProvider(ctx, q); err != nil {
 			t.Fatal(err)
 		}
-		if n := count(t, st, `SELECT COUNT(*) FROM github_leftovers WHERE user_id = 'B'`); n != 0 {
-			t.Fatal("a deleted user's reminders stayed")
+		if _, ok, _ := store.GetGitHubApp(ctx, q); ok {
+			t.Fatal("the App outlived its row")
+		}
+		own := store.ProviderRow{ID: store.ProviderGitHub, Owner: store.ProviderSite, Slug: "github", Kind: "github", Name: "GitHub", Enabled: true,
+			Config: `{"clientId":"own","baseUrl":"https://github.com","organizations":["acme"]}`, SecretEnc: "sealed", Created: now, Updated: now}
+		if err := store.InsertProvider(ctx, q, own); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := store.GetProvider(ctx, q, store.ProviderGitHub); got.Repos {
+			t.Fatal("a sign-in provider holds repositories")
+		}
+		mkGitHubRow(t, st, now.Add(time.Hour))
+		got, _ := store.GetProvider(ctx, q, store.ProviderGitHub)
+		if !got.Enabled || got.SecretEnc != "" || !got.Repos || !strings.Contains(got.Config, `"organizations":["acme"]`) || !strings.Contains(got.Config, `"clientId":"Iv1.x"`) {
+			t.Fatalf("%+v", got)
 		}
 	})
 }

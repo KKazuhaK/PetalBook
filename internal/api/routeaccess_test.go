@@ -63,6 +63,20 @@ func init() {
 // routeAccessAdded are the routes added after the golden file was written,
 // with their decision for each caller.
 var routeAccessAdded = map[string][4]string{
+	// Providers and linked accounts (consolidation 5c): every kind of provider on /api/admin/providers,
+	// every link of a person on /api/account/links.
+	"PUT /api/admin/providers/{id}":                              {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/providers/{id}/installations":                {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"PUT /api/admin/providers/{id}/installations/{installation}": {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/providers/{id}/manifest":                    {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/providers/{id}/manifest/retry":              {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"GET /api/providers/github/manifest/callback":                {"ok", "ok", "ok", "403 token_scope"},
+	"GET /api/account/links/{provider}/callback":                 {"ok", "ok", "ok", "403 token_scope"},
+	"GET /api/account/links/{provider}/owners":                   {"ok", "ok", "ok", "403 token_scope"},
+	"GET /api/account/links/{provider}/repos":                    {"ok", "ok", "ok", "403 token_scope"},
+	"DELETE /api/account/links/{id}/repos":                       {"ok", "ok", "ok", "403 token_scope"},
+	"DELETE /api/account/leftovers/{provider}/{repoId}":          {"ok", "ok", "ok", "403 token_scope"},
+
 	"GET /api/admin/permissions": {"ok", "ok", "403 forbidden", "403 token_scope"},
 
 	// The manual purge of the audit log: the site's alone (site.audit.purge).

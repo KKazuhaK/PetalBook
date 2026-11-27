@@ -89,6 +89,8 @@ export const githubEn = {
       account_in_use: 'That GitHub account is connected to another user of this server.',
       different_account:
         'Spaces here sync through the GitHub account you connected before. Disconnect it first, or switch those spaces to another credential.',
+      last_method:
+        'You sign in with the GitHub account linked to you, and it is your only way in. Set a password or link another sign-in method first, or authorize with that same account.',
       unknown: 'Something went wrong.',
     },
     account: 'Account',
@@ -261,6 +263,7 @@ export const githubEn = {
     secretKept: 'A secret is saved. Enter one only to replace it.',
     secretHelp: 'Made on the App’s settings page, with the client id.',
     callbackHelp: 'Set this as the App’s callback URL on GitHub:',
+    signinCallbackHelp: 'And this one too, for signing in with GitHub (turn it on under Sign-in providers):',
     noPublicUrl: 'The server has no public address (--public-url).',
     needIds: 'Give the App ID and, the first time, the private key.',
     needSecret: 'The client id and the client secret go together.',
@@ -283,6 +286,8 @@ export const githubEn = {
         app_rejected: 'GitHub does not accept this key for this App ID.',
         client_rejected: 'GitHub does not accept this client id and secret for the App.',
         provider_in_use: 'Spaces still sync through the App, or users are connected. Switch or disconnect those first.',
+        provider_host_mismatch:
+          'Signing in with GitHub is set up for another GitHub host, and people have linked accounts there. Delete that sign-in provider, or remove its linked accounts, first.',
         unavailable: 'GitHub could not be reached. Nothing was saved.',
         provider_not_configured: 'GitHub no longer accepts the saved key. Save the App again.',
         public_url_needed: 'The server has no public address (--public-url), so GitHub cannot send you back.',

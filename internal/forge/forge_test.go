@@ -230,7 +230,7 @@ func TestTheSecretIsSealedAndNeverShown(t *testing.T) {
 			}
 			var m map[string]any
 			_ = json.Unmarshal(raw, &m)
-			if m["hasSecret"] != true || m["clientId"] != h.f.ClientID || m["configured"] != true || m["callbackUrl"] != publicURL+"/api/connections/main/authorization/callback" {
+			if m["hasSecret"] != true || m["clientId"] != h.f.ClientID || m["configured"] != true || m["callbackUrl"] != publicURL+"/api/account/links/main/callback" {
 				t.Fatalf("%s", raw)
 			}
 			if _, has := m["clientSecret"]; has {
@@ -391,7 +391,7 @@ func TestAPersonConnectsOnceWithPKCE(t *testing.T) {
 		u, _ := url.Parse(st.URL)
 		q := u.Query()
 		if u.Host != h.f.Host() || q.Get("client_id") != h.f.ClientID || q.Get("code_challenge_method") != "S256" || len(q.Get("code_challenge")) < 40 ||
-			len(q.Get("state")) < 40 || q.Get("redirect_uri") != publicURL+"/api/connections/main/authorization/callback" || q.Get("response_type") != "code" {
+			len(q.Get("state")) < 40 || q.Get("redirect_uri") != publicURL+"/api/account/links/main/callback" || q.Get("response_type") != "code" {
 			t.Fatalf("%s", st.URL)
 		}
 		if strings.Contains(st.URL, h.f.ClientSecret) || st.Binding == "" || strings.Contains(st.URL, st.Binding) {

@@ -262,7 +262,7 @@ func invalid(reason, msg string) *connections.Error {
 	return e
 }
 
-// createRequest is the body of POST /api/admin/connections.
+// createRequest is the body of POST /api/admin/providers.
 type createRequest struct {
 	ID           string `json:"id"`
 	Type         string `json:"type"`
@@ -398,7 +398,7 @@ func (m *Manager) callbackURL(id string) string {
 	if m.opt.PublicURL == "" {
 		return ""
 	}
-	return m.opt.PublicURL + "/api/connections/" + id + "/authorization/callback"
+	return m.opt.PublicURL + connections.CallbackPath(id)
 }
 
 // checkHost asks the host who it is and whether it accepts the client: its
@@ -419,7 +419,7 @@ func (m *Manager) checkHost(ctx context.Context, d driver, c *client, clientID, 
 		return "", invalid(ReasonVersion, "This version ("+version+") is too old: it has no authorisation with PKCE.")
 	}
 	if redirect == "" {
-		redirect = "https://notes.invalid/api/connections/check/authorization/callback"
+		redirect = "https://notes.invalid" + connections.CallbackPath("check")
 	}
 	_, err = m.token(ctx, d, c, clientID, clientSecret, [][2]string{{"grant_type", "authorization_code"}, {"code", "petalbook-check"},
 		{"redirect_uri", redirect}, {"code_verifier", "petalbook-check-petalbook-check-petalbook-check-0123456789"}})

@@ -6,10 +6,6 @@ import "context"
 // draft and writing the new one; nil removes it.
 func SetDraftRaceHook(fn func()) { testHookAfterDraftRead = fn }
 
-// SetGitHubPutRaceHook makes every PutGitHubAuthorization call fn between its
-// check of the GitHub account and its write; nil removes it.
-func SetGitHubPutRaceHook(fn func()) { testHookBeforeGitHubPut = fn }
-
 // SetEmailInsertRaceHook makes every SetPrimaryEmail call fn with its
 // transaction between its check of who holds the address and its insert; nil
 // removes it.

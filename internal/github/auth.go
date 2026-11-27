@@ -17,12 +17,12 @@ import (
 	"petalbook.app/server/internal/store"
 )
 
-// Errors of using a user's authorisation.
+// Errors of using a user's authorisation (the token service's).
 var (
 	// ErrNoAuthorization: the user has not connected a GitHub account.
-	ErrNoAuthorization = errors.New("the user has not connected a GitHub account")
+	ErrNoAuthorization = connections.ErrNoAuthorization
 	// ErrAuthorizationExpired: the refresh token ran out or was revoked.
-	ErrAuthorizationExpired = errors.New("the GitHub authorisation expired or was revoked")
+	ErrAuthorizationExpired = connections.ErrAuthorizationExpired
 )
 
 // Bounds of the sign-ins in progress.
@@ -33,8 +33,6 @@ const (
 	// their own: a flood of people connecting accounts must not push out an
 	// administrator's attempt.
 	manifestCapacity = 64
-	renewBefore      = 5 * time.Minute
-	maxUserTokens    = 10_000
 )
 
 // attempt is one authorisation between start and the callback.
@@ -154,7 +152,7 @@ func (s *Service) StartAuthorization(ctx context.Context, userID, ret string) (a
 		return "", "", err
 	}
 	login := ""
-	if a, err := store.GetGitHubAuthorization(ctx, s.opt.Store.Q(), userID); err == nil {
+	if a, err := store.GetRepoLink(ctx, s.opt.Store.Q(), ProviderID, userID); err == nil {
 		login = a.Login
 	}
 	state := githubapp.RandomState()
@@ -201,6 +199,9 @@ const (
 	cbError     = "provider_error"
 	cbInUse     = "account_in_use"
 	cbDifferent = "different_account"
+	// cbLastMethod: the account the person authorised is not the one their link
+	// is to, and the link is their only way to sign in.
+	cbLastMethod = "last_method"
 	// cbInstalled: GitHub installed the App but sent no code (the App does not
 	// ask for authorisation during installation). cbRequested: an organisation
 	// has to approve the installation first.
@@ -261,10 +262,15 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 		s.log.Warn("could not read the GitHub account", "reason", reason(err))
 		return fail(cbError)
 	}
-	now := s.opt.Now()
 	db := s.opt.Store.Q()
-	if prev, err := store.GetGitHubAuthorization(ctx, db, userID); err == nil && prev.GitHubID != acct.ID {
-		n, err := store.CountUserGitHubSpaces(ctx, db, userID)
+	subject := strconv.FormatInt(acct.ID, 10)
+	// Their link at GitHub, whatever it is for: a sign-in that holds no tokens is
+	// moved to the other account just the same.
+	if prev, err := store.FindUserLink(ctx, db, ProviderID, userID); err == nil && prev.Subject != subject {
+		// Another GitHub account takes the link over: what syncs through the old
+		// one would be left without a credential, and a sign-in the link gave
+		// (and the address it brought) belongs to the old account.
+		n, err := store.CountUserProviderSpaces(ctx, db, ProviderID, userID)
 		if err != nil {
 			s.log.Error("could not count the spaces of a GitHub connection", "error", err)
 			return fail(cbError)
@@ -273,30 +279,46 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 			return fail(cbDifferent)
 		}
 	}
-	row := store.GitHubAuthorization{UserID: userID, GitHubID: acct.ID, Login: acct.Login, State: store.GitHubOK,
-		AccessExpires: tok.AccessExpires, RefreshExpires: tok.RefreshExpires, Connected: now, Updated: now}
-	if row.AccessEnc, err = s.opt.Secrets.Seal(userID, purposeAccess, []byte(tok.Access)); err != nil {
-		s.log.Error("could not seal a GitHub token", "error", err)
-		return fail(cbError)
-	}
-	if tok.Refresh != "" {
-		if row.RefreshEnc, err = s.opt.Secrets.Seal(userID, purposeRefresh, []byte(tok.Refresh)); err != nil {
-			s.log.Error("could not seal a GitHub token", "error", err)
-			return fail(cbError)
+	// Whether a sign-in may move with the link to the other account is asked in
+	// the write's transaction, the link locked: another request that removes
+	// the person's other ways in meanwhile cannot leave them without one.
+	s.mu.Lock()
+	guard := s.guard
+	s.mu.Unlock()
+	move := func(ctx context.Context, q store.Q, prev *store.Link) error {
+		if guard == nil {
+			return errNoGuard
 		}
+		ok, err := guard(ctx, q, userID, prev.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errLastMethod
+		}
+		return nil
 	}
-	switch err := store.PutGitHubAuthorization(ctx, db, row); {
+	switch err := s.tok.Put(ctx, connections.Account{ProviderID: ProviderID, UserID: userID, Subject: subject, Login: acct.Login, SigninMove: move},
+		connections.Pair{Access: tok.Access, Refresh: tok.Refresh, AccessExpires: tok.AccessExpires, RefreshExpires: tok.RefreshExpires}); {
 	case errors.Is(err, store.ErrExists):
 		return fail(cbInUse)
+	case errors.Is(err, errLastMethod):
+		return fail(cbLastMethod)
 	case err != nil:
 		s.log.Error("could not store a GitHub authorisation", "error", err)
 		return fail(cbError)
 	}
-	s.bump(userID)
 	s.forgetNoApp(acct.Login) // they may have installed the App in this very flow
 	s.changed(userID)
 	return a.ret, true
 }
+
+// errLastMethod refuses to move a link that is a person's last way to sign in;
+// errNoGuard, to move a sign-in while nothing can say whether that is allowed.
+var (
+	errLastMethod = errors.New("the link is the person's last way to sign in")
+	errNoGuard    = errors.New("no guard of sign-ins is set")
+)
 
 // reason is an error as a log line may say it: never a token, since none of
 // this package's errors carries one.
@@ -324,342 +346,110 @@ func sanitize(s string) string {
 	}, s)
 }
 
-const (
-	purposeAccess  = "github-access"
-	purposeRefresh = "github-refresh"
-)
-
 // --- the user's connection --------------------------------------------------------
 
 // Connection returns the user's connection, or nil.
 func (s *Service) Connection(ctx context.Context, userID string) (*connections.Connection, error) {
 	db := s.opt.Store.Q()
-	a, err := store.GetGitHubAuthorization(ctx, db, userID)
+	a, err := store.GetRepoLink(ctx, db, ProviderID, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	n, err := store.CountUserGitHubSpaces(ctx, db, userID)
+	n, err := store.CountUserProviderSpaces(ctx, db, ProviderID, userID)
 	if err != nil {
 		return nil, err
 	}
-	return &connections.Connection{Login: a.Login, AccountID: strconv.FormatInt(a.GitHubID, 10), State: a.State, Connected: a.Connected, RefreshExpires: a.RefreshExpires, Spaces: n}, nil
+	return &connections.Connection{Login: a.Login, AccountID: a.Subject, State: a.State, Connected: a.Connected, RefreshExpires: a.RefreshExpires, Spaces: n}, nil
 }
 
-// Disconnect deletes a user's connection. GitHub is asked to revoke the grant
-// (best effort); the tokens are deleted from the database and memory whatever it answers.
+// Disconnect drops a user's repository tokens (a link that also signs them in
+// stays, without tokens). GitHub is asked to revoke the grant (best effort);
+// the tokens are deleted from the database and memory whatever it answers.
 func (s *Service) Disconnect(ctx context.Context, userID string) error {
-	db := s.opt.Store.Q()
-	a, err := store.GetGitHubAuthorization(ctx, db, userID)
+	a, err := store.GetRepoLink(ctx, s.opt.Store.Q(), ProviderID, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if st, err := s.state(ctx); err == nil && st != nil {
-		s.revoke(ctx, st, *a)
-	}
-	if err := store.DeleteGitHubAuthorization(ctx, db, userID); err != nil {
+	// The tokens go first; GitHub is asked to revoke the grant once they are.
+	if err := s.tok.Remove(ctx, ProviderID, userID); err != nil {
 		return err
 	}
-	s.bump(userID)
+	if st, err := s.state(ctx); err == nil && st != nil {
+		s.revoke(ctx, st, a)
+	}
 	return nil
 }
 
+// RevokeRemoved is told that a link went with its row (connections.Revoker).
+func (s *Service) RevokeRemoved(ctx context.Context, l *store.RepoLink) {
+	s.tok.Forget(ProviderID, l.UserID)
+	if st, err := s.state(ctx); err == nil && st != nil {
+		s.revoke(ctx, st, l)
+	}
+}
+
 // revoke asks GitHub to revoke a grant, quickly and without caring how it ends.
-func (s *Service) revoke(ctx context.Context, st *appState, a store.GitHubAuthorization) {
+func (s *Service) revoke(ctx context.Context, st *appState, a *store.RepoLink) {
 	if a.AccessEnc == "" || st.rec.ClientID == "" || st.secret == "" {
 		return
 	}
-	b, err := s.opt.Secrets.Open(a.UserID, purposeAccess, a.AccessEnc)
+	access, err := s.tok.OpenAccess(a)
 	if err != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	if err := s.c.RevokeGrant(ctx, st.rec.ClientID, st.secret, string(b)); err != nil {
+	if err := s.c.RevokeGrant(ctx, st.rec.ClientID, st.secret, access); err != nil {
 		s.log.Info("GitHub did not revoke a grant", "reason", reason(err))
 	}
 }
 
-// --- tokens and their renewal -------------------------------------------------------
-
-type cachedUser struct {
-	access  string
-	expires time.Time // zero: none
-	version int64
-}
-
-type renewal struct {
-	done   chan struct{}
-	access string
-	err    error
-}
+// --- tokens ------------------------------------------------------------------------
 
 // UserToken returns the user's access token, renewing it first when it has
-// less than five minutes left. ErrNoAuthorization or ErrAuthorizationExpired
-// when there is nothing to use; an *Error when GitHub cannot be asked.
+// less than five minutes left (the token service's). ErrNoAuthorization or
+// ErrAuthorizationExpired when there is nothing to use; an *Error when GitHub
+// cannot be asked.
 func (s *Service) UserToken(ctx context.Context, userID string) (string, error) {
-	now := s.opt.Now()
-	s.mu.Lock()
-	if c, ok := s.tokens[userID]; ok && (c.expires.IsZero() || now.Add(renewBefore).Before(c.expires)) {
-		s.mu.Unlock()
-		return c.access, nil
-	}
-	s.mu.Unlock()
-	return s.renew(ctx, userID, false)
+	return s.tok.Token(ctx, ProviderID, userID)
 }
 
-// renew renews one user's tokens, one renewal at a time per user; a caller that
-// arrives meanwhile waits for it. force renews even if the token is still good.
-func (s *Service) renew(ctx context.Context, userID string, force bool) (string, error) {
-	s.mu.Lock()
-	if r, ok := s.renewing[userID]; ok {
-		s.mu.Unlock()
-		select {
-		case <-r.done:
-			return r.access, r.err
-		case <-ctx.Done():
-			return "", ctx.Err()
-		}
-	}
-	r := &renewal{done: make(chan struct{})}
-	s.renewing[userID] = r
-	s.mu.Unlock()
-	// Once GitHub has handed out a new refresh token the old one is dead: the
-	// new pair must reach the database even if this request goes away.
-	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	r.access, r.err = s.doRenew(wctx, userID, force)
-	cancel()
-	s.mu.Lock()
-	delete(s.renewing, userID)
-	s.mu.Unlock()
-	close(r.done)
-	return r.access, r.err
-}
-
-// tokenGen is how many times a user's connection was replaced or removed in
-// this process (user), and the whole cache dropped (all). A renewal notes it
-// before it reads the database and caches what it read only if it is unchanged.
-type tokenGen struct{ all, user uint64 }
-
-func (s *Service) generation(userID string) tokenGen {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return tokenGen{all: s.genAll, user: s.gens[userID]}
-}
-
-// bump says the user's connection was replaced or removed (after the database
-// was written): the cached token goes, and a renewal that read before it does
-// not cache. One counter per user who connected or disconnected since the start.
-func (s *Service) bump(userID string) {
-	s.mu.Lock()
-	s.gens[userID]++
-	delete(s.tokens, userID)
-	s.mu.Unlock()
-}
-
-// dropAllTokens empties the cache (the App changed or went away).
-func (s *Service) dropAllTokens() {
-	s.mu.Lock()
-	s.genAll++
-	s.tokens = map[string]cachedUser{}
-	s.mu.Unlock()
-}
-
-// testHookAfterRenewRead, when set, runs after a renewal read the connection.
-var testHookAfterRenewRead func(userID string)
-
-func (s *Service) cacheToken(userID string, gen tokenGen, access string, expires time.Time, version int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if gen != (tokenGen{all: s.genAll, user: s.gens[userID]}) {
-		return // the connection changed after this was read
-	}
-	if len(s.tokens) >= maxUserTokens {
-		for k := range s.tokens {
-			delete(s.tokens, k)
-			break
-		}
-	}
-	s.tokens[userID] = cachedUser{access: access, expires: expires, version: version}
-}
-
-func (s *Service) dropToken(userID string) {
-	s.mu.Lock()
-	delete(s.tokens, userID)
-	s.mu.Unlock()
-}
-
-func (s *Service) doRenew(ctx context.Context, userID string, force bool) (string, error) {
-	db := s.opt.Store.Q()
-	for pass := 0; pass < 3; pass++ {
-		gen := s.generation(userID)
-		row, err := store.GetGitHubAuthorization(ctx, db, userID)
-		if testHookAfterRenewRead != nil {
-			testHookAfterRenewRead(userID)
-		}
-		if errors.Is(err, store.ErrNotFound) {
-			s.dropToken(userID)
-			return "", ErrNoAuthorization
-		}
-		if err != nil {
-			return "", err
-		}
-		if row.State != store.GitHubOK {
-			s.dropToken(userID)
-			return "", ErrAuthorizationExpired
-		}
-		now := s.opt.Now()
-		access, err := s.opt.Secrets.Open(userID, purposeAccess, row.AccessEnc)
-		if err != nil {
-			return "", err
-		}
-		good := row.AccessExpires.IsZero() || now.Add(renewBefore).Before(row.AccessExpires)
-		if good && !force {
-			s.cacheToken(userID, gen, string(access), row.AccessExpires, row.Version)
-			return string(access), nil
-		}
-		if row.RefreshEnc == "" {
-			if row.AccessExpires.IsZero() || now.Before(row.AccessExpires) {
-				s.cacheToken(userID, gen, string(access), row.AccessExpires, row.Version) // no refresh token: use it to the end
-				return string(access), nil
-			}
-			s.expire(ctx, row)
-			return "", ErrAuthorizationExpired
-		}
-		st, err := s.state(ctx)
-		if err != nil {
-			return "", err
-		}
-		if st == nil || st.rec.ClientID == "" || st.secret == "" {
-			return "", notConfigured()
-		}
-		refresh, err := s.opt.Secrets.Open(userID, purposeRefresh, row.RefreshEnc)
-		if err != nil {
-			return "", err
-		}
-		tok, err := s.c.Refresh(ctx, st.rec.ClientID, st.secret, string(refresh))
-		if err != nil {
-			if githubapp.IsBadRefresh(err) {
-				s.log.Info("a GitHub authorisation expired or was revoked", "user", userID)
-				s.expire(ctx, row)
-				return "", ErrAuthorizationExpired
-			}
-			var oe *githubapp.OAuthError
-			if errors.As(err, &oe) {
-				// Another refusal (the client credentials changed): the App needs attention.
-				s.log.Warn("GitHub refused to renew a token", "reason", oe.Code)
-				return "", notConfigured()
-			}
-			return "", s.wrap(err)
-		}
-		accessEnc, err := s.opt.Secrets.Seal(userID, purposeAccess, []byte(tok.Access))
-		if err != nil {
-			return "", err
-		}
-		refreshEnc := ""
-		if tok.Refresh != "" {
-			if refreshEnc, err = s.opt.Secrets.Seal(userID, purposeRefresh, []byte(tok.Refresh)); err != nil {
-				return "", err
-			}
-		}
-		// The new pair is saved before it is used, and replaces only the pair it
-		// was made from.
-		var replaced bool
-		for try := 0; try < 3; try++ {
-			if replaced, err = store.ReplaceGitHubTokens(ctx, db, userID, row.Version, accessEnc, refreshEnc, tok.AccessExpires, tok.RefreshExpires, s.opt.Now()); err == nil {
-				break
-			}
-			time.Sleep(time.Duration(try+1) * 100 * time.Millisecond)
-		}
-		if err != nil {
-			// The old refresh token is dead and the new one is not stored: this
-			// connection cannot go on.
-			s.log.Error("could not store a renewed GitHub token", "user", userID, "error", err)
-			s.expire(ctx, row)
-			return "", ErrAuthorizationExpired
-		}
-		if !replaced {
-			continue // reconnected or renewed elsewhere meanwhile: use what is there now
-		}
-		s.cacheToken(userID, gen, tok.Access, tok.AccessExpires, row.Version+1)
-		return tok.Access, nil
-	}
-	return "", errf(http.StatusServiceUnavailable, CodeUnavailable, "The GitHub authorisation keeps changing; try again.")
-}
-
-func (s *Service) expire(ctx context.Context, row *store.GitHubAuthorization) {
-	if _, err := store.ExpireGitHubAuthorization(ctx, s.opt.Store.Q(), row.UserID, row.Version, s.opt.Now()); err != nil {
-		s.log.Error("could not mark a GitHub authorisation expired", "user", row.UserID, "error", err)
-	}
-	s.dropToken(row.UserID)
-}
-
-// RenewDue renews, one at a time, the connections whose refresh token ends
-// within RenewWithin, so someone whose spaces sit closed for months stays
-// connected. It returns how many it renewed.
-func (s *Service) RenewDue(ctx context.Context) int {
+// RefreshTokens trades a refresh token for a new pair at GitHub: it is what the
+// token service asks of this provider (connections.Refresher).
+func (s *Service) RefreshTokens(ctx context.Context, refresh string) (*connections.Pair, error) {
 	st, err := s.state(ctx)
-	if err != nil || st == nil || st.rec.ClientID == "" {
-		return 0
+	if err != nil {
+		return nil, err
 	}
-	n := 0
-	// Pages by (refresh end, user id), so connections that keep failing do not
-	// hold up the ones after them. A renewed one moves past the window; one
-	// seen twice in a run (its new end still inside it) is not tried again.
-	before := s.opt.Now().Add(s.opt.RenewWithin)
-	var cur store.DueCursor
-	tried := map[string]bool{}
-	for {
-		due, err := store.DueGitHubRenewals(ctx, s.opt.Store.Q(), before, cur, 50)
-		if err != nil {
-			s.log.Error("could not look for GitHub authorisations to renew", "error", err)
-			return n
-		}
-		for _, a := range due {
-			cur = a.Next()
-			if tried[a.UserID] {
-				continue
-			}
-			tried[a.UserID] = true
-			if ctx.Err() != nil {
-				return n
-			}
-			if _, err := s.renew(ctx, a.UserID, true); err != nil {
-				s.log.Info("could not renew a GitHub authorisation", "user", a.UserID, "reason", err.Error())
-				continue
-			}
-			n++
-		}
-		if len(due) < 50 {
-			return n
-		}
+	if st == nil || st.rec.ClientID == "" || st.secret == "" {
+		return nil, notConfigured()
 	}
+	tok, err := s.c.Refresh(ctx, st.rec.ClientID, st.secret, refresh)
+	if err != nil {
+		if githubapp.IsBadRefresh(err) {
+			return nil, connections.ErrRevoked
+		}
+		var oe *githubapp.OAuthError
+		if errors.As(err, &oe) {
+			// Another refusal (the client credentials changed): the App needs attention.
+			s.log.Warn("GitHub refused to renew a token", "reason", oe.Code)
+			return nil, notConfigured()
+		}
+		return nil, s.wrap(err)
+	}
+	return &connections.Pair{Access: tok.Access, Refresh: tok.Refresh, AccessExpires: tok.AccessExpires, RefreshExpires: tok.RefreshExpires}, nil
 }
 
-// RunRenew renews the connections that need it now and then once every RenewEvery, until ctx ends.
-func (s *Service) RunRenew(ctx context.Context) {
-	first := time.Minute
-	if s.opt.RenewEvery < first {
-		first = s.opt.RenewEvery
-	}
-	t := time.NewTimer(first)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-		if n := s.RenewDue(ctx); n > 0 {
-			s.log.Info("renewed GitHub authorisations", "count", n)
-		}
-		t.Reset(s.opt.RenewEvery)
-	}
+// expire marks a link whose token GitHub no longer accepts as needing the
+// person's attention (the token service's).
+func (s *Service) expire(ctx context.Context, row *store.RepoLink) {
+	s.tok.Expire(ctx, row)
 }
 
 // Info is the state of GitHub on this server and of the user's connection.
@@ -685,7 +475,7 @@ func (s *Service) Info(ctx context.Context, userID string) (*connections.Info, e
 
 // Leftovers lists a user's reminders, newest first.
 func (s *Service) Leftovers(ctx context.Context, userID string) ([]connections.Leftover, error) {
-	rows, err := store.ListGitHubLeftovers(ctx, s.opt.Store.Q(), userID)
+	rows, err := store.ListRepoLeftovers(ctx, s.opt.Store.Q(), ProviderID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -705,13 +495,13 @@ const leftoverTimeout = 10 * time.Second
 func (s *Service) RecordLeftover(ctx context.Context, userID string, repo *connections.Repo, spaceName string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leftoverTimeout)
 	defer cancel()
-	return store.PutGitHubLeftover(ctx, s.opt.Store.Q(), store.GitHubLeftover{UserID: userID, RepoID: repo.ID, FullName: repo.FullName,
+	return store.PutRepoLeftover(ctx, s.opt.Store.Q(), store.RepoLeftover{ProviderID: ProviderID, UserID: userID, RepoID: repo.ID, FullName: repo.FullName,
 		HTMLURL: repo.HTMLURL, SpaceName: spaceName, Created: s.opt.Now()})
 }
 
 // DismissLeftover forgets the user's reminder of a repository; there being none is fine.
 func (s *Service) DismissLeftover(ctx context.Context, userID string, repoID int64) error {
-	_, err := store.DeleteGitHubLeftover(ctx, s.opt.Store.Q(), userID, repoID)
+	_, err := store.DeleteRepoLeftover(ctx, s.opt.Store.Q(), ProviderID, userID, repoID)
 	return err
 }
 

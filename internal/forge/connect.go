@@ -148,8 +148,18 @@ func (p *Provider) Disconnect(ctx context.Context, userID string) error {
 	if err != nil {
 		return err
 	}
+	// The tokens go first; the host is asked to revoke them once they are.
+	if err := p.m.tokens.Remove(ctx, p.id, userID); err != nil {
+		return err
+	}
 	p.revoke(ctx, a)
-	return p.m.tokens.Remove(ctx, p.id, userID)
+	return nil
+}
+
+// RevokeRemoved is told that a link went with its row (connections.Revoker).
+func (p *Provider) RevokeRemoved(ctx context.Context, l *store.RepoLink) {
+	p.m.tokens.Forget(p.id, l.UserID)
+	p.revoke(ctx, l)
 }
 
 func (p *Provider) revoke(ctx context.Context, a *store.RepoLink) {

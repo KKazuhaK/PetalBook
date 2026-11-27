@@ -144,6 +144,7 @@ func TestTheDeletionPlanNamesAnAttachmentRepositoryOnThePersonsConnection(t *tes
 		now := time.Now()
 		mkUser(t, st, "OLIVE", "olive", "member")
 		mkUser(t, st, "EDDIE", "eddie", "member")
+		mkGitHubRow(t, st, now)
 		for _, sid := range []string{"S00000000C", "S00000000A"} {
 			if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, sid, sid, "", "", now); err != nil {
 				t.Fatal(err)

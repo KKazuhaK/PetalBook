@@ -79,7 +79,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   mail_not_configured: '还没有配置发信，所以不能这样做。',
   needs_mail: '还没有配置发信，所以现在不能开启。',
   needs_tenancy: '还没有开启多组织，所以现在不能开启。',
-  slug_reserved: '这个组织地址是保留的，换一个吧。',
+  slug_reserved: '这个名字是保留的，换一个吧。',
   slug_taken: '这个组织地址已被占用，换一个吧。',
   org_limit: '不能再创建组织了。',
   mail_insecure: '发信连接没有加密，请换成加密的连接。',
@@ -94,6 +94,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   domain_required: '租户拥有的登录提供方，需要租户先有一个已验证的域名。',
   already_linked: '你在这个提供方已经关联了一个账号。请先取消关联，再关联另一个。',
   last_method: '这是最后一种登录方式。请先设置密码或关联另一种登录方式。',
+  github_app_client: '这个提供方的客户端就是 GitHub 应用的客户端：请在仓库提供方里改应用的设置。',
   auto_create_needs_org: '自动创建账号需要先指定组织。',
   local_admin_required: '要先有一个能用密码登录的管理员，才能这样设置。',
   sso_only_with_registration: '关闭密码登录后没人能完成注册，请先关闭开放注册。',
@@ -137,6 +138,8 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   provider_in_use: (p) =>
     `还有账号在通过这个平台登录或连接${p.accounts ? `（${p.accounts} 个账号）` : ''}，请先处理它们。`,
   provider_limit: '这种平台的数量已达上限。',
+  provider_host_mismatch:
+    '已有人在这个 GitHub 提供方当前的主机上关联了账号，所以它不能换到另一个 GitHub 主机。请先删除这个提供方，或移除它已关联的账号。',
   name_taken: '这个名字已经被占用了，请换一个。',
   push_failed: '没能把内容推送到仓库，空间没有创建。',
   repo_not_in_installation: '这个仓库不在已安装的应用范围内，请在平台上把它加进去。',

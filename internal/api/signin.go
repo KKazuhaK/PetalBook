@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"net/url"
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
@@ -69,20 +68,6 @@ var signinRoutes = []route{
 
 	{"GET", "/api/admin/security", needs(authz.SiteSecurityManage).always(), true, false, false, (*server).adminGetSecurity},
 	{"PUT", "/api/admin/security", needs(authz.SiteSecurityManage).always(), true, false, false, (*server).adminPutSecurity},
-	{"GET", "/api/admin/providers", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminListProviders},
-	{"POST", "/api/admin/providers", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminCreateProvider},
-	{"GET", "/api/admin/providers/{id}", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminGetProvider},
-	{"PATCH", "/api/admin/providers/{id}", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminPatchProvider},
-	{"DELETE", "/api/admin/providers/{id}", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminDeleteProvider},
-	{"POST", "/api/admin/providers/{id}/check", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminCheckProvider},
-	{"POST", "/api/admin/providers/{id}/test", needs(authz.SiteSigninManage).always(), true, true, false, (*server).adminTestProvider},
-	{"GET", "/api/admin/providers/{id}/test", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminTestResult},
-
-	{"GET", "/api/account/links", signedIn.always(), true, false, false, (*server).listAccountLinks},
-	{"POST", "/api/account/links/{provider}/start", signedIn.always(), true, true, false, (*server).accountLinkStart},
-	{"DELETE", "/api/account/links/{id}", signedIn.always(), true, false, false, (*server).unlinkAccount},
-	{"GET", "/api/users/{id}/links", needs(authz.TenantUsersRead).always(), true, false, false, (*server).userLinks},
-	{"DELETE", "/api/users/{id}/links/{link}", needs(authz.TenantUsersManage).always(), true, false, false, (*server).disconnectUserLink},
 }
 
 func init() { routeTable = append(routeTable, signinRoutes...) }
@@ -435,121 +420,4 @@ func (s *server) adminPutSecurity(c *call) {
 		return
 	}
 	s.adminGetSecurity(c)
-}
-
-func (s *server) adminListProviders(c *call) {
-	l, err := s.auth.Providers(c.r.Context())
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	if l == nil {
-		l = []auth.ProviderView{}
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Providers []auth.ProviderView `json:"providers"`
-	}{l})
-}
-
-func (s *server) adminGetProvider(c *call) {
-	v, err := s.auth.Provider(c.r.Context(), c.r.PathValue("id"))
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, v)
-}
-
-func (s *server) adminCreateProvider(c *call) {
-	var req auth.ProviderInput
-	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
-		return
-	}
-	v, err := s.auth.CreateProvider(c.r.Context(), c.user().ID, s.auth.ClientAddr(c.r), req)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	c.w.Header().Set("Location", "/api/admin/providers/"+url.PathEscape(v.ID))
-	writeJSON(c.w, http.StatusCreated, v)
-}
-
-func (s *server) adminPatchProvider(c *call) {
-	var req auth.ProviderInput
-	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
-		return
-	}
-	v, err := s.auth.UpdateProvider(c.r.Context(), c.user().ID, s.auth.ClientAddr(c.r), c.r.PathValue("id"), req)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, v)
-}
-
-func (s *server) adminDeleteProvider(c *call) {
-	force := false
-	if q := c.r.URL.Query(); q.Has("force") {
-		switch q.Get("force") {
-		case "1":
-			force = true
-		case "0":
-		default:
-			writeError(c.w, http.StatusBadRequest, "invalid", "Force is 1 or 0.")
-			return
-		}
-	}
-	if err := s.auth.DeleteProvider(c.r.Context(), c.user().ID, s.auth.ClientAddr(c.r), c.r.PathValue("id"), force); err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	c.w.WriteHeader(http.StatusNoContent)
-}
-
-// adminTestProvider starts a test sign-in: the administrator signs in at the
-// provider (on or off) and sees what it says, with nothing made or linked.
-func (s *server) adminTestProvider(c *call) {
-	u := c.user()
-	res, err := s.auth.TestBegin(c.r.Context(), c.r.PathValue("id"), &u, s.auth.ClientAddr(c.r))
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	http.SetCookie(c.w, res.Cookie)
-	if res.Binding != nil {
-		http.SetCookie(c.w, res.Binding)
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		URL string `json:"url"`
-	}{res.URL})
-}
-
-// adminTestResult is what the administrator's last test sign-in found: once.
-func (s *server) adminTestResult(c *call) {
-	c.w.Header().Set("Cache-Control", "no-store")
-	type result struct {
-		Subject      string `json:"subject"`
-		Email        string `json:"email"`
-		EmailTrusted bool   `json:"emailTrusted"`
-		Name         string `json:"name"`
-		Username     string `json:"username"`
-		At           string `json:"at"`
-	}
-	var out *result
-	if r := s.auth.TestResultOf(c.user().ID, c.r.PathValue("id")); r != nil {
-		out = &result{r.Subject, r.Email, r.EmailTrusted, r.Name, r.Username, rfc3339(r.At)}
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Result *result `json:"result"`
-	}{out})
-}
-
-// adminCheckProvider fetches the provider's discovery document or metadata now.
-func (s *server) adminCheckProvider(c *call) {
-	v, err := s.auth.RefreshProvider(c.r.Context(), c.r.PathValue("id"))
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, v)
 }

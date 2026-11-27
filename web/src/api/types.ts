@@ -632,7 +632,32 @@ export interface Provider {
 }
 
 // A reminder: the repository was made and kept; `spaceName` is what the space was to be called.
-// What the administrators' list says of each provider (docs/api.md, "Administration", "Connections").
+// One entry of GET /api/admin/providers: a sign-in provider (with `repo` when it also holds repositories), or a provider
+// that only holds repositories, with its repository side flat.
+export interface AdminProviderItem {
+  id: string
+  kind: string
+  name: string
+  signin: boolean
+  repos: boolean
+  // A provider that only holds repositories.
+  type?: string
+  host?: string
+  configured?: boolean
+  partialSync?: 'yes' | 'no' | 'unknown'
+  connections?: number
+  spaces?: number
+  // The repository side of a sign-in provider.
+  repo?: {
+    host: string
+    configured: boolean
+    partialSync: 'yes' | 'no' | 'unknown'
+    connections: number
+    spaces: number
+  }
+}
+
+// What the administrators' list says of each repository provider (docs/api.md, "Providers").
 export interface AdminProviderRow {
   id: string
   type: string
@@ -737,9 +762,13 @@ export interface CreateSpaceInput {
 
 // The settings of the server's one GitHub App as an administrator sees them: never a secret.
 export type AdminGitHub =
-  | { configured: false; callbackUrl: string }
+  | { configured: false; callbackUrl: string; signinCallbackUrl?: string; provider?: AuthProvider }
   | {
       configured: true
+      // Where GitHub sends people who sign in with the App's client: the App's callback URLs list it too.
+      signinCallbackUrl?: string
+      // The sign-in side of the same provider (turned on there, by `enabled`).
+      provider?: AuthProvider
       appId: string
       clientId: string
       slug: string
@@ -891,6 +920,7 @@ export type ErrorCode =
   | 'app_rejected'
   | 'client_rejected'
   | 'provider_in_use'
+  | 'provider_host_mismatch'
   | 'app_missing_permission'
   | 'app_not_installed'
   | 'public_url_needed'
@@ -904,6 +934,7 @@ export type ErrorCode =
   | 'passkey_unavailable'
   | 'last_method'
   | 'already_linked'
+  | 'github_app_client'
   | 'domain_required'
   | 'provider_in_use'
   | 'group_not_found'
@@ -1077,17 +1108,26 @@ export interface ConsentDecision {
 
 export type ProviderKind = 'oidc' | 'saml' | 'github'
 
-// One sign-in the person has linked at a provider (GET /api/account/links, GET /api/users/{id}/links): one per provider.
+// One account the person has at a provider (GET /api/account/links, GET /api/users/{id}/links): one per provider. It
+// signs them in (`signin`), holds their repositories (`repos`), or both: the GitHub link is one row for the two.
 export interface Link {
   id: string
   providerId: string
   // The provider's display name.
   provider: string
   slug: string
-  kind: ProviderKind | ''
+  kind: ProviderKind | 'gitlab' | 'gitea' | ''
   label: string
   signin: boolean
   created: string
+  // The account's name on the platform (the person's own list says it; an administrator's does not).
+  login?: string
+  // Repositories are connected through this link, or were and the person must authorise again (state 'expired').
+  repos?: boolean
+  state?: 'ok' | 'expired'
+  refreshExpires?: string
+  spaces?: number
+  admin?: boolean
 }
 export interface Passkey {
   id: string
@@ -1787,6 +1827,8 @@ export interface GithubSettings {
   hasSecret: boolean
   organizations: string[]
   redirectUrl: string
+  // The client is the GitHub App's: it is set with the App, not here.
+  app?: boolean
 }
 export interface AuthProvider {
   // A site provider's id is its slug.
@@ -1806,6 +1848,9 @@ export interface AuthProvider {
   saml?: SamlSettings
   github?: GithubSettings
   status: { ok: boolean; checked: string; message: string }
+  // A provider people sign in with always has `signin`; `repos` says it also holds repositories (the GitHub row once its App is set up).
+  signin?: boolean
+  repos?: boolean
   people: number
   created: string
   updated: string

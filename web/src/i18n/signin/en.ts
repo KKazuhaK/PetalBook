@@ -41,6 +41,8 @@ export const signinEn: SigninMessages = {
     disabled: 'This account is disabled.',
     identity_in_use: 'This identity already belongs to another account.',
     already_linked: 'You already have an account linked at this provider; unlink it first to link another.',
+    not_for_signin:
+      'This account is connected for repositories only. Sign in another way, then choose “link to sign in” in your account settings.',
     email_in_use:
       'Another account already has this email address. Sign in to that account, then link this sign-in method from your account settings.',
     invite_invalid: 'The invite is invalid, expired or already used.',

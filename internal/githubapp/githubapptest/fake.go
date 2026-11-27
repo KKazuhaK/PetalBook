@@ -99,10 +99,15 @@ func KeyPEM(k *rsa.PrivateKey) string {
 
 // Account is a user or an organisation.
 type Account struct {
-	ID      int64
-	Login   string
-	Org     bool
-	Members map[string]bool // org: logins of members (they can create repositories there)
+	ID    int64
+	Login string
+	// Name and Email are what a person's profile says (the sign-in reads them);
+	// EmailVerified is whether GitHub lists the address as verified.
+	Name          string
+	Email         string
+	EmailVerified bool
+	Org           bool
+	Members       map[string]bool // org: logins of members (they can create repositories there)
 	// NoCreate: members cannot create repositories in this organisation.
 	NoCreate bool
 	// NoPrivate: private repositories cannot be created.
@@ -653,6 +658,11 @@ func randHex(n int) string {
 // --- serving ------------------------------------------------------------------------
 
 func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
+	// A GitHub Enterprise server's API lives under /api/v3 of its web address
+	// (what sign-in with the App's client reads): the same API as the root's.
+	if strings.HasPrefix(r.URL.Path, "/api/v3/") {
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/api/v3")
+	}
 	path := r.URL.Path
 	auth := ""
 	switch {
@@ -957,7 +967,27 @@ func (f *Fake) serveAPI(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		a := f.accounts[strings.ToLower(p.login)]
 		f.mu.Unlock()
-		writeJSON(w, 200, map[string]any{"id": a.ID, "login": a.Login})
+		writeJSON(w, 200, map[string]any{"id": a.ID, "login": a.Login, "name": a.Name})
+	case r.Method == "GET" && path == "/user/emails" && p.kind == "user":
+		f.mu.Lock()
+		a := f.accounts[strings.ToLower(p.login)]
+		f.mu.Unlock()
+		out := []map[string]any{}
+		if a.Email != "" {
+			out = append(out, map[string]any{"email": a.Email, "primary": true, "verified": a.EmailVerified})
+		}
+		writeJSON(w, 200, out)
+	case r.Method == "GET" && path == "/user/orgs" && p.kind == "user":
+		f.mu.Lock()
+		out := []map[string]any{}
+		for _, o := range f.accounts {
+			if o.Org && o.Members[strings.ToLower(p.login)] {
+				out = append(out, map[string]any{"login": o.Login})
+			}
+		}
+		f.mu.Unlock()
+		sort.Slice(out, func(i, j int) bool { return out[i]["login"].(string) < out[j]["login"].(string) })
+		writeJSON(w, 200, out)
 	case r.Method == "GET" && path == "/user/installations" && p.kind == "user":
 		f.mu.Lock()
 		var all []*Install

@@ -427,55 +427,6 @@ func toLinks(rows []auth.LinkView) []signinLinkResp {
 	return items
 }
 
-func (s *server) listAccountLinks(c *call) {
-	rows, err := s.auth.Links(c.r.Context(), c.user().ID)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Links []signinLinkResp `json:"links"`
-	}{toLinks(rows)})
-}
-
-// accountLinkStart starts linking the signed-in person to an account at a
-// provider: it answers the address to send the browser to. One account per
-// provider: a second is refused (already_linked) until the first is unlinked.
-func (s *server) accountLinkStart(c *call) {
-	var req struct {
-		Purpose string `json:"purpose"`
-		Return  string `json:"return"`
-	}
-	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
-		return
-	}
-	if req.Purpose != "" && req.Purpose != "signin" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "Purpose is signin.")
-		return
-	}
-	u := c.user()
-	res, err := s.auth.LinkBegin(c.r.Context(), c.r.PathValue("provider"), &u, req.Return, s.auth.ClientAddr(c.r))
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	http.SetCookie(c.w, res.Cookie)
-	if res.Binding != nil {
-		http.SetCookie(c.w, res.Binding)
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		URL string `json:"url"`
-	}{res.URL})
-}
-
-func (s *server) unlinkAccount(c *call) {
-	if err := s.auth.UnlinkAccount(c.r.Context(), c.user().ID, c.r.PathValue("id")); err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	c.w.WriteHeader(http.StatusNoContent)
-}
-
 // --- users and invites (administrators) --------------------------------------
 
 // userEx is a user as the administration's list shows them.
