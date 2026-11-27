@@ -69,6 +69,10 @@ var (
 	IO = Class{Name: "io", PerTenant: 1, PerServer: 2}
 	// Recycle actions: one per item through the lock key, paced by the handler.
 	Recycle = Class{Name: "recycle"}
+	// AuditPurge: a purge of the audit log by hand. It takes no slot of the
+	// settings' limits (it rests between batches and holds no connection), and
+	// one runs at a time through its lock key.
+	AuditPurge = Class{Name: "audit.purge"}
 )
 
 // Handler runs the jobs of one kind.

@@ -108,7 +108,7 @@ type Options struct {
 	// provider "git" is added when it is missing.
 	Connections *connections.Registry
 	// MaxSpaces is --max-spaces when the flag was given: then it is the site's
-	// quota.spacesPerPerson, read only. Nil leaves the stored setting (20).
+	// quota.spacesPerPerson, read only. Nil leaves the stored setting (3).
 	MaxSpaces *int
 	// Now is the clock (default time.Now), for what has an end: confirmations and
 	// views of spaces.
@@ -290,6 +290,7 @@ func New(opt Options) *Handler {
 		MaxRunning: func() int { return s.jobLimit("", settings.JobsMaxRunning, 2) },
 		PerTenant:  func(tenant string) int { return s.jobLimit(tenant, settings.JobsPerTenant, 1) }})
 	s.jobs.Register(bulkKindName, bulkKind{s})
+	s.jobs.Register(store.JobAuditPurge, auditPurgeKind{s})
 	if opt.Spaces != nil && opt.Store != nil {
 		// The exports, the actions of the recycle bin and the moves of
 		// attachments run on the same runner.

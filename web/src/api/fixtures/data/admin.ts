@@ -162,6 +162,26 @@ export function createAdminData(now: number, admin: { id: string; username: stri
         ip: '203.0.113.7',
         detail: { method: 'password' },
       },
+      // Older rows of other categories, for the purge to count.
+      ...(
+        [
+          [40, 'login_failed', 'security'],
+          [75, 'setting_changed', 'admin'],
+          [120, 'space_deleted', 'data'],
+          [200, 'login_failed', 'security'],
+        ] as const
+      ).map(([days, kind, category], i) => ({
+        id: `A0000000${i + 2}`,
+        at: stamp(now - days * 86_400_000),
+        kind,
+        category,
+        capacity: null,
+        actor: null,
+        user: null,
+        username: '',
+        ip: '203.0.113.7',
+        detail: {},
+      })),
     ],
     recycle: [],
     exports: [],

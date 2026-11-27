@@ -1880,6 +1880,24 @@ export interface AuditList {
   items: AuditItem[]
   next: string
 }
+// POST /api/admin/audit/purge (site administrators): `category` is a category or "all", `before` a time or a day, both
+// optional. With dry_run it only counts (`AuditPurgeCount`); otherwise it starts a job of kind `audit.purge` (202 `{job}`)
+// whose `done` is the rows deleted so far and `total` 0.
+export interface AuditPurgeInput {
+  category?: AuditCategory | 'all'
+  before?: string
+}
+export interface AuditPurgeCount {
+  dryRun: boolean
+  // How many rows would be deleted, at most 1,000,000: `more` says the count stopped there.
+  count: number
+  more: boolean
+  category: AuditCategory | 'all'
+  before: string
+}
+export interface AuditPurgeStarted {
+  job: Job
+}
 
 // --- offline sync (docs/api.md, "Offline sync") -------------------------------------
 //
@@ -2347,7 +2365,7 @@ export interface ConfirmResult {
 // an export), `bytesDone` the bytes written; `subject` is what a recycle job works on; `action` is a bulk job's;
 // `expires` is when an export's file goes.
 export type JobState = 'queued' | 'running' | 'done' | 'interrupted' | 'failed' | 'cancelled'
-export type JobKind = 'bulk' | 'export' | 'recycle.move' | 'recycle.restore' | 'recycle.purge'
+export type JobKind = 'bulk' | 'export' | 'recycle.move' | 'recycle.restore' | 'recycle.purge' | 'audit.purge'
 export interface Job {
   id: string
   kind: JobKind

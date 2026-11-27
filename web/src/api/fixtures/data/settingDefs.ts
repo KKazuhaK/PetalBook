@@ -48,7 +48,7 @@ export const SETTING_DEFS: SiteSetting[] = [
     key: 'quota.spacesPerPerson',
     kind: 'limit',
     layers: ['site', 'tenant', 'person'],
-    site: { value: 20, lower: { mode: 'allow' } },
+    site: { value: 3, lower: { mode: 'allow' } },
   },
   {
     key: 'quota.bytesPerPerson',
@@ -106,6 +106,14 @@ export const SETTING_DEFS: SiteSetting[] = [
     site: { value: 'or', lower: { mode: 'allow' } },
   },
   { key: 'audit.optionalKeepDays', kind: 'limit', layers: ['site'], site: { value: 30, lower: { mode: 'allow' } } },
+  { key: 'audit.keepDays.security', kind: 'limit', layers: ['site'], site: { value: null, lower: { mode: 'allow' } } },
+  { key: 'audit.keepDays.admin', kind: 'limit', layers: ['site'], site: { value: null, lower: { mode: 'allow' } } },
+  { key: 'audit.keepDays.data', kind: 'limit', layers: ['site'], site: { value: null, lower: { mode: 'allow' } } },
+  { key: 'audit.keepDays.system', kind: 'limit', layers: ['site'], site: { value: null, lower: { mode: 'allow' } } },
+  { key: 'audit.keepDays.signins', kind: 'limit', layers: ['site'], site: { value: null, lower: { mode: 'allow' } } },
+  { key: 'audit.keepDays.reads', kind: 'limit', layers: ['site'], site: { value: null, lower: { mode: 'allow' } } },
+  { key: 'audit.keepDays.downloads', kind: 'limit', layers: ['site'], site: { value: null, lower: { mode: 'allow' } } },
+  { key: 'audit.keepDays.api', kind: 'limit', layers: ['site'], site: { value: null, lower: { mode: 'allow' } } },
   { key: 'users.emailNonAscii', kind: 'boolean', layers: ['site'], site: { value: false, lower: { mode: 'allow' } } },
   {
     key: 'accounts.multipleEmails',

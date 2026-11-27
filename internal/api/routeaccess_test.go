@@ -65,6 +65,9 @@ func init() {
 var routeAccessAdded = map[string][4]string{
 	"GET /api/admin/permissions": {"ok", "ok", "403 forbidden", "403 token_scope"},
 
+	// The manual purge of the audit log: the site's alone (site.audit.purge).
+	"POST /api/admin/audit/purge": {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+
 	// The jobs list (consolidation 4b); GET /api/admin/exports/{id} is gone (GET /api/admin/jobs/{id} answers).
 	"GET /api/admin/jobs": {"ok", "ok", "403 forbidden", "403 token_scope"},
 

@@ -21,6 +21,7 @@ var (
 	SiteStatusRead         = Register("site.status.read", ScopeSite, "", "Read the server's status")
 	SiteStorageManage      = Register("site.storage.manage", ScopeSite, "", "Change the server's storage budget and a space's storage, evict and pin spaces, see the disk, and exempt a person from the site's requirement of a remote")
 	SiteRecyclePurge       = Register("site.recycle.purge", ScopeSite, "", "Purge an item of the recycle bin for good")
+	SiteAuditPurge         = Register("site.audit.purge", ScopeSite, "", "Purge rows of the audit log by hand, whatever the retention settings say")
 	SiteAdminsManage       = Register("site.admins.manage", ScopeSite, "", "Change administrators of the whole server (their accounts, passwords, passkeys, sessions and tokens), delete them, and make or end one")
 	SiteSpacesPersonalMeta = Register("site.spaces.personal.meta", ScopeSite, "", "See people's personal spaces in the administration (in lists, the recycle bin and a person's page, with their size), restore them with their person, and manage one without being its member; not their content")
 	// The content of people's personal spaces is the built-in site

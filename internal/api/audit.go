@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +14,8 @@ import (
 	"petalbook.app/server/internal/auditlog"
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
+	"petalbook.app/server/internal/jobs"
+	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/store"
 )
 
@@ -131,6 +135,43 @@ func (s *server) pathRedactor(c *call) func(kind string, detail json.RawMessage)
 	}
 }
 
+// addressRedactor returns the function that makes a row's detail safe for this
+// reader: a site administrator across the whole site sees every address; any
+// other reader (a tenant's administrator, a site administrator in a tenant's
+// scope) sees the primary address of the person the row is about and the
+// addresses in the tenant's verified domains, and the rest read "(hidden)".
+// Which places of a detail hold addresses is the kind's own declaration
+// (auditlog.Kind.AddressFields). The person's primary address is asked once for
+// each person in the list, and a tenant's domains once for each tenant.
+func (s *server) addressRedactor(c *call) func(kind, user, tenant string, detail json.RawMessage) json.RawMessage {
+	if c.siteWide(authz.TenantAuditRead) {
+		return func(_, _, _ string, detail json.RawMessage) json.RawMessage { return detail }
+	}
+	primary := map[string]string{}
+	rules := map[string]func(primary, email string) bool{}
+	return func(kind, user, tenant string, detail json.RawMessage) json.RawMessage {
+		if len(detail) == 0 {
+			return detail
+		}
+		if k, ok := auditlog.Lookup(kind); !ok || len(k.AddressFields) == 0 {
+			return detail
+		}
+		p, seen := primary[user]
+		if !seen && user != "" {
+			if u, err := store.GetUser(c.r.Context(), s.opt.Store.Q(), store.AllTenants(), user); err == nil {
+				p = u.Email
+			}
+			primary[user] = p
+		}
+		shown, ok := rules[tenant]
+		if !ok {
+			shown = s.auth.TenantAddressRule(c.r.Context(), tenant)
+			rules[tenant] = shown
+		}
+		return auditlog.RedactAddresses(kind, detail, func(a string) bool { return shown(p, a) })
+	}
+}
+
 func (s *server) adminAudit(c *call) {
 	q := c.r.URL.Query()
 	limit := 50
@@ -169,10 +210,10 @@ func (s *server) adminAudit(c *call) {
 		}
 		return v
 	}
-	redact := s.pathRedactor(c)
+	redact, redactAddr := s.pathRedactor(c), s.addressRedactor(c)
 	items := make([]item, len(rows))
 	for i, r := range rows {
-		items[i] = item{r.ID, rfc3339(r.At), r.Kind, r.Category, nullable(r.Capacity), nullable(r.Actor), nullable(r.User), r.Username, r.IP, redact(r.Kind, r.Detail)}
+		items[i] = item{r.ID, rfc3339(r.At), r.Kind, r.Category, nullable(r.Capacity), nullable(r.Actor), nullable(r.User), r.Username, r.IP, redactAddr(r.Kind, r.User, r.Tenant, redact(r.Kind, r.Detail))}
 	}
 	var nx any
 	if next != "" {
@@ -263,12 +304,12 @@ func (s *server) adminAuditDownload(c *call) {
 		_ = w.Write([]string{"id", "time", "category", "kind", "capacity", "tenant", "actor", "user", "username", "ip", "detail"})
 	}
 	flusher, _ := c.w.(http.Flusher)
-	redact := s.pathRedactor(c)
+	redact, redactAddr := s.pathRedactor(c), s.addressRedactor(c)
 	rows := 0
 	n, more, err := s.auth.StreamAudit(c.r.Context(), sc, f, auditDownloadMax, func(e auth.AuditEntry) error {
 		start()
 		if err := w.Write([]string{csvCell(e.ID), rfc3339(e.At), csvCell(e.Category), csvCell(e.Kind), csvCell(e.Capacity), csvCell(e.Tenant),
-			csvCell(e.Actor), csvCell(e.User), csvCell(e.Username), csvCell(e.IP), csvCell(string(redact(e.Kind, e.Detail)))}); err != nil {
+			csvCell(e.Actor), csvCell(e.User), csvCell(e.Username), csvCell(e.IP), csvCell(string(redactAddr(e.Kind, e.User, e.Tenant, redact(e.Kind, e.Detail))))}); err != nil {
 			return err
 		}
 		if rows++; rows%store.AuditStreamPage == 0 {
@@ -308,6 +349,153 @@ func (s *server) adminAuditDownload(c *call) {
 		}
 	}
 	s.auditRow(c, "audit_downloaded", tenant, detail)
+}
+
+// adminAuditPurge deletes rows of the audit log by hand, whatever the retention
+// settings say: POST {category?: a category or "all", before?: RFC 3339 time or
+// a day}. Without category every category is covered; without before every row
+// up to now. With the query dry_run=true it counts what it would delete (at
+// most store.AuditCountCap; "more" says it stopped there) and deletes nothing.
+// Otherwise it starts a job of the kind audit.purge (the work is done on the
+// jobs runner, batch by batch, not in this request) and answers 202 {job}; one
+// runs at a time (409 busy). Site administrators only (the key
+// site.audit.purge: a tenant's administrator, and a site administrator in a
+// tenant's scope, are refused). The rows of kind audit_purged are never deleted.
+// The job writes one audit_purged row when it ends, saying who, when and what.
+func (s *server) adminAuditPurge(c *call) {
+	var req struct {
+		Category string `json:"category"`
+		Before   string `json:"before"`
+	}
+	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
+		return
+	}
+	dry := false
+	if v := c.r.URL.Query().Get("dry_run"); v != "" {
+		var err error
+		if dry, err = strconv.ParseBool(v); err != nil {
+			writeError(c.w, http.StatusBadRequest, "invalid", "Dry_run is true or false.")
+			return
+		}
+	}
+	p := store.AuditPurge{}
+	if cat := strings.TrimSpace(req.Category); cat != "" && cat != "all" {
+		if _, ok := auditlog.CategoryInfo(auditlog.Category(cat)); !ok {
+			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown category "+cat+".")
+			return
+		}
+		p.Category = cat
+	}
+	// A purge covers what was written up to now, the rows written while it runs
+	// excluded.
+	end := s.now().Add(time.Millisecond)
+	p.Before = end
+	if v := strings.TrimSpace(req.Before); v != "" {
+		t, _, err := auditTime(v)
+		if err != nil {
+			writeError(c.w, http.StatusBadRequest, "invalid", "Before is a time (RFC 3339) or a day (YYYY-MM-DD).")
+			return
+		}
+		if t.Before(end) {
+			p.Before = t
+		}
+	}
+	if dry {
+		n, more, err := s.auth.CountAuditPurge(c.r.Context(), p)
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		writeJSON(c.w, http.StatusOK, struct {
+			DryRun   bool   `json:"dryRun"`
+			Count    int64  `json:"count"`
+			More     bool   `json:"more"`
+			Category string `json:"category"`
+			Before   string `json:"before"`
+		}{true, n, more, purgeCategory(p.Category), rfc3339(p.Before)})
+		return
+	}
+	params, err := json.Marshal(auditPurgeParams{Category: p.Category, Before: rfc3339(p.Before), IP: s.auth.ClientAddr(c.r)})
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	job, err := s.jobs.Enqueue(c.r.Context(), store.Job{ID: page.NewID(s.now()), TenantID: c.tenant(), Kind: store.JobAuditPurge, LockKey: store.AuditPurgeLock,
+		MadeBy: c.user().ID, MadeByName: c.user().Username, Capacity: c.scope.capacity, SiteOnly: true, Params: params})
+	if errors.Is(err, jobs.ErrClosed) {
+		writeError(c.w, http.StatusServiceUnavailable, "unavailable", "The server is stopping: ask again once it has started.")
+		return
+	}
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusAccepted, struct {
+		Job jobResp `json:"job"`
+	}{jobOf(job)})
+}
+
+// auditPurgeParams is a purge job's request, as its row keeps it. Before is
+// fixed when the job is made, so a resumed job covers the same rows.
+type auditPurgeParams struct {
+	Category string `json:"category"`
+	Before   string `json:"before"`
+	IP       string `json:"ip"`
+}
+
+func auditPurgeParamsOf(j *store.Job) (p store.AuditPurge, ip string) {
+	var in auditPurgeParams
+	_ = json.Unmarshal(j.Params, &in)
+	p.Category = in.Category
+	p.Before, _ = time.Parse(time.RFC3339Nano, in.Before)
+	return p, in.IP
+}
+
+// auditPurgeKind runs the purge jobs on the runner. Its job holds no tenant
+// (the log is the site's) and the lock key keeps it to one at a time.
+type auditPurgeKind struct{ s *server }
+
+func (auditPurgeKind) Class() jobs.Class { return jobs.AuditPurge }
+
+// Recover resumes: the deletes are by bounds, so a run again deletes what is
+// left and the count of the row goes on from what was done.
+func (auditPurgeKind) Recover(context.Context, *store.Job) jobs.Outcome { return jobs.Resume }
+
+// Run deletes in batches (each its own short transaction, resting between), the
+// progress being the rows deleted so far.
+func (k auditPurgeKind) Run(ctx context.Context, j *store.Job, p *jobs.Progress) error {
+	pg, _ := auditPurgeParamsOf(j)
+	p.Item("*")
+	_, err := k.s.auth.PurgeAudit(ctx, pg, func(n int64) { p.Step(n, 0) })
+	return err
+}
+
+// Ended writes the one audit_purged row of the purge, with what it deleted. A
+// job that did not finish says partial. An interrupted job that will resume
+// has not ended, and writes nothing.
+func (k auditPurgeKind) Ended(ctx context.Context, j *store.Job) {
+	if k.s.auth == nil || (j.State != store.JobDone && j.Done == 0) {
+		return
+	}
+	pg, ip := auditPurgeParamsOf(j)
+	k.s.auth.AuditIn(auditlog.WithCapacity(ctx, j.Capacity), auth.AuditEvent{Kind: "audit_purged", Actor: j.MadeBy, Tenant: "-", IP: ip,
+		Detail: purgeDetail(pg, j.Done, j.State != store.JobDone)})
+}
+
+func purgeCategory(c string) string {
+	if c == "" {
+		return "all"
+	}
+	return c
+}
+
+// purgeDetail is the detail of an audit_purged row.
+func purgeDetail(p store.AuditPurge, n int64, partial bool) map[string]any {
+	d := map[string]any{"category": purgeCategory(p.Category), "before": rfc3339(p.Before), "deleted": n}
+	if partial {
+		d["partial"] = true
+	}
+	return d
 }
 
 func timeText(t time.Time) string {

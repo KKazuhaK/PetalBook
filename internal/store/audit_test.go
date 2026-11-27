@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -117,9 +119,9 @@ func TestTrimAuditModes(t *testing.T) {
 	}
 }
 
-// A core row younger than the floor is never deleted, whatever the days and
-// rows say; past it, it goes by the same rules.
-func TestTrimAuditKeepsCoreRowsForTheFloor(t *testing.T) {
+// No floor: a core row goes by the days and rows asked for, however few the
+// days. 0 days is no age limit.
+func TestTrimAuditHasNoFloor(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		day := 24 * hour
@@ -128,9 +130,61 @@ func TestTrimAuditKeepsCoreRowsForTheFloor(t *testing.T) {
 		if _, err := store.TrimAudit(ctx, st.Q(), trimNow, p); err != nil {
 			t.Fatal(err)
 		}
-		// Only the rows older than 90 days go; the days and rows asked for far less.
-		if got, want := leftAudit(t, st), []time.Duration{80 * day, 10 * day, hour}; fmt.Sprint(got) != fmt.Sprint(want) {
+		if got, want := leftAudit(t, st), []time.Duration{hour}; fmt.Sprint(got) != fmt.Sprint(want) {
 			t.Fatalf("left %v, want %v", got, want)
+		}
+	})
+}
+
+// Days 0 keeps by age forever: "or" deletes nothing, "and" only what is
+// outside the newest rows.
+func TestTrimAuditZeroDaysKeepsForever(t *testing.T) {
+	t.Parallel()
+	for mode, want := range map[string][]time.Duration{"or": {400 * 24 * hour, 200 * 24 * hour, hour}, "and": {200 * 24 * hour, hour}} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			storetest.Each(t, func(t *testing.T, st *store.Store) {
+				putAudit(t, st, "admin", 400*24*hour, 200*24*hour, hour)
+				if mode == "and" {
+					putAudit(t, st, "admin", 1000*24*hour)
+				}
+				p := store.AuditRetention{Days: 0, Rows: 2, Mode: mode, OptionalDays: 1}
+				if _, err := store.TrimAudit(ctx, st.Q(), trimNow, p); err != nil {
+					t.Fatal(err)
+				}
+				got := leftAudit(t, st)
+				if mode == "and" {
+					// The newest two rows stay.
+					want = []time.Duration{200 * 24 * hour, hour}
+				}
+				if fmt.Sprint(got) != fmt.Sprint(want) {
+					t.Fatalf("left %v, want %v", got, want)
+				}
+			})
+		})
+	}
+}
+
+// A category with days of its own is kept by them alone: 0 forever whatever
+// the rows say, n days whatever the general days say; the others follow the
+// general rules.
+func TestTrimAuditCategoryDays(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		day := 24 * hour
+		putAudit(t, st, "security", 400*day, 5*day)
+		putAudit(t, st, "data", 400*day, 5*day)
+		putAudit(t, st, "admin", 400*day, 5*day)
+		putAudit(t, st, "reads", 400*day, 5*day)
+		putAudit(t, st, "system", hour) // the newest row
+		p := store.AuditRetention{Days: 90, Rows: 1, Mode: "and", OptionalDays: 30, CategoryDays: map[string]int{"security": 0, "data": 3, "reads": 1000}}
+		if _, err := store.TrimAudit(ctx, st.Q(), trimNow, p); err != nil {
+			t.Fatal(err)
+		}
+		for cat, want := range map[string]int{"security": 2, "data": 0, "admin": 0, "reads": 2} {
+			if n := count(t, st, `SELECT COUNT(*) FROM audit_log WHERE category = '`+cat+`'`); n != want {
+				t.Errorf("%s: %d rows left, want %d", cat, n, want)
+			}
 		}
 	})
 }
@@ -354,4 +408,86 @@ func TestCoreCategoriesHaveNoSwitch(t *testing.T) {
 			t.Errorf("category %s: core %v, setting %q", c.ID, c.Core, c.Setting)
 		}
 	}
+}
+
+// The record of purges is never trimmed, and a row of a category the registry
+// does not know follows the general rule.
+func TestTrimAuditKeepsPurgeRecordsAndTrimsUnknownCategories(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		put := func(kind, category string, age time.Duration) {
+			at := trimNow.Add(-age)
+			if _, err := st.Q().Exec(ctx, `INSERT INTO audit_log(id, tenant_id, at, kind, category) VALUES (?, ?, ?, ?, ?)`,
+				auditID(at, int(putSeq.Add(1))), store.DefaultTenantID, at.UnixMilli(), kind, category); err != nil {
+				t.Fatal(err)
+			}
+		}
+		put(store.AuditPurgedKind, "system", 1000*hour)
+		put("x", "system", 1000*hour)
+		put("x", "from_a_later_version", 1000*hour)
+		put("x", "from_a_later_version", hour)
+		n, err := store.TrimAudit(ctx, st.Q(), trimNow, store.AuditRetention{Days: 4, Rows: 1, Mode: "or", OptionalDays: 90})
+		if err != nil || n != 2 {
+			t.Fatalf("trimmed %d (%v), want the old system row and the old unknown one", n, err)
+		}
+		if k := count(t, st, `SELECT COUNT(*) FROM audit_log WHERE kind = ?`, store.AuditPurgedKind); k != 1 {
+			t.Fatalf("the purge record is %d rows", k)
+		}
+	})
+}
+
+// A purge reports each batch, rests between them, can be stopped and run again
+// to delete the rest (the same bounds), and never deletes its own record.
+func TestPurgeAuditInBatchesResumesAndKeepsItsRecord(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		total := 2*store.AuditTrimBatch + 7
+		bulk(t, st, "audit_log", "id, tenant_id, at, kind, category", total+1, 500, func(i int) []any {
+			at := trimNow.Add(-time.Duration(total-i) * time.Second)
+			kind := "x"
+			if i == total {
+				kind = store.AuditPurgedKind
+			}
+			return []any{auditID(at, i), store.DefaultTenantID, at.UnixMilli(), kind, "data"}
+		})
+		p := store.AuditPurge{Before: trimNow}
+		cctx, cancel := context.WithCancel(ctx)
+		var batches []int64
+		n1, err := store.PurgeAudit(cctx, st.Q(), p, func(n int64) {
+			batches = append(batches, n)
+			cancel() // stop after the first batch
+		})
+		if !errors.Is(err, context.Canceled) || n1 != store.AuditTrimBatch || len(batches) != 1 {
+			t.Fatalf("stopped after %d (%v), batches %v", n1, err, batches)
+		}
+		batches = nil
+		n2, err := store.PurgeAudit(ctx, st.Q(), p, func(n int64) { batches = append(batches, n) })
+		if err != nil || n1+n2 != int64(total) || len(batches) != 2 || batches[0] != store.AuditTrimBatch || batches[1] != 7 {
+			t.Fatalf("resumed: %d then %d (%v), batches %v", n1, n2, err, batches)
+		}
+		if left := count(t, st, `SELECT COUNT(*) FROM audit_log`); left != 1 {
+			t.Fatalf("%d rows left, want the purge record", left)
+		}
+	})
+}
+
+// The dry run's count stops at its cap and says so.
+func TestCountAuditPurgeIsBounded(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		putAudit(t, st, "data", 5*hour, 4*hour, 3*hour, 2*hour, hour)
+		for _, tc := range []struct {
+			cap  int64
+			n    int64
+			more bool
+		}{{10, 5, false}, {5, 5, false}, {3, 3, true}} {
+			n, more, err := store.CountAuditPurgeUpTo(ctx, st.Q(), store.AuditPurge{Category: "data", Before: trimNow}, tc.cap)
+			if err != nil || n != tc.n || more != tc.more {
+				t.Fatalf("cap %d: %d, more %v (%v)", tc.cap, n, more, err)
+			}
+		}
+		if n, more, err := store.CountAuditPurge(ctx, st.Q(), store.AuditPurge{}); err != nil || n != 5 || more {
+			t.Fatalf("%d %v %v", n, more, err)
+		}
+	})
 }
