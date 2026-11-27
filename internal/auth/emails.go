@@ -100,12 +100,22 @@ func (s *Service) EmailsForAdmin(ctx context.Context, u store.User, wide bool) (
 // of the tenant whose primary address is primary: the primary, or one in the
 // tenant's verified domains.
 func (s *Service) AddressShownToTenantAdmin(ctx context.Context, tenant, primary, email string) bool {
-	if a, ok := store.EmailKey(email); ok {
-		if b, ok := store.EmailKey(primary); ok && a == b {
-			return true
+	return s.TenantAddressRule(ctx, tenant)(primary, email)
+}
+
+// TenantAddressRule is AddressShownToTenantAdmin for one tenant, with the
+// tenant's verified domains read once: a caller that checks many addresses
+// (a page of the audit log) asks here once and calls the rule for each.
+func (s *Service) TenantAddressRule(ctx context.Context, tenant string) func(primary, email string) bool {
+	domains := s.orgDomains(ctx, tenant)
+	return func(primary, email string) bool {
+		if a, ok := store.EmailKey(email); ok {
+			if b, ok := store.EmailKey(primary); ok && a == b {
+				return true
+			}
 		}
+		return domainAllowed(email, domains)
 	}
-	return domainAllowed(email, s.orgDomains(ctx, tenant))
 }
 
 // PendingClaims lists the claims the account waits on: addresses it asked to

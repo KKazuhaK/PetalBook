@@ -1255,8 +1255,8 @@ export const adminRoutes: Route[] = [
     },
   ],
   ['GET', '/api/admin/audit/kinds', () => ({ categories: AUDIT_CATEGORIES })],
-  // A purge by hand (site administrators): the same rules as the server's, the record of purges never deleted, one
-  // `audit_purged` row after a delete that was not a dry run.
+  // A purge by hand (site administrators): the same rules as the server's, the record of purges never deleted. A real
+  // one is a job (202), done at once, with its one `audit_purged` row.
   [
     'POST',
     '/api/admin/audit/purge',
@@ -1270,23 +1270,24 @@ export const adminRoutes: Route[] = [
       const dry = c.query.get('dry_run') === 'true'
       const covers = (a: AuditItem) =>
         a.kind !== 'audit_purged' && (category === 'all' || a.category === category) && Date.parse(a.at) < cutoff
-      const count = A(c).audit.filter(covers).length
-      if (!dry) {
-        A(c).audit = A(c).audit.filter((a) => !covers(a))
-        A(c).audit.unshift({
-          id: newId(c.data, '01AU'),
-          at: now(c),
-          kind: 'audit_purged',
-          category: 'system',
-          capacity: 'site_admin',
-          actor: c.data.auth.signedIn,
-          user: null,
-          username: '',
-          ip: '',
-          detail: { category, before: now(c), deleted: count },
-        })
-      }
-      return { dryRun: dry, count, category, before: now(c) }
+      const matched = A(c).audit.filter(covers).length
+      const count = Math.min(matched, 1_000_000)
+      if (dry) return { dryRun: true, count, more: matched > count, category, before: now(c) }
+      A(c).audit = A(c).audit.filter((a) => !covers(a))
+      A(c).audit.unshift({
+        id: newId(c.data, '01AU'),
+        at: now(c),
+        kind: 'audit_purged',
+        category: 'system',
+        capacity: 'site_admin',
+        actor: c.data.auth.signedIn,
+        user: null,
+        username: '',
+        ip: '',
+        detail: { category, before: now(c), deleted: count },
+      })
+      // The purge is a job, done at once here.
+      return reply(202, { job: jobOf(c, { kind: 'audit.purge', done: count }) })
     },
   ],
 

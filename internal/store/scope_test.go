@@ -35,7 +35,7 @@ var scopeAllowlist = map[string]string{
 	"DeleteOldInvites":           "background job: expired invites of every tenant",
 	"NotifyUser":                 "a notification for one person by id: the row carries the person's own tenant, read here",
 	"TrimAudit":                  "background job: the audit log of every tenant",
-	"CountAuditPurge":            "the site administrator's purge of the audit log of every tenant (site.audit.purge)",
+	"CountAuditPurgeUpTo":        "the cap given: the site administrator's purge of the audit log of every tenant (site.audit.purge)",
 	"DisabledSpaces":             "the server's set of disabled space ids, which is checked by id",
 	"EndTenantSessions":          "a site administrator disabling a tenant: the tenant is the one named, its people's sessions end",
 	"DeleteTenantSessionEnds":    "a site administrator enabling a tenant again: the tenant is the one named",

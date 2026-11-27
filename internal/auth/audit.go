@@ -237,15 +237,20 @@ func (s *Service) AuditRetention(ctx context.Context) store.AuditRetention {
 	return p
 }
 
-// PurgeAudit deletes the rows of the log p covers (a purge by hand, see
-// store.AuditPurge), after writing what is queued; dry only counts them. The
-// purge writes no row itself: the caller records it once, after.
-func (s *Service) PurgeAudit(ctx context.Context, p store.AuditPurge, dry bool) (int64, error) {
+// CountAuditPurge is how many rows a purge by hand would delete (the dry run),
+// at most store.AuditCountCap; more says the count stopped there. What is
+// queued is written first.
+func (s *Service) CountAuditPurge(ctx context.Context, p store.AuditPurge) (int64, bool, error) {
 	s.FlushAudit(ctx)
-	if dry {
-		return store.CountAuditPurge(ctx, s.st.Q(), p)
-	}
-	return store.PurgeAudit(ctx, s.st.Q(), p)
+	return store.CountAuditPurge(ctx, s.st.Q(), p)
+}
+
+// PurgeAudit deletes the rows of the log p covers (a purge by hand, see
+// store.AuditPurge), after writing what is queued; step is told each batch's
+// count. The purge writes no row itself: its job records it once, at its end.
+func (s *Service) PurgeAudit(ctx context.Context, p store.AuditPurge, step func(int64)) (int64, error) {
+	s.FlushAudit(ctx)
+	return store.PurgeAudit(ctx, s.st.Q(), p, step)
 }
 
 func (s *Service) trimAudit(ctx context.Context) {

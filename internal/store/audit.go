@@ -289,8 +289,15 @@ func auditTrimBounds(now time.Time, p AuditRetention, oldestKept string) map[str
 		}
 		out[id] = b
 	}
+	// A category the registry does not know (a row of an older or later
+	// version) follows the general rule.
+	out[unknownCategories] = general
 	return out
 }
+
+// unknownCategories is the key of auditTrimBounds for the rows whose category
+// is none of auditlog.Categories().
+const unknownCategories = "*"
 
 // TrimAudit deletes what p says the log does not keep, in batches of
 // AuditTrimBatch rows, each batch its own statement: on q the database (not a
@@ -309,12 +316,27 @@ func TrimAudit(ctx context.Context, q Q, now time.Time, p AuditRetention) (int64
 	}
 	bounds := auditTrimBounds(now, p, oldestKept)
 	var total int64
+	// The record of purges is never trimmed: it is the only trace of a deletion.
 	for _, c := range auditlog.Categories() {
 		b := bounds[string(c.ID)]
 		if b == "" {
 			continue
 		}
-		n, err := trimAuditWhere(ctx, q, `category = ? AND id < ?`, string(c.ID), b)
+		n, err := trimAuditWhere(ctx, q, nil, `category = ? AND kind <> ? AND id < ?`, string(c.ID), AuditPurgedKind, b)
+		total += n
+		if err != nil {
+			return total, err
+		}
+	}
+	if b := bounds[unknownCategories]; b != "" {
+		cats := auditlog.Categories()
+		marks := strings.TrimSuffix(strings.Repeat("?, ", len(cats)), ", ")
+		args := make([]any, 0, len(cats)+2)
+		for _, c := range cats {
+			args = append(args, string(c.ID))
+		}
+		args = append(args, AuditPurgedKind, b)
+		n, err := trimAuditWhere(ctx, q, nil, `category NOT IN (`+marks+`) AND kind <> ? AND id < ?`, args...)
 		total += n
 		if err != nil {
 			return total, err
@@ -322,6 +344,13 @@ func TrimAudit(ctx context.Context, q Q, now time.Time, p AuditRetention) (int64
 	}
 	return total, nil
 }
+
+// AuditJobPurge is the kind of the job that runs a purge by hand, and
+// AuditPurgeLock its lock key: one purge runs at a time.
+const (
+	JobAuditPurge  = "audit.purge"
+	AuditPurgeLock = "audit.purge"
+)
 
 // AuditPurgedKind is the kind of the one row a purge writes about itself.
 const AuditPurgedKind = "audit_purged"
@@ -347,24 +376,46 @@ func (p AuditPurge) where() (string, []any) {
 	return cond, args
 }
 
-// CountAuditPurge is how many rows PurgeAudit would delete now (the dry run).
-func CountAuditPurge(ctx context.Context, q Q, p AuditPurge) (int64, error) {
+// AuditCountCap is the most CountAuditPurge counts: a dry run never reads more
+// rows than this, whatever the log holds.
+const AuditCountCap = 1_000_000
+
+// AuditPurgePause is how long a purge rests between two batches, so that the
+// writers of the log (and SQLite's one write connection) get their turn.
+var AuditPurgePause = 20 * time.Millisecond
+
+// CountAuditPurge is how many rows PurgeAudit would delete now (the dry run),
+// at most AuditCountCap: more says the count stopped there. The count reads
+// the (category, id) index when p names a category, and an id range otherwise,
+// and stops at the cap either way.
+func CountAuditPurge(ctx context.Context, q Q, p AuditPurge) (n int64, more bool, err error) {
+	return CountAuditPurgeUpTo(ctx, q, p, AuditCountCap)
+}
+
+// CountAuditPurgeUpTo is CountAuditPurge with the cap given.
+func CountAuditPurgeUpTo(ctx context.Context, q Q, p AuditPurge, limit int64) (n int64, more bool, err error) {
 	cond, args := p.where()
-	var n int64
-	err := q.QueryRow(ctx, `SELECT COUNT(*) FROM audit_log WHERE `+cond, args...).Scan(&n)
-	return n, err
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM audit_log WHERE `+cond+` LIMIT ?) c`, append(args, limit+1)...).Scan(&n)
+	if n > limit {
+		n, more = limit, true
+	}
+	return n, more, err
 }
 
 // PurgeAudit deletes the rows p covers, oldest first, in batches of
-// AuditTrimBatch like TrimAudit, and returns how many went.
-func PurgeAudit(ctx context.Context, q Q, p AuditPurge) (int64, error) {
+// AuditTrimBatch like TrimAudit, resting AuditPurgePause between them, and
+// returns how many went. step, when set, is told how many each batch deleted.
+// Running it again after a stop is safe: it deletes what the same bounds still
+// cover.
+func PurgeAudit(ctx context.Context, q Q, p AuditPurge, step func(n int64)) (int64, error) {
 	cond, args := p.where()
-	return trimAuditWhere(ctx, q, cond, args...)
+	return trimAuditWhere(ctx, q, step, cond, args...)
 }
 
 // trimAuditWhere deletes the rows cond matches (a range of ids, with the
-// category if it names one), the oldest first, in batches; args are cond's.
-func trimAuditWhere(ctx context.Context, q Q, cond string, args ...any) (int64, error) {
+// category if it names one), the oldest first, in batches, each its own
+// statement; args are cond's. step, when set, is told each batch's count.
+func trimAuditWhere(ctx context.Context, q Q, step func(int64), cond string, args ...any) (int64, error) {
 	var total int64
 	for {
 		res, err := q.Exec(ctx, `DELETE FROM audit_log WHERE id IN (SELECT id FROM audit_log WHERE `+cond+` ORDER BY id LIMIT ?)`, append(append([]any(nil), args...), AuditTrimBatch)...)
@@ -373,8 +424,16 @@ func trimAuditWhere(ctx context.Context, q Q, cond string, args ...any) (int64, 
 		}
 		n, _ := res.RowsAffected()
 		total += n
+		if step != nil && n > 0 {
+			step(n)
+		}
 		if n < AuditTrimBatch || ctx.Err() != nil {
 			return total, ctx.Err()
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		case <-time.After(AuditPurgePause):
 		}
 	}
 }

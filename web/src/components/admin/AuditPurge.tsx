@@ -1,8 +1,9 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useAuditPurgeCount, usePurgeAudit } from '@/api/admin'
+import { useAuditPurgeCount, useAuditPurged, usePurgeAudit } from '@/api/admin'
+import { useJob } from '@/api/manage'
 import type { AuditCategory } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import {
@@ -14,6 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { FormMessage } from '@/components/auth/Field'
+import { JobBar } from '@/components/admin/manage/JobProgress'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -48,25 +50,35 @@ function PurgeDialog({ onClose }: { onClose: () => void }) {
   const [category, setCategory] = useState<AuditCategory | 'all'>('all')
   const [before, setBefore] = useState('')
   const [error, setError] = useState('')
+  const [jobId, setJobId] = useState<string | null>(null)
   const validDay = before === '' || DAY.test(before)
   const input = { category, ...(before && validDay ? { before } : {}) }
-  const count = useAuditPurgeCount(input, validDay)
+  const count = useAuditPurgeCount(input, validDay && !jobId)
   const purge = usePurgeAudit()
+  const purged = useAuditPurged()
+  const job = useJob(jobId).data
   const id = useId()
   const n = count.data?.count
+  const more = count.data?.more ?? false
   const label = category === 'all' ? tp.all.toLowerCase() : tsec.audit.categories[category]
+  const running = purge.isPending || (jobId !== null && (!job || job.state === 'queued' || job.state === 'running'))
+  const ended = job && job.state !== 'queued' && job.state !== 'running' ? job : null
+  // The log is read again once the job has ended; the result stays in the dialog until it is closed.
+  useEffect(() => {
+    if (ended) {
+      void purged()
+      if (ended.state === 'done') toast.success(tp.done(ended.done))
+    }
+  }, [ended?.id, ended?.state]) // eslint-disable-line react-hooks/exhaustive-deps
   const run = () => {
     setError('')
     purge.mutate(input, {
-      onSuccess: (r) => {
-        toast.success(tp.done(r.count))
-        onClose()
-      },
+      onSuccess: (r) => setJobId(r.job.id),
       onError: (e) => setError(e instanceof ApiError && e.message ? e.message : tp.failed),
     })
   }
   return (
-    <Dialog open onOpenChange={(o) => !o && !purge.isPending && onClose()}>
+    <Dialog open onOpenChange={(o) => !o && !running && onClose()}>
       <DialogContent data-slot="audit-purge-dialog">
         <DialogHeader>
           <DialogTitle>{tp.title}</DialogTitle>
@@ -78,7 +90,7 @@ function PurgeDialog({ onClose }: { onClose: () => void }) {
             <NativeSelect
               id={`${id}-category`}
               value={category}
-              disabled={purge.isPending}
+              disabled={running || !!ended}
               onChange={(e) => setCategory(e.target.value as AuditCategory | 'all')}
             >
               <option value="all">{tp.all}</option>
@@ -95,40 +107,56 @@ function PurgeDialog({ onClose }: { onClose: () => void }) {
               id={`${id}-before`}
               type="date"
               value={before}
-              disabled={purge.isPending}
+              disabled={running || !!ended}
               aria-invalid={!validDay}
               onChange={(e) => setBefore(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">{tp.beforeHelp}</p>
           </div>
-          <p
-            role="status"
-            aria-live="polite"
-            data-slot="audit-purge-count"
-            className={n && n > 0 ? 'text-sm font-medium text-destructive' : 'text-sm text-muted-foreground'}
-          >
-            {count.isError
-              ? tp.countFailed
-              : n === undefined
-                ? tp.counting
-                : n === 0
-                  ? tp.none
-                  : tp.will(n, label, before)}
-          </p>
+          {jobId ? (
+            <div className="grid gap-2" data-slot="audit-purge-job">
+              {job && <JobBar job={job} />}
+              <p role="status" aria-live="polite" data-slot="audit-purge-result" className="text-sm font-medium">
+                {ended
+                  ? ended.state === 'done'
+                    ? tp.done(ended.done)
+                    : tp.stopped(ended.done)
+                  : tp.progress(job?.done ?? 0)}
+              </p>
+            </div>
+          ) : (
+            <p
+              role="status"
+              aria-live="polite"
+              data-slot="audit-purge-count"
+              className={n && n > 0 ? 'text-sm font-medium text-destructive' : 'text-sm text-muted-foreground'}
+            >
+              {count.isError
+                ? tp.countFailed
+                : n === undefined
+                  ? tp.counting
+                  : n === 0
+                    ? tp.none
+                    : tp.will(n, label, before, more)}
+            </p>
+          )}
           <FormMessage>{error}</FormMessage>
         </div>
         <DialogFooter>
-          <Button type="button" variant="outline" disabled={purge.isPending} onClick={onClose}>
-            {tp.cancel}
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={purge.isPending || !n || count.isFetching}
-            onClick={run}
-          >
-            {purge.isPending ? tp.deleting : tp.confirm(n ?? 0)}
-          </Button>
+          {ended ? (
+            <Button type="button" onClick={onClose}>
+              {tp.close}
+            </Button>
+          ) : (
+            <>
+              <Button type="button" variant="outline" disabled={running} onClick={onClose}>
+                {tp.cancel}
+              </Button>
+              <Button type="button" variant="destructive" disabled={running || !n || count.isFetching} onClick={run}>
+                {running ? tp.deleting : tp.confirm(n ?? 0, more)}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -450,13 +450,18 @@ export const securityEn: SecurityMessages = {
       counting: 'Counting the rows…',
       countFailed: 'Could not count the rows.',
       none: 'No rows match; nothing would be deleted.',
-      will: (n: number, category: string, before: string) =>
-        `${n === 1 ? '1 row' : `${n.toLocaleString('en')} rows`} of ${category}${before ? `, written before ${before},` : ''} will be deleted for good. This cannot be undone. One record of the purge stays in the log.`,
+      will: (n: number, category: string, before: string, more = false) =>
+        `${more ? 'More than ' : ''}${n === 1 ? '1 row' : `${n.toLocaleString('en')} rows`} of ${category}${before ? `, written before ${before},` : ''} will be deleted for good. This cannot be undone. One record of the purge stays in the log.`,
       cancel: 'Cancel',
-      confirm: (n: number) => (n === 1 ? 'Delete 1 row' : `Delete ${n.toLocaleString('en')} rows`),
+      confirm: (n: number, more = false) =>
+        `${more ? 'Delete more than ' : 'Delete '}${n === 1 ? '1 row' : `${n.toLocaleString('en')} rows`}`,
       deleting: 'Deleting…',
+      progress: (n: number) => (n === 1 ? '1 row deleted so far…' : `${n.toLocaleString('en')} rows deleted so far…`),
       done: (n: number) => (n === 1 ? 'Deleted 1 row.' : `Deleted ${n.toLocaleString('en')} rows.`),
+      stopped: (n: number) =>
+        `The purge stopped after ${n === 1 ? '1 row' : `${n.toLocaleString('en')} rows`}. Start it again to delete the rest.`,
       failed: 'The purge did not work.',
+      close: 'Close',
     },
   },
   users: {

@@ -33,6 +33,30 @@ func auditCount(t *testing.T, c *client, query string) int {
 	return len(c.do("GET", "/api/admin/audit?limit=200"+query, nil).want(t, 200, "").body["items"].([]any))
 }
 
+// purge starts a purge by hand and waits for it: the answer is 202 with the
+// job, which ends done, and its audit_purged row (written when the job ends)
+// is there; it returns the job. rows is how many audit_purged rows the log has
+// once it is written.
+func purge(t *testing.T, c *client, body map[string]any, rows int) map[string]any {
+	t.Helper()
+	r := c.do("POST", "/api/admin/audit/purge", body).want(t, 202, "")
+	j := r.body["job"].(map[string]any)
+	if j["kind"] != "audit.purge" {
+		t.Fatalf("%v", j)
+	}
+	done := waitJob(t, c, j["id"].(string))
+	if done["state"] != "done" {
+		t.Fatalf("%v", done)
+	}
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if auditCounts(t, c, "&kind=audit_purged")["audit_purged"] >= rows {
+			return done
+		}
+	}
+	t.Fatalf("the purge wrote no audit_purged row (want %d)", rows)
+	return nil
+}
+
 // Only a site administrator across the site purges: a tenant's administrator,
 // a member and a site administrator in a tenant's scope are refused, and the
 // log is whole afterwards.
@@ -64,7 +88,7 @@ func TestAuditPurgeDryRunCounts(t *testing.T) {
 		five := purgeFx(t, a, f.tenB)
 		before := auditCount(t, f.root, "")
 		r := f.root.do("POST", "/api/admin/audit/purge?dry_run=true", map[string]any{"category": "data", "before": five.Format(time.RFC3339Nano)}).want(t, 200, "")
-		if r.body["dryRun"] != true || r.body["count"] != float64(1) || r.body["category"] != "data" {
+		if r.body["dryRun"] != true || r.body["count"] != float64(1) || r.body["more"] != false || r.body["category"] != "data" {
 			t.Fatalf("%v", r.body)
 		}
 		all := f.root.do("POST", "/api/admin/audit/purge?dry_run=true", map[string]any{}).want(t, 200, "")
@@ -103,9 +127,8 @@ func TestAuditPurgeByCategoryDateAndAll(t *testing.T) {
 		}
 
 		// One category, before a date: only the oldest row of the category goes.
-		r := f.root.do("POST", "/api/admin/audit/purge", map[string]any{"category": "data", "before": five.Format(time.RFC3339Nano)}).want(t, 200, "")
-		if r.body["dryRun"] != false || r.body["count"] != float64(1) {
-			t.Fatalf("%v", r.body)
+		if j := purge(t, f.root, map[string]any{"category": "data", "before": five.Format(time.RFC3339Nano)}, 1); j["done"] != float64(1) {
+			t.Fatalf("%v", j)
 		}
 		k := kinds()
 		if k["space_deleted"] != 2 || k["login_failed"] != 3 || k["tenant_changed"] != 3 || k["audit_purged"] != 1 {
@@ -122,30 +145,27 @@ func TestAuditPurgeByCategoryDateAndAll(t *testing.T) {
 		}
 
 		// One category, every date.
-		f.root.do("POST", "/api/admin/audit/purge", map[string]any{"category": "security"}).want(t, 200, "")
+		purge(t, f.root, map[string]any{"category": "security"}, 2)
 		if k := kinds(); k["login_failed"] != 0 || k["space_deleted"] != 2 || k["audit_purged"] != 2 {
 			t.Fatalf("after a purge of security: %v", k)
 		}
 
 		// A date alone covers every category.
 		a.clock.Advance(time.Hour)
-		f.root.do("POST", "/api/admin/audit/purge", map[string]any{"before": five.Format(time.RFC3339Nano)}).want(t, 200, "")
+		purge(t, f.root, map[string]any{"before": five.Format(time.RFC3339Nano)}, 3)
 		if k := kinds(); k["tenant_changed"] != 2 || k["audit_purged"] != 3 {
 			t.Fatalf("after a purge before a date: %v", k)
 		}
 
 		// Everything: the records of the purges stay, and one more is written.
 		a.clock.Advance(time.Hour)
-		all := f.root.do("POST", "/api/admin/audit/purge", map[string]any{"category": "all"}).want(t, 200, "")
-		if all.body["category"] != "all" {
-			t.Fatalf("%v", all.body)
-		}
+		purge(t, f.root, map[string]any{"category": "all"}, 4)
 		if k = auditCounts(t, f.root, ""); k["audit_purged"] != 4 || len(k) != 1 {
 			t.Fatalf("after a purge of everything: %v", k)
 		}
 		// Nothing is left to delete, and it is still said once.
-		if n := f.root.do("POST", "/api/admin/audit/purge", map[string]any{}).want(t, 200, "").body["count"]; n != float64(0) {
-			t.Fatalf("%v", n)
+		if j := purge(t, f.root, map[string]any{}, 5); j["done"] != float64(0) {
+			t.Fatalf("%v", j)
 		}
 		if k = auditCounts(t, f.root, ""); k["audit_purged"] != 5 {
 			t.Fatalf("%v", k)
@@ -160,6 +180,48 @@ func TestAuditPurgeChecksItsInput(t *testing.T) {
 		root := a.setup("root", pw)
 		root.do("POST", "/api/admin/audit/purge", map[string]any{"category": "nope"}).want(t, 400, "invalid")
 		root.do("POST", "/api/admin/audit/purge", map[string]any{"before": "last week"}).want(t, 400, "invalid")
-		root.do("POST", "/api/admin/audit/purge", map[string]any{"before": "2020-01-02"}).want(t, 200, "")
+		purge(t, root, map[string]any{"before": "2020-01-02"}, 1)
+	})
+}
+
+// The purge is a job: the answer is 202 with the job, a site administrator
+// follows it in the jobs, a tenant's administrator does not, a second purge
+// while one runs is refused, and the row of the purge says how many went.
+func TestAuditPurgeRunsAsAJobOnlyTheSiteFollows(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		purgeFx(t, a, f.tenB)
+		j := purge(t, f.root, map[string]any{"category": "data"}, 1)
+		id := j["id"].(string)
+		if j["kind"] != "audit.purge" || j["done"] != float64(3) {
+			t.Fatalf("%v", j)
+		}
+		f.admB.do("GET", "/api/admin/jobs/"+id, nil).want(t, 404, "not_found")
+		for _, it := range f.admB.do("GET", "/api/admin/jobs", nil).want(t, 200, "").body["items"].([]any) {
+			if it.(map[string]any)["kind"] == "audit.purge" {
+				t.Fatal("a tenant's administrator sees the purge in the jobs")
+			}
+		}
+		list := f.root.do("GET", "/api/admin/jobs?kind=audit.purge", nil).want(t, 200, "").body["items"].([]any)
+		if len(list) != 1 {
+			t.Fatalf("the site's list has %d purges", len(list))
+		}
+		row := f.root.do("GET", "/api/admin/audit?kind=audit_purged", nil).want(t, 200, "").body["items"].([]any)[0].(map[string]any)
+		if d := row["detail"].(map[string]any); d["deleted"] != float64(3) || d["category"] != "data" || d["partial"] != nil {
+			t.Fatalf("%v", row)
+		}
+	})
+}
+
+// One purge runs at a time: while one holds the lock, another is refused.
+func TestAuditPurgeIsOneAtATime(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		root := a.setup("root", pw)
+		if err := store.InsertJob(ctxBG, a.st.Q(), store.Job{ID: "HELD", TenantID: store.DefaultTenantID, Kind: store.JobAuditPurge, LockKey: store.AuditPurgeLock, State: "running", SiteOnly: true, Created: a.clock.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		root.do("POST", "/api/admin/audit/purge", map[string]any{}).want(t, 409, "busy")
 	})
 }

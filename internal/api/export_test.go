@@ -69,3 +69,6 @@ func (h *Handler) SetFeatureFault(f func(tenant, feature string) error) { h.s.fe
 func (h *Handler) JobLimits(tenant string) (maxRunning, perTenant int) {
 	return h.s.jobLimit("", settings.JobsMaxRunning, 2), h.s.jobLimit(tenant, settings.JobsPerTenant, 1)
 }
+
+// AddressKinds is the audit kinds whose detail names an address, under which keys.
+func AddressKinds() map[string][]string { return addressKinds }

@@ -4389,7 +4389,29 @@
   "before": "string",
   "category": "string",
   "count": "number",
-  "dryRun": "boolean"
+  "dryRun": "boolean",
+  "more": "boolean"
+ },
+ "POST /api/admin/audit/purge 202": {
+  "job": {
+   "bytesDone": "number",
+   "bytesTotal": "number",
+   "created": "string",
+   "done": "number",
+   "error": "string",
+   "expires": "null",
+   "failed": [],
+   "id": "string",
+   "kind": "string",
+   "madeBy": {
+    "id": "string",
+    "username": "string"
+   },
+   "state": "string",
+   "subject": "string",
+   "total": "number",
+   "updated": "string"
+  }
  },
  "POST /api/admin/audit/purge 400": {
   "error": "string",

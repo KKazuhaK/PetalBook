@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +14,8 @@ import (
 	"petalbook.app/server/internal/auditlog"
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
+	"petalbook.app/server/internal/jobs"
+	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/store"
 )
 
@@ -132,10 +136,14 @@ func (s *server) pathRedactor(c *call) func(kind string, detail json.RawMessage)
 }
 
 // addressKinds are the kinds whose detail names an email address of the
-// person the row is about, under these keys.
+// person the row is about, under these keys. A key whose value is an object
+// (user_changed keeps what a change replaced under old) has its "email"
+// redacted. Every kind whose writer puts an address in its detail is here
+// (TestAuditAddressKinds).
 var addressKinds = map[string][]string{
 	"email_added": {"email"}, "email_verified": {"email"}, "email_removed": {"email"},
 	"email_claim_withdrawn": {"email"}, "email_primary_changed": {"email", "old"},
+	"email_released": {"email"}, "registered": {"email"}, "user_changed": {"email", "old"},
 }
 
 // hiddenAddress is what a row says in place of an address its reader may not see.
@@ -152,6 +160,7 @@ func (s *server) addressRedactor(c *call) func(kind, user, tenant string, detail
 		return func(_, _, _ string, detail json.RawMessage) json.RawMessage { return detail }
 	}
 	primary := map[string]string{}
+	rules := map[string]func(primary, email string) bool{}
 	return func(kind, user, tenant string, detail json.RawMessage) json.RawMessage {
 		keys := addressKinds[kind]
 		if len(keys) == 0 || len(detail) == 0 {
@@ -168,10 +177,22 @@ func (s *server) addressRedactor(c *call) func(kind, user, tenant string, detail
 			}
 			primary[user] = p
 		}
+		shown, ok := rules[tenant]
+		if !ok {
+			shown = s.auth.TenantAddressRule(c.r.Context(), tenant)
+			rules[tenant] = shown
+		}
 		changed := false
+		hide := func(m map[string]any, k string) {
+			if a, ok := m[k].(string); ok && a != "" && !shown(p, a) {
+				m[k], changed = hiddenAddress, true
+			}
+		}
 		for _, k := range keys {
-			if a, ok := d[k].(string); ok && a != "" && !s.auth.AddressShownToTenantAdmin(c.r.Context(), tenant, p, a) {
-				d[k], changed = hiddenAddress, true
+			if inner, ok := d[k].(map[string]any); ok {
+				hide(inner, "email")
+			} else {
+				hide(d, k)
 			}
 		}
 		if !changed {
@@ -366,12 +387,15 @@ func (s *server) adminAuditDownload(c *call) {
 
 // adminAuditPurge deletes rows of the audit log by hand, whatever the retention
 // settings say: POST {category?: a category or "all", before?: RFC 3339 time or
-// a day} with the query dry_run=true to count what it would delete and delete
-// nothing. Without category every category is covered; without before every
-// row up to now. Site administrators only (the key site.audit.purge: a tenant's
-// administrator, and a site administrator in a tenant's scope, are refused).
-// The rows of kind audit_purged are never deleted. A purge that deletes writes
-// one audit_purged row, after the delete, saying who, when and what.
+// a day}. Without category every category is covered; without before every row
+// up to now. With the query dry_run=true it counts what it would delete (at
+// most store.AuditCountCap; "more" says it stopped there) and deletes nothing.
+// Otherwise it starts a job of the kind audit.purge (the work is done on the
+// jobs runner, batch by batch, not in this request) and answers 202 {job}; one
+// runs at a time (409 busy). Site administrators only (the key
+// site.audit.purge: a tenant's administrator, and a site administrator in a
+// tenant's scope, are refused). The rows of kind audit_purged are never deleted.
+// The job writes one audit_purged row when it ends, saying who, when and what.
 func (s *server) adminAuditPurge(c *call) {
 	var req struct {
 		Category string `json:"category"`
@@ -410,24 +434,86 @@ func (s *server) adminAuditPurge(c *call) {
 			p.Before = t
 		}
 	}
-	n, err := s.auth.PurgeAudit(c.r.Context(), p, dry)
-	if err != nil {
-		if !dry && n > 0 {
-			// Some of it went: say so, once, before the error.
-			s.auditRow(c, "audit_purged", "-", purgeDetail(p, n, true))
+	if dry {
+		n, more, err := s.auth.CountAuditPurge(c.r.Context(), p)
+		if err != nil {
+			s.fail(c.w, err)
+			return
 		}
+		writeJSON(c.w, http.StatusOK, struct {
+			DryRun   bool   `json:"dryRun"`
+			Count    int64  `json:"count"`
+			More     bool   `json:"more"`
+			Category string `json:"category"`
+			Before   string `json:"before"`
+		}{true, n, more, purgeCategory(p.Category), rfc3339(p.Before)})
+		return
+	}
+	params, err := json.Marshal(auditPurgeParams{Category: p.Category, Before: rfc3339(p.Before), IP: s.auth.ClientAddr(c.r)})
+	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	if !dry {
-		s.auditRow(c, "audit_purged", "-", purgeDetail(p, n, false))
+	job, err := s.jobs.Enqueue(c.r.Context(), store.Job{ID: page.NewID(s.now()), TenantID: c.tenant(), Kind: store.JobAuditPurge, LockKey: store.AuditPurgeLock,
+		MadeBy: c.user().ID, MadeByName: c.user().Username, Capacity: c.scope.capacity, SiteOnly: true, Params: params})
+	if errors.Is(err, jobs.ErrClosed) {
+		writeError(c.w, http.StatusServiceUnavailable, "unavailable", "The server is stopping: ask again once it has started.")
+		return
 	}
-	writeJSON(c.w, http.StatusOK, struct {
-		DryRun   bool   `json:"dryRun"`
-		Count    int64  `json:"count"`
-		Category string `json:"category"`
-		Before   string `json:"before"`
-	}{dry, n, purgeCategory(p.Category), rfc3339(p.Before)})
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusAccepted, struct {
+		Job jobResp `json:"job"`
+	}{jobOf(job)})
+}
+
+// auditPurgeParams is a purge job's request, as its row keeps it. Before is
+// fixed when the job is made, so a resumed job covers the same rows.
+type auditPurgeParams struct {
+	Category string `json:"category"`
+	Before   string `json:"before"`
+	IP       string `json:"ip"`
+}
+
+func auditPurgeParamsOf(j *store.Job) (p store.AuditPurge, ip string) {
+	var in auditPurgeParams
+	_ = json.Unmarshal(j.Params, &in)
+	p.Category = in.Category
+	p.Before, _ = time.Parse(time.RFC3339Nano, in.Before)
+	return p, in.IP
+}
+
+// auditPurgeKind runs the purge jobs on the runner. Its job holds no tenant
+// (the log is the site's) and the lock key keeps it to one at a time.
+type auditPurgeKind struct{ s *server }
+
+func (auditPurgeKind) Class() jobs.Class { return jobs.AuditPurge }
+
+// Recover resumes: the deletes are by bounds, so a run again deletes what is
+// left and the count of the row goes on from what was done.
+func (auditPurgeKind) Recover(context.Context, *store.Job) jobs.Outcome { return jobs.Resume }
+
+// Run deletes in batches (each its own short transaction, resting between), the
+// progress being the rows deleted so far.
+func (k auditPurgeKind) Run(ctx context.Context, j *store.Job, p *jobs.Progress) error {
+	pg, _ := auditPurgeParamsOf(j)
+	p.Item("*")
+	_, err := k.s.auth.PurgeAudit(ctx, pg, func(n int64) { p.Step(n, 0) })
+	return err
+}
+
+// Ended writes the one audit_purged row of the purge, with what it deleted. A
+// job that did not finish says partial. An interrupted job that will resume
+// has not ended, and writes nothing.
+func (k auditPurgeKind) Ended(ctx context.Context, j *store.Job) {
+	if k.s.auth == nil || (j.State != store.JobDone && j.Done == 0) {
+		return
+	}
+	pg, ip := auditPurgeParamsOf(j)
+	k.s.auth.AuditIn(auditlog.WithCapacity(ctx, j.Capacity), auth.AuditEvent{Kind: "audit_purged", Actor: j.MadeBy, Tenant: "-", IP: ip,
+		Detail: purgeDetail(pg, j.Done, j.State != store.JobDone)})
 }
 
 func purgeCategory(c string) string {

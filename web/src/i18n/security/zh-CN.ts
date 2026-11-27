@@ -412,13 +412,16 @@ export const securityZhCN = {
       counting: '正在数记录…',
       countFailed: '没能数出记录条数。',
       none: '没有符合的记录，不会删除任何东西。',
-      will: (n: number, category: string, before: string) =>
-        `将永久删除${category}的 ${n.toLocaleString('zh-CN')} 条记录${before ? `（写入时间早于 ${before}）` : ''}，无法撤销。日志里会留下一条这次清除的记录。`,
+      will: (n: number, category: string, before: string, more = false) =>
+        `将永久删除${category}的${more ? '超过 ' : ' '}${n.toLocaleString('zh-CN')} 条记录${before ? `（写入时间早于 ${before}）` : ''}，无法撤销。日志里会留下一条这次清除的记录。`,
       cancel: '取消',
-      confirm: (n: number) => `删除 ${n.toLocaleString('zh-CN')} 条记录`,
+      confirm: (n: number, more = false) => `删除${more ? '超过 ' : ' '}${n.toLocaleString('zh-CN')} 条记录`,
       deleting: '正在删除…',
+      progress: (n: number) => `已删除 ${n.toLocaleString('zh-CN')} 条记录…`,
       done: (n: number) => `已删除 ${n.toLocaleString('zh-CN')} 条记录。`,
+      stopped: (n: number) => `清除在删除 ${n.toLocaleString('zh-CN')} 条记录后停止了。再清除一次即可删除其余的。`,
       failed: '清除没有成功。',
+      close: '关闭',
     },
   },
   users: {

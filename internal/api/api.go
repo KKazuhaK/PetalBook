@@ -290,6 +290,7 @@ func New(opt Options) *Handler {
 		MaxRunning: func() int { return s.jobLimit("", settings.JobsMaxRunning, 2) },
 		PerTenant:  func(tenant string) int { return s.jobLimit(tenant, settings.JobsPerTenant, 1) }})
 	s.jobs.Register(bulkKindName, bulkKind{s})
+	s.jobs.Register(store.JobAuditPurge, auditPurgeKind{s})
 	if opt.Spaces != nil && opt.Store != nil {
 		// The exports, the actions of the recycle bin and the moves of
 		// attachments run on the same runner.

@@ -61,12 +61,14 @@ func jobKeyOf(kind string) authz.Key {
 		return authz.TenantDataExport
 	case store.JobRecycleMove, store.JobRecycleRestore, store.JobRecyclePurge:
 		return authz.TenantRecycleRead
+	case store.JobAuditPurge:
+		return authz.SiteAuditPurge
 	}
 	return authz.TenantBulkRun
 }
 
 // jobKinds are the kinds a person may follow, in a list.
-var jobKinds = []string{bulkKindName, store.JobExport, store.JobRecycleMove, store.JobRecycleRestore, store.JobRecyclePurge}
+var jobKinds = []string{bulkKindName, store.JobExport, store.JobRecycleMove, store.JobRecycleRestore, store.JobRecyclePurge, store.JobAuditPurge}
 
 func (s *server) adminGetJob(c *call) {
 	j, err := s.jobs.Get(c.r.Context(), c.reach(), c.r.PathValue("id"))
@@ -108,7 +110,7 @@ func (s *server) adminListJobs(c *call) {
 			known = known || kk == k
 		}
 		if !known {
-			writeError(c.w, http.StatusBadRequest, "invalid", "Kind is bulk, export, recycle.move, recycle.restore or recycle.purge.")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Kind is bulk, export, recycle.move, recycle.restore, recycle.purge or audit.purge.")
 			return
 		}
 		kinds = []string{k}

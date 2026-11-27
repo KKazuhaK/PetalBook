@@ -125,6 +125,12 @@ describe('purging the audit log by hand', () => {
     )
     expect(button(tsec.audit.purge.confirm(2))).toBeDefined()
     await click(button(tsec.audit.purge.confirm(2)))
+    // The purge is a job: the dialog follows it and says what it did, then closes on request.
+    await settle(
+      () => q('[data-slot="audit-purge-result"]')?.textContent === tsec.audit.purge.done(2),
+      'the result of the job',
+    )
+    await click(button(tsec.audit.purge.close))
     await settle(() => dialog() === null, 'the dialog closing')
     const real = posts().filter((r) => !r.url.includes('dry_run'))
     expect(real).toHaveLength(1)

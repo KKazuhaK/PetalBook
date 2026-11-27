@@ -47,6 +47,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ApiError, api, fileUrl, markSignedIn, request, spaceApi, type SpaceApi } from './client'
 import { adminApi } from './admin'
+import { manageApi } from './manage'
 import { join, misfits, routeOf, shapeOf, type Shape } from './contractShapes'
 import type {
   AdminSpace,
@@ -7316,14 +7317,25 @@ function suite(target: Target) {
     })
 
     it('a purge by hand: a dry run counts and writes nothing, a real one writes one audit_purged row', async () => {
-      const dry = await adminApi.purgeAudit({ category: 'all' }, true)
-      expect(dry).toMatchObject({ dryRun: true, category: 'all' })
+      const dry = await adminApi.countAuditPurge({ category: 'all' })
+      expect(dry).toMatchObject({ dryRun: true, category: 'all', more: false })
       expect(dry.count).toBeGreaterThan(0)
       const before = await adminApi.audit({ kind: 'audit_purged', limit: 100 })
       // Nothing is that old, so nothing goes, and the purge still says so once.
-      const done = await adminApi.purgeAudit({ category: 'reads', before: '2000-01-01' })
-      expect(done).toMatchObject({ dryRun: false, count: 0, category: 'reads' })
-      const after = await adminApi.audit({ kind: 'audit_purged', limit: 100 })
+      const { job } = await adminApi.purgeAudit({ category: 'reads', before: '2000-01-01' })
+      expect(job).toMatchObject({ kind: 'audit.purge' })
+      // The purge is a job: followed until it ends, then its one record is in the log.
+      let ended = job
+      for (let i = 0; i < 200 && (ended.state === 'queued' || ended.state === 'running'); i++) {
+        await new Promise((r) => setTimeout(r, 25))
+        ended = (await manageApi.job(job.id)).job
+      }
+      expect(ended).toMatchObject({ state: 'done', done: 0 })
+      let after = await adminApi.audit({ kind: 'audit_purged', limit: 100 })
+      for (let i = 0; i < 200 && after.items.length === before.items.length; i++) {
+        await new Promise((r) => setTimeout(r, 25))
+        after = await adminApi.audit({ kind: 'audit_purged', limit: 100 })
+      }
       expect(after.items.length).toBe(before.items.length + 1)
       expect(after.items[0]).toMatchObject({ category: 'system', detail: { category: 'reads', deleted: 0 } })
       for (const body of [{ category: 'nope' }, { before: 'last week' }]) {

@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -406,4 +408,86 @@ func TestCoreCategoriesHaveNoSwitch(t *testing.T) {
 			t.Errorf("category %s: core %v, setting %q", c.ID, c.Core, c.Setting)
 		}
 	}
+}
+
+// The record of purges is never trimmed, and a row of a category the registry
+// does not know follows the general rule.
+func TestTrimAuditKeepsPurgeRecordsAndTrimsUnknownCategories(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		put := func(kind, category string, age time.Duration) {
+			at := trimNow.Add(-age)
+			if _, err := st.Q().Exec(ctx, `INSERT INTO audit_log(id, tenant_id, at, kind, category) VALUES (?, ?, ?, ?, ?)`,
+				auditID(at, int(putSeq.Add(1))), store.DefaultTenantID, at.UnixMilli(), kind, category); err != nil {
+				t.Fatal(err)
+			}
+		}
+		put(store.AuditPurgedKind, "system", 1000*hour)
+		put("x", "system", 1000*hour)
+		put("x", "from_a_later_version", 1000*hour)
+		put("x", "from_a_later_version", hour)
+		n, err := store.TrimAudit(ctx, st.Q(), trimNow, store.AuditRetention{Days: 4, Rows: 1, Mode: "or", OptionalDays: 90})
+		if err != nil || n != 2 {
+			t.Fatalf("trimmed %d (%v), want the old system row and the old unknown one", n, err)
+		}
+		if k := count(t, st, `SELECT COUNT(*) FROM audit_log WHERE kind = ?`, store.AuditPurgedKind); k != 1 {
+			t.Fatalf("the purge record is %d rows", k)
+		}
+	})
+}
+
+// A purge reports each batch, rests between them, can be stopped and run again
+// to delete the rest (the same bounds), and never deletes its own record.
+func TestPurgeAuditInBatchesResumesAndKeepsItsRecord(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		total := 2*store.AuditTrimBatch + 7
+		bulk(t, st, "audit_log", "id, tenant_id, at, kind, category", total+1, 500, func(i int) []any {
+			at := trimNow.Add(-time.Duration(total-i) * time.Second)
+			kind := "x"
+			if i == total {
+				kind = store.AuditPurgedKind
+			}
+			return []any{auditID(at, i), store.DefaultTenantID, at.UnixMilli(), kind, "data"}
+		})
+		p := store.AuditPurge{Before: trimNow}
+		cctx, cancel := context.WithCancel(ctx)
+		var batches []int64
+		n1, err := store.PurgeAudit(cctx, st.Q(), p, func(n int64) {
+			batches = append(batches, n)
+			cancel() // stop after the first batch
+		})
+		if !errors.Is(err, context.Canceled) || n1 != store.AuditTrimBatch || len(batches) != 1 {
+			t.Fatalf("stopped after %d (%v), batches %v", n1, err, batches)
+		}
+		batches = nil
+		n2, err := store.PurgeAudit(ctx, st.Q(), p, func(n int64) { batches = append(batches, n) })
+		if err != nil || n1+n2 != int64(total) || len(batches) != 2 || batches[0] != store.AuditTrimBatch || batches[1] != 7 {
+			t.Fatalf("resumed: %d then %d (%v), batches %v", n1, n2, err, batches)
+		}
+		if left := count(t, st, `SELECT COUNT(*) FROM audit_log`); left != 1 {
+			t.Fatalf("%d rows left, want the purge record", left)
+		}
+	})
+}
+
+// The dry run's count stops at its cap and says so.
+func TestCountAuditPurgeIsBounded(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		putAudit(t, st, "data", 5*hour, 4*hour, 3*hour, 2*hour, hour)
+		for _, tc := range []struct {
+			cap  int64
+			n    int64
+			more bool
+		}{{10, 5, false}, {5, 5, false}, {3, 3, true}} {
+			n, more, err := store.CountAuditPurgeUpTo(ctx, st.Q(), store.AuditPurge{Category: "data", Before: trimNow}, tc.cap)
+			if err != nil || n != tc.n || more != tc.more {
+				t.Fatalf("cap %d: %d, more %v (%v)", tc.cap, n, more, err)
+			}
+		}
+		if n, more, err := store.CountAuditPurge(ctx, st.Q(), store.AuditPurge{}); err != nil || n != 5 || more {
+			t.Fatalf("%d %v %v", n, more, err)
+		}
+	})
 }

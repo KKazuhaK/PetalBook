@@ -64,7 +64,8 @@ import type {
   AuditKinds,
   AuditList,
   AuditPurgeInput,
-  AuditPurgeResult,
+  AuditPurgeCount,
+  AuditPurgeStarted,
   AuthProvider,
   Passkey,
   ProviderInput,
@@ -364,13 +365,12 @@ export const adminApi = {
   },
   // The registry of kinds with their categories, and which optional categories are on in the caller's scope.
   auditKinds: (signal?: AbortSignal) => request<AuditKinds>('/admin/audit/kinds', { signal }),
-  // Deletes rows of the log by hand (site administrators); `dryRun` counts and deletes nothing.
-  purgeAudit: (input: AuditPurgeInput, dryRun = false, signal?: AbortSignal) =>
-    request<AuditPurgeResult>(`/admin/audit/purge${dryRun ? '?dry_run=true' : ''}`, {
-      method: 'POST',
-      body: input,
-      signal,
-    }),
+  // Counts what a purge by hand would delete (site administrators), at most a million; deletes nothing.
+  countAuditPurge: (input: AuditPurgeInput, signal?: AbortSignal) =>
+    request<AuditPurgeCount>('/admin/audit/purge?dry_run=true', { method: 'POST', body: input, signal }),
+  // Starts the purge: a job (202) that deletes in the background; follow it with useJob.
+  purgeAudit: (input: AuditPurgeInput, signal?: AbortSignal) =>
+    request<AuditPurgeStarted>('/admin/audit/purge', { method: 'POST', body: input, signal }),
   // The address of the CSV of a filter (the browser downloads it; the server streams it). A link cannot carry the scope
   // header, so in a tenant's scope the address names it (?scope=, which the server reads as the header).
   auditDownloadUrl: (filters: Partial<AuditFilters>, scope: string | null = null) => {
@@ -1178,20 +1178,22 @@ export function useAuditKinds() {
 export function useAuditPurgeCount(input: AuditPurgeInput, enabled: boolean) {
   return useQuery({
     queryKey: ['admin', 'audit-purge-count', input.category ?? 'all', input.before ?? ''],
-    queryFn: ({ signal }) => adminApi.purgeAudit(input, true, signal),
+    queryFn: ({ signal }) => adminApi.countAuditPurge(input, signal),
     enabled,
     gcTime: 0,
     staleTime: 0,
   })
 }
 
-// The purge itself; the log and its registry are read again after it.
+// Starts the purge, which runs as a job: the caller follows `job.id` with useJob and calls useAuditPurged when it ends.
 export function usePurgeAudit() {
+  return useMutation({ mutationFn: (input: AuditPurgeInput) => adminApi.purgeAudit(input) })
+}
+
+// Reads the log and its registry again once a purge has ended.
+export function useAuditPurged() {
   const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (input: AuditPurgeInput) => adminApi.purgeAudit(input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'audit'] }),
-  })
+  return () => qc.invalidateQueries({ queryKey: ['admin', 'audit'] })
 }
 
 // The query of a set of filters, in a fixed order, without what is empty: the same string for the same view.
