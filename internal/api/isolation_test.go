@@ -180,6 +180,7 @@ type isoEntry struct {
 var isolationRoutes = map[string]isoEntry{
 	"GET /api/meta":                        {kind: isoList},
 	"GET /api/session":                     {kind: isoExempt, reason: "the caller's own user"},
+	"GET /api/admin/scopes":                {kind: isoExempt, reason: "lists the caller's own subject: the tenants they hold tenant.settings.read in, never another's"},
 	"GET /api/admin/permissions":           {kind: isoExempt, reason: "the registry of permission keys: the same for every tenant"},
 	"POST /api/setup":                      {kind: isoExempt, reason: "public: nothing of a tenant"},
 	"POST /api/login":                      {kind: isoExempt, reason: "public: the account that signs in decides the tenant"},

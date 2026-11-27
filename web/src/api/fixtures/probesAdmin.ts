@@ -232,6 +232,7 @@ export function adminProbes(fx: FixtureServer): Call[] {
     ['DELETE', `${S}/view`],
     ['GET', '/api/admin/status'],
     ['GET', '/api/admin/permissions'],
+    ['GET', '/api/admin/scopes'],
     ['GET', '/api/admin/storage'],
     ['GET', '/api/admin/storage/people'],
     ['GET', '/api/admin/storage/people/01FXDAVE01'],

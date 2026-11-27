@@ -8,7 +8,7 @@ import { seedAdminDemo } from '../src/api/fixtures/data/adminDemo.ts'
 import { addNotification, addProblems, approveApp, withAuthorizationServer } from '../src/api/fixtures/data/area.ts'
 import { githubInstallations, githubPendingClaims, githubProvider } from '../src/api/fixtures/data/connections.ts'
 import { sharedSpace, type FixtureData, type FixtureOptions } from '../src/api/fixtures/data/model.ts'
-import { INVITE_TOKEN, MOCK_ADMIN, SETUP_TOKEN } from '../src/api/fixtures/data/people.ts'
+import { INVITE_TOKEN, MEMBER_PERMISSIONS, MOCK_ADMIN, SETUP_TOKEN } from '../src/api/fixtures/data/people.ts'
 import { addGroup, addPerson } from '../src/api/fixtures/data/scenes.ts'
 import { createFixtureServer } from '../src/api/fixtures/server.ts'
 
@@ -30,7 +30,11 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 //   MOCK_REMOTE=ok|offline|rewritten|error  the first space follows a remote repository in that state
 //   MOCK_OAUTH=1     the server has an authorization server: a consent page to look at, and a connected app
 //   MOCK_EMAILS=1    mail is on, an account may have several addresses, and the administrator has two
-//   MOCK_ORGS=1      mail, tenants, registration and creating one's own organization are on
+//   MOCK_ORGS=1      mail, tenants, registration and creating one's own organization are on; the administrator
+//                    also administers two tenants of their own (the console's scope selector)
+//   MOCK_TENANT_ADMIN=1  the administrator is a tenant administrator, not a site administrator
+//   MOCK_NARROW_ROLE=1   with MOCK_MEMBER_ADMIN: the role in Acme only reads
+//   MOCK_MEMBER_ADMIN=1  with MOCK_ORGS: a plain member who administers only Acme (the console opens in its scope)
 function optionsFromEnv(): FixtureOptions {
   const mode = process.env.MOCK_MODE ?? 'single'
   if (mode === 'single') return {}
@@ -123,6 +127,28 @@ function seedAccounts(d: FixtureData) {
     d.auth.register = true
     d.auth.orgCreation = true
     for (const key of ['features.tenancy', 'features.registration', 'features.orgCreation']) d.features[key] = true
+    for (const [slug, name] of [
+      ['acme', 'Acme'],
+      ['northwind', 'Northwind Traders International Holdings (Europe, Middle East and Africa)'],
+    ]) {
+      const id = `01TN${slug.toUpperCase().padEnd(6, 'X').slice(0, 6)}`
+      d.admin.tenants.push({ ...d.admin.tenants[0], id, slug, name, default: false, origin: 'admin' })
+      d.admin.scopeTenants.push(id)
+    }
+  }
+  if (process.env.MOCK_MEMBER_ADMIN === '1') {
+    const me = d.auth.users[0]
+    me.siteAdmin = false
+    me.role = 'member'
+    me.permissions = MEMBER_PERMISSIONS
+    d.admin.scopeTenants = d.admin.scopeTenants.filter((id) => id.includes('ACME'))
+    if (process.env.MOCK_NARROW_ROLE === '1')
+      for (const id of d.admin.scopeTenants) d.admin.scopeKeys[id] = ['tenant.settings.read', 'tenant.users.read']
+  }
+  if (process.env.MOCK_TENANT_ADMIN === '1') {
+    const me = d.auth.users[0]
+    me.siteAdmin = false
+    me.permissions = (me.permissions ?? []).filter((k) => !k.startsWith('site.'))
   }
 }
 

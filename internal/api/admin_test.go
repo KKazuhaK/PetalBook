@@ -25,6 +25,11 @@ func adminRoutes(t *testing.T) []api.RouteInfo {
 	var out []api.RouteInfo
 	for _, rt := range api.Routes() {
 		if strings.HasPrefix(rt.Pattern, "/api/admin/") {
+			// The scope list asks for no key: it answers what the caller administers, and 403 for nothing.
+			if rt.Pattern == "/api/admin/scopes" {
+				out = append(out, rt)
+				continue
+			}
 			if !(rt.Admin || rt.SiteAdmin) || !rt.AccountsOnly {
 				t.Errorf("%s %s must be admin and accounts-only", rt.Method, rt.Pattern)
 			}

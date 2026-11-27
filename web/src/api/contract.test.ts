@@ -1487,6 +1487,17 @@ function suite(target: Target) {
           expect((await call(m.browser, 'GET', '/api/settings')).status).toBe(200)
         })
 
+        it("the console's scope list holds the site for a site administrator, and is for administrators only", async () => {
+          const list = (await call(admin, 'GET', '/api/admin/scopes')).json.scopes as {
+            kind: string
+            capacity: string
+          }[]
+          expect(list[0]).toMatchObject({ kind: 'site', capacity: 'site_admin' })
+          expect(list.filter((s) => s.kind === 'site')).toHaveLength(1)
+          const m = await newMember(uniq('sc'))
+          expect((await call(m.browser, 'GET', '/api/admin/scopes')).status).toBe(403)
+        })
+
         it('mail is off until an administrator enables it: registration and reset answer as switched off, nothing can open registration', async () => {
           const mail = (await call(admin, 'GET', '/api/admin/mail')).json
           // A server this suite runs against has not been given SMTP.
@@ -2288,6 +2299,64 @@ function suite(target: Target) {
           } finally {
             await call(admin, 'DELETE', `/api/invites/${inv.id}`)
             await call(admin, 'DELETE', `/api/admin/tenants/${tenantId}`)
+            await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: was })
+          }
+        })
+      })
+
+      describe('the console scope list of a tenant administrator', () => {
+        it('holds their tenant, with the keys they hold there, and no site entry', async () => {
+          const was = await siteValue(admin, 'features.tenancy')
+          await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: true })
+          const username = uniq('qs')
+          const made = await call(admin, 'POST', '/api/admin/tenants', {
+            slug: `qs${run}`
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, '')
+              .slice(0, 24),
+            name: 'Scopes',
+            admin: { username },
+          })
+          expect(made.status).toBe(201)
+          const tenantId = made.json.id as string
+          try {
+            const b = browser()
+            const r = await call(b, 'POST', '/api/invites/accept', {
+              token: made.json.invite.token,
+              username,
+              name: 'Scope Admin',
+              password: 'a-long-password',
+            })
+            expect(r.status).toBe(201)
+            created.users.push(r.json.user.id)
+            const scopes = (await call(b, 'GET', '/api/admin/scopes')).json.scopes as {
+              kind: string
+              id: string
+              name: string
+              capacity: string
+              permissions: string[]
+            }[]
+            expect(scopes).toHaveLength(1)
+            expect([scopes[0].kind, scopes[0].id, scopes[0].name, scopes[0].capacity]).toEqual([
+              'tenant',
+              tenantId,
+              'Scopes',
+              'tenant_admin',
+            ])
+            expect(scopes[0].permissions).toContain('tenant.settings.read')
+            expect(scopes[0].permissions.some((k) => k.startsWith('site.'))).toBe(false)
+            // The list is a person's own route: the scope header on it is refused.
+            expect(
+              (
+                await call(b, 'GET', '/api/admin/scopes', undefined, {
+                  ...JSON_HEADERS,
+                  'PetalBook-Scope': `tenant:${tenantId}`,
+                })
+              ).status,
+            ).toBe(400)
+          } finally {
+            // A tenant with a person in it is not deleted: it is disabled, as the suite disables its people.
+            await call(admin, 'PATCH', `/api/admin/tenants/${tenantId}`, { disabled: true })
             await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: was })
           }
         })

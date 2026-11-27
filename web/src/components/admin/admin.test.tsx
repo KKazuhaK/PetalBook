@@ -97,7 +97,9 @@ describe('who can reach the administration', () => {
     await settle(() => text().includes(t.notFound), 'not found')
     expect(heading()).toBeUndefined()
     expect(text()).not.toContain(tc.sections.spaces)
-    expect(adminCalls()).toEqual([])
+    // Only the list of what they administer is asked (a member may administer another tenant), and it is empty.
+    await settle(() => adminCalls().length > 0, 'the list asked')
+    expect(adminCalls().map((r) => r.url)).toEqual(['/api/admin/scopes'])
   })
 
   it('a single-user server has no administration: the address is not found', async () => {

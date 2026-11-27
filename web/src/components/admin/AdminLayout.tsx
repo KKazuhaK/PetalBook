@@ -12,6 +12,7 @@ import { tc } from '@/i18n/console'
 import type { NavSection } from './adminNav'
 import { VersionBadge } from './VersionBadge'
 import { useAdminPaths, useScope } from './TenantScope'
+import { ScopeSelector } from './ScopeSelector'
 
 // A row of the rail. Collapsed, a row is a 40 px square centred in the rail, so the icon is on the rail's centre line and
 // the highlight is a square round it; open, it is a full-width row.
@@ -125,6 +126,7 @@ export function AdminLayout({
             </button>
             <p className="min-w-0 flex-1 truncate text-sm font-medium">{current?.label ?? tc.title}</p>
           </header>
+          <ScopeSelector variant="bar" active={active} />
           <main className="mx-auto w-full max-w-6xl min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">{children}</main>
         </div>
         <Sheet open={open} onOpenChange={setOpen}>
@@ -142,6 +144,7 @@ export function AdminLayout({
               collapsed={false}
               Title="p"
               footer={<VersionBadge site={site} collapsed={false} />}
+              scopeControl={<ScopeSelector variant="drawer" active={active} onNavigate={() => setOpen(false)} />}
               onNavigate={() => setOpen(false)}
             />
           </SheetContent>
@@ -158,6 +161,7 @@ function Nav({
   spaceName,
   collapsed,
   footer,
+  scopeControl,
   onNavigate,
   Title,
 }: {
@@ -167,6 +171,8 @@ function Nav({
   spaceName?: string
   collapsed: boolean
   footer?: ReactNode
+  // Where the console acts (the phone's menu has it here; a wider screen has a strip above the page).
+  scopeControl?: ReactNode
   onNavigate?: () => void
   // The heading of the page: the sidebar's own, the drawer's is a copy and is none.
   Title?: 'h1' | 'p'
@@ -195,6 +201,7 @@ function Nav({
         </Link>
         {Title && <Title className={collapsed ? 'sr-only' : 'px-3 pt-4 pb-1 text-lg font-semibold'}>{tc.title}</Title>}
       </div>
+      {scopeControl}
       <nav aria-label={tc.nav} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         <ul className="grid gap-0.5">
           {sections.map(({ key, label, Icon }) => {

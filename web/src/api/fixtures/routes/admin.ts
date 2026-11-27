@@ -11,6 +11,7 @@ import type {
   DailyApi,
   Group,
   GroupPerson,
+  PermissionKey,
   Job,
   PersonUsage,
   RecycleItem,
@@ -23,6 +24,7 @@ import type {
   User,
   UserDeletionPlan,
 } from '../../types.ts'
+import registries from '../../generated/registries.json' with { type: 'json' }
 import { TENANT_KEYS } from '../data/settingDefs.ts'
 import {
   changeProvider,
@@ -594,6 +596,37 @@ export const adminRoutes: Route[] = [
     }),
   ],
   ['GET', '/api/admin/permissions', () => ({ permissions: [] })],
+  // Where the signed-in person may act: the site for a site administrator, else their own tenant, and every tenant
+  // they hold a role in besides (scopeTenants), by name.
+  [
+    'GET',
+    '/api/admin/scopes',
+    (c) => {
+      const me = signedIn(c.data)
+      const mine = me.permissions ?? []
+      const site = mine.includes('site.tenants.manage')
+      const own = mine.includes('tenant.settings.read')
+      // The keys a tenant's own role gives: every tenant key (the fixture has no narrower role).
+      const tenantKeys = registries.permissions.filter((p) => p.scope === 'tenant').map((p) => p.name as PermissionKey)
+      const ids = new Set([...(!site && own ? [me.tenant?.id ?? DEFAULT_TENANT] : []), ...A(c).scopeTenants])
+      const tenants = A(c)
+        .tenants.filter((t) => ids.has(t.id))
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.id.localeCompare(b.id))
+        .map((t) => ({
+          kind: 'tenant' as const,
+          id: t.id,
+          name: t.name,
+          capacity: 'tenant_admin' as const,
+          permissions: A(c).scopeKeys[t.id] ?? tenantKeys,
+        }))
+      const scopes = [
+        ...(site ? [{ kind: 'site' as const, capacity: 'site_admin' as const, permissions: mine }] : []),
+        ...tenants,
+      ]
+      if (scopes.length === 0) throw new Refusal(403, 'forbidden', 'Only an administrator may do that.')
+      return { scopes }
+    },
+  ],
 
   // --- storage and usage ---
   [

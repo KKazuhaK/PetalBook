@@ -13,7 +13,8 @@ import {
   type UseQueryResult,
 } from '@tanstack/react-query'
 import { API_BASE, ApiError, enc, request } from './client'
-import { keys } from './hooks'
+import { keys, useSession } from './hooks'
+import { administers } from '@/lib/access'
 import { SCOPE_PARAM } from '@/lib/adminScope'
 import {
   dailyOf,
@@ -47,6 +48,7 @@ import type {
   SiteSetting,
   SecretMeta,
   Tenancy,
+  ConsoleScope,
   Tenant,
   TenantList,
   TenantOverview,
@@ -248,6 +250,8 @@ export const adminApi = {
     const qs = q.toString()
     return request<TenantList>(`/admin/tenants${qs ? `?${qs}` : ''}`, { signal })
   },
+  // The places the console may act in: the site and every tenant the person administers. Never sent in a scope.
+  scopes: (signal?: AbortSignal) => request<{ scopes: ConsoleScope[] }>('/admin/scopes', { signal }),
   tenant: (id: string, signal?: AbortSignal) => request<Tenant>(`/admin/tenants/${enc(id)}`, { signal }),
   tenantOverview: (id: string, signal?: AbortSignal) =>
     request<TenantOverview>(`/admin/tenants/${enc(id)}/overview`, { signal }),
@@ -1038,6 +1042,8 @@ function useGroupsChanged() {
   return () =>
     Promise.all([
       qc.invalidateQueries({ queryKey: keys.adminGroups }),
+      // A role may be held through a group: the places the console may act in follow its people.
+      qc.invalidateQueries({ queryKey: keys.consoleScopes }),
       qc.invalidateQueries({ queryKey: keys.account }),
       qc.invalidateQueries({ queryKey: keys.spaces }),
       qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'space' && q.queryKey[2] === 'members' }),
@@ -1405,6 +1411,31 @@ export function usePutSpaceStorage() {
     onSuccess: (_r, { id }) => Promise.all([changed(id), qc.invalidateQueries({ queryKey: keys.adminStorage })]),
   })
 }
+// The places the console may act in (GET /api/admin/scopes), as the list; none for a person who administers nothing (the
+// server refuses them, and the console is not theirs). A request of the site's own client, never sent in a scope.
+export const consoleScopesQuery = {
+  queryKey: keys.consoleScopes,
+  queryFn: async ({ signal }: { signal: AbortSignal }): Promise<ConsoleScope[]> => {
+    try {
+      return (await adminApi.scopes(signal)).scopes
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) return []
+      throw e
+    }
+  },
+  staleTime: 60_000,
+}
+
+// Whether the person has a console: they administer something in their own tenant (known from the session), or the
+// server lists a place they administer, which it is asked only of the rest (a member of one tenant may administer
+// another through a role). `pending` while that is asked.
+export function useConsoleAccess(): { open: boolean; pending: boolean } {
+  const session = useSession().data
+  const own = administers(session?.user)
+  const q = useQuery({ ...consoleScopesQuery, enabled: session?.mode === 'accounts' && !!session.user && !own })
+  return { open: own || (q.data?.length ?? 0) > 0, pending: !own && q.isPending && q.fetchStatus !== 'idle' }
+}
+
 export function useEvictSpace() {
   const changed = useAdminSpaceChanged()
   return useMutation({ mutationFn: (id: string) => adminApi.evictSpace(id), onSuccess: (_r, id) => changed(id) })

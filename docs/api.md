@@ -10530,10 +10530,34 @@ and a space's content do not read it.
 
 **Capacity.** Every audit row written for an administration request records
 the capacity used: `site_admin` for a holder of the route's key across the
-site (in a tenant's scope too), `tenant_admin` for a key held in the tenant,
-none for anything else (sign-ins, a person's own account). A bulk job's and a
+site (in the site's scope, and in a tenant's scope they hold nothing in
+themselves), `tenant_admin` for a key held in the tenant (also for a site
+administrator who holds a role in that tenant, who acts there as its
+administrator and writes no `tenant_console_opened`), none for anything else (sign-ins, a person's own account). A bulk job's and a
 purge's rows record the capacity of the request that started them; a page
 opened in a view records the viewer's capacity.
+
+#### `GET /api/admin/scopes`
+
+3.6 (c7). Where the console may act, for its scope selector: `{"scopes":
+[{"kind": "site", "capacity": "site_admin", "permissions": […]}, {"kind":
+"tenant", "id", "name", "capacity": "tenant_admin", "permissions": […]}]}`.
+`permissions` are the keys the person holds in that scope, as a request there
+is held to (a tenant's: its tenant keys, which the web console gates its
+controls on inside `/admin/t/{id}`). `capacity` is `tenant_admin` when the
+tenant's own roles give the person everything they hold there, `site_admin`
+when some of it is held only across the site (a site administrator with a
+narrow role in the tenant): such acts are a site administrator's, and entering
+the scope is recorded as `tenant_console_opened`. `site` comes first, for whoever holds
+`tenant.settings.read` across the site; then every tenant the person holds it
+in through a role of that tenant (their own tenant's administrator, and a
+built-in or custom role held in another tenant), by name. It asks for no key
+of the person's own tenant: a member of one tenant who administers another has
+the console for that one. `403 forbidden` when the list would be empty (no
+console). It reads the session's cached subject and the cached tenants' names:
+no query. It is a person's own route, so the scope header on it is `400`. A
+site administrator's other tenants are not listed (there may be thousands):
+they are entered from the tenant list.
 
 ### Taking over a space
 

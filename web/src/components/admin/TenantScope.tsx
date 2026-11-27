@@ -1,8 +1,10 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
+import { QueryClientProvider, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { LogOut, UserCog } from 'lucide-react'
+import { consoleScopesQuery } from '@/api/admin'
 import { keys, useSession } from '@/api/hooks'
+import type { SessionInfo } from '@/api/types'
 import { acrossSite } from '@/lib/access'
 import { scopedClient } from '@/lib/scopedClient'
 import { adminPath, adminTenantPath, adminUserPath, type AdminSection } from '@/lib/urls'
@@ -17,6 +19,17 @@ import { tt } from '@/i18n/tenants'
 // reads through the site's client and never carries the header.
 
 const ScopeContext = createContext<string | null>(null)
+
+// The site's own client, which a tenant's scope sits under: what the console's frame reads without the scope (the
+// selector's list of scopes).
+// The session as a tenant's scope shows it, by the scope's client.
+const scopedSessions = new WeakMap<QueryClient, SessionInfo>()
+
+const MainClientContext = createContext<QueryClient | null>(null)
+export function useMainClient(): QueryClient {
+  const here = useQueryClient()
+  return useContext(MainClientContext) ?? here
+}
 
 // The tenant whose scope the page is in, null for the whole site.
 export const useScope = (): string | null => useContext(ScopeContext)
@@ -45,17 +58,33 @@ export function useAcrossSite(): boolean {
 export function TenantScope({ tenant, children }: { tenant: string | null; children: ReactNode }) {
   const main = useQueryClient()
   const who = useSession().data?.user?.id ?? null
+  const listed = useQuery(consoleScopesQuery, main).data
   const client = useMemo(() => {
     if (tenant === null) return main
     const c = scopedClient(main, tenant, who, keys.tenants)
-    const session = main.getQueryData(keys.session)
-    if (session && c.getQueryData(keys.session) === undefined) c.setQueryData(keys.session, session)
+    const session = main.getQueryData<SessionInfo>(keys.session)
+    if (session) {
+      // Inside a tenant's scope the person holds what that scope gives them (the keys the list says, else a site
+      // administrator's tenant keys: their site keys are set aside there), so what the console offers is what a
+      // request in the scope is held to. The scope's own cache keeps it; reading the session again keeps it too.
+      const keysHere =
+        listed?.find((s) => s.kind === 'tenant' && s.id === tenant)?.permissions ??
+        (session.user?.permissions ?? []).filter((k) => !k.startsWith('site.'))
+      const here: SessionInfo = session.user
+        ? { ...session, user: { ...session.user, siteAdmin: false, permissions: keysHere } }
+        : session
+      scopedSessions.set(c, here)
+      c.setQueryDefaults(keys.session, { queryFn: () => Promise.resolve(scopedSessions.get(c) ?? here) })
+      c.setQueryData(keys.session, here)
+    }
     return c
-  }, [main, tenant, who])
+  }, [main, tenant, who, listed])
   return (
-    <ScopeContext.Provider value={tenant}>
-      {client === main ? children : <QueryClientProvider client={client}>{children}</QueryClientProvider>}
-    </ScopeContext.Provider>
+    <MainClientContext.Provider value={main}>
+      <ScopeContext.Provider value={tenant}>
+        {client === main ? children : <QueryClientProvider client={client}>{children}</QueryClientProvider>}
+      </ScopeContext.Provider>
+    </MainClientContext.Provider>
   )
 }
 

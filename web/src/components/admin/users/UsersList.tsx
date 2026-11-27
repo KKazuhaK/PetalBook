@@ -26,7 +26,7 @@ import { absoluteTime } from '@/lib/time'
 import { useAcrossSite, useAdminPaths } from '../TenantScope'
 import { useCursorPages } from '@/lib/useCursorPages'
 import { useDebounced } from '@/lib/useDebounced'
-import { adminKindOf, isAdminAccount } from '@/lib/access'
+import { adminKindOf, can, isAdminAccount } from '@/lib/access'
 import { useTablePrefs } from '@/lib/tablePrefs'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
@@ -45,6 +45,9 @@ const isSort = (v: string): v is UserSort => (SORTS as readonly string[]).includ
 export function UsersList() {
   const { path: adminPath, userPath: adminUserPath } = useAdminPaths()
   const me = useSession().data?.user
+  // What the person holds in the scope the console is in (a tenant's, inside it): who may only read is not offered the writes.
+  const canManage = can(me, 'tenant.users.manage')
+  const canInvite = can(me, 'tenant.invites.manage')
   const navigate = useNavigate()
   const qc = useQueryClient()
   const prefs = useTablePrefs('users')
@@ -249,12 +252,14 @@ export function UsersList() {
             <option value="inactive">{tc.users.inactive(INACTIVE_DAYS)}</option>
           </NativeSelect>
         </div>
-        <AdminPageActions>
-          <Button className="h-10" render={<Link to={adminPath('users', 'invites')} />} nativeButton={false}>
-            <UserPlus aria-hidden="true" />
-            {tc.users.invite}
-          </Button>
-        </AdminPageActions>
+        {canInvite && (
+          <AdminPageActions>
+            <Button className="h-10" render={<Link to={adminPath('users', 'invites')} />} nativeButton={false}>
+              <UserPlus aria-hidden="true" />
+              {tc.users.invite}
+            </Button>
+          </AdminPageActions>
+        )}
       </div>
       <FormMessage focusRef={messageRef}>{error ? error.message : ''}</FormMessage>
       <DataTable
@@ -278,14 +283,16 @@ export function UsersList() {
         }}
         sort={sort}
         onSort={(s) => isSort(s.key) && setSort({ key: s.key, order: s.order })}
-        selection={{ selected: picked, onChange: setPicked }}
+        selection={canManage ? { selected: picked, onChange: setPicked } : undefined}
         bulk={
-          <BulkBar
-            count={picked.size}
-            actions={['delete_users', 'disable_users', 'enable_users']}
-            onAction={setBulk}
-            onClear={() => setPicked(new Set())}
-          />
+          canManage ? (
+            <BulkBar
+              count={picked.size}
+              actions={['delete_users', 'disable_users', 'enable_users']}
+              onAction={setBulk}
+              onClear={() => setPicked(new Set())}
+            />
+          ) : undefined
         }
         actions={(u) => (
           <>
@@ -295,33 +302,35 @@ export function UsersList() {
               ariaLabel={t.fmt.labelled(tc.table.view, u.name)}
               render={<Link to={adminUserPath(u.id)} />}
             />
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                aria-label={t.fmt.labelled(tc.table.more, u.name)}
-                className="inline-flex size-10 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 data-popup-open:bg-muted"
-              >
-                <Ellipsis className="size-4" aria-hidden="true" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-44">
-                <DropdownMenuItem className="min-h-10" onClick={() => navigate(adminUserPath(u.id))}>
-                  <Eye />
-                  {tc.table.view}
-                </DropdownMenuItem>
-                <DropdownMenuItem className="min-h-10" disabled={busy === u.id} onClick={() => void toggle(u)}>
-                  {u.disabled ? <CircleCheck /> : <Ban />}
-                  {u.disabled ? tc.users.enable : tc.users.disable}
-                </DropdownMenuItem>
-                {u.id !== me?.id && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem className="min-h-10 text-destructive" onClick={() => setDeleting(u)}>
-                      <Trash2 />
-                      {tc.users.delete}
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {canManage && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  aria-label={t.fmt.labelled(tc.table.more, u.name)}
+                  className="inline-flex size-10 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 data-popup-open:bg-muted"
+                >
+                  <Ellipsis className="size-4" aria-hidden="true" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-44">
+                  <DropdownMenuItem className="min-h-10" onClick={() => navigate(adminUserPath(u.id))}>
+                    <Eye />
+                    {tc.table.view}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="min-h-10" disabled={busy === u.id} onClick={() => void toggle(u)}>
+                    {u.disabled ? <CircleCheck /> : <Ban />}
+                    {u.disabled ? tc.users.enable : tc.users.disable}
+                  </DropdownMenuItem>
+                  {u.id !== me?.id && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem className="min-h-10 text-destructive" onClick={() => setDeleting(u)}>
+                        <Trash2 />
+                        {tc.users.delete}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </>
         )}
       />

@@ -4,7 +4,7 @@ import { useTenant } from '@/api/admin'
 import { useSession } from '@/api/hooks'
 import { PageFallback } from '@/components/common'
 import { NotFoundPage } from '@/pages/NotFoundPage'
-import { acrossSite } from '@/lib/access'
+import { acrossSite, administers } from '@/lib/access'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
@@ -13,6 +13,7 @@ import { AdminPageHeader } from './AdminPageHeader'
 import { AdminTabs } from './AdminTabs'
 import { navFor } from './adminNav'
 import { useConsoleFeature } from './useConsoleFeature'
+import { useConsoleScopes } from './ScopeSelector'
 
 // The tenant made with the server: its people are no organisation's (their spaces are their own).
 const DEFAULT_TENANT_ID = '0000000000'
@@ -39,20 +40,35 @@ export default function AdminRoute() {
   const scoped = parts[0] === 't' && parts[1] !== undefined
   const scope = scoped ? parts[1] : null
   const rest = scoped ? parts.slice(2) : parts
-  const siteUser = acrossSite(useSession().data?.user)
-  // A tenant's own administrator has no scope to enter: their console is their tenant's already.
-  if (scope !== null && !siteUser) return <Navigate to={['/admin', ...rest].join('/')} replace />
+  const user = useSession().data?.user
+  const siteUser = acrossSite(user)
+  const scopes = useConsoleScopes()
+  // Who is not a site administrator may enter the scope of a tenant they hold a role in besides their own (the list
+  // of scopes says which); their own tenant is their console already, and any other is an address that leads there.
+  if (scope !== null && !siteUser) {
+    if (scopes.isPending) return <PageFallback />
+    const listed = scope !== user?.tenant?.id && scopes.data?.some((s) => s.kind === 'tenant' && s.id === scope)
+    if (!listed) return <Navigate to={['/admin', ...rest].join('/')} replace />
+  }
+  // Someone who administers nothing in their own tenant, only others (a role there), lands in the first of them.
+  if (scope === null && !administers(user)) {
+    if (scopes.isPending) return <PageFallback />
+    const first = scopes.data?.find((s) => s.kind === 'tenant' && s.id)
+    if (first?.id) return <Navigate to={['/admin', 't', encodeURIComponent(first.id), ...rest].join('/')} replace />
+  }
   return (
     <TenantScope tenant={scope}>
-      <Console scope={scope} segments={rest} />
+      <Console scope={scope} segments={rest} siteUser={siteUser} />
     </TenantScope>
   )
 }
 
-function Console({ scope, segments }: { scope: string | null; segments: string[] }) {
+function Console({ scope, segments, siteUser }: { scope: string | null; segments: string[]; siteUser: boolean }) {
   const [first, second, third] = segments
   const { path } = useAdminPaths()
-  const site = acrossSite(useSession().data?.user) && scope === null
+  // A site administrator acting in a tenant: asked of the site's own session (inside the scope the session is the scope's).
+  const actsAsSite = siteUser
+  const site = actsAsSite && scope === null
   const tenant = useTenant(scope)
   const ownTenant = useSession().data?.user?.tenant
   const ownTenantName = ownTenant?.name
@@ -88,7 +104,8 @@ function Console({ scope, segments }: { scope: string | null; segments: string[]
     <AdminLayout
       sections={sections}
       active={section.key}
-      banner={scope !== null ? <ScopeBanner tenantId={scope} name={tenant.data?.name} /> : undefined}
+      // A site administrator acting as a tenant's says so, and leads out to its page; a tenant's own administrator is in their console, not acting.
+      banner={scope !== null && actsAsSite ? <ScopeBanner tenantId={scope} name={tenant.data?.name} /> : undefined}
     >
       {person ? (
         <PersonPage id={second} tab={third} />

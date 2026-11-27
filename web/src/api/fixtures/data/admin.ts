@@ -4,6 +4,7 @@
 
 import registries from '../../generated/registries.json' with { type: 'json' }
 import type {
+  PermissionKey,
   AdminDailyBody,
   AdminGrant,
   AdminSpace,
@@ -57,6 +58,11 @@ export interface AdminData {
   // The site's settings with the site's value of each; what a tenant sets of its own is in `tenantRules`.
   settings: SiteSetting[]
   tenants: Tenant[]
+  // The tenants the signed-in person administers by a role of their own besides their home one (the console's scope
+  // selector lists them).
+  scopeTenants: string[]
+  // The keys a tenant's role gives the signed-in person there, where it is narrower than a tenant administrator's.
+  scopeKeys: Record<string, PermissionKey[]>
   // A tenant's own value and rule per setting key: tenant id, then key.
   tenantRules: Record<string, Record<string, NonNullable<TenantSetting['tenant']>>>
   plans: Plan[]
@@ -121,6 +127,8 @@ export function createAdminData(now: number, admin: { id: string; username: stri
   return {
     settings: structuredClone(SETTING_DEFS),
     tenants: [tenant],
+    scopeTenants: [],
+    scopeKeys: {},
     tenantRules: {},
     plans: [],
     groups: [],

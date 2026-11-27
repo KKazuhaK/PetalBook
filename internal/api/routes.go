@@ -308,6 +308,7 @@ var routeTable = []route{
 	{"GET", "/api/admin/audit/kinds", needs(authz.TenantAuditRead), true, false, false, (*server).adminAuditKinds},
 	{"GET", "/api/admin/audit/download", needs(authz.TenantAuditRead).and(settings.FeatureAuditDownload), true, false, false, (*server).adminAuditDownload},
 	{"POST", "/api/admin/audit/purge", needs(authz.SiteAuditPurge).always(), true, false, false, (*server).adminAuditPurge},
+	{"GET", "/api/admin/scopes", signedIn.always(), true, false, false, (*server).adminScopes},
 	{"GET", "/api/admin/tenants", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminListTenants},
 	{"POST", "/api/admin/tenants", needs(authz.SiteTenantsManage).on(settings.FeatureTenancy), true, false, false, (*server).adminCreateTenant},
 	{"GET", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsRead).always(), true, false, false, (*server).adminGetTenant},

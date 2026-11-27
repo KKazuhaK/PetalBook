@@ -2079,6 +2079,19 @@ export interface TenantOverview {
     username: string
   }[]
 }
+// One place the console may act (GET /api/admin/scopes): the whole site, or a tenant the person administers, with what
+// they act as there.
+export interface ConsoleScope {
+  kind: 'site' | 'tenant'
+  // The tenant's id and name; absent for the site.
+  id?: string
+  name?: string
+  // tenant_admin when the tenant's own roles give them everything they hold there, site_admin when some of it is held
+  // only across the site.
+  capacity: 'site_admin' | 'tenant_admin'
+  // The keys they hold in that scope, as a request in it is held to (a tenant's: its tenant keys).
+  permissions: PermissionKey[]
+}
 export interface TenantList {
   items: Tenant[]
   next: string

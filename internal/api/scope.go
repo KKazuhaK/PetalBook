@@ -99,11 +99,22 @@ func (s *server) enterScope(c *call, rt route) bool {
 			writeError(c.w, http.StatusNotFound, "not_found", "No such tenant.")
 			return false
 		}
-		siteWide := c.p.Access.SiteWide(authz.TenantSettingsRead)
+		// A key held in the tenant itself is acted on as its administrator's;
+		// one held only across the site (the narrowed subject keeps the
+		// tenant keys of the site's) as a site administrator's, and that is
+		// recorded as entering the scope, from the keys the route uses.
+		if admin {
+			c.scope.capacity = auditlog.CapacityTenantAdmin
+			for _, k := range rt.access.keys() {
+				if capacityIn(c.p.Access, k, id) == auditlog.CapacitySiteAdmin {
+					c.scope.capacity = auditlog.CapacitySiteAdmin
+				}
+			}
+		}
 		p := *c.p
 		p.User, p.Access = narrowTo(p.User, p.Access, id)
 		c.p = &p
-		c.scope.tenant, c.scope.narrowed, c.scope.entered = id, true, siteWide
+		c.scope.tenant, c.scope.narrowed, c.scope.entered = id, true, c.scope.capacity == auditlog.CapacitySiteAdmin
 	}
 	if c.scope.capacity != "" {
 		c.r = c.r.WithContext(auditlog.WithCapacity(c.r.Context(), c.scope.capacity))
@@ -147,6 +158,72 @@ func capacityFor(access authz.Subject, k authz.Key) string {
 		return auditlog.CapacitySiteAdmin
 	}
 	return auditlog.CapacityTenantAdmin
+}
+
+// capacityIn is the capacity of a holder of k acting in tenant: a key held in
+// the tenant itself is a tenant administrator's, one held only across the site
+// a site administrator's.
+func capacityIn(access authz.Subject, k authz.Key, tenant string) string {
+	if access.Tenant[tenant].Has(k) {
+		return auditlog.CapacityTenantAdmin
+	}
+	return capacityFor(access, k)
+}
+
+// scopeResp is one place the console may act: the whole site, or a tenant.
+type scopeResp struct {
+	// Kind is "site" or "tenant"; ID and Name are the tenant's, empty for the site.
+	Kind string `json:"kind"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Capacity is what the person acts as there: tenant_admin when the tenant's own roles give them everything they
+	// hold in it, site_admin when some of it is held only across the site (authz.Subject.TenantCovers).
+	Capacity string `json:"capacity"`
+	// Permissions are the keys they hold in that scope, as a request in it is held to (a tenant's: its tenant keys).
+	Permissions []string `json:"permissions"`
+}
+
+// adminScopes answers GET /api/admin/scopes: where the person may act in the
+// console, from the subject the session cache holds and the cached tenants'
+// names, with no query. The site first, for whoever holds the tenant keys
+// across it; then every tenant they administer (hold tenant.settings.read in,
+// the key the header needs), by name. It asks for no key of the person's own
+// tenant: someone who is a member of theirs and administers another one has
+// the console for that. It is a person's own route (it never takes the scope
+// header), and answers 403 when the list would be empty: no console.
+func (s *server) adminScopes(c *call) {
+	out := []scopeResp{}
+	acc := c.p.Access
+	if acc.SiteWide(authz.TenantSettingsRead) {
+		out = append(out, scopeResp{Kind: "site", Capacity: auditlog.CapacitySiteAdmin, Permissions: acc.Site.Names()})
+	}
+	var tenants []scopeResp
+	for id, set := range acc.Tenant {
+		if !set.Has(authz.TenantSettingsRead) {
+			continue
+		}
+		ref, ok := s.opt.Store.TenantRefOf(id)
+		if !ok {
+			continue
+		}
+		capacity := auditlog.CapacityTenantAdmin
+		if !acc.TenantCovers(id) {
+			capacity = auditlog.CapacitySiteAdmin
+		}
+		tenants = append(tenants, scopeResp{Kind: "tenant", ID: id, Name: ref.Name, Capacity: capacity, Permissions: acc.TenantKeys(id).Names()})
+	}
+	slices.SortFunc(tenants, func(a, b scopeResp) int {
+		if n := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); n != 0 {
+			return n
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	out = append(out, tenants...)
+	if len(out) == 0 {
+		writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator may do that.")
+		return
+	}
+	writeJSON(c.w, http.StatusOK, map[string]any{"scopes": out})
 }
 
 // maxConsoleAudit bounds the console-open throttle's table.
