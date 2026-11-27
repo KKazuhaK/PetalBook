@@ -21,6 +21,10 @@ var mailRoutes = []route{
 	{"GET", "/api/register", public.always(), true, false, false, (*server).getRegister},
 	{"POST", "/api/register", public.always(), true, false, false, (*server).postRegister},
 	{"POST", "/api/register/confirm", public.always(), true, false, false, (*server).registerConfirm},
+	// The waiting page of a sign-up that asked to join an organisation (3.6 d5):
+	// the registration link's token shows the request, and withdraws it.
+	{"POST", "/api/register/request", public.always(), true, false, false, (*server).registerRequestStatus},
+	{"POST", "/api/register/request/withdraw", public.always(), true, false, false, (*server).registerRequestWithdraw},
 
 	{"POST", "/api/account/email/verify", signedIn.always(), true, false, false, (*server).accountEmailVerify},
 	// More than one address (accounts.multipleEmails): the list is GET /api/account's.
@@ -169,8 +173,11 @@ func (s *server) getRegister(c *call) {
 	// A person may also make an organisation of their own (the default tenant's
 	// terms apply), when the site lets them.
 	orgOpen := s.auth.OrgCreation(c.r.Context()).Open
-	if !rules.Open && !orgOpen {
-		writeJSON(c.w, http.StatusOK, map[string]any{"open": false, "orgCreation": map[string]bool{"open": false}})
+	// An address of a domain that joins its organisation signs up whatever
+	// the tenant's own registration says (3.6 d5).
+	domainJoin := s.auth.DomainJoinOpen(c.r.Context())
+	if !rules.Open && !orgOpen && !domainJoin {
+		writeJSON(c.w, http.StatusOK, map[string]any{"open": false, "orgCreation": map[string]bool{"open": false}, "domainJoin": false})
 		return
 	}
 	joinOpen := rules.Open
@@ -186,7 +193,7 @@ func (s *server) getRegister(c *call) {
 	if domains == nil {
 		domains = []string{}
 	}
-	writeJSON(c.w, http.StatusOK, map[string]any{"open": joinOpen, "orgCreation": map[string]bool{"open": orgOpen},
+	writeJSON(c.w, http.StatusOK, map[string]any{"open": joinOpen, "orgCreation": map[string]bool{"open": orgOpen}, "domainJoin": domainJoin,
 		"tenant": map[string]string{"slug": ref.Slug, "name": ref.Name}, "domains": domains, "termsUrl": rules.TermsURL, "privacyUrl": rules.PrivacyURL, "password": map[string]int{"minLength": auth.MinPasswordChars}})
 }
 
@@ -237,9 +244,16 @@ func (s *server) registerConfirm(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	res, err := s.auth.RegisterConfirm(c.r.Context(), req.Token, s.auth.ClientAddr(c.r))
+	res, err := s.auth.RegisterConfirm(c.r.Context(), req.Token, langOf(c, ""), s.auth.ClientAddr(c.r))
 	if err != nil {
 		s.fail(c.w, err)
+		return
+	}
+	if res.Request != nil {
+		// A request to join: no account yet, and nobody is signed in.
+		writeJSON(c.w, http.StatusAccepted, struct {
+			Request joinStatusResp `json:"request"`
+		}{joinStatusOf(res.Request)})
 		return
 	}
 	s.startSession(c, res.Token)
@@ -254,7 +268,11 @@ func (s *server) registerConfirm(c *call) {
 			Name    string `json:"name"`
 			Renamed bool   `json:"renamed"`
 		} `json:"tenant,omitempty"`
+		Joined *tenantNameResp `json:"joined,omitempty"`
 	}{signInAnswer: signInAnswer{user, hold}}
+	if res.Joined != nil {
+		out.Joined = &tenantNameResp{res.Joined.Slug, res.Joined.Name}
+	}
 	if res.Org != nil {
 		out.Tenant = &struct {
 			Slug    string `json:"slug"`
@@ -263,6 +281,59 @@ func (s *server) registerConfirm(c *call) {
 		}{res.Org.Slug, res.Org.Name, res.Renamed}
 	}
 	writeJSON(c.w, http.StatusCreated, out)
+}
+
+// tenantNameResp names an organisation in an answer.
+type tenantNameResp struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+// joinStatusResp is a request to join as its waiting page shows it.
+type joinStatusResp struct {
+	State     string         `json:"state"`
+	Tenant    tenantNameResp `json:"tenant"`
+	Username  string         `json:"username"`
+	Email     string         `json:"email"`
+	Created   string         `json:"created"`
+	Expires   string         `json:"expires"`
+	DecidedAt *string        `json:"decidedAt"`
+}
+
+func joinStatusOf(j *auth.JoinStatus) joinStatusResp {
+	return joinStatusResp{State: j.State, Tenant: tenantNameResp{j.TenantSlug, j.TenantName}, Username: j.Username, Email: j.Email,
+		Created: rfc3339(j.Created), Expires: rfc3339(j.Expires), DecidedAt: optTime(j.DecidedAt)}
+}
+
+// registerRequestStatus is POST /api/register/request {"token"}: the request
+// a registration link became, for its waiting page.
+func (s *server) registerRequestStatus(c *call) {
+	var req tokenReq
+	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
+		return
+	}
+	j, err := s.auth.JoinRequestStatus(c.r.Context(), req.Token, s.auth.ClientAddr(c.r))
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	c.w.Header().Set("Cache-Control", "no-store")
+	writeJSON(c.w, http.StatusOK, joinStatusOf(j))
+}
+
+// registerRequestWithdraw is POST /api/register/request/withdraw {"token"}:
+// the person withdraws their pending request.
+func (s *server) registerRequestWithdraw(c *call) {
+	var req tokenReq
+	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
+		return
+	}
+	j, err := s.auth.WithdrawJoinRequest(c.r.Context(), req.Token, s.auth.ClientAddr(c.r))
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusOK, joinStatusOf(j))
 }
 
 // --- email verification ---------------------------------------------------------------

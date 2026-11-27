@@ -33,8 +33,9 @@ type tenFx struct {
 	userB, spaceB, groupB, inviteB, tokenB, grantB string
 	userA, spaceA, groupA, inviteA                 string
 	secretB                                        string
-	// domainB is a domain B claimed; providerB a sign-in provider of B's own.
-	domainB, providerB string
+	// domainB is a domain B claimed; providerB a sign-in provider of B's own;
+	// joinB a request to join B by a domain (3.6 d5).
+	domainB, providerB, joinB string
 
 	// syncedB is a synced group of B that a provider of B maps (addMappedB).
 	syncedB string
@@ -129,6 +130,13 @@ func newTenFx(t *testing.T, a *acc) *tenFx {
 	if err := a.auth.ReloadProviders(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// A request to join B, waiting (3.6 d5), stored as a confirmed sign-up stores one.
+	f.joinB = "JOINREQB01"
+	if err := store.InsertJoinRequest(ctx, a.st.Q(), store.JoinRequest{ID: f.joinB, TenantID: f.tenB, Username: "joiner-b", Name: "Joiner",
+		Email: "joiner@acme-b.example", EmailKey: "joiner@acme-b.example", Domain: "acme-b.example", PasswordHash: "x", Lang: "en", TokenHash: "joinb-token-hash",
+		Created: now, Expires: now.Add(24 * time.Hour)}, now); err != nil {
+		t.Fatal(err)
+	}
 	a.auth.FlushAudit(ctx)
 	return f
 }
@@ -207,6 +215,8 @@ var isolationRoutes = map[string]isoEntry{
 	"GET /api/register":                    {kind: isoExempt, reason: "public: names a tenant by slug and shows only its public rules"},
 	"POST /api/register":                   {kind: isoExempt, reason: "public: makes a pending registration in the tenant named by slug; tested in the registration tests"},
 	"POST /api/register/confirm":           {kind: isoExempt, reason: "the secret token of a registration is the capability"},
+	"POST /api/register/request":           {kind: isoExempt, reason: "the secret token of the registration a request to join came from is the capability"},
+	"POST /api/register/request/withdraw":  {kind: isoExempt, reason: "the secret token of the registration a request to join came from is the capability"},
 	"POST /api/email/confirm":              {kind: isoExempt, reason: "the secret token of the link is the capability"},
 	"POST /api/password/forgot":            {kind: isoExempt, reason: "public: answers the same whatever exists; mail goes to the account's own address"},
 	"POST /api/password/reset/check":       {kind: isoExempt, reason: "the secret token of the link is the capability"},
@@ -376,6 +386,14 @@ var isolationRoutes = map[string]isoEntry{
 		body: func(f *tenFx, id string) any { return map[string]any{"restrictOrgs": true} }},
 	"DELETE /api/admin/tenants/{tenant}/domains/{domain}": {kind: isoParam, ids: func(f *tenFx) map[string]string {
 		return map[string]string{"tenant": f.tenB, "domain": f.domainB}
+	}},
+	// 3.6 d5: a tenant's requests to join by domain; B's request in B, and a made-up one.
+	"GET /api/admin/tenants/{tenant}/join-requests": {kind: isoParam},
+	"POST /api/admin/tenants/{tenant}/join-requests/{id}/approve": {kind: isoParam, ids: func(f *tenFx) map[string]string {
+		return map[string]string{"tenant": f.tenB, "id": f.joinB}
+	}},
+	"POST /api/admin/tenants/{tenant}/join-requests/{id}/deny": {kind: isoParam, ids: func(f *tenFx) map[string]string {
+		return map[string]string{"tenant": f.tenB, "id": f.joinB}
 	}},
 	"GET /api/admin/tenants/{tenant}/providers": {kind: isoParam},
 	"POST /api/admin/tenants/{tenant}/providers": {kind: isoParam, body: func(f *tenFx, id string) any {

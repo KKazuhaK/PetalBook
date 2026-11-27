@@ -106,8 +106,15 @@ type Config struct {
 	// RoutedProviders is every provider some verified domain is routed to,
 	// while the domain's tenant has features.domains.
 	RoutedProviders func(ctx context.Context) []string
-	Logger          *slog.Logger
-	Now             func() time.Time
+	// JoinDomain is how the domain of an address joins a tenant at sign-up
+	// (3.6 d5): the tenant that holds it verified, the domain's key and its
+	// join mode (store.JoinModeAuto or Request); ok false when it does not
+	// (the in-memory map of internal/domains).
+	JoinDomain func(ctx context.Context, email string) (tenant, domain, mode string, ok bool)
+	// JoiningTenants is every tenant some verified domain joins people to.
+	JoiningTenants func(ctx context.Context) []string
+	Logger         *slog.Logger
+	Now            func() time.Time
 }
 
 // Service is safe for concurrent use.
@@ -172,6 +179,7 @@ type Service struct {
 	mailCaps *ratelimit.Window // messages per address and per caller
 	testCaps *ratelimit.Window // test messages
 	regCaps  *ratelimit.Window // registrations per tenant
+	joinCaps *ratelimit.Window // requests to join by domain, per address and day
 	settings atomic.Pointer[settings.Service]
 }
 
@@ -610,6 +618,10 @@ type CreateParams struct {
 	PasswordHash   string
 	RegistrationID string
 	Terms          string
+	// JoinRequestID is the pending request to join the tenant that an
+	// administrator (JoinDecidedBy) approves by making the account (3.6 d5):
+	// its approval is written in the same transaction.
+	JoinRequestID, JoinDecidedBy string
 	// NewTenant makes the account's tenant in the same transaction, with the
 	// account as its administrator (Role must be admin; SiteAdmin and TenantID
 	// are ignored). CreateUser fills in the tenant it made.
@@ -764,6 +776,13 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return err
 				} else if !ok {
 					return errf(NotFound, "That link is not valid, or has expired.")
+				}
+			}
+			if p.JoinRequestID != "" {
+				if ok, err := store.DecideJoinRequest(ctx, q, p.TenantID, p.JoinRequestID, store.JoinApproved, p.JoinDecidedBy, cand.ID, s.now()); err != nil {
+					return err
+				} else if !ok {
+					return errJoinDecided()
 				}
 			}
 			// An organisation the account makes: the tenant first (the user row

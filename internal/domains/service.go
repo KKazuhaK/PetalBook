@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -94,6 +95,9 @@ type owner struct {
 	// provider is the sign-in provider the domain is routed to (3.6 d3; ""
 	// for none).
 	provider string
+	// join is how people of the domain join the tenant at sign-up (3.6 d5;
+	// store.JoinModeOff, Auto or Request).
+	join string
 }
 
 type book struct {
@@ -102,6 +106,9 @@ type book struct {
 	// routed is every (provider, tenant) some verified domain routes: a
 	// provider counts while one of its tenants has features.domains.
 	routes []route
+	// joining is every tenant with a verified domain people join it by,
+	// sorted (whether the registration page offers joining by domain).
+	joining []string
 }
 
 // Service is safe for concurrent use.
@@ -165,8 +172,11 @@ func (s *Service) Load(ctx context.Context) error {
 	b := &book{byDomain: make(map[string]owner, len(rows)), byTenant: map[string][]string{}}
 	seen := map[route]bool{}
 	for _, r := range rows {
-		b.byDomain[r.Domain] = owner{r.TenantID, r.RestrictOrgs, r.ProviderID}
+		b.byDomain[r.Domain] = owner{r.TenantID, r.RestrictOrgs, r.ProviderID, r.JoinMode}
 		b.byTenant[r.TenantID] = append(b.byTenant[r.TenantID], r.Domain)
+		if r.JoinMode != store.JoinModeOff && !slices.Contains(b.joining, r.TenantID) {
+			b.joining = append(b.joining, r.TenantID)
+		}
 		if rt := (route{r.ProviderID, r.TenantID}); r.ProviderID != "" && !seen[rt] {
 			seen[rt] = true
 			b.routes = append(b.routes, rt)
@@ -178,6 +188,7 @@ func (s *Service) Load(ctx context.Context) error {
 		}
 		return b.routes[i].tenant < b.routes[j].tenant
 	})
+	sort.Strings(b.joining)
 	s.book.Store(b)
 	return nil
 }
@@ -244,6 +255,32 @@ func (s *Service) Route(ctx context.Context, email string) (tenant, provider str
 		return "", "", false
 	}
 	return o.tenant, o.provider, true
+}
+
+// Join is how the domain of an address joins its tenant at sign-up (3.6 d5):
+// the tenant that holds the domain verified, the domain's key, and its join
+// mode (store.JoinModeAuto or Request); ok false when no tenant holds the
+// domain itself (a subdomain is another domain), its tenant does not have
+// features.domains now, or its mode is off. From memory: no query.
+func (s *Service) Join(ctx context.Context, email string) (tenant, domain, mode string, ok bool) {
+	d := EmailDomain(email)
+	o, found := s.book.Load().byDomain[d]
+	if !found || o.join == store.JoinModeOff || !s.on(ctx, o.tenant) {
+		return "", "", "", false
+	}
+	return o.tenant, d, o.join, true
+}
+
+// JoiningTenants is every tenant some verified domain joins people to, while
+// it has features.domains, sorted. From memory and the settings' cache.
+func (s *Service) JoiningTenants(ctx context.Context) []string {
+	var out []string
+	for _, t := range s.book.Load().joining {
+		if s.on(ctx, t) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // route is a provider some verified domain of the tenant is routed to.
@@ -378,16 +415,116 @@ func (s *Service) SetProvider(ctx context.Context, tenant, input, providerID str
 	return store.GetDomain(ctx, s.opt.Store.Q(), tenant, r.Domain)
 }
 
-// Remove deletes a tenant's claim.
-func (s *Service) Remove(ctx context.Context, tenant, input string) (store.DomainRow, error) {
+// ErrJoinMode refuses a join mode that is none of the three.
+var ErrJoinMode = refuse(http.StatusBadRequest, "invalid", "Join is off, auto or request.")
+
+// JoinModeOf is the stored form of a join mode as the API names it ("off",
+// "auto", "request"); ok false for another word.
+func JoinModeOf(api string) (string, bool) {
+	switch api {
+	case "off":
+		return store.JoinModeOff, true
+	case store.JoinModeAuto, store.JoinModeRequest:
+		return api, true
+	}
+	return "", false
+}
+
+// JoinModeName is the API's name of a stored join mode.
+func JoinModeName(mode string) string {
+	if mode == store.JoinModeOff {
+		return "off"
+	}
+	return mode
+}
+
+// Who is the administrator a change of a domain is made by, for the audit
+// rows of the requests it cancels.
+type Who struct{ ID, IP string }
+
+// SetJoin sets how people of a tenant's verified domain join it at sign-up
+// (3.6 d5; mode as the API names it). Turning it off cancels the domain's
+// pending requests, and audits each, in the same transaction: the caller has
+// had it confirmed. A mode other than off needs a verified domain.
+func (s *Service) SetJoin(ctx context.Context, tenant, input, mode string, who Who) (store.DomainRow, error) {
+	m, ok := JoinModeOf(mode)
+	if !ok {
+		return store.DomainRow{}, ErrJoinMode
+	}
 	r, err := s.Get(ctx, tenant, input)
 	if err != nil {
 		return r, err
 	}
-	if ok, err := store.DeleteDomain(ctx, s.opt.Store.Q(), tenant, r.Domain); err != nil {
+	if m != store.JoinModeOff && !r.Verified() {
+		return r, refuse(http.StatusConflict, "domain_required", "Verify the domain first: people join by a verified domain only.")
+	}
+	now := s.opt.Now()
+	err = s.opt.Store.Tx(ctx, func(q store.Q) error {
+		if m == store.JoinModeOff {
+			if err := s.cancelJoins(ctx, q, tenant, r.Domain, "join_off", who, now); err != nil {
+				return err
+			}
+		}
+		_, err := store.SetDomainJoin(ctx, q, tenant, r.Domain, m, now)
+		return err
+	})
+	if err != nil {
 		return r, err
-	} else if !ok {
-		return r, ErrNotFound
+	}
+	if r.Verified() {
+		s.Changed(ctx)
+	}
+	return store.GetDomain(ctx, s.opt.Store.Q(), tenant, r.Domain)
+}
+
+// PendingJoins are the ids of the pending requests of a tenant's domain
+// (given in any spelling), sorted: what removing it or turning its join off
+// would cancel.
+func (s *Service) PendingJoins(ctx context.Context, tenant, input string) ([]string, error) {
+	key, ok := Key(input)
+	if !ok {
+		return nil, nil
+	}
+	return store.PendingJoinIDs(ctx, s.opt.Store.Q(), tenant, key, s.opt.Now())
+}
+
+// cancelJoins cancels the pending requests of a tenant's domain, with an
+// audit row for each (reason: join_off, removed, lapsed, moved), in q.
+func (s *Service) cancelJoins(ctx context.Context, q store.Q, tenant, domain, reason string, who Who, at time.Time) error {
+	rows, err := store.CancelJoinRequests(ctx, q, tenant, domain, at)
+	if err != nil {
+		return err
+	}
+	for _, j := range rows {
+		err := notify.WithAudit(ctx, q, notify.JoinCancelled, notify.Entry{Actor: who.ID, IP: who.IP, Tenant: tenant, Username: j.Username, Now: at,
+			Detail: map[string]any{"request": j.ID, "username": j.Username, "email": j.Email, "domain": domain, "reason": reason}})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Remove deletes a tenant's claim, and cancels the domain's pending requests
+// to join (the caller has had that confirmed).
+func (s *Service) Remove(ctx context.Context, tenant, input string, who Who) (store.DomainRow, error) {
+	r, err := s.Get(ctx, tenant, input)
+	if err != nil {
+		return r, err
+	}
+	err = s.opt.Store.Tx(ctx, func(q store.Q) error {
+		if err := s.cancelJoins(ctx, q, tenant, r.Domain, "removed", who, s.opt.Now()); err != nil {
+			return err
+		}
+		if ok, err := store.DeleteDomain(ctx, q, tenant, r.Domain); err != nil {
+			return err
+		} else if !ok {
+			return ErrNotFound
+		}
+		return nil
+	})
+	if err != nil {
+		return r, err
 	}
 	if r.Verified() {
 		s.Changed(ctx)
@@ -402,7 +539,16 @@ func (s *Service) Assign(ctx context.Context, input, to, by string) (string, sto
 	if !ok {
 		return "", store.DomainRow{}, ErrNotFound
 	}
-	from, err := store.AssignDomain(ctx, s.opt.Store.Q(), key, to, by, s.opt.Now())
+	// The holder's pending requests to join by it are cancelled: the domain
+	// is the other tenant's now.
+	var from string
+	err := s.opt.Store.Tx(ctx, func(q store.Q) error {
+		var err error
+		if from, err = store.AssignDomain(ctx, q, key, to, by, s.opt.Now()); err != nil || from == to {
+			return err
+		}
+		return s.cancelJoins(ctx, q, from, key, "moved", Who{ID: by}, s.opt.Now())
+	})
 	if errors.Is(err, store.ErrNotFound) {
 		return "", store.DomainRow{}, refuse(http.StatusNotFound, "not_found", "No organization has verified that domain.")
 	}
@@ -682,6 +828,9 @@ func (s *Service) recheck(ctx context.Context, r store.DomainRow) (bool, error) 
 					}
 				}
 				if err := s.lapsed(ctx, q, r, missing, c); err != nil {
+					return err
+				}
+				if err := s.cancelJoins(ctx, q, r.TenantID, r.Domain, "lapsed", Who{}, c.At); err != nil {
 					return err
 				}
 				lapsed = true

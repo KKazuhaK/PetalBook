@@ -11,5 +11,7 @@
   "email_released",
   "viewed_as",
   "link_reauth",
-  "domain_lapsed"
+  "domain_lapsed",
+  "join_requested",
+  "join_approved"
 ]

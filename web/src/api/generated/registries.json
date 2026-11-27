@@ -563,6 +563,30 @@
           "site": false
         },
         {
+          "name": "join_approved",
+          "site": false
+        },
+        {
+          "name": "join_auto",
+          "site": false
+        },
+        {
+          "name": "join_cancelled",
+          "site": false
+        },
+        {
+          "name": "join_denied",
+          "site": false
+        },
+        {
+          "name": "join_requested",
+          "site": false
+        },
+        {
+          "name": "join_withdrawn",
+          "site": false
+        },
+        {
           "name": "members_batch",
           "site": false
         },

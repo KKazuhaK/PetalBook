@@ -125,7 +125,7 @@ func (s *server) getAuthProviders(c *call) {
 		// "Sign in with SSO" entry (/login/sso) is offered (3.6 d4).
 		IdentifierFirst bool `json:"identifierFirst"`
 		SSOEntry        bool `json:"ssoEntry"`
-	}{info.Providers, info.Mode, info.Local, info.SSO, info.Passkey, rules.Open, s.auth.MailEnabled(), s.auth.OrgCreation(c.r.Context()).Open,
+	}{info.Providers, info.Mode, info.Local, info.SSO, info.Passkey, rules.Open || s.auth.DomainJoinOpen(c.r.Context()), s.auth.MailEnabled(), s.auth.OrgCreation(c.r.Context()).Open,
 		info.IdentifierFirst, info.SSOEntry})
 }
 

@@ -72,6 +72,17 @@ var registered = []Kind{
 	{Name: "tenant_deleted", Category: Admin},
 	{Name: "tenant_console_opened", Category: Admin},
 	{Name: "registered", Category: Admin, AddressFields: []string{"email"}},
+	// Joining by email domain at sign-up (3.6 d5): an account made at once
+	// (auto), a request, its approval or denial by an administrator, the
+	// person withdrawing it, and the domain going (it is cancelled). The
+	// tenant's administrators see them; the address is the person's, on the
+	// tenant's own domain.
+	{Name: "join_auto", Category: Admin, AddressFields: []string{"email"}},
+	{Name: "join_requested", Category: Admin, AddressFields: []string{"email"}},
+	{Name: "join_approved", Category: Admin, AddressFields: []string{"email"}},
+	{Name: "join_denied", Category: Admin, AddressFields: []string{"email"}},
+	{Name: "join_withdrawn", Category: Admin, AddressFields: []string{"email"}},
+	{Name: "join_cancelled", Category: Admin, AddressFields: []string{"email"}},
 	{Name: "user_changed", Category: Admin, AddressFields: []string{"email", "old.email"}},
 	{Name: "user_deleted", Category: Admin},
 	{Name: "user_restored", Category: Admin},

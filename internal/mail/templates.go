@@ -18,9 +18,16 @@ const (
 	// KindRegisterOrgRefused says that none was made (a cap was reached).
 	KindRegisterOrg        = "register_org"
 	KindRegisterOrgRefused = "register_org_refused"
-	KindReset              = "reset"
-	KindResetSSO           = "reset_sso"
-	KindEmailChanged       = "email_changed"
+	// KindRegisterJoin confirms a registration that joins an organisation by
+	// the domain of the address (3.6 d5); KindRegisterJoinRequest one that asks
+	// to. KindJoinApproved and KindJoinDenied are an administrator's answer.
+	KindRegisterJoin        = "register_join"
+	KindRegisterJoinRequest = "register_join_request"
+	KindJoinApproved        = "join_approved"
+	KindJoinDenied          = "join_denied"
+	KindReset               = "reset"
+	KindResetSSO            = "reset_sso"
+	KindEmailChanged        = "email_changed"
 	// Notes with no link about the addresses of an account with several
 	// (accounts.multipleEmails): one was added, removed, or made primary.
 	KindEmailAdded   = "email_added"
@@ -35,7 +42,7 @@ type Vars struct {
 	Site     string // the host of the public address
 	Name     string // the account's display name, beside its username
 	Username string
-	Org      string // the name of the organisation a registration makes
+	Org      string // the name of the organisation a registration makes or joins
 	Email    string
 	Link     string
 	Links    []Link // reset: one per account sharing the address
@@ -134,6 +141,14 @@ func en(kind string, v Vars) body {
 		return body{subject: "Confirm your registration", paras: []string{fmt.Sprintf("Follow this link to finish making your account %q and your organization %q on %s. You will be its administrator. It works once and for %d hours.", v.Username, v.Org, v.Site, v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegisterOrgRefused:
 		return body{subject: "Your organization was not made", paras: []string{fmt.Sprintf("Someone asked to register this address on %s and to make the organization %q, but no organization can be made right now, so nothing was made. You can try again later.", v.Site, v.Org)}, foot: ignore}
+	case KindRegisterJoin:
+		return body{subject: "Confirm your registration", paras: []string{fmt.Sprintf("Follow this link to finish making your account %q on %s. Your address is on a domain of the organization %q, so the account joins it. It works once and for %d hours.", v.Username, v.Site, v.Org, v.Hours)}, link: v.Link, foot: ignore}
+	case KindRegisterJoinRequest:
+		return body{subject: "Confirm your request to join " + v.Org, paras: []string{fmt.Sprintf("Follow this link to confirm your address and ask to join the organization %q on %s with the account %q. Its administrators then approve or deny it, and you get a message either way. The link works once and for %d hours.", v.Org, v.Site, v.Username, v.Hours)}, link: v.Link, foot: ignore}
+	case KindJoinApproved:
+		return body{subject: "You joined " + v.Org, paras: []string{fmt.Sprintf("Your request to join the organization %q on %s was approved. Your account %q is ready: sign in with the password you chose.", v.Org, v.Site, v.Username)}, link: v.Link}
+	case KindJoinDenied:
+		return body{subject: "Your request to join " + v.Org + " was not approved", paras: []string{fmt.Sprintf("Your request to join the organization %q on %s was not approved, so no account was made, and the username %q is free again. Ask the organization if you think this is a mistake.", v.Org, v.Site, v.Username)}}
 	case KindRegisterDup:
 		return body{subject: "You already have an account", paras: []string{fmt.Sprintf("Someone tried to register this address on %s, but it already has an account. If it was you, you can reset the password with this link (it works once and for %d hour).", v.Site, v.Hours)}, link: v.Link, foot: ignore}
 	case KindReset:
@@ -172,6 +187,14 @@ func zh(kind string, v Vars) body {
 		return body{subject: "确认你的注册", paras: []string{fmt.Sprintf("点开下面的链接，完成在 %s 上创建账号「%s」和组织「%s」，你将是这个组织的管理员。链接只能用一次，%d 小时内有效。", v.Site, v.Username, v.Org, v.Hours)}, link: v.Link, foot: ignore}
 	case KindRegisterOrgRefused:
 		return body{subject: "你的组织没有创建", paras: []string{fmt.Sprintf("有人想用这个邮箱在 %s 上注册并创建组织「%s」，但现在不能再创建组织，所以什么都没有创建。可以稍后再试。", v.Site, v.Org)}, foot: ignore}
+	case KindRegisterJoin:
+		return body{subject: "确认你的注册", paras: []string{fmt.Sprintf("点开下面的链接，完成在 %s 上创建账号「%s」。你的邮箱属于组织「%s」的域名，账号会加入这个组织。链接只能用一次，%d 小时内有效。", v.Site, v.Username, v.Org, v.Hours)}, link: v.Link, foot: ignore}
+	case KindRegisterJoinRequest:
+		return body{subject: "确认申请加入" + v.Org, paras: []string{fmt.Sprintf("点开下面的链接，确认你的邮箱，并以账号「%s」申请加入 %s 上的组织「%s」。组织的管理员会批准或拒绝，无论结果都会发邮件告诉你。链接只能用一次，%d 小时内有效。", v.Username, v.Site, v.Org, v.Hours)}, link: v.Link, foot: ignore}
+	case KindJoinApproved:
+		return body{subject: "你已加入" + v.Org, paras: []string{fmt.Sprintf("你申请加入 %s 上的组织「%s」已获批准。账号「%s」已经创建好，用你注册时设置的密码登录即可。", v.Site, v.Org, v.Username)}, link: v.Link}
+	case KindJoinDenied:
+		return body{subject: "你加入" + v.Org + "的申请没有通过", paras: []string{fmt.Sprintf("你申请加入 %s 上的组织「%s」没有获得批准，所以没有创建账号，用户名「%s」也已释放。如果你觉得有误，请联系该组织。", v.Site, v.Org, v.Username)}}
 	case KindRegisterDup:
 		return body{subject: "你已经有账号了", paras: []string{fmt.Sprintf("有人想用这个邮箱在 %s 上注册，但它已经有账号了。如果是你，可以用下面的链接重置密码（只能用一次，%d 小时内有效）。", v.Site, v.Hours)}, link: v.Link, foot: ignore}
 	case KindReset:

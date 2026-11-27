@@ -723,7 +723,11 @@ CREATE TABLE registrations (
   -- it; org_slug <> '' marks it, and holds the slug (unique) until the row ends.
   -- Its tenant_id is the default tenant, which keeps the foreign key.
   org_name      TEXT COLLATE "C" NOT NULL DEFAULT '',
-  org_slug      TEXT COLLATE "C" NOT NULL DEFAULT ''
+  org_slug      TEXT COLLATE "C" NOT NULL DEFAULT '',
+  -- A registration that joins its tenant by the domain of its address (3.6
+  -- d5) names that domain (its key); '' for one that joins by the tenant's
+  -- open registration. Its link checks the domain's join mode again.
+  join_domain   TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX registrations_username ON registrations(username);
 CREATE UNIQUE INDEX registrations_org_slug ON registrations(org_slug) WHERE org_slug <> '';
@@ -1055,7 +1059,8 @@ CREATE TABLE retired_usernames (
 -- the record (0: found). next_check_at is when the recheck looks again (0: not
 -- verified). provider_id is the tenant's own sign-in provider the domain
 -- routes to ('' for none; 3.6 d3, cleared when the provider is deleted);
--- join_mode (d5) and managed (3.7) are reserved; managed is always 0 until then.
+-- join_mode is how people of the domain join the tenant at sign-up (3.6 d5):
+-- '' (off), 'auto' or 'request'; managed (3.7) is reserved and always 0 until then.
 CREATE TABLE tenant_domains (
   tenant_id     TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   domain        TEXT COLLATE "C" NOT NULL,
@@ -1068,7 +1073,7 @@ CREATE TABLE tenant_domains (
   last_check    TEXT COLLATE "C" NOT NULL DEFAULT '',
   next_check_at BIGINT NOT NULL DEFAULT 0,
   provider_id   TEXT COLLATE "C" NOT NULL DEFAULT '',
-  join_mode     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  join_mode     TEXT COLLATE "C" NOT NULL DEFAULT '' CHECK (join_mode IN ('', 'auto', 'request')),
   restrict_orgs BIGINT NOT NULL DEFAULT 0,
   managed       BIGINT NOT NULL DEFAULT 0 CHECK (managed = 0),
   created_by    TEXT COLLATE "C" NOT NULL DEFAULT '',
@@ -1085,6 +1090,50 @@ CREATE INDEX tenant_domains_due ON tenant_domains(next_check_at, tenant_id, doma
 -- The domains routed to a sign-in provider (3.6 d3): its view, and clearing
 -- them when it is deleted.
 CREATE INDEX tenant_domains_provider ON tenant_domains(provider_id, domain) WHERE provider_id <> '';
+
+-- Requests to join a tenant by the domain of an address (3.6 d5): a sign-up
+-- whose address is on a domain the tenant holds verified with join_mode
+-- 'request' becomes one when its link is followed, and waits for the tenant's
+-- administrators. It holds the username while pending (as a registration
+-- does), until expires (30 days). Approving it makes the account
+-- (made_user); a decided, withdrawn, expired or cancelled one keeps no
+-- password hash. user_id is reserved for 3.7 (an account asking to join;
+-- '' for a sign-up). token_hash is the SHA-256 of the registration link's
+-- token, which the waiting page shows the request by. email_key is the
+-- address as addresses are compared; domain the domain's key. decided_by is
+-- the administrator who approved or denied it ('' otherwise).
+CREATE TABLE join_requests (
+  id            TEXT COLLATE "C" PRIMARY KEY,
+  tenant_id     TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id       TEXT COLLATE "C" NOT NULL DEFAULT '',
+  username      TEXT COLLATE "C" NOT NULL,
+  name          TEXT COLLATE "C" NOT NULL,
+  email         TEXT COLLATE "C" NOT NULL,
+  email_key     TEXT COLLATE "C" NOT NULL,
+  domain        TEXT COLLATE "C" NOT NULL,
+  password_hash TEXT COLLATE "C" NOT NULL DEFAULT '',
+  terms         TEXT COLLATE "C" NOT NULL DEFAULT '',
+  lang          TEXT COLLATE "C" NOT NULL DEFAULT 'en',
+  token_hash    TEXT COLLATE "C" NOT NULL UNIQUE,
+  state         TEXT COLLATE "C" NOT NULL DEFAULT 'pending'
+                CHECK (state IN ('pending', 'approved', 'denied', 'withdrawn', 'expired', 'cancelled')),
+  created       BIGINT NOT NULL,
+  expires       BIGINT NOT NULL,
+  decided_at    BIGINT NOT NULL DEFAULT 0,
+  decided_by    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  made_user     TEXT COLLATE "C" NOT NULL DEFAULT ''
+);
+-- A pending request holds its username, and one person (address) has one
+-- pending request per tenant.
+CREATE UNIQUE INDEX join_requests_username ON join_requests(username) WHERE state = 'pending';
+CREATE UNIQUE INDEX join_requests_person ON join_requests(tenant_id, email_key) WHERE state = 'pending';
+-- The administrators' lists, newest first: a tenant's pending ones, and all of them.
+CREATE INDEX join_requests_list ON join_requests(tenant_id, state, created, id);
+CREATE INDEX join_requests_all ON join_requests(tenant_id, created, id);
+-- The sweep: the pending ones by when they expire.
+CREATE INDEX join_requests_expires ON join_requests(expires) WHERE state = 'pending';
+-- Cancelling a domain's pending requests when it goes.
+CREATE INDEX join_requests_domain ON join_requests(tenant_id, domain) WHERE state = 'pending';
 
 -- Background work, one row per job whatever its kind (internal/jobs): a bulk
 -- action over many spaces, people or items now; exports, recycle actions,

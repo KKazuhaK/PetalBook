@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"petalbook.app/server/internal/domains"
 )
 
 // Confirmations (docs/api.md, "Confirmations and bulk actions"). A token says
@@ -141,6 +143,9 @@ type confirmRequest struct {
 	// tenant of the rule ("" for the site's value).
 	Key    string `json:"key"`
 	Tenant string `json:"tenant"`
+	// Domain is the domain whose pending requests to join domain_join_off
+	// cancels (with Tenant).
+	Domain string `json:"domain"`
 }
 
 // confirmPlan is what an action would do, as the confirmation shows it.
@@ -171,6 +176,8 @@ var confirmActions = map[string]string{
 	"export": "spaces+items",
 	// Switching a feature off that is in use (capabilities.go).
 	"change_capabilities": "key",
+	// Cancelling the pending requests to join by a domain (domains.go).
+	"domain_join_off": "domain",
 }
 
 // ids of the request that this action takes.
@@ -189,6 +196,15 @@ func (r confirmRequest) idList() []string {
 			return nil
 		}
 		return []string{r.Key, "tenant:" + r.Tenant}
+	case "domain":
+		if r.Domain == "" || r.Tenant == "" {
+			return nil
+		}
+		key, ok := domains.Key(r.Domain)
+		if !ok {
+			key = r.Domain
+		}
+		return []string{"tenant:" + r.Tenant, "domain:" + key}
 	}
 	return nil
 }
@@ -280,6 +296,8 @@ func (s *server) planFor(c *call, req confirmRequest) (confirmPlan, bool) {
 		return s.planUsers(c, sc, req)
 	case "key":
 		return s.planCapabilities(c, req)
+	case "domain":
+		return s.joinOffPlan(c, req)
 	case "spaces+items":
 		p1, ok := s.planSpaces(c, sc, confirmRequest{Action: req.Action, Spaces: req.Spaces})
 		if !ok {

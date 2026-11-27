@@ -32,4 +32,5 @@ func (s *Service) initLimits(now ratelimit.Clock) {
 	s.mailCaps = newHourCaps(maxLimitKeys, now)
 	s.testCaps = newHourCaps(4, now)
 	s.regCaps = newHourCaps(2000, now)
+	s.joinCaps = ratelimit.NewWindow(maxLimitKeys, 24*time.Hour, ratelimit.KeepLive, now)
 }

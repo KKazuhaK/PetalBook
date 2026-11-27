@@ -284,7 +284,8 @@ func TestTurningTheSwitchOffKeepsTheExtraAddressesUnused(t *testing.T) {
 
 // An organisation's domain requirement is met by any address the account
 // holds verified in one of its domains, a second address too; an unverified
-// one, or one only a tenant administrator marked, does not meet it.
+// one, one only a tenant administrator marked, or one of a subdomain does not
+// meet it.
 func TestTheDomainRequirementCountsASecondAddress(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
@@ -318,8 +319,15 @@ func TestTheDomainRequirementCountsASecondAddress(t *testing.T) {
 		if err := store.SetEmailRowVerified(ctx, a.st.Q(), uid, "tang@eng.acme.example", true, ""); err != nil {
 			t.Fatal(err)
 		}
+		if has() {
+			t.Fatal("an address of a subdomain met the requirement: the domain counts exactly")
+		}
+		c.do("POST", "/api/account/emails", map[string]any{"email": "tang@acme.example"}).want(t, 202, "")
+		if err := store.SetEmailRowVerified(ctx, a.st.Q(), uid, "tang@acme.example", true, ""); err != nil {
+			t.Fatal(err)
+		}
 		if !has() {
-			t.Fatal("a verified second address in a subdomain did not meet it")
+			t.Fatal("a verified second address in the domain did not meet it")
 		}
 	})
 }

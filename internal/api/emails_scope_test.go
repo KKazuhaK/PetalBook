@@ -79,8 +79,12 @@ func TestTenantAdministratorsSeeTheOrganisationsAddressesOnly(t *testing.T) {
 		// The site administrator across the site sees all three.
 		check("site admin", 3, userEmails(t, f.root.do("GET", path, nil).want(t, 200, "")), auditText(f.root), home(true))
 
-		// With a verified domain: the addresses in it too (a subdomain counts), still not the others.
+		// A verified domain counts exactly: an address of its subdomain is not shown.
 		domains.Store(&[]string{"acme.example"})
+		check("tenant admin, parent domain", 1, userEmails(t, f.admB.do("GET", path, nil).want(t, 200, "")), auditText(f.admB),
+			map[string]bool{"mem-b@home.example": false, "mem-b@eng.acme.example": false})
+		// With the subdomain verified too: the addresses in it, still not the others.
+		domains.Store(&[]string{"acme.example", "eng.acme.example"})
 		sub := map[string]bool{"mem-b@home.example": false, "mem-b@eng.acme.example": true}
 		check("tenant admin, domain", 2, userEmails(t, f.admB.do("GET", path, nil).want(t, 200, "")), auditText(f.admB), sub)
 		check("scoped site admin, domain", 2, userEmails(t, f.root.do("GET", path, nil, inB...).want(t, 200, "")), auditText(f.root, inB...), sub)

@@ -28,9 +28,12 @@ type Registration struct {
 	// then the default tenant, which keeps the foreign key.
 	OrgName string
 	OrgSlug string
+	// JoinDomain is the domain (its key) by which the registration joins
+	// TenantID (3.6 d5), "" for one that joins by the tenant's open registration.
+	JoinDomain string
 }
 
-const registrationCols = `id, tenant_id, username, name, email, password_hash, token_hash, terms, created, expires, org_name, org_slug`
+const registrationCols = `id, tenant_id, username, name, email, password_hash, token_hash, terms, created, expires, org_name, org_slug, join_domain`
 
 // InsertRegistration holds a username for a registration. A pending
 // registration of the same username that has expired is removed first; one
@@ -44,8 +47,8 @@ func InsertRegistration(ctx context.Context, q Q, r Registration, now time.Time)
 			return err
 		}
 	}
-	_, err := q.Exec(ctx, `INSERT INTO registrations(`+registrationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.TenantID, r.Username, r.Name, r.Email, r.PasswordHash, r.TokenHash, r.Terms, ms(r.Created), ms(r.Expires), r.OrgName, r.OrgSlug)
+	_, err := q.Exec(ctx, `INSERT INTO registrations(`+registrationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.TenantID, r.Username, r.Name, r.Email, r.PasswordHash, r.TokenHash, r.Terms, ms(r.Created), ms(r.Expires), r.OrgName, r.OrgSlug, r.JoinDomain)
 	return err
 }
 
@@ -69,10 +72,12 @@ func DeleteOrgRegistrations(ctx context.Context, q Q) (int64, error) {
 	return res.RowsAffected()
 }
 
-// PendingUsername reports whether a live registration holds the username.
+// PendingUsername reports whether a live registration, or a pending request
+// to join a tenant that has not expired, holds the username.
 func PendingUsername(ctx context.Context, q Q, username string, now time.Time) (bool, error) {
 	var one int
-	err := q.QueryRow(ctx, `SELECT 1 FROM registrations WHERE username = ? AND expires > ?`, username, ms(now)).Scan(&one)
+	err := q.QueryRow(ctx, `SELECT 1 FROM registrations WHERE username = ? AND expires > ?
+		UNION ALL SELECT 1 FROM join_requests WHERE username = ? AND state = 'pending' AND expires > ?`, username, ms(now), username, ms(now)).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -97,7 +102,7 @@ func FindRegistration(ctx context.Context, q Q, tokenHash string, now time.Time)
 	var r Registration
 	var created, expires int64
 	err := q.QueryRow(ctx, `SELECT `+registrationCols+` FROM registrations WHERE token_hash = ? AND expires > ?`, tokenHash, ms(now)).
-		Scan(&r.ID, &r.TenantID, &r.Username, &r.Name, &r.Email, &r.PasswordHash, &r.TokenHash, &r.Terms, &created, &expires, &r.OrgName, &r.OrgSlug)
+		Scan(&r.ID, &r.TenantID, &r.Username, &r.Name, &r.Email, &r.PasswordHash, &r.TokenHash, &r.Terms, &created, &expires, &r.OrgName, &r.OrgSlug, &r.JoinDomain)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

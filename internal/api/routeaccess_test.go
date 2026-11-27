@@ -68,6 +68,13 @@ var routeAccessAdded = map[string][4]string{
 	"POST /api/auth/oidc/{slug}/callback": {"ok", "ok", "ok", "403 token_scope"},
 	// Finding the SSO by an address (3.6 d4): public.
 	"POST /api/auth/discover": {"ok", "ok", "ok", "403 token_scope"},
+	// Joining by email domain (3.6 d5): the waiting page is public; a tenant's
+	// requests are its administrators' (tenant.users.manage, features.domains).
+	"POST /api/register/request":                                  {"ok", "ok", "ok", "403 token_scope"},
+	"POST /api/register/request/withdraw":                         {"ok", "ok", "ok", "403 token_scope"},
+	"GET /api/admin/tenants/{tenant}/join-requests":               {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/tenants/{tenant}/join-requests/{id}/approve": {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/tenants/{tenant}/join-requests/{id}/deny":    {"ok", "ok", "403 forbidden", "403 token_scope"},
 	// The console's scope selector (3.6 c7).
 	// The member reaches the handler, which answers 403 for a list that is empty.
 	"GET /api/admin/scopes": {"ok", "ok", "ok", "403 token_scope"},

@@ -359,3 +359,21 @@ func DomainRoutes(ctx context.Context, q Q) (map[string][]string, error) {
 	}
 	return out, rows.Err()
 }
+
+// The join modes of a domain (3.6 d5): how people with an address on it join
+// its tenant when they sign up. Off is the empty string in the row.
+const (
+	JoinModeOff     = ""
+	JoinModeAuto    = "auto"
+	JoinModeRequest = "request"
+)
+
+// SetDomainJoin sets a tenant's domain's join mode.
+func SetDomainJoin(ctx context.Context, q Q, tenantID, domain, mode string, now time.Time) (bool, error) {
+	res, err := q.Exec(ctx, `UPDATE tenant_domains SET join_mode = ?, updated = ? WHERE tenant_id = ? AND domain = ?`, mode, ms(now), tenantID, domain)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}

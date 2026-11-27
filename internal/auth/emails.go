@@ -88,7 +88,7 @@ func (s *Service) EmailsForAdmin(ctx context.Context, u store.User, wide bool) (
 	domains := s.orgDomains(ctx, u.TenantID)
 	out := rows[:0]
 	for _, r := range rows {
-		if r.Primary || domainAllowed(r.Email, domains) {
+		if r.Primary || inDomain(r.Email, domains) {
 			out = append(out, r)
 		}
 	}
@@ -114,7 +114,7 @@ func (s *Service) TenantAddressRule(ctx context.Context, tenant string) func(pri
 				return true
 			}
 		}
-		return domainAllowed(email, domains)
+		return inDomain(email, domains)
 	}
 }
 
@@ -129,8 +129,9 @@ func (s *Service) PendingClaims(ctx context.Context, u store.User) ([]store.Emai
 }
 
 // HasVerifiedEmailIn says whether the account holds, verified, an address in
-// one of the domains (or below one): the condition of an organisation's
-// domain requirement. Any address counts, the primary or another while the
+// one of the domains, exactly (an address of a subdomain is not in it, as an
+// organisation verifies each domain it holds): the condition of an
+// organisation's domain requirement. Any address counts, the primary or another while the
 // switch is on; an address only a tenant administrator marked does not
 // (store.EmailRow.Holds). Nothing calls it yet: the organisation's domain
 // requirement (milestone 3.6, the organisation part) is where it is meant to
@@ -144,7 +145,7 @@ func (s *Service) HasVerifiedEmailIn(ctx context.Context, u store.User, domains 
 		return false, err
 	}
 	for _, r := range rows {
-		if r.Holds() && domainAllowed(r.Email, domains) {
+		if r.Holds() && inDomain(r.Email, domains) {
 			return true, nil
 		}
 	}
