@@ -63,6 +63,8 @@ func init() {
 // routeAccessAdded are the routes added after the golden file was written,
 // with their decision for each caller.
 var routeAccessAdded = map[string][4]string{
+	// The console's scope selector (3.6 c7).
+	"GET /api/admin/scopes": {"ok", "ok", "403 forbidden", "403 token_scope"},
 	// Providers and linked accounts (consolidation 5c): every kind of provider on /api/admin/providers,
 	// every link of a person on /api/account/links.
 	"PUT /api/admin/providers/{id}":                     {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},

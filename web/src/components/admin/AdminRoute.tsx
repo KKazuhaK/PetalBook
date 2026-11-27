@@ -13,6 +13,7 @@ import { AdminPageHeader } from './AdminPageHeader'
 import { AdminTabs } from './AdminTabs'
 import { navFor } from './adminNav'
 import { useConsoleFeature } from './useConsoleFeature'
+import { useConsoleScopes } from './ScopeSelector'
 
 // The tenant made with the server: its people are no organisation's (their spaces are their own).
 const DEFAULT_TENANT_ID = '0000000000'
@@ -39,9 +40,16 @@ export default function AdminRoute() {
   const scoped = parts[0] === 't' && parts[1] !== undefined
   const scope = scoped ? parts[1] : null
   const rest = scoped ? parts.slice(2) : parts
-  const siteUser = acrossSite(useSession().data?.user)
-  // A tenant's own administrator has no scope to enter: their console is their tenant's already.
-  if (scope !== null && !siteUser) return <Navigate to={['/admin', ...rest].join('/')} replace />
+  const user = useSession().data?.user
+  const siteUser = acrossSite(user)
+  const scopes = useConsoleScopes()
+  // Who is not a site administrator may enter the scope of a tenant they hold a role in besides their own (the list
+  // of scopes says which); their own tenant is their console already, and any other is an address that leads there.
+  if (scope !== null && !siteUser) {
+    if (scopes.isPending) return <PageFallback />
+    const listed = scope !== user?.tenant?.id && scopes.data?.some((s) => s.kind === 'tenant' && s.id === scope)
+    if (!listed) return <Navigate to={['/admin', ...rest].join('/')} replace />
+  }
   return (
     <TenantScope tenant={scope}>
       <Console scope={scope} segments={rest} />

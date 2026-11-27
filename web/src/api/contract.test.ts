@@ -1487,6 +1487,17 @@ function suite(target: Target) {
           expect((await call(m.browser, 'GET', '/api/settings')).status).toBe(200)
         })
 
+        it("the console's scope list holds the site for a site administrator, and is for administrators only", async () => {
+          const list = (await call(admin, 'GET', '/api/admin/scopes')).json.scopes as {
+            kind: string
+            capacity: string
+          }[]
+          expect(list[0]).toEqual({ kind: 'site', capacity: 'site_admin' })
+          expect(list.filter((s) => s.kind === 'site')).toHaveLength(1)
+          const m = await newMember(uniq('sc'))
+          expect((await call(m.browser, 'GET', '/api/admin/scopes')).status).toBe(403)
+        })
+
         it('mail is off until an administrator enables it: registration and reset answer as switched off, nothing can open registration', async () => {
           const mail = (await call(admin, 'GET', '/api/admin/mail')).json
           // A server this suite runs against has not been given SMTP.

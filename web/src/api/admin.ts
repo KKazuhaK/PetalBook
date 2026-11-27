@@ -47,6 +47,7 @@ import type {
   SiteSetting,
   SecretMeta,
   Tenancy,
+  ConsoleScope,
   Tenant,
   TenantList,
   TenantOverview,
@@ -248,6 +249,8 @@ export const adminApi = {
     const qs = q.toString()
     return request<TenantList>(`/admin/tenants${qs ? `?${qs}` : ''}`, { signal })
   },
+  // The places the console may act in: the site and every tenant the person administers. Never sent in a scope.
+  scopes: (signal?: AbortSignal) => request<{ scopes: ConsoleScope[] }>('/admin/scopes', { signal }),
   tenant: (id: string, signal?: AbortSignal) => request<Tenant>(`/admin/tenants/${enc(id)}`, { signal }),
   tenantOverview: (id: string, signal?: AbortSignal) =>
     request<TenantOverview>(`/admin/tenants/${enc(id)}/overview`, { signal }),

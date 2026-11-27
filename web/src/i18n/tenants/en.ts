@@ -514,6 +514,15 @@ export const tenantsEn: TenantsMessages = {
     managing: (name: string) => `Managing ${name} as its administrator`,
     managingLoading: 'Managing this tenant as its administrator',
     exit: 'Exit',
+    // The selector in the console's header: where the console acts.
+    selector: {
+      label: 'Console scope',
+      current: (name: string) => `Console scope: ${name}`,
+      site: 'Whole site',
+      siteSub: 'Site administrator',
+      tenantSub: 'Tenant administrator',
+      hint: 'Choose where to manage',
+    },
   },
   // A tenant's own page: /admin/tenants/<id>/<tab>.
   detail: {

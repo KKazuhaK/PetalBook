@@ -486,6 +486,15 @@ export const tenantsZhCN = {
     managing: (name: string) => `正在以管理员身份管理「${name}」`,
     managingLoading: '正在以管理员身份管理这个租户',
     exit: '退出',
+    // The selector in the console's header: where the console acts.
+    selector: {
+      label: '管理范围',
+      current: (name: string) => `管理范围：${name}`,
+      site: '整个站点',
+      siteSub: '站点管理员',
+      tenantSub: '租户管理员',
+      hint: '选择要管理的范围',
+    },
   },
   // A tenant's own page: /admin/tenants/<id>/<tab>.
   detail: {

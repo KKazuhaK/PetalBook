@@ -1463,6 +1463,19 @@
   "message": "string",
   "permission": "string"
  },
+ "GET /api/admin/scopes 200": {
+  "scopes": [
+   {
+    "capacity": "string",
+    "kind": "string"
+   }
+  ]
+ },
+ "GET /api/admin/scopes 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
  "GET /api/admin/secrets 200": {
   "secrets": [
    {

@@ -2079,6 +2079,15 @@ export interface TenantOverview {
     username: string
   }[]
 }
+// One place the console may act (GET /api/admin/scopes): the whole site, or a tenant the person administers, with what
+// they act as there.
+export interface ConsoleScope {
+  kind: 'site' | 'tenant'
+  // The tenant's id and name; absent for the site.
+  id?: string
+  name?: string
+  capacity: 'site_admin' | 'tenant_admin'
+}
 export interface TenantList {
   items: Tenant[]
   next: string

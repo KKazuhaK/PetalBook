@@ -102,6 +102,8 @@ export const keys = {
   secrets: (tenant: string) => ['admin', 'secrets', tenant] as const,
   adminMail: ['admin', 'mail'] as const,
   tenants: ['admin', 'tenants'] as const,
+  // Under the tenants, so a rename (a write that reads the tenants again) reads the selector's names again.
+  consoleScopes: ['admin', 'tenants', 'scopes'] as const,
   siteSettings: ['admin', 'settings', 'site'] as const,
   tenantSettings: (id: string) => ['admin', 'settings', 'tenant', id] as const,
   mySettings: (space: string) => ['settings', space] as const,

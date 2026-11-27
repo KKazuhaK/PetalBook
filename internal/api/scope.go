@@ -99,11 +99,22 @@ func (s *server) enterScope(c *call, rt route) bool {
 			writeError(c.w, http.StatusNotFound, "not_found", "No such tenant.")
 			return false
 		}
-		siteWide := c.p.Access.SiteWide(authz.TenantSettingsRead)
+		// A key held in the tenant itself is acted on as its administrator's,
+		// even by someone who also holds it across the site; a site
+		// administrator in a tenant they do not administer acts as one.
+		viaSite := !c.p.Access.Tenant[id].Has(authz.TenantSettingsRead) && c.p.Access.SiteWide(authz.TenantSettingsRead)
+		if admin {
+			c.scope.capacity = auditlog.CapacityTenantAdmin
+			for _, k := range rt.access.keys() {
+				if capacityIn(c.p.Access, k, id) == auditlog.CapacitySiteAdmin {
+					c.scope.capacity = auditlog.CapacitySiteAdmin
+				}
+			}
+		}
 		p := *c.p
 		p.User, p.Access = narrowTo(p.User, p.Access, id)
 		c.p = &p
-		c.scope.tenant, c.scope.narrowed, c.scope.entered = id, true, siteWide
+		c.scope.tenant, c.scope.narrowed, c.scope.entered = id, true, viaSite
 	}
 	if c.scope.capacity != "" {
 		c.r = c.r.WithContext(auditlog.WithCapacity(c.r.Context(), c.scope.capacity))
@@ -147,6 +158,57 @@ func capacityFor(access authz.Subject, k authz.Key) string {
 		return auditlog.CapacitySiteAdmin
 	}
 	return auditlog.CapacityTenantAdmin
+}
+
+// capacityIn is the capacity of a holder of k acting in tenant: a key held in
+// the tenant itself is a tenant administrator's, one held only across the site
+// a site administrator's.
+func capacityIn(access authz.Subject, k authz.Key, tenant string) string {
+	if access.Tenant[tenant].Has(k) {
+		return auditlog.CapacityTenantAdmin
+	}
+	return capacityFor(access, k)
+}
+
+// scopeResp is one place the console may act: the whole site, or a tenant.
+type scopeResp struct {
+	// Kind is "site" or "tenant"; ID and Name are the tenant's, empty for the site.
+	Kind     string `json:"kind"`
+	ID       string `json:"id,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Capacity string `json:"capacity"`
+}
+
+// adminScopes answers GET /api/admin/scopes: where the person may act in the
+// console, from the subject the session cache holds and the cached tenants'
+// names, with no query. The site first, for whoever holds the tenant keys
+// across it; then every tenant they administer (hold tenant.settings.read in,
+// the key the header needs), by name. A person who administers nothing gets an
+// empty list, and no console.
+func (s *server) adminScopes(c *call) {
+	out := []scopeResp{}
+	acc := c.p.Access
+	if acc.SiteWide(authz.TenantSettingsRead) {
+		out = append(out, scopeResp{Kind: "site", Capacity: auditlog.CapacitySiteAdmin})
+	}
+	var tenants []scopeResp
+	for id, set := range acc.Tenant {
+		if !set.Has(authz.TenantSettingsRead) {
+			continue
+		}
+		ref, ok := s.opt.Store.TenantRefOf(id)
+		if !ok {
+			continue
+		}
+		tenants = append(tenants, scopeResp{Kind: "tenant", ID: id, Name: ref.Name, Capacity: auditlog.CapacityTenantAdmin})
+	}
+	slices.SortFunc(tenants, func(a, b scopeResp) int {
+		if n := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); n != 0 {
+			return n
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	writeJSON(c.w, http.StatusOK, map[string]any{"scopes": append(out, tenants...)})
 }
 
 // maxConsoleAudit bounds the console-open throttle's table.

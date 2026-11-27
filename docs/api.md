@@ -10530,10 +10530,26 @@ and a space's content do not read it.
 
 **Capacity.** Every audit row written for an administration request records
 the capacity used: `site_admin` for a holder of the route's key across the
-site (in a tenant's scope too), `tenant_admin` for a key held in the tenant,
-none for anything else (sign-ins, a person's own account). A bulk job's and a
+site (in the site's scope, and in a tenant's scope they hold nothing in
+themselves), `tenant_admin` for a key held in the tenant (also for a site
+administrator who holds a role in that tenant, who acts there as its
+administrator and writes no `tenant_console_opened`), none for anything else (sign-ins, a person's own account). A bulk job's and a
 purge's rows record the capacity of the request that started them; a page
 opened in a view records the viewer's capacity.
+
+#### `GET /api/admin/scopes`
+
+3.6 (c7). Where the console may act, for its scope selector: `{"scopes":
+[{"kind": "site", "capacity": "site_admin"}, {"kind": "tenant", "id", "name",
+"capacity": "tenant_admin"}]}`. `site` comes first, for whoever holds
+`tenant.settings.read` across the site; then every tenant the person holds it
+in through a role of that tenant (their own tenant's administrator, and a
+custom role held in another tenant), by name. It reads the session's cached
+subject and the cached tenants' names: no query. Needs `tenant.settings.read`
+(`403 forbidden` for anyone who administers nothing, who has no console).
+A site administrator's other tenants are not listed (there may be thousands):
+they are entered from the tenant list. The console sends it without the scope
+header; sent with one, it lists only that tenant.
 
 ### Taking over a space
 

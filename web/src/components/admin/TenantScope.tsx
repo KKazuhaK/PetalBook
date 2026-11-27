@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
+import { QueryClientProvider, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { LogOut, UserCog } from 'lucide-react'
 import { keys, useSession } from '@/api/hooks'
 import { acrossSite } from '@/lib/access'
@@ -17,6 +17,14 @@ import { tt } from '@/i18n/tenants'
 // reads through the site's client and never carries the header.
 
 const ScopeContext = createContext<string | null>(null)
+
+// The site's own client, which a tenant's scope sits under: what the console's frame reads without the scope (the
+// selector's list of scopes).
+const MainClientContext = createContext<QueryClient | null>(null)
+export function useMainClient(): QueryClient {
+  const here = useQueryClient()
+  return useContext(MainClientContext) ?? here
+}
 
 // The tenant whose scope the page is in, null for the whole site.
 export const useScope = (): string | null => useContext(ScopeContext)
@@ -53,9 +61,11 @@ export function TenantScope({ tenant, children }: { tenant: string | null; child
     return c
   }, [main, tenant, who])
   return (
-    <ScopeContext.Provider value={tenant}>
-      {client === main ? children : <QueryClientProvider client={client}>{children}</QueryClientProvider>}
-    </ScopeContext.Provider>
+    <MainClientContext.Provider value={main}>
+      <ScopeContext.Provider value={tenant}>
+        {client === main ? children : <QueryClientProvider client={client}>{children}</QueryClientProvider>}
+      </ScopeContext.Provider>
+    </MainClientContext.Provider>
   )
 }
 
