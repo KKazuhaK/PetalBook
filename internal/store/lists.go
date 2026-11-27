@@ -246,62 +246,82 @@ type SpaceFilter struct {
 	Limit int
 }
 
+// lacksViaSQL is the SQL that a space s lacks a remote of the kind the policy
+// requires, from the columns of the space: it follows none, or another provider,
+// or a GitHub remote that lost its access (its installation is no longer the
+// owner's), which counts as none. The deadline lists, the counts of each person
+// and the counts of the summary all use it.
+func lacksViaSQL(p RemotePolicy) (string, []any) {
+	lost := `(s.remote_via = 'github' AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND NOT ` + usableRemote + `))`
+	if p.Require != "any" {
+		return `(s.remote_via <> ? OR ` + lost + `)`, []any{p.Require}
+	}
+	return `(s.remote_via = '' OR ` + lost + `)`, nil
+}
+
 // deadlineCond is the SQL that keeps the spaces in their grace period or past
 // their deadline under a policy: a range of created, and the rest are columns
 // (the space lacks what is required, is not exempt, and has no exempt owner).
-func deadlineCond(p RemotePolicy, which string) (string, []any) {
+// sc is the scope the list is in; the ranges of the grace list are searched
+// within it.
+func deadlineCond(p RemotePolicy, which string, sc Scope) (string, []any) {
 	if !p.Active() {
 		return "1 = 0", nil
 	}
-	// A GitHub remote that lost its access (its installation is no longer the
-	// owner's) counts as none: only spaces that follow GitHub are looked at.
-	lost := `(s.remote_via = 'github' AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND NOT ` + usableRemote + `))`
-	lacks, args := `(s.remote_via = '' OR `+lost+`)`, []any(nil)
-	if p.Require != "any" {
-		lacks, args = `(s.remote_via <> ? OR `+lost+`)`, []any{p.Require}
-	}
+	lacks, args := lacksViaSQL(p)
 	exempt := `s.exempt = 0 AND NOT EXISTS (SELECT 1 FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0)`
 	since, now, grace := ms(p.Since), ms(p.Now), p.Grace.Milliseconds()
 	// A space made since the requirement began is due at created + grace; an
 	// older one (when the requirement is for every space) at since + grace; and
 	// one that lost its GitHub remote at the later of that and the loss + grace
-	// (remote_lost_at; the partial index spaces_lost holds only those, and the
-	// literal "<> 0" is what lets the planner use it).
-	var parts []string
-	var pargs []any
+	// (remote_lost_at; the partial indexes spaces_lost and spaces_lost_t hold
+	// only those, and the literal "<> 0" is what lets the planner use them).
 	if which == "overdue" {
 		// Past the deadline: past the one from the start, and past the loss's.
-		parts, pargs = append(parts, `(s.created >= ? AND s.created < ?)`), append(pargs, since, now-grace)
+		parts := []string{`(s.created >= ? AND s.created < ?)`}
+		pargs := []any{since, now - grace}
 		if p.All && since+grace < now {
 			parts, pargs = append(parts, `s.created < ?`), append(pargs, since)
 		}
 		return lacks + ` AND ` + exempt + ` AND (` + strings.Join(parts, " OR ") + `) AND s.remote_lost_at < ?`, append(append(args, pargs...), now-grace)
 	}
+	// Each term is a range of one index (created; spaces_lost, which holds only
+	// the spaces that lost a remote), inside the scope. An OR of them in the one
+	// WHERE makes SQLite walk the whole created index, so the terms are put to
+	// the database as one set of ids, the union of the ranges, and the spaces
+	// are looked up in it by their key. t is the alias of the table in a term.
+	type term struct {
+		sql  string
+		args []any
+	}
 	from := now - grace
 	if since > from {
 		from = since
 	}
-	parts, pargs = append(parts, `s.created >= ?`), append(pargs, from)
+	terms := []func(t string) term{
+		func(t string) term { return term{t + `.created >= ?`, []any{from}} },
+	}
 	if p.All && since+grace >= now {
-		parts, pargs = append(parts, `s.created < ?`), append(pargs, since)
+		terms = append(terms, func(t string) term { return term{t + `.created < ?`, []any{since}} })
 	}
 	// Still in grace through the loss: covered by the requirement, and lost
 	// since now - grace.
-	cover, cargs := `s.created >= ?`, []any{since}
-	if p.All {
-		cover, cargs = `1 = 1`, nil
+	terms = append(terms, func(t string) term {
+		cover, cargs := t+`.created >= ?`, []any{since}
+		if p.All {
+			cover, cargs = `1 = 1`, nil
+		}
+		return term{`(` + t + `.remote_lost_at <> 0 AND ` + t + `.remote_lost_at >= ? AND ` + cover + `)`, append([]any{now - grace}, cargs...)}
+	})
+	var sub []string
+	var sargs []any
+	for _, mk := range terms {
+		tm := mk("d")
+		scope, scargs := sc.spaceCond("d.tenant_id", "d.personal_of IS NULL")
+		sub = append(sub, `SELECT d.id FROM spaces d WHERE `+scope+` AND `+tm.sql)
+		sargs = append(append(sargs, scargs...), tm.args...)
 	}
-	parts, pargs = append(parts, `(s.remote_lost_at <> 0 AND s.remote_lost_at >= ? AND `+cover+`)`), append(append(pargs, now-grace), cargs...)
-	// Each term is a range of one index (created; spaces_lost, which holds only
-	// the spaces that lost a remote, and whose literal "<> 0" lets the planner
-	// use it). An OR of them in the one WHERE makes SQLite walk the whole created
-	// index, so the terms are put to the database as one set of ids, the union
-	// of the ranges, and the spaces are looked up in it by their key.
-	sub := make([]string, len(parts))
-	for k, part := range parts {
-		sub[k] = `SELECT d.id FROM spaces d WHERE ` + strings.ReplaceAll(part, "s.", "d.")
-	}
-	return lacks + ` AND ` + exempt + ` AND s.id IN (` + strings.Join(sub, " UNION ALL ") + `)`, append(args, pargs...)
+	return lacks + ` AND ` + exempt + ` AND s.id IN (` + strings.Join(sub, " UNION ALL ") + `)`, append(args, sargs...)
 }
 
 // ListAllSpaces returns one page of the spaces in the scope: the first owner and
@@ -363,7 +383,7 @@ func ListAllSpaces(ctx context.Context, q Q, sc Scope, f SpaceFilter) (out []Adm
 		if f.Policy == nil {
 			add(`1 = 0`)
 		} else {
-			c, a := deadlineCond(*f.Policy, f.Deadline)
+			c, a := deadlineCond(*f.Policy, f.Deadline, sc)
 			add(c, a...)
 		}
 	default:
@@ -744,10 +764,7 @@ func (s *Store) SettleDeadlines(ctx context.Context, p RemotePolicy) (changed in
 	type pair struct{ grace, overdue int64 }
 	want := map[string]pair{}
 	if p.Active() {
-		lacks, largs := `s.remote_via = ''`, []any(nil)
-		if p.Require != "any" {
-			lacks, largs = `s.remote_via <> ?`, []any{p.Require}
-		}
+		lacks, largs := lacksViaSQL(p)
 		exempt := `s.exempt = 0 AND NOT EXISTS (SELECT 1 FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0)`
 		dl, dargs := deadlineSQL(p)
 		// The two counts of each person and, with usage_user '', of each tenant.

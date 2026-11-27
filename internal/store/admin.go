@@ -22,7 +22,7 @@ type AdminSpace struct {
 	Created  time.Time
 	Disabled bool
 	// RemoteLostAt is when the space lost the GitHub access its remote synced
-	// through; zero if it did not (or has a remote again). The grace period of
+	// through; zero if it never did. The grace period of
 	// the storage requirement starts again from it.
 	RemoteLostAt time.Time
 	// SizeBytes and SizeAt are the last measurement (see SetSpaceSize); nil

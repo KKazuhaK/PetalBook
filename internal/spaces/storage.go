@@ -479,7 +479,7 @@ func (m *Manager) Notice(ctx context.Context, id string) (*RemoteNotice, error) 
 	if !ok {
 		return nil, nil
 	}
-	return &RemoteNotice{Required: p.Require, Deadline: dl, Overdue: !p.Now.Before(dl)}, nil
+	return &RemoteNotice{Required: p.Require, Deadline: dl, Overdue: p.Now.After(dl)}, nil
 }
 
 // CheckWritable refuses a change to the files of a space that is past its
@@ -684,5 +684,5 @@ func (m *Manager) NoticeOfRow(r store.AdminSpace) *RemoteNotice {
 	if !ok {
 		return nil
 	}
-	return &RemoteNotice{Required: p.Require, Deadline: dl, Overdue: !p.Now.Before(dl)}
+	return &RemoteNotice{Required: p.Require, Deadline: dl, Overdue: p.Now.After(dl)}
 }

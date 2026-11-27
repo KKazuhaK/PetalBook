@@ -19,7 +19,8 @@ func TestASpaceThatLosesItsGitHubRemoteGetsItsGraceAgain(t *testing.T) {
 			storetest.Each(t, func(t *testing.T, st *store.Store) {
 				q := st.Q()
 				made := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
-				grace := 30 * 24 * time.Hour
+				day := 24 * time.Hour
+				grace := 30 * day
 				disconnected := made.Add(90 * 24 * time.Hour) // long past the 30 days
 				mkGitHubRow(t, st, made)
 				owner, tenant := store.InstallOwner{UserID: "U1"}, store.DefaultTenantID
@@ -54,12 +55,19 @@ func TestASpaceThatLosesItsGitHubRemoteGetsItsGraceAgain(t *testing.T) {
 				policy := func(now time.Time) store.RemotePolicy {
 					return store.RemotePolicy{Require: "github", Since: made.Add(-time.Hour), Grace: grace, Now: now}
 				}
-				// The counts and the two lists agree on what the space is at a time.
+				// The counts, the two lists and the settled usage numbers agree on what
+				// the space is at a time.
 				at := func(now time.Time, wantGrace, wantOverdue int) {
 					t.Helper()
 					g, o, _, err := store.PolicyCounts(ctx, q, policy(now))
 					if err != nil || g != wantGrace || o != wantOverdue {
 						t.Fatalf("at %v: in grace %d, overdue %d, want %d and %d (%v)", now, g, o, wantGrace, wantOverdue, err)
+					}
+					if _, err := st.SettleDeadlines(ctx, policy(now)); err != nil {
+						t.Fatal(err)
+					}
+					if sum, err := store.GetStorageSummary(ctx, q, store.InTenant(tenant)); err != nil || int(sum.InGrace) != wantGrace || int(sum.Overdue) != wantOverdue {
+						t.Fatalf("at %v: settled %d in grace, %d overdue, want %d and %d (%v)", now, sum.InGrace, sum.Overdue, wantGrace, wantOverdue, err)
 					}
 					for _, c := range []struct {
 						which string
@@ -81,11 +89,25 @@ func TestASpaceThatLosesItsGitHubRemoteGetsItsGraceAgain(t *testing.T) {
 				at(disconnected.Add(grace+time.Millisecond), 0, 1)
 				// Connected again: it has its remote, whenever.
 				claim()
-				at(disconnected.Add(time.Hour), 0, 0)
-				// Lost some other way later (here: its installation is nobody's): the
-				// disconnect of before no longer gives it time.
-				put(6)
-				at(disconnected.Add(time.Hour), 0, 1)
+				at(disconnected.Add(10*day), 0, 0)
+				// Connected and disconnected again with no successful sync between:
+				// no new grace, the first loss counts.
+				if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, owner, "lost", disconnected.Add(20*day)); err != nil {
+					t.Fatal(err)
+				}
+				at(disconnected.Add(20*day), 1, 0)
+				at(disconnected.Add(grace+time.Millisecond), 0, 1)
+				// It syncs well again, and its next loss gets a grace of its own.
+				claim()
+				if err := store.UpdateRemoteStatus(ctx, q, "S1", store.RoleContent, store.RemoteStatus{State: "ok", LastSync: disconnected.Add(40 * day)}, disconnected.Add(40*day)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, owner, "lost", disconnected.Add(50*day)); err != nil {
+					t.Fatal(err)
+				}
+				at(disconnected.Add(50*day), 1, 0)
+				at(disconnected.Add(80*day), 1, 0)
+				at(disconnected.Add(80*day+time.Millisecond), 0, 1)
 			})
 		})
 	}

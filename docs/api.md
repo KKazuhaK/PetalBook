@@ -2264,9 +2264,11 @@ administrator who installed it; any of its administrators manages it).
   deadline before, so that it has time to get a new repository; the later of
   its creation, the requirement's `since` and the disconnect counts. The same
   holds when GitHub reports the installation uninstalled (the webhook's
-  `deleted`) and when a person disconnects their own installation. It is
-  cleared when the space has a remote it can use again (a new repository, or
-  the same installation connected again by the same owner, which restores them); for an organisation that needs the App uninstalled on GitHub
+  `deleted`) and when a person disconnects their own installation. A space
+  that is connected again and disconnected again without a successful sync in
+  between keeps its first loss time (no endless grace by toggling); a loss after
+  a successful sync starts a grace of its own. Connecting the same
+  installation again by the same owner restores the spaces; for an organisation that needs the App uninstalled on GitHub
   and installed again from here, since who installed it proved one claim (the
   record is used up when the claim succeeds). The spaces listed, counted and marked are the owner's only: a
   space of an earlier owner that still names the installation is not.

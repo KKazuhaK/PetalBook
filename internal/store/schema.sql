@@ -222,7 +222,7 @@ CREATE INDEX invites_created_by ON invites(created_by);
 -- says where the bytes live (server, own, tenant, site), remote_via is '' without
 -- a remote, the provider of a connection or 'git', remote_state the remote's
 -- state ('' without one). remote_lost_at is when the space last lost the GitHub
--- access its remote synced through (0: never, or it has a remote again): the
+-- access its remote synced through (0: never): the
 -- storage requirement's grace period starts again from then.
 CREATE TABLE spaces (
   id           TEXT COLLATE "C" PRIMARY KEY,
@@ -264,6 +264,7 @@ CREATE INDEX spaces_rstate_t ON spaces(tenant_id, remote_state, created, id);
 CREATE INDEX spaces_rstate ON spaces(remote_state, created, id);
 CREATE INDEX spaces_pinned ON spaces(created, id) WHERE pinned <> 0;
 CREATE INDEX spaces_lost ON spaces(remote_lost_at, id) WHERE remote_lost_at <> 0;
+CREATE INDEX spaces_lost_t ON spaces(tenant_id, remote_lost_at, id) WHERE remote_lost_at <> 0;
 CREATE INDEX spaces_exempt ON spaces(created, id) WHERE exempt <> 0;
 CREATE INDEX spaces_owner ON spaces(usage_user, created, id);
 

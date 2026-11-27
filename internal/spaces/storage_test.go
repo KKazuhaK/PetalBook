@@ -961,7 +961,15 @@ func TestASpaceThatLostItsGitHubRemoteHasItsGraceAgain(t *testing.T) {
 		if l, _ := f.m.List(ctx, f.user.ID); len(l) != 1 || l[0].RemoteNotice == nil || l[0].RemoteNotice.Overdue {
 			t.Fatalf("the list: %+v", l)
 		}
-		f.clk.Advance(30*24*time.Hour + time.Second)
+		// At the deadline itself it is still in grace, as the lists say.
+		f.clk.Advance(30 * 24 * time.Hour)
+		if n, _ := f.m.Notice(ctx, in.ID); n == nil || n.Overdue {
+			t.Fatalf("at the deadline: %+v", n)
+		}
+		if err := f.m.CheckWritable(in.ID); err != nil {
+			t.Fatalf("read only at the deadline: %v", err)
+		}
+		f.clk.Advance(time.Millisecond)
 		if n, _ := f.m.Notice(ctx, in.ID); n == nil || !n.Overdue {
 			t.Fatalf("after the grace: %+v", n)
 		}

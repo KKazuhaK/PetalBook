@@ -175,18 +175,8 @@ func PutRemote(ctx context.Context, q Q, r Remote) error {
 			r.SpaceID, r.Role, r.URL, r.Branch, r.CredType, r.Username, r.TokenEnc, r.PrivKeyEnc, r.PubKey, r.LastGood,
 			r.State, r.ErrorKind, r.LastError, r.RemoteTip, sync, ms(r.Updated), r.Provider, r.Via, r.InstallationID, r.RepoID, r.CredUserID,
 			r.TargetID, r.Used, r.JobID)
-		if err != nil {
+		if err != nil || r.URL == "" || r.RepoID == 0 {
 			return err
-		}
-		if r.Role == RoleContent && r.URL != "" {
-			// A remote it can sync through again ends the grace the loss of
-			// the last one gave it.
-			if _, err := q.Exec(ctx, `UPDATE spaces AS s SET remote_lost_at = 0 WHERE s.id = ? AND s.remote_lost_at <> 0 AND `+hasUsableRemote, r.SpaceID); err != nil {
-				return err
-			}
-		}
-		if r.URL == "" || r.RepoID == 0 {
-			return nil
 		}
 		// A space that follows the repository (in either role) answers every
 		// reminder of it, at the provider it is on.

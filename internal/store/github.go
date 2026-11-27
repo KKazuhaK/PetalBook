@@ -155,16 +155,8 @@ func ClaimGitHubInstallation(ctx context.Context, q Q, i GitHubInstallation) err
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrInstallationTaken
 	}
-	// The spaces that synced through it have their remote again.
-	_, err = q.Exec(ctx, `UPDATE spaces AS s SET remote_lost_at = 0 WHERE s.remote_lost_at <> 0
-		AND s.id IN (SELECT r.space_id FROM remotes r WHERE r.installation_id = ? AND r.role = 'content')
-		AND `+hasUsableRemote, i.ID)
-	return err
+	return nil
 }
-
-// hasUsableRemote is the SQL that a space s has a content remote it can sync on
-// the face of it (see usableRemote).
-const hasUsableRemote = `EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND ` + usableRemote + `)`
 
 // ownerCond is the condition that an installation row (its columns prefixed
 // with p) belongs to o.
@@ -331,13 +323,20 @@ func DisconnectGitHubInstallation(ctx context.Context, q Q, id int64, o InstallO
 			}
 			// Their grace period under the storage requirement starts again now:
 			// time to get a new repository (a space whose remote is only an
-			// attachment repository has not lost its content remote).
+			// attachment repository has not lost its content remote). Only
+			// when the remote synced well since the last loss, or there was
+			// none: connecting and disconnecting again without a successful
+			// sync does not give more time. The value is never cleared on a
+			// reconnect (a space with a usable remote is not asked for one,
+			// and the first loss comes back if it is disconnected again); a
+			// later loss after a good sync replaces it.
 			largs := []any{ms(now)}
 			for _, sid := range rest[:n] {
 				largs = append(largs, sid)
 			}
 			if _, err := q.Exec(ctx, `UPDATE spaces SET remote_lost_at = ? WHERE id IN (?`+marks+`)
-				AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = spaces.id AND r.role = 'content' AND `+onInstallation+`)`, append(largs, id)...); err != nil {
+				AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = spaces.id AND r.role = 'content' AND `+onInstallation+`
+					AND (spaces.remote_lost_at = 0 OR r.last_sync > spaces.remote_lost_at))`, append(largs, id)...); err != nil {
 				return err
 			}
 			rest = rest[n:]
