@@ -46,7 +46,7 @@ func TestASpaceWithARepositoryIsItsCreatorsTenantsAndCounts(t *testing.T) {
 		ctx := context.Background()
 		// B's own installation on acme-gh, which its administrator connects.
 		a.fake.AddUser("adm-b-gh")
-		a.fake.SetAccount("acme-gh", func(x *ghAccount) { x.Members["adm-b-gh"] = true })
+		a.fake.MakeAdmin("acme-gh", "adm-b-gh")
 		installGitHub(t, a, f.admB, "/api/admin/github/install", map[string]any{"account": "acme-gh"}, "adm-b-gh", "acme-gh")
 		before := f.memB.do("GET", "/api/account/usage", nil).want(t, 200, "")
 		r := f.memB.do("POST", "/api/spaces", map[string]any{"name": "Acme notes", "storage": ghSync(map[string]any{"owner": "acme-gh", "name": "notes"})}).want(t, 201, "")

@@ -158,6 +158,14 @@ describe("an organisation's GitHub installations, in its console", () => {
     )
   })
 
+  it("is not a tab of the default tenant's console, which is no organisation", async () => {
+    await openOrg(() => '/admin/t/0000000000/storage/manage')
+    await settle(() => text().includes(tc.tabs.storage.manage), 'the console in the default tenant')
+    expect([...document.querySelectorAll('a')].some((a) => a.textContent?.trim() === tc.tabs.storage.github)).toBe(
+      false,
+    )
+  })
+
   it('names the GitHub organisation, installs, lists it as the organisation’s and disconnects it', async () => {
     const assign = vi.fn()
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, assign })

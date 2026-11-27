@@ -112,6 +112,24 @@ type Account struct {
 	NoCreate bool
 	// NoPrivate: private repositories cannot be created.
 	NoPrivate bool
+	// Admins: logins of the organisation's owners (GET /user/memberships/orgs/{org}
+	// answers role "admin" for them, "member" for the other members).
+	Admins map[string]bool
+}
+
+// MakeAdmin makes login a member and an owner of the organisation org.
+func (f *Fake) MakeAdmin(org, login string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a := f.accounts[strings.ToLower(org)]
+	if a.Members == nil {
+		a.Members = map[string]bool{}
+	}
+	if a.Admins == nil {
+		a.Admins = map[string]bool{}
+	}
+	a.Members[strings.ToLower(login)] = true
+	a.Admins[strings.ToLower(login)] = true
 }
 
 // Install is one installation of the App.
@@ -982,6 +1000,23 @@ func (f *Fake) serveAPI(w http.ResponseWriter, r *http.Request) {
 		a := f.accounts[strings.ToLower(p.login)]
 		f.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"id": a.ID, "login": a.Login, "name": a.Name})
+	case r.Method == "GET" && strings.HasPrefix(path, "/user/memberships/orgs/") && p.kind == "user":
+		org := strings.ToLower(strings.TrimPrefix(path, "/user/memberships/orgs/"))
+		f.mu.Lock()
+		a := f.accounts[org]
+		me := strings.ToLower(p.login)
+		member := a != nil && a.Org && a.Members[me]
+		admin := member && a.Admins[me]
+		f.mu.Unlock()
+		if !member {
+			apiError(w, 404, "Not Found")
+			return
+		}
+		role := "member"
+		if admin {
+			role = "admin"
+		}
+		writeJSON(w, 200, map[string]any{"state": "active", "role": role, "organization": map[string]any{"login": a.Login, "id": a.ID}})
 	case r.Method == "GET" && path == "/user/emails" && p.kind == "user":
 		f.mu.Lock()
 		a := f.accounts[strings.ToLower(p.login)]

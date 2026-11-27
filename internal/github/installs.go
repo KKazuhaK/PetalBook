@@ -41,6 +41,9 @@ const (
 	// attempt was for (an organisation instead of the person's own account,
 	// another organisation, or a person's account for an organisation).
 	cbWrongAccount = "wrong_account"
+	// cbNotOrgAdmin: the claimer is not an active owner of the GitHub
+	// organisation (a member who merely reaches one of its repositories).
+	cbNotOrgAdmin = connections.CodeNotOrgAdmin
 	// cbTaken: another person or organisation on this server has it.
 	cbTaken = connections.CodeInstallationTaken
 	// cbNotConnected: the App asked for no authorisation and the person has no
@@ -216,6 +219,18 @@ func (s *Service) completeInstall(ctx context.Context, a *attempt, code string, 
 		if in.Account.Type != "Organization" || !strings.EqualFold(in.Account.Login, a.account) {
 			return fail(cbWrongAccount)
 		}
+		// GitHub lists an organisation's installation for any member who reaches
+		// one of its repositories: only the organisation's owners may connect it.
+		m, err := s.c.UserOrgMembership(ctx, tok, in.Account.Login)
+		switch {
+		case githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden) && !limited(err):
+			return fail(cbNotOrgAdmin)
+		case err != nil:
+			s.log.Warn("could not read the person's membership of the organisation", "reason", reason(err))
+			return fail(cbError)
+		case m.State != "active" || m.Role != "admin":
+			return fail(cbNotOrgAdmin)
+		}
 	}
 	now := s.opt.Now()
 	err = store.ClaimGitHubInstallation(ctx, s.opt.Store.Q(), store.GitHubInstallation{ID: in.ID, Account: in.Account.Login, AccountID: in.Account.ID,
@@ -289,7 +304,7 @@ func (s *Service) Installations(ctx context.Context, o store.InstallOwner) ([]Ow
 	for i, r := range rows {
 		ids[i] = r.ID
 	}
-	counts, err := store.GitHubSpaceCounts(ctx, q, ids)
+	counts, err := store.GitHubSpaceCounts(ctx, q, o, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +333,7 @@ func (s *Service) InstallationSpaces(ctx context.Context, o store.InstallOwner, 
 	if _, err := s.owned(ctx, o, id); err != nil {
 		return nil, 0, err
 	}
-	return store.SpacesOnGitHubInstallation(ctx, s.opt.Store.Q(), id)
+	return store.SpacesOnGitHubInstallation(ctx, s.opt.Store.Q(), o, id)
 }
 
 // InstallationRepos lists the repositories the owner's installation reaches,

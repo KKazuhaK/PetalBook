@@ -928,6 +928,7 @@ export type ErrorCode =
   | 'provider_refused'
   | 'repo_not_in_installation'
   | 'installation_taken'
+  | 'not_org_admin'
   | 'push_failed'
   | 'key_invalid'
   | 'app_rejected'

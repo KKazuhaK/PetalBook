@@ -225,7 +225,8 @@ export const githubZhCN: GitHubMessages = {
     disconnectTitle: (account: string) => `断开 ${account}？`,
     disconnectBody:
       '它仍装在 GitHub 上（要卸载请到 GitHub 上操作）。下面这些空间会失去 GitHub 访问：笔记都会保留，但会停止同步，直到重新连接 GitHub，或者把它们连到别的仓库。',
-    disconnectGrace: '如果这台服务器要求每个空间都同步到仓库，它们会有通常的期限去连上一个。',
+    disconnectGrace:
+      '如果这台服务器要求每个空间都同步到仓库，它们会被当作没有仓库：期限（从空间创建时算起）已经过了的空间会立刻变成只读；其余的保留剩下的期限。',
     disconnectSpaces: (n: number) => `${n} 个空间通过它同步：`,
     disconnectMore: (n: number) => `还有 ${n} 个`,
     disconnectNone: '没有空间通过它同步。',
@@ -245,6 +246,8 @@ export const githubZhCN: GitHubMessages = {
       installation_not_yours: 'GitHub 没有把这个安装列在你的 GitHub 账号下，所以没有连接。请从这里重新安装。',
       wrong_account: 'App 装到了另一个账号上，不是这里要的那个，所以没有连接。',
       installation_taken: '这个安装已经连接到这台服务器上的另一个组织或个人了。',
+      not_org_admin:
+        '只有 GitHub 组织的所有者才能连接它的安装。GitHub 显示你的账号在那里是成员而不是所有者；请让所有者从这里安装。',
       not_connected: 'GitHub 没有在同一步里给你授权。请先连接你的 GitHub 账号，再重新安装。',
       unknown: '出了点问题。',
     },

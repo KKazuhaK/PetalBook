@@ -2228,7 +2228,11 @@ administrator who installed it; any of its administrators manages it).
      `installation_not_yours`;
   4. it is on the account asked for: the person's own GitHub account (type
      `User`, the id of the token's user) or the organisation named at the start
-     (type `Organization`): `wrong_account`;
+     (type `Organization`): `wrong_account`; for an organisation, the claimer
+     must also be an active owner of it (`GET /user/memberships/orgs/{org}`
+     with their token answers `state: active`, `role: admin`): GitHub lists an
+     organisation's installation for any member who reaches one of its
+     repositories, so a plain member gets `not_org_admin`;
   5. no other person or organisation on this server has it (one statement; of
      two at once one wins): `installation_taken`, "already connected to another
      organisation or person on this server".
@@ -2255,7 +2259,11 @@ administrator who installed it; any of its administrators manages it).
   Under a storage requirement of a remote, such a space counts as having none
   and is in the requirement's grace like any space without one (`InGrace`, then
   `Overdue`; exemptions of spaces and people as always); no other grace period
-  applies. Connecting the same installation again by the same owner restores them.
+  applies: the grace counts from the space's creation, so a space whose grace
+  has already run out is `Overdue` (read only) at once, and the others keep what
+  is left of theirs. Connecting the same installation again by the same owner
+  restores them. The spaces listed, counted and marked are the owner's only: a
+  space of an earlier owner that still names the installation is not.
 - Another owner's installation is as good as not there: `404 not_found`.
 
 ### Tokens, and how they reach Git

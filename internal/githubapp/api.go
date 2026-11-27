@@ -305,3 +305,20 @@ func (c *Client) ManifestURL(org, state string) string {
 	}
 	return base + "?state=" + url.QueryEscape(state)
 }
+
+// OrgMembership is a user's membership of an organisation: state is "active"
+// or "pending", role "admin" (an owner) or "member".
+type OrgMembership struct {
+	State string `json:"state"`
+	Role  string `json:"role"`
+}
+
+// UserOrgMembership reads the token's user's membership of an organisation
+// (GET /user/memberships/orgs/{org}); a 404 when they are not a member.
+func (c *Client) UserOrgMembership(ctx context.Context, token, org string) (*OrgMembership, error) {
+	var out OrgMembership
+	if _, err := c.bearer(ctx, token, http.MethodGet, "/user/memberships/orgs/"+url.PathEscape(org), nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

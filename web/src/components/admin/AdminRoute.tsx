@@ -57,7 +57,9 @@ function Console({ scope, segments }: { scope: string | null; segments: string[]
   const ownTenantName = ownTenant?.name
   // An organisation's console: a tenant's (its own administrator's, or a site administrator's in its scope), not the
   // default tenant's, which is no organisation.
-  const org = !site && (scope !== null || (ownTenant !== undefined && ownTenant.id !== DEFAULT_TENANT_ID))
+  const org =
+    !site &&
+    (scope !== null ? scope !== DEFAULT_TENANT_ID : ownTenant !== undefined && ownTenant.id !== DEFAULT_TENANT_ID)
   const sections = navFor(site, org)
   const person = first === 'user' && second !== undefined
   // A tenant's own page: `/admin/tenants/<id>/<tab>`; the list's two pages are tenants and plans.

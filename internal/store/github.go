@@ -43,10 +43,12 @@ func CountUserGitHubSpaces(ctx context.Context, q Q, userID string) (n int, err 
 	return
 }
 
-// GitHubSpaceCounts is how many spaces sync through each of the installations.
-func GitHubSpaceCounts(ctx context.Context, q Q, ids []int64) (map[int64]int, error) {
+// GitHubSpaceCounts is how many of the owner's spaces sync through each of
+// the installations. A space of another owner that still names an installation
+// (it synced through it before the installation changed hands) is not counted.
+func GitHubSpaceCounts(ctx context.Context, q Q, o InstallOwner, ids []int64) (map[int64]int, error) {
 	out := map[int64]int{}
-	if len(ids) == 0 {
+	if len(ids) == 0 || !o.Valid() {
 		return out, nil
 	}
 	args := make([]any, len(ids))
@@ -54,9 +56,11 @@ func GitHubSpaceCounts(ctx context.Context, q Q, ids []int64) (map[int64]int, er
 	for i, id := range ids {
 		args[i], marks[i] = id, "?"
 	}
-	rows, err := q.Query(ctx, `SELECT installation_id, COUNT(DISTINCT space_id) FROM remotes
-		WHERE installation_id IN (`+strings.Join(marks, ",")+`) AND installation_id <> 0 AND url <> '' AND cred_type = 'connection' AND provider = 'github' AND via = 'app'
-		GROUP BY installation_id`, args...)
+	oc, oa := ownersSpace(o)
+	rows, err := q.Query(ctx, `SELECT r.installation_id, COUNT(DISTINCT r.space_id) FROM remotes r JOIN spaces s ON s.id = r.space_id
+		WHERE r.installation_id IN (`+strings.Join(marks, ",")+`) AND r.installation_id <> 0 AND r.url <> '' AND r.cred_type = 'connection' AND r.provider = 'github' AND r.via = 'app'
+		AND `+oc+`
+		GROUP BY r.installation_id`, append(args, oa...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -208,19 +212,38 @@ type SpaceRef struct {
 // maxAffectedSpaces bounds the spaces a list of affected spaces names.
 const maxAffectedSpaces = 200
 
+// ownersSpace is the condition that a remote r of a space s is the owner's to
+// sync through its installation: an organisation's space (one of the tenant
+// that is no one's personal space), or a person's space (of the default
+// tenant, or a personal one) whose remote names that person.
+func ownersSpace(o InstallOwner) (string, []any) {
+	if o.UserID != "" {
+		return `r.cred_user_id = ? AND (s.tenant_id = ? OR s.personal_of IS NOT NULL)`, []any{o.UserID, DefaultTenantID}
+	}
+	return `s.tenant_id = ? AND s.personal_of IS NULL`, []any{o.TenantID}
+}
+
 // onInstallation is the condition that a remote r syncs through installation ?.
 const onInstallation = `r.installation_id = ? AND r.installation_id <> 0 AND r.url <> '' AND r.cred_type = 'connection' AND r.provider = 'github' AND r.via = 'app'`
 
-// SpacesOnGitHubInstallation lists the spaces that sync through an installation
-// (their own repository or their attachment repository), by name, at most 200,
-// with how many there are in all: each one scan of remotes_installation.
-func SpacesOnGitHubInstallation(ctx context.Context, q Q, id int64) ([]SpaceRef, int, error) {
+// SpacesOnGitHubInstallation lists the owner's spaces that sync through an
+// installation (their own repository or their attachment repository), by name,
+// at most 200, with how many there are in all: each one scan of
+// remotes_installation. Another owner's spaces that still name the
+// installation (from before it changed hands) are not the owner's to see.
+func SpacesOnGitHubInstallation(ctx context.Context, q Q, o InstallOwner, id int64) ([]SpaceRef, int, error) {
+	if !o.Valid() {
+		return nil, 0, nil
+	}
+	oc, oa := ownersSpace(o)
 	var n int
-	if err := q.QueryRow(ctx, `SELECT COUNT(DISTINCT r.space_id) FROM remotes r WHERE `+onInstallation, id).Scan(&n); err != nil {
+	if err := q.QueryRow(ctx, `SELECT COUNT(DISTINCT r.space_id) FROM remotes r JOIN spaces s ON s.id = r.space_id WHERE `+onInstallation+` AND `+oc,
+		append([]any{id}, oa...)...).Scan(&n); err != nil {
 		return nil, 0, err
 	}
 	rows, err := q.Query(ctx, `SELECT s.id, s.name, s.tenant_id FROM spaces s
-		WHERE s.id IN (SELECT r.space_id FROM remotes r WHERE `+onInstallation+`) ORDER BY s.name_key, s.id LIMIT ?`, id, maxAffectedSpaces)
+		WHERE s.id IN (SELECT r.space_id FROM remotes r WHERE `+onInstallation+` AND `+oc+`) ORDER BY s.name_key, s.id LIMIT ?`,
+		append(append([]any{id}, oa...), maxAffectedSpaces)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -259,7 +282,9 @@ func DisconnectGitHubInstallation(ctx context.Context, q Q, id int64, o InstallO
 		if n, _ := res.RowsAffected(); n == 0 {
 			return ErrNotFound
 		}
-		rows, err := q.Query(ctx, `SELECT DISTINCT r.space_id FROM remotes r WHERE `+onInstallation, id)
+		oc, oa := ownersSpace(o)
+		rows, err := q.Query(ctx, `SELECT DISTINCT r.space_id FROM remotes r JOIN spaces s ON s.id = r.space_id WHERE `+onInstallation+` AND `+oc,
+			append([]any{id}, oa...)...)
 		if err != nil {
 			return err
 		}
@@ -275,14 +300,30 @@ func DisconnectGitHubInstallation(ctx context.Context, q Q, id int64, o InstallO
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		if _, err := q.Exec(ctx, `UPDATE remotes SET state = ?, error_kind = ?, last_error = ?, updated = ?
-			WHERE installation_id = ? AND installation_id <> 0 AND url <> '' AND cred_type = 'connection' AND provider = 'github' AND via = 'app'`,
-			RemoteError, AccessLost, msg, ms(now), id); err != nil {
-			return err
+		// Only those spaces' remotes, in batches of the ids found above.
+		for rest := ids; len(rest) > 0; {
+			n := min(len(rest), 500)
+			marks := strings.Repeat(",?", n-1)
+			args := []any{RemoteError, AccessLost, msg, ms(now), id}
+			for _, sid := range rest[:n] {
+				args = append(args, sid)
+			}
+			if _, err := q.Exec(ctx, `UPDATE remotes SET state = ?, error_kind = ?, last_error = ?, updated = ?
+				WHERE installation_id = ? AND installation_id <> 0 AND url <> '' AND cred_type = 'connection' AND provider = 'github' AND via = 'app'
+				AND space_id IN (?`+marks+`)`, args...); err != nil {
+				return err
+			}
+			sargs := []any{RemoteError, RemoteError}
+			for _, sid := range rest[:n] {
+				sargs = append(sargs, sid)
+			}
+			if _, err := q.Exec(ctx, `UPDATE spaces SET remote_state = ? WHERE remote_state <> ? AND id IN (?`+marks+`)
+				AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = spaces.id AND r.role = 'content' AND r.url <> '')`, sargs...); err != nil {
+				return err
+			}
+			rest = rest[n:]
 		}
-		_, err = q.Exec(ctx, `UPDATE spaces SET remote_state = ? WHERE remote_state <> ? AND id IN (SELECT r.space_id FROM remotes r WHERE r.role = 'content' AND `+onInstallation+`)`,
-			RemoteError, RemoteError, id)
-		return err
+		return nil
 	})
 	return ids, err
 }

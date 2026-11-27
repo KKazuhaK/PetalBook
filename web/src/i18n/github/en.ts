@@ -239,7 +239,7 @@ export const githubEn = {
     disconnectBody:
       'It stays installed on GitHub (uninstall it there). The spaces below lose GitHub access: their notes are kept, and they stop syncing until GitHub is connected again or they are connected to another repository.',
     disconnectGrace:
-      'Where this server requires every space to sync to a repository, they then have the usual time to get one.',
+      'Where this server requires every space to sync to a repository, they count as having none: a space whose time to get one has already run out (it counts from when the space was made) becomes read only at once; the others keep what is left of theirs.',
     disconnectSpaces: (n: number) => (n === 1 ? '1 space syncs through it:' : `${n} spaces sync through it:`),
     disconnectMore: (n: number) => `and ${n} more`,
     disconnectNone: 'No space syncs through it.',
@@ -261,6 +261,8 @@ export const githubEn = {
         'GitHub does not list that installation for your GitHub account, so it was not connected. Install it again from here.',
       wrong_account: 'The App was installed on another account than the one asked for, so it was not connected.',
       installation_taken: 'That installation is already connected to another organisation or person on this server.',
+      not_org_admin:
+        'Only an owner of the GitHub organisation can connect its installation. GitHub says your account is a member there, not an owner; ask an owner to install it from here.',
       not_connected:
         'GitHub did not authorize you in the same step. Connect your GitHub account first, then install again.',
       unknown: 'Something went wrong.',

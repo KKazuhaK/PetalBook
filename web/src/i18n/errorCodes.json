@@ -68,6 +68,7 @@
   "not_fixable",
   "not_found",
   "not_json",
+  "not_org_admin",
   "oidc_issuer_invalid",
   "org_limit",
   "owner_not_allowed",

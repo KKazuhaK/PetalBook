@@ -634,6 +634,7 @@ func TestConnectingAnotherTenantsSpaceChecksTheSpacesTenant(t *testing.T) {
 // App's callback.
 func (e *ghEnv) claimOrg(tenant, org string) int64 {
 	e.t.Helper()
+	e.f.MakeAdmin(org, "tang") // an owner of the organisation installs it
 	hc := connections.WithInstallHooks(ctx, connections.InstallHooks{Allow: func(context.Context, store.InstallOwner) error { return nil }})
 	o := store.InstallOwner{TenantID: tenant}
 	u, binding, err := e.svc.StartInstallFor(hc, e.user.ID, o, org, "/back")

@@ -202,6 +202,7 @@ func (h *harness) installMine(userID, login string) int64 {
 // the organisation org for tenant; it answers the installation's id.
 func (h *harness) installOrg(admin, tenant, org, login string) int64 {
 	h.t.Helper()
+	h.f.MakeAdmin(org, login) // an owner of the organisation installs it
 	if to := h.installFor(admin, store.InstallOwner{TenantID: tenant}, org, login, org, true); to != "/back" {
 		h.t.Fatalf("installing on %s: %s", org, to)
 	}
