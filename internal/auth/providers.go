@@ -1530,7 +1530,12 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	if err := s.reloadProviders(ctx, b.row.ID); err != nil {
 		return nil, err
 	}
-	s.AuditIn(ctx, AuditEvent{Kind: providerAuditKind(b.row.Owner, "provider_created", "tenant_provider_created"), Actor: actorID, IP: ip, Tenant: auditTenant(b.row.Owner), Detail: map[string]any{"slug": b.row.Slug, "kind": b.row.Kind, "name": b.row.Name}})
+	// A tenant's own provider has rows of its own kind, its tenant's: the site's are site-only.
+	auditKind := "provider_created"
+	if b.row.Owner != store.ProviderSite {
+		auditKind = "tenant_provider_created"
+	}
+	s.AuditIn(ctx, AuditEvent{Kind: auditKind, Actor: actorID, IP: ip, Tenant: auditTenant(b.row.Owner), Detail: map[string]any{"slug": b.row.Slug, "kind": b.row.Kind, "name": b.row.Name}})
 	return s.Provider(ctx, b.row.ID)
 }
 
@@ -1628,19 +1633,13 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, id string, in
 		for _, f := range b.changed {
 			d[f] = changedValue(b, f)
 		}
-		s.AuditIn(ctx, AuditEvent{Kind: providerAuditKind(cur.row.Owner, "provider_changed", "tenant_provider_changed"), Actor: actorID, IP: ip, Tenant: auditTenant(cur.row.Owner), Detail: d})
+		auditKind := "provider_changed"
+		if cur.row.Owner != store.ProviderSite {
+			auditKind = "tenant_provider_changed"
+		}
+		s.AuditIn(ctx, AuditEvent{Kind: auditKind, Actor: actorID, IP: ip, Tenant: auditTenant(cur.row.Owner), Detail: d})
 	}
 	return s.Provider(ctx, id)
-}
-
-// providerAuditKind is the kind of a provider's audit row: site's for the
-// site's own (site-only rows), tenant's for a tenant's own, which its
-// administrators read.
-func providerAuditKind(owner, site, tenant string) string {
-	if owner == store.ProviderSite {
-		return site
-	}
-	return tenant
 }
 
 // auditTenant is the tenant a provider's audit rows belong to: its own
@@ -1747,7 +1746,11 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, id string, fo
 	if err := s.reloadProviders(ctx); err != nil {
 		return err
 	}
-	s.AuditIn(ctx, AuditEvent{Kind: providerAuditKind(cur.row.Owner, "provider_deleted", "tenant_provider_deleted"), Actor: actorID, IP: ip, Tenant: auditTenant(cur.row.Owner), Detail: map[string]any{"slug": cur.row.Slug, "kind": cur.row.Kind}})
+	auditKind := "provider_deleted"
+	if cur.row.Owner != store.ProviderSite {
+		auditKind = "tenant_provider_deleted"
+	}
+	s.AuditIn(ctx, AuditEvent{Kind: auditKind, Actor: actorID, IP: ip, Tenant: auditTenant(cur.row.Owner), Detail: map[string]any{"slug": cur.row.Slug, "kind": cur.row.Kind}})
 	return nil
 }
 

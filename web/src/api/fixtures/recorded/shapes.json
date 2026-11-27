@@ -860,6 +860,7 @@
      "previous?": [
       "string"
      ],
+     "provider?": "null",
      "quota?": {
       "$or": [
        "string",
@@ -2111,6 +2112,13 @@
   "error": "string",
   "message": "string"
  },
+ "GET /api/admin/tenants/{}/providers 200": {
+  "providers": []
+ },
+ "GET /api/admin/tenants/{}/providers/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
  "GET /api/admin/tenants/{}/secrets 200": {
   "secrets": [
    {
@@ -2128,7 +2136,9 @@
     "effective": {
      "$or": [
       "boolean|null|number|string",
-      []
+      [
+       "string"
+      ]
      ]
     },
     "key": "string",
@@ -2144,7 +2154,9 @@
      "value": {
       "$or": [
        "boolean|null|number|string",
-       []
+       [
+        "string"
+       ]
       ]
      }
     },
@@ -4247,7 +4259,7 @@
   "message": "string"
  },
  "PATCH /api/admin/tenants/{}/domains/{} 200": {
-  "checkedAt": "string",
+  "checkedAt": "null|string",
   "code": "null",
   "codeExpired": "boolean",
   "codeExpires": "string",
@@ -4257,16 +4269,21 @@
   "join": "null",
   "lapsedAt": "null",
   "lastCheck": {
-   "at": "string",
-   "by": "string",
-   "error": "string",
-   "result": "string",
-   "seen": [],
-   "via": "string"
+   "$or": [
+    "null",
+    {
+     "at": "string",
+     "by": "string",
+     "error": "string",
+     "result": "string",
+     "seen": [],
+     "via": "string"
+    }
+   ]
   },
   "missingSince": "null",
   "mixedScript": "boolean",
-  "nextCheckAllowedAt": "string",
+  "nextCheckAllowedAt": "null|string",
   "nextCheckAt": "null",
   "provider": "null",
   "recordName": "string",
@@ -4274,6 +4291,10 @@
   "restrictOrgs": "boolean",
   "state": "string",
   "verifiedAt": "null"
+ },
+ "PATCH /api/admin/tenants/{}/domains/{} 404": {
+  "error": "string",
+  "message": "string"
  },
  "PATCH /api/prefs 200": {
   "personal": "boolean"
@@ -5109,6 +5130,10 @@
   "verifiedAt": "null"
  },
  "POST /api/admin/tenants/{}/domains/{}/verify 429": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/tenants/{}/providers 400": {
   "error": "string",
   "message": "string"
  },

@@ -140,8 +140,9 @@ export const NAV: readonly NavSection[] = [
     Icon: Layers,
     tabs: [
       { key: 'settings', label: tc.sections.settings, render: () => <SettingsPanel /> },
-      // The organisation's own email domains (3.6 d2); a site administrator has them on each tenant's page.
-      { key: 'signin', label: tdom.title, orgOnly: true, render: () => later(<OrgDomains />) },
+      // The organisation's sign-in: its own SSO (3.6 d3) and email domains (d2); a site administrator has them on each
+      // tenant's page.
+      { key: 'signin', label: tdom.signinTab, orgOnly: true, render: () => later(<OrgDomains />) },
     ],
   },
   {

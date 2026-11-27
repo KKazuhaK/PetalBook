@@ -109,7 +109,10 @@ function ConfirmBody({ change, onClose }: { change: CapabilityChange; onClose: (
             <li key={l.tenant} className="min-w-0 break-words" data-slot="plan-line">
               <span className="font-medium">{l.name}</span>{' '}
               <span className="text-muted-foreground">
-                ({l.slug}) · {tc.line(l.domains, l.verified)}
+                ({l.slug}) ·{' '}
+                {l.providers !== undefined
+                  ? tc.providersLine(l.providers, l.enabled ?? 0)
+                  : tc.line(l.domains ?? 0, l.verified ?? 0)}
               </span>
             </li>
           ))}

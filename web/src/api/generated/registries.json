@@ -485,6 +485,18 @@
         {
           "name": "sessions_ended",
           "site": false
+        },
+        {
+          "name": "tenant_provider_changed",
+          "site": false
+        },
+        {
+          "name": "tenant_provider_created",
+          "site": false
+        },
+        {
+          "name": "tenant_provider_deleted",
+          "site": false
         }
       ]
     },

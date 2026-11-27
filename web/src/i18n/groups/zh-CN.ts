@@ -168,6 +168,9 @@ export const groupsZhCN = {
     findNone: '没有名称包含这些字的同步组。',
     unknownGroup: '（已不存在的组）',
     rows: (n: number) => `${n} 项`,
+    allow: '只允许这些组的人登录',
+    allowHelp:
+      '每行一个组声明里的值。不留空时，只有声明里有其中一个值的人才能登录，每次登录都会检查；没有这个声明的人一律不能登录。留空则不限制。不必打开「登录时同步组」。',
     errors: {
       notSynced: '映射只能指向同步组。',
       notFound: '映射里有不存在的组。',

@@ -266,6 +266,11 @@ memory, without a database query.
 - From 3.3, `register` and `forgot`: whether the page links to registration and
   to password reset, for the tenant named by `?tenant={slug}` (the default
   tenant without it); see "Registration" and "Password reset".
+- From 3.6 d3, with `?tenant={slug}` the providers are what that tenant's
+  people may use: the site's social providers its `signin.social` allows, the
+  site's SSO offered to it (`tenants`), and its own that can sign in now. With
+  none of them the mode is `local_only`. Without `?tenant` they are the site's
+  enabled providers, as before; a tenant's own are never listed there.
 
 Whether password sign-in is refused (`ssoOnly`) is never in this answer, nor
 anything about a particular account: neither may help someone choose which
@@ -780,7 +785,8 @@ events exist.
 
 A tenant's administrators see the rows about their tenant, a site
 administrator's changes to it included. Only the server's own doings are
-site-only: `provider_created`, `provider_changed`, `provider_deleted`,
+site-only: `provider_created`, `provider_changed`, `provider_deleted` (the
+site's own providers; a tenant's are `tenant_provider_*`, its own rows),
 `connection_provider_changed`, `mail_changed`, `mail_test`, `rate_limited`,
 `lockout`, `dropped` and `audit_purged`.
 
@@ -814,6 +820,7 @@ A site administrator can also purge by hand, see `POST /api/admin/audit/purge`.
 | `passkey_added`, `passkey_removed` | a passkey was registered or deleted | `passkey`, `by` (`user`, `admin`) |
 | `secret_changed` | a secret of the site or of a tenant was set or cleared (see "Secrets") | `name`, `scope` (`site`, `tenant`), `change` (`set`, `cleared`); never the value. The captcha's secret and the mail password also write it, through their own forms, as `setting_changed` with `key` `captcha.secret` and `to` `"changed"`, and `mail_changed` |
 | `provider_created`, `provider_changed`, `provider_deleted` | a sign-in provider changed | `slug`, `kind`, the changed fields (secrets as `"changed"`) |
+| `tenant_provider_created`, `tenant_provider_changed`, `tenant_provider_deleted` | a tenant's own sign-in provider changed (3.6 d3; its tenant's rows) | as `provider_*` |
 | `user_changed` | an administrator changed `role`, `disabled`, `passkeyRequired`, `email` or `emailVerified` | the changed fields |
 | `token_created` | an API token was made (`POST /api/account/tokens`) | `token` (id), `name`, `access`, `spaces` (ids); never the secret |
 | `token_revoked` | an API token was revoked through the server (once: revoking one already revoked writes nothing) | `token`, `name`, `by` (`user`, `admin`) |
@@ -1617,7 +1624,8 @@ A sign-in provider (see "Sign-in providers") may carry a `groups` setting:
 ```json
 "groups": {"enabled": true, "claim": "groups", "missing": "keep",
            "map": [{"value": "5f1c…-engineering", "groupId": "01JD4A2K9P"},
-                   {"value": "/staff", "groupId": "01JD4A3B7Q"}]}
+                   {"value": "/staff", "groupId": "01JD4A3B7Q"}],
+           "allow": []}
 ```
 
 - `claim`: where the values are read. OpenID Connect: a claim of the ID token
@@ -1626,6 +1634,10 @@ A sign-in provider (see "Sign-in providers") may carry a `groups` setting:
   (`memberOf`, or `http://schemas.microsoft.com/ws/2008/06/identity/claims/groups`
   for Entra ID). GitHub: not settable; the values are the organisations the
   person belongs to (the logins 2.8 already reads, at most 500).
+- `allow` (3.6 d3): when not empty, only people whose claim names one of these
+  values sign in, checked at every sign-in (also with `enabled` off: the claim
+  is then read for this alone); a missing claim lets nobody in
+  (`sso_error=not_allowed`). Not settable on GitHub.
 - `missing`: what happens when the claim is not there at all: `keep` (default:
   the person's groups from this provider stay as they are) or `clear` (as if
   the list were empty). OpenID Connect's "groups overage" (Entra ID sends
@@ -8487,9 +8499,12 @@ it is in use: `{"action": "change_capabilities", "key": "features.domains",
 "tenant": "01JDT3NANT"}` (`tenant` for a site administrator's rule for one
 tenant; without it, the site's value). Only who may make that change gets it
 (`404 not_found` otherwise); a feature with no count of its use is `400
-invalid` (today only `features.domains` has one). `plan` has one line per
-tenant that has the feature now and uses it:
-`{"tenant", "slug", "name", "feature", "domains", "verified"}`. The token is
+invalid` (today `features.domains` and, from 3.6 d3, `features.ownSso` have
+one). `plan` has one line per tenant that has the feature now and uses it:
+`{"tenant", "slug", "name", "feature", "domains", "verified"}` for
+`features.domains` (its claims, and how many are verified), `{"tenant",
+"slug", "name", "feature", "providers", "enabled"}` for `features.ownSso` (its
+own sign-in providers, and how many are on). The token is
 not a bulk action's (`POST /api/admin/bulk` refuses it): it goes as `confirm`
 with the change itself, `PUT /api/admin/settings/{key}` or
 `PUT /api/admin/tenants/{tenant}/settings/{key}` (`{"value": false, "confirm":
@@ -9531,6 +9546,7 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | `features.tokens`, `features.mcp`, `features.offline`, `features.registration` | boolean | S, T |
 | `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.tenantAudit`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`, `.githubConnect`; `mail.ownSender` | boolean (features) | S + rule |
 | `features.passkeys`, `features.tenancy` | boolean | S! |
+| `signin.social` | list: provider slugs, or `["*"]` (default) | S, T (3.6 d3) |
 | `audit.signins`, `.reads`, `.downloads`, `.api` | boolean | S, T |
 | `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` 0 for no age limit), choice `or`, `and` | S! |
 | `audit.keepDays.<category>` (eight) | limit, 0 (forever) to 3,650, or none | S! |
@@ -9723,7 +9739,7 @@ Sign-in providers are of two kinds, as consumer products do it.
   "Continue with Google" button on every sign-in page. It signs a person in to
   the account its identity is attached to, in any tenant, as today; with
   registration open for the page's tenant it can register (see below).
-  `auth.social` lets a tenant with `signin.socialChoice` narrow which social
+  `signin.social` (its tenant layer, 3.6 d3) lets a tenant narrow which social
   providers its people may use;
   an identity from a provider the person's tenant does not allow is refused
   after it is resolved (`sso_error=not_allowed`, the same as for a GitHub
@@ -9770,8 +9786,9 @@ provider. A tenant's SSO provider:
 - keeps its linked accounts when its issuer, SAML entity id or GitHub base
   address changes: they belong to the provider row, not to the address.
 
-`POST`/`PATCH`/`DELETE /api/admin/providers…` in a tenant's scope need the
-tenant's feature `features.ownSso` (`403 feature_off` otherwise). Slugs stay
+A tenant's own providers are managed at `/api/admin/tenants/{tenant}/providers`
+(3.6 d3, below); a site administrator may also make one with
+`POST /api/admin/providers` and `"owner": "<tenant id>"`. Slugs stay
 unique on the server (they are in the callback addresses registered at the
 identity provider), whoever owns them, and the database holds that with one
 unique index on `slug` (a GitLab or Gitea host's id is its slug, so they share
@@ -9781,6 +9798,76 @@ social only, and a tenant's own provider is `sso` only (`400 invalid`).
 `class` defaults to `social` for `github` and a template, `sso` otherwise;
 a `PATCH` with another `class` is `400 invalid`, and the store never writes
 it after the row is made.
+
+**An organisation's own SSO** (3.6 d3, built). The routes need
+`tenant.signin.manage` (every tenant administrator holds it) and the feature
+`features.ownSso` (`403 feature_off` while it is off for the tenant; a site
+administrator is not bound by it). `{tenant}` is one the caller may manage
+(`404 not_found` otherwise), and `{id}` a provider that tenant owns (another
+tenant's, or the site's, is `404 not_found`):
+
+- `GET /api/admin/tenants/{tenant}/providers`: `{"providers": [Provider]}`,
+  the tenant's own, in order;
+- `POST …/providers`: the body of `POST /api/admin/providers` for `kind`
+  `oidc` or `saml`; `owner` is the tenant (left out, or the same id; another is
+  `400 invalid`). A template, `kind` `github`, `class` `social`,
+  `mergeVerifiedEmail: true`, a `tenant` (jit) other than its own and
+  `tenants` are `400 invalid`. It starts off until the tenant has a verified
+  domain (`409 domain_required` when asked on). `201` with the Provider;
+- `GET`, `PATCH`, `DELETE …/providers/{id}` (`?force=1` as the site's),
+  `POST …/providers/{id}/check`: as the site's;
+- `POST …/providers/{id}/test` (`{"return": "/admin/…"}`, optional): a test
+  sign-in that comes back to `return` (an address of the console; the
+  organisation console's sign-in tab without one) with `?provider_test={id}`,
+  read once with `GET …/providers/{id}/test`.
+
+Its audit rows are `tenant_provider_created`, `…_changed`, `…_deleted`, the
+tenant's (its administrators read them); the site's own stay `provider_*`,
+site-only. At most 50 providers per owner (`409 provider_limit`).
+
+Signing in through a tenant's provider (`/api/auth/{kind}/{slug}/…`, the slug
+being unique on the server):
+
+- the provider works only while it is on, the tenant has `features.ownSso`
+  and a verified domain; otherwise its start is `404 not_found` and a callback
+  `sso_error=provider_unavailable` (nothing is deleted: it works again when they
+  are back);
+- the account found by `(provider id, subject)` must be of the provider's
+  tenant, checked on the account at every sign-in, and must hold no site key
+  (the built-in site administrator or a custom site role): otherwise
+  `sso_error=not_allowed`, audited as `login_failed` (`reason: not_allowed`)
+  in the account's tenant. Linking it (`POST /api/account/links/{id}/start`)
+  is offered to the tenant's people only (`404 not_found` for anyone else, and
+  `sso_error=not_allowed` for a link started otherwise); it makes no first
+  administrator (`setup`), and an invitation it accepts must be of its tenant
+  and not a site administrator's;
+- `autoCreate` makes accounts in the provider's tenant only (its `tenant` is
+  its owner), as members;
+- `groups.map` names the tenant's own groups only (another's is
+  `404 group_not_found`, as one that does not exist);
+- `groups.allow` (any OIDC or SAML provider, the site's too): when not empty,
+  only people whose groups claim (`groups.claim`) names one of these values
+  sign in, at every sign-in, whether or not the groups are synced; a missing
+  claim lets nobody in (`sso_error=not_allowed`). Who the identity provider
+  takes out of the group signs in no more; the account stays.
+
+**A site SSO provider offered to tenants.** `tenants` on a site provider of
+class `sso` is `"all"` (the default) or a list of tenant ids (at most 1000;
+`400 invalid` on a social provider, which `signin.social` prunes instead). With
+a list, only the people of those tenants sign in or link through it, and
+`autoCreate` makes no account in a tenant not on it (`sso_error=not_allowed`).
+
+**`signin.social`** (site and tenant, a list: the slugs of the site's social
+providers the tenant's people may use, or `["*"]` for every one, the default).
+The site's value is the default and its lower rule says whether a tenant
+prunes it; a rule for one tenant may lock it. It is read once a sign-in has
+found its account (or the tenant `autoCreate` would make it in): an identity
+of a provider the account's tenant does not allow is `sso_error=not_allowed`.
+
+**Outgoing requests.** A tenant's provider reaches public addresses only (its
+discovery document, keys, tokens and SAML metadata; the check of "Outgoing
+requests made for a tenant", on the address each name resolves to, at most 3
+redirects). The per-tenant outbound cap is not applied to sign-in yet.
 
 **Several sign-in methods per account** (owner, 2026-11-23). An account may
 have a password and any number of identities (Google, GitHub, Microsoft, …) at
@@ -9910,8 +9997,15 @@ bound by it):
 - `POST …/domains/{domain}/code` (a new code, for a claim that is not
   verified; `409 domain_verified` for one that is): `200` with the Domain, its
   `code` and `records`;
-- `PATCH …/domains/{domain}` (`{"restrictOrgs": true}`): `200` with the Domain;
-  `provider` and `join` are refused (`400 invalid`) until d3 and d5;
+- `PATCH …/domains/{domain}` (`{"restrictOrgs": true}`, `{"provider":
+  "01JDP4ACME"}`, or both): `200` with the Domain. `provider` (3.6 d3) routes a
+  **verified** domain to one of the tenant's own sign-in providers (its id;
+  `null` for none): it needs `tenant.signin.manage` and the feature
+  `features.ownSso` too (`403 forbidden`, `403 feature_off`), a provider of
+  another tenant or of the site is `404 not_found`, and an unverified domain
+  `409 domain_required`. Only the routing is stored in d3; the sign-in page's
+  discovery that reads it is d4. Deleting the provider clears it. `join` is
+  refused (`400 invalid`) until d5;
 - `DELETE …/domains/{domain}`: `204`.
 
 `{domain}` takes any spelling of the domain (Unicode or punycode, any case); a
@@ -10931,7 +11025,7 @@ exist, a `before` that is not a time, or a `dry_run` that is not a boolean.
 | `email_not_ascii` | 400 | an address with characters outside ASCII while `users.emailNonAscii` is off; also asking to verify such a stored address then |
 | `feature_off` | 403 | the tenant does not have the feature (`features.*`) what was asked needs; with `feature` (and `permission`, the key, when a route's key needs it); the message is a capitalised sentence naming it ("The API tokens feature is turned off for this organization.") |
 | `takeover_required` | 403 | an administrator who is not a member of the space asked for what only taking it over gives (see "Taking over a space") |
-| `confirm_required` | 409 | a change of a feature, a plan or its assignment that stops something in use (`features.domains`), now or at a later start or end of a rule, without the confirmation of `change_capabilities`; with `plan` |
+| `confirm_required` | 409 | a change of a feature, a plan or its assignment that stops something in use (`features.domains`, `features.ownSso`), now or at a later start or end of a rule, without the confirmation of `change_capabilities`; with `plan` |
 | `plan_in_use` | 409 | deleting a plan that tenants use; with `tenants` |
 | `partial_unsupported` | 409 | connecting a space to a host that cannot sync partially while `storage.partial.unsupported` is `refuse`; with `host` |
 | `storage_target_error` | 502 | the storage target refused to make a space's repository; with `reason`, `status` |

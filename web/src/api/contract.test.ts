@@ -1653,6 +1653,32 @@ function suite(target: Target) {
           }
         })
 
+        it("an organisation's own single sign-on: its list, OIDC or SAML only, and a domain routed to none", async () => {
+          const own = '/api/admin/tenants/0000000000/providers'
+          const list = await call(admin, 'GET', own)
+          expect(list.status).toBe(200)
+          expect(Array.isArray(list.json.providers)).toBe(true)
+          // Templates are the site's social sign-in, GitHub too: refused before anything is fetched.
+          const tmpl = await call(admin, 'POST', own, { template: 'google', slug: `ct-${run}`.toLowerCase() })
+          expect([tmpl.status, tmpl.json.error]).toEqual([400, 'invalid'])
+          const gh = await call(admin, 'POST', own, { slug: `ct-${run}`.toLowerCase(), kind: 'github', name: 'x' })
+          expect([gh.status, gh.json.error]).toEqual([400, 'invalid'])
+          expect((await call(admin, 'GET', `${own}/0000000ZZZ`)).json.error).toBe('not_found')
+          // A domain's routing: to none is always allowed; to a provider the tenant does not own is not found.
+          const domains = '/api/admin/tenants/0000000000/domains'
+          const key = `ct3-${run}.example`.toLowerCase()
+          expect((await call(admin, 'POST', domains, { domain: key })).status).toBe(201)
+          try {
+            const none = await call(admin, 'PATCH', `${domains}/${key}`, { provider: null })
+            expect([none.status, none.json.provider]).toEqual([200, null])
+            expect((await call(admin, 'PATCH', `${domains}/${key}`, { provider: '0000000ZZZ' })).json.error).toBe(
+              'not_found',
+            )
+          } finally {
+            expect((await call(admin, 'DELETE', `${domains}/${key}`)).status).toBe(204)
+          }
+        })
+
         it('the sign-in templates are the presets the server ships, social and with their addresses', async () => {
           const r = await call(admin, 'GET', '/api/admin/provider-templates')
           expect(r.status).toBe(200)

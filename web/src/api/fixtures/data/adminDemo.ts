@@ -164,6 +164,28 @@ export function seedAdminDemo(d: FixtureData) {
     },
     { ...base('a-rather-long-subdomain-name.engineering.example-company.co.uk') },
   ]
+  // The default tenant's own single sign-on (3.6 d3): one provider, acme.example routed to it.
+  d.admin.providers.push(
+    makeProvider(
+      {
+        slug: 'acme-entra',
+        kind: 'oidc',
+        owner: DEFAULT_TENANT,
+        name: 'Acme Entra ID（员工账号）',
+        autoCreate: true,
+        oidc: {
+          issuer: 'https://login.microsoftonline.com/0a1b2c3d-4e5f-6789-abcd-ef0123456789/v2.0',
+          clientId: 'demo',
+          clientSecret: 'x',
+        },
+        groups: { allow: ['staff'] },
+      },
+      at,
+      3,
+      '01SSDEMO01',
+    ),
+  )
+  d.admin.domains[DEFAULT_TENANT][0].provider = '01SSDEMO01'
   d.admin.siteHost = 'notes.example.test'
   d.admin.publishedDomains.push('acme.example', 'a-rather-long-subdomain-name.engineering.example-company.co.uk')
 }

@@ -141,6 +141,16 @@ export const securityEn: SecurityMessages = {
   providers: {
     title: 'Sign-in providers',
     help: 'OpenID Connect, SAML and GitHub providers for single sign-on, at most 50.',
+    // The organisation's own single sign-on (3.6 d3).
+    org: {
+      title: 'Single sign-on',
+      help: "The organization's own OpenID Connect or SAML providers, at most 50. They sign in and make only this organization's accounts, map only to its groups, and never sign in a site administrator.",
+      featureOff: "This organization's single sign-on is turned off: its providers are kept, but sign nobody in.",
+      needDomain: 'Verify an email domain below first: a provider can be turned on only then.',
+      trust:
+        "Only addresses on the organization's verified domains are trusted (each exactly: a subdomain is verified by itself).",
+      domains: (list: string) => `Domains routed here: ${list}`,
+    },
     empty: 'No providers yet.',
     add: 'Add a provider',
     loadFailed: 'Could not load the providers',
@@ -426,6 +436,9 @@ export const securityEn: SecurityMessages = {
       provider_created: 'Provider added',
       provider_changed: 'Provider changed',
       provider_deleted: 'Provider deleted',
+      tenant_provider_created: "Organization's sign-in provider added",
+      tenant_provider_changed: "Organization's sign-in provider changed",
+      tenant_provider_deleted: "Organization's sign-in provider deleted",
       plan_created: 'Plan made',
       plan_changed: 'Plan changed',
       plan_deleted: 'Plan deleted',

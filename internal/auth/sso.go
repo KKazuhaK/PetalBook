@@ -1091,7 +1091,7 @@ func (s *Service) ssoInvite(ctx context.Context, rt *providerRT, c claimed, toke
 	// The account the invitation makes must be one the provider may sign in:
 	// a tenant's provider makes no site administrator, nor anyone of another
 	// tenant.
-	if inv.SiteAdmin && rt.row.Owner != store.ProviderSite || !s.tenantMayUse(ctx, rt, inv.TenantID) {
+	if store.IsSiteAdminRole(inv.Role, inv.SiteAdmin) && rt.row.Owner != store.ProviderSite || !s.tenantMayUse(ctx, rt, inv.TenantID) {
 		return nil, ssoErr("not_allowed")
 	}
 	u, err := s.createFromClaims(ctx, c, inv.Role, inv.ID, false, inv.TenantID, inv.SiteAdmin)

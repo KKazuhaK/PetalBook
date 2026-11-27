@@ -166,6 +166,9 @@ export const groupsEn: GroupsMessages = {
     addRow: 'Add an entry',
     removeRow: 'Remove this entry',
     noSynced: 'There is no synced group yet. Make one on the Groups page with the source "Synced group".',
+    allow: 'Only people in these groups sign in',
+    allowHelp:
+      'One value of the groups claim per line. When it is not empty, only people whose claim holds one of them sign in, checked at every sign-in; anyone without the claim is refused. Empty lets everyone through. Syncing the groups need not be on.',
     findGroup: 'Find a synced group',
     findMore: 'Showing the first 200 by name; type part of a name to find the others.',
     findNone: 'No synced group has that in its name.',

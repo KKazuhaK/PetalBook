@@ -279,6 +279,7 @@ export const tenantsZhCN = {
     names: {
       'features.registration': '开放注册',
       'registration.domains': '注册允许的邮箱域名',
+      'signin.social': '成员可以使用的社交登录',
       'registration.perHour': '每小时注册数',
       'legal.termsUrl': '服务条款链接',
       'legal.privacyUrl': '隐私政策链接',
