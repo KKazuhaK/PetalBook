@@ -48,6 +48,20 @@ func (s Subject) NarrowTo(tenant string) Subject {
 	return Subject{Tenant: map[string]Set{tenant: s.In(tenant).Intersect(tenantAdminSet)}}
 }
 
+// TenantKeys are the keys the subject holds acting in tenant (what NarrowTo keeps): the tenant keys of its site keys
+// and of its roles there.
+func (s Subject) TenantKeys(tenant string) Set {
+	buildRoles()
+	return s.In(tenant).Intersect(tenantAdminSet)
+}
+
+// TenantCovers reports whether the tenant's own roles give the subject everything it holds acting in tenant: false
+// when some of it is held only across the site, which makes its acts there a site administrator's.
+func (s Subject) TenantCovers(tenant string) bool {
+	buildRoles()
+	return s.Tenant[tenant].Intersect(tenantAdminSet) == s.TenantKeys(tenant)
+}
+
 // Grant is a custom role a person holds, directly or through a group, as the
 // subject is built from it: the role's scope and keys, and where it is held
 // (Tenant "" is across the site).

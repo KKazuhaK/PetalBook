@@ -58,15 +58,16 @@ export default function AdminRoute() {
   }
   return (
     <TenantScope tenant={scope}>
-      <Console scope={scope} segments={rest} />
+      <Console scope={scope} segments={rest} siteUser={siteUser} />
     </TenantScope>
   )
 }
 
-function Console({ scope, segments }: { scope: string | null; segments: string[] }) {
+function Console({ scope, segments, siteUser }: { scope: string | null; segments: string[]; siteUser: boolean }) {
   const [first, second, third] = segments
   const { path } = useAdminPaths()
-  const actsAsSite = acrossSite(useSession().data?.user)
+  // A site administrator acting in a tenant: asked of the site's own session (inside the scope the session is the scope's).
+  const actsAsSite = siteUser
   const site = actsAsSite && scope === null
   const tenant = useTenant(scope)
   const ownTenant = useSession().data?.user?.tenant

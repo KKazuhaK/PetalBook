@@ -493,7 +493,6 @@ export const tenantsZhCN = {
       site: '整个站点',
       siteSub: '站点管理员',
       tenantSub: '租户管理员',
-      hint: '选择要管理的范围',
     },
   },
   // A tenant's own page: /admin/tenants/<id>/<tab>.

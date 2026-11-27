@@ -10,6 +10,7 @@ import { addTenant, asTenantAdmin, tenancyOn } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 import { UserMenu } from '@/components/layout/UserMenu'
 import { t } from '@/i18n'
+import { tc } from '@/i18n/console'
 import { MEMBER_PERMISSIONS } from '@/api/fixtures/data/people'
 
 // The console's scope selector: the site and every tenant the person administers, chosen from the header. A choice is
@@ -169,6 +170,20 @@ describe("the console's scope selector", () => {
     expect(items().map(label)).toEqual([tt.scope.selector.site, 'Acme'])
   })
 
+  it("reads the list again when a person's role changes, rather than waiting out its freshness", async () => {
+    await open(() => '/admin/users/all', dual)
+    const asked = () => m!.requests.filter((r) => r.url === '/api/admin/scopes').length
+    await settle(() => asked() === 1 && document.querySelectorAll('[data-user]').length > 0, 'the list and the people')
+    const row = document.querySelector('[data-user]')!
+    await click(row.querySelector(`button[aria-label*="${tc.table.more}"]`))
+    await settle(
+      () => [...document.querySelectorAll('[role="menuitem"]')].some((i) => i.textContent === tc.users.disable),
+      'menu',
+    )
+    await click([...document.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent === tc.users.disable))
+    await settle(() => asked() === 2, 'the list asked again')
+  })
+
   it('truncates a long name instead of widening the page, and keeps it whole in the title', async () => {
     const long = 'An organisation with a very long name that would not fit in any header'
     await open(
@@ -247,6 +262,49 @@ describe("the console's scope selector", () => {
       )
       await settle(() => locationText().startsWith(`/admin/t/${ids.acme}/`), 'sent to Acme')
       expect(adminCalls().filter((r) => r.scope && r.scope !== `tenant:${ids.acme}`)).toEqual([])
+    })
+
+    const inviteButton = () => [...document.querySelectorAll('a')].find((a) => a.textContent === tc.users.invite)
+    const rowMenus = () => document.querySelectorAll(`button[aria-label*="${tc.table.more}"]`)
+    const checks = () => document.querySelectorAll('tbody input[type="checkbox"], tbody [role="checkbox"]')
+
+    it("offers a person who administers only B all of B's controls, from the keys B gives them", async () => {
+      await open(
+        () => '/admin',
+        (d) => {
+          memberOf(d)
+          d.admin.scopeTenants.push(ids.acme)
+        },
+      )
+      await settle(() => document.querySelectorAll('[data-user]').length > 0, "Acme's people")
+      expect(inviteButton()).toBeDefined()
+      expect(rowMenus().length).toBeGreaterThan(0)
+    })
+
+    it('offers a narrow role in B no write control, whatever their own tenant gives', async () => {
+      await open(
+        () => '/admin',
+        (d) => {
+          // An administrator of their own tenant, with only the keys to read in Acme.
+          asTenantAdmin(d)
+          d.admin.scopeTenants.push(ids.acme)
+          d.admin.scopeKeys[ids.acme] = ['tenant.settings.read', 'tenant.users.read']
+        },
+      )
+      await settle(() => locationText() === '/admin/users', 'in their own console')
+      await settle(() => inviteButton() !== undefined, "their own tenant's invite")
+      await open(
+        (id) => `/admin/t/${id.acme}/users`,
+        (d) => {
+          asTenantAdmin(d)
+          d.admin.scopeTenants.push(ids.acme)
+          d.admin.scopeKeys[ids.acme] = ['tenant.settings.read', 'tenant.users.read']
+        },
+      )
+      await settle(() => document.querySelectorAll('[data-user]').length > 0, "Acme's people")
+      expect(inviteButton()).toBeUndefined()
+      expect(rowMenus().length).toBe(0)
+      expect(checks().length).toBe(0)
     })
 
     it('shows the way into the console in their menu; someone who administers nothing gets neither', async () => {

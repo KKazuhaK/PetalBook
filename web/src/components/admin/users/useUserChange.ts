@@ -46,6 +46,8 @@ export function useUserChange() {
     try {
       const { user } = await inScope(() => adminApi.updateUser(u.id, patch))
       void qc.invalidateQueries({ queryKey: keys.users })
+      // A person's role or administrator flag decides where the console may act for them.
+      void qc.invalidateQueries({ queryKey: keys.consoleScopes })
       setBusy(null)
       return user
     } catch (e) {

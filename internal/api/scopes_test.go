@@ -46,8 +46,9 @@ func TestTheScopeListHoldsExactlyWhatThePersonAdministers(t *testing.T) {
 		grantRole(t, a, "RB", store.RoleScopeTenant, f.tenB, store.GrantToUser, mustUserID(t, a, "adm-a"), "tenant.settings.read", "tenant.users.read")
 		eq("adm-a with a role in B", scopeList(t, f.admA), []string{
 			"tenant:" + f.tenB + "=tenant_admin", "tenant:" + store.DefaultTenantID + "=tenant_admin"})
+		// Holding only a narrow role in B, a site administrator acts there with the site's keys: a site_admin.
 		grantRole(t, a, "RC", store.RoleScopeTenant, f.tenB, store.GrantToUser, mustUserID(t, a, "root"), "tenant.settings.read")
-		eq("root with a role in B", scopeList(t, f.root), []string{"site:=site_admin", "tenant:" + f.tenB + "=tenant_admin"})
+		eq("root with a role in B", scopeList(t, f.root), []string{"site:=site_admin", "tenant:" + f.tenB + "=site_admin"})
 
 		// A role that holds no settings key there lists nothing of that tenant.
 		grantRole(t, a, "RD", store.RoleScopeTenant, f.tenB, store.GrantToUser, f.userA, "tenant.users.read")

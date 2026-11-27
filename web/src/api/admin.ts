@@ -1042,6 +1042,8 @@ function useGroupsChanged() {
   return () =>
     Promise.all([
       qc.invalidateQueries({ queryKey: keys.adminGroups }),
+      // A role may be held through a group: the places the console may act in follow its people.
+      qc.invalidateQueries({ queryKey: keys.consoleScopes }),
       qc.invalidateQueries({ queryKey: keys.account }),
       qc.invalidateQueries({ queryKey: keys.spaces }),
       qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'space' && q.queryKey[2] === 'members' }),

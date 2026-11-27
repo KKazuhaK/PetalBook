@@ -10540,8 +10540,15 @@ opened in a view records the viewer's capacity.
 #### `GET /api/admin/scopes`
 
 3.6 (c7). Where the console may act, for its scope selector: `{"scopes":
-[{"kind": "site", "capacity": "site_admin"}, {"kind": "tenant", "id", "name",
-"capacity": "tenant_admin"}]}`. `site` comes first, for whoever holds
+[{"kind": "site", "capacity": "site_admin", "permissions": […]}, {"kind":
+"tenant", "id", "name", "capacity": "tenant_admin", "permissions": […]}]}`.
+`permissions` are the keys the person holds in that scope, as a request there
+is held to (a tenant's: its tenant keys, which the web console gates its
+controls on inside `/admin/t/{id}`). `capacity` is `tenant_admin` when the
+tenant's own roles give the person everything they hold there, `site_admin`
+when some of it is held only across the site (a site administrator with a
+narrow role in the tenant): such acts are a site administrator's, and entering
+the scope is recorded as `tenant_console_opened`. `site` comes first, for whoever holds
 `tenant.settings.read` across the site; then every tenant the person holds it
 in through a role of that tenant (their own tenant's administrator, and a
 built-in or custom role held in another tenant), by name. It asks for no key

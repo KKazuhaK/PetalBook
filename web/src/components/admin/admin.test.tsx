@@ -98,6 +98,7 @@ describe('who can reach the administration', () => {
     expect(heading()).toBeUndefined()
     expect(text()).not.toContain(tc.sections.spaces)
     // Only the list of what they administer is asked (a member may administer another tenant), and it is empty.
+    await settle(() => adminCalls().length > 0, 'the list asked')
     expect(adminCalls().map((r) => r.url)).toEqual(['/api/admin/scopes'])
   })
 

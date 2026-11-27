@@ -1467,9 +1467,18 @@
   "scopes": [
    {
     "capacity": "string",
-    "kind": "string"
+    "id?": "string",
+    "kind": "string",
+    "name?": "string",
+    "permissions": [
+     "string"
+    ]
    }
   ]
+ },
+ "GET /api/admin/scopes 400": {
+  "error": "string",
+  "message": "string"
  },
  "GET /api/admin/scopes 403": {
   "error": "string",

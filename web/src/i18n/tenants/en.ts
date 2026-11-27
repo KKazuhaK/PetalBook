@@ -521,7 +521,6 @@ export const tenantsEn: TenantsMessages = {
       site: 'Whole site',
       siteSub: 'Site administrator',
       tenantSub: 'Tenant administrator',
-      hint: 'Choose where to manage',
     },
   },
   // A tenant's own page: /admin/tenants/<id>/<tab>.
