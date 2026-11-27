@@ -147,14 +147,27 @@ func TestAuditOptionalCategoriesFollowTheirSettings(t *testing.T) {
 		if logins() != before+1 {
 			t.Fatal("a sign-in was written for a tenant that turned them off")
 		}
-		// No setting exists for a core category, and the retention keeps the floor.
+		// No setting exists for a core category to switch it off, and the
+		// retention has no floor: days from 1, or 0 for no age limit.
 		f.root.putSetting("audit.security", false).want(t, 404, "")
-		f.root.putSetting("audit.keepDays", 30).want(t, 400, "")
+		f.root.putSetting("audit.keepDays", -1).want(t, 400, "")
+		f.root.putSetting("audit.keepDays", 1).want(t, 200, "")
+		f.root.putSetting("audit.keepDays", 0).want(t, 200, "")
 		f.root.putSetting("audit.keepDays", 120).want(t, 200, "")
 		f.root.putSetting("audit.keepRows", 5000).want(t, 200, "")
 		f.root.putSetting("audit.keepMode", "and").want(t, 200, "")
 		f.root.putSetting("audit.optionalKeepDays", 7).want(t, 200, "")
-		f.root.putSetting("audit.optionalKeepDays", 91).want(t, 400, "")
+		f.root.putSetting("audit.optionalKeepDays", 0).want(t, 400, "")
+		f.root.putSetting("audit.optionalKeepDays", 3651).want(t, 400, "")
+		// Each category has days of its own: 0 forever, null follows the rest.
+		f.root.putSetting("audit.keepDays.security", 1).want(t, 200, "")
+		f.root.putSetting("audit.keepDays.data", 0).want(t, 200, "")
+		f.root.putSetting("audit.keepDays.system", 3651).want(t, 400, "")
+		if got := a.auth.AuditRetention(context.Background()); got.CategoryDays["security"] != 1 || got.CategoryDays["data"] != 0 || len(got.CategoryDays) != 2 {
+			t.Fatalf("the trim reads %+v", got)
+		}
+		f.root.putSetting("audit.keepDays.security", nil).want(t, 200, "")
+		f.root.putSetting("audit.keepDays.data", nil).want(t, 200, "")
 		if got := a.auth.AuditRetention(context.Background()); got.Days != 120 || got.Rows != 5000 || got.Mode != "and" || got.OptionalDays != 7 {
 			t.Fatalf("the trim reads %+v", got)
 		}

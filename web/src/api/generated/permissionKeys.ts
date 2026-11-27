@@ -12,6 +12,7 @@ export type PermissionKey =
   | 'site.status.read'
   | 'site.storage.manage'
   | 'site.recycle.purge'
+  | 'site.audit.purge'
   | 'site.admins.manage'
   | 'site.spaces.personal.meta'
   | 'site.spaces.personal.content'

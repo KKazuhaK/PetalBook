@@ -85,7 +85,7 @@ func TestLimitsLayerPersonOverTenantOverSite(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		svc, _, _ := newService(t, st)
 		l, err := svc.Limits(ctx, store.DefaultTenantID, Own{})
-		if err != nil || *l.Spaces != 20 || l.Bytes != nil || l.Pages != nil {
+		if err != nil || *l.Spaces != 3 || l.Bytes != nil || l.Pages != nil {
 			t.Fatalf("%+v %v", l, err)
 		}
 		if _, err := svc.set.SetSite(ctx, settings.QuotaBytesPerPerson, settings.Change{HasValue: true, Value: int64(1000)}); err != nil {
@@ -183,16 +183,16 @@ func TestSpaceLimitsAreThePersonsAndTheTenants(t *testing.T) {
 		if err := store.InsertUser(ctx, st.Q(), u); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := svc.SpaceLimits(ctx, u); err != nil || got != (spaces.SpaceLimits{Person: 20}) {
+		if got, err := svc.SpaceLimits(ctx, u); err != nil || got != (spaces.SpaceLimits{Person: 3}) {
 			t.Fatalf("%+v %v", got, err)
 		}
-		if err := store.SetUserQuota(ctx, st.Q(), store.AllTenants(), "U1", Own{Spaces: n(3)}.Encode()); err != nil {
+		if err := store.SetUserQuota(ctx, st.Q(), store.AllTenants(), "U1", Own{Spaces: n(4)}.Encode()); err != nil {
 			t.Fatal(err)
 		}
 		if err := svc.set.SetTenant(ctx, store.DefaultTenantID, settings.QuotaSpaces, settings.Change{Site: true, HasSiteRule: true, SiteRule: &settings.Rule{Value: int64(9)}}); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := svc.SpaceLimits(ctx, u); err != nil || got != (spaces.SpaceLimits{Person: 3, Tenant: 9}) {
+		if got, err := svc.SpaceLimits(ctx, u); err != nil || got != (spaces.SpaceLimits{Person: 4, Tenant: 9}) {
 			t.Fatalf("%+v %v", got, err)
 		}
 	})

@@ -273,7 +273,7 @@ const (
 	// few files open.
 	DefaultMaxOpen = 256
 	// DefaultMaxSpaces is the flag's default; Options.MaxSpaces 0 is unlimited.
-	DefaultMaxSpaces = 20
+	DefaultMaxSpaces = 3
 )
 
 // opening is one space that is open, being opened, or being closed.

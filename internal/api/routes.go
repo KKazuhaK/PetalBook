@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"slices"
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
@@ -104,6 +105,17 @@ func needsAny(k authz.Key, more ...authz.Key) access {
 		}
 	}
 	a.orKeys = more
+	return a
+}
+
+// orSite adds a site key that admits the caller too, for a route a site role
+// may follow (the jobs: a role that holds only site.audit.purge follows its
+// purge). The key must be of no feature; the handler narrows what it shows.
+func (a access) orSite(k authz.Key) access {
+	if k.Scope() != authz.ScopeSite || k.Feature() != a.feature {
+		panic("api: orSite takes a site key of the route's feature (" + k.Name() + ")")
+	}
+	a.orKeys = append(slices.Clone(a.orKeys), k)
 	return a
 }
 
@@ -254,8 +266,8 @@ var routeTable = []route{
 	{"POST", "/api/admin/confirm", needs(authz.TenantBulkRun).always(), true, false, false, (*server).adminConfirm},
 	{"POST", "/api/admin/bulk", needs(authz.TenantBulkRun).always(), true, false, false, (*server).adminBulk},
 	// The jobs: each kind's key lets a person follow that kind (jobKeyOf).
-	{"GET", "/api/admin/jobs", needsAny(authz.TenantBulkRun, authz.TenantDataExport, authz.TenantRecycleRead).always(), true, false, false, (*server).adminListJobs},
-	{"GET", "/api/admin/jobs/{id}", needsAny(authz.TenantBulkRun, authz.TenantDataExport, authz.TenantRecycleRead).always(), true, false, false, (*server).adminGetJob},
+	{"GET", "/api/admin/jobs", needsAny(authz.TenantBulkRun, authz.TenantDataExport, authz.TenantRecycleRead).orSite(authz.SiteAuditPurge).always(), true, false, false, (*server).adminListJobs},
+	{"GET", "/api/admin/jobs/{id}", needsAny(authz.TenantBulkRun, authz.TenantDataExport, authz.TenantRecycleRead).orSite(authz.SiteAuditPurge).always(), true, false, false, (*server).adminGetJob},
 	{"GET", "/api/admin/users/{user}/deletion", needs(authz.TenantUsersDelete).always(), true, false, false, (*server).adminUserDeletion},
 	{"POST", "/api/admin/exports", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminCreateExport},
 	{"GET", "/api/admin/exports", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminListExports},
@@ -284,6 +296,7 @@ var routeTable = []route{
 	{"GET", "/api/admin/audit", needs(authz.TenantAuditRead).always(), true, false, false, (*server).adminAudit},
 	{"GET", "/api/admin/audit/kinds", needs(authz.TenantAuditRead).always(), true, false, false, (*server).adminAuditKinds},
 	{"GET", "/api/admin/audit/download", needs(authz.TenantAuditRead).on(settings.FeatureAuditDownload), true, false, false, (*server).adminAuditDownload},
+	{"POST", "/api/admin/audit/purge", needs(authz.SiteAuditPurge).always(), true, false, false, (*server).adminAuditPurge},
 	{"GET", "/api/admin/tenants", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminListTenants},
 	{"POST", "/api/admin/tenants", needs(authz.SiteTenantsManage).on(settings.FeatureTenancy), true, false, false, (*server).adminCreateTenant},
 	{"GET", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsRead).always(), true, false, false, (*server).adminGetTenant},

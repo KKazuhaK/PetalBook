@@ -303,7 +303,7 @@ export const securityEn: SecurityMessages = {
   },
   audit: {
     title: 'Audit log',
-    help: 'Sign-ins, refused sign-ins, changes to settings and people, deleted and exported spaces, and more, newest first. Core categories are always recorded and kept for at least 90 days; the optional ones are switched on in the "Audit" group of the settings, where how long rows are kept is set too.',
+    help: 'Sign-ins, refused sign-ins, changes to settings and people, deleted and exported spaces, and more, newest first. Core categories are always recorded; the optional ones are switched on in the "Audit" group of the settings, where how long each category is kept is set too.',
     categoriesLabel: 'Categories',
     category: 'Category',
     allCategories: 'All',
@@ -425,6 +425,7 @@ export const securityEn: SecurityMessages = {
       export_downloaded: 'Export downloaded',
       audit_downloaded: 'Audit log downloaded',
       dropped: 'Rows dropped',
+      audit_purged: 'Audit log purged',
     } as Record<string, string>,
     at: 'When',
     who: 'About',
@@ -440,6 +441,30 @@ export const securityEn: SecurityMessages = {
     actor: (id: string) => `by ${id}`,
     cli: 'command line',
     refresh: 'Refresh',
+    purge: {
+      open: 'Purge rows…',
+      title: 'Purge audit rows',
+      help: 'Deletes rows of the audit log now, whatever the retention settings say. Pick what to delete; the count is checked before anything goes.',
+      category: 'Category',
+      all: 'All categories',
+      before: 'Written before',
+      beforeHelp: 'A day, YYYY-MM-DD. Empty: every row up to now.',
+      counting: 'Counting the rows…',
+      countFailed: 'Could not count the rows.',
+      none: 'No rows match; nothing would be deleted.',
+      will: (n: number, category: string, before: string, more = false) =>
+        `${more ? 'More than ' : ''}${n === 1 ? '1 row' : `${n.toLocaleString('en')} rows`} of ${category}${before ? `, written before ${before},` : ''} will be deleted for good. This cannot be undone. One record of the purge stays in the log.`,
+      cancel: 'Cancel',
+      confirm: (n: number, more = false) =>
+        `${more ? 'Delete more than ' : 'Delete '}${n === 1 ? '1 row' : `${n.toLocaleString('en')} rows`}`,
+      deleting: 'Deleting…',
+      progress: (n: number) => (n === 1 ? '1 row deleted so far…' : `${n.toLocaleString('en')} rows deleted so far…`),
+      done: (n: number) => (n === 1 ? 'Deleted 1 row.' : `Deleted ${n.toLocaleString('en')} rows.`),
+      stopped: (n: number) =>
+        `The purge stopped after ${n === 1 ? '1 row' : `${n.toLocaleString('en')} rows`}. Start it again to delete the rest.`,
+      failed: 'The purge did not work.',
+      close: 'Close',
+    },
   },
   users: {
     passkeyRequired: 'Require a passkey',

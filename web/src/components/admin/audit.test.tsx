@@ -101,3 +101,53 @@ describe('the filters of the audit log page', () => {
     expect(chip('security').hasAttribute('data-off')).toBe(false)
   })
 })
+
+describe('purging the audit log by hand', () => {
+  const dialog = () => q('[data-slot="audit-purge-dialog"]')
+  const countText = () => q('[data-slot="audit-purge-count"]')?.textContent ?? ''
+  const posts = () => m!.requests.filter((r) => r.method === 'POST' && r.url.startsWith('/api/admin/audit/purge'))
+  const button = (text: string) =>
+    [...document.querySelectorAll('[data-slot="audit-purge-dialog"] button')].find(
+      (b) => b.textContent?.trim() === text,
+    )
+
+  it('counts with a dry run, says what will go, and deletes only when confirmed', async () => {
+    await open('/admin/audit')
+    await click(q('[data-slot="audit-purge-open"]'))
+    await settle(() => dialog() !== null && countText().includes('5'), 'the count of every row')
+    // Nothing was deleted by looking: only a dry run was asked, and the button names the number.
+    expect(posts().map((r) => r.url)).toEqual(['/api/admin/audit/purge?dry_run=true'])
+    expect(button(tsec.audit.purge.confirm(5))).toBeDefined()
+    await type(dialog()!.querySelector('select')!, 'security')
+    await settle(
+      () => countText() === tsec.audit.purge.will(2, tsec.audit.categories.security, ''),
+      'the security count',
+    )
+    expect(button(tsec.audit.purge.confirm(2))).toBeDefined()
+    await click(button(tsec.audit.purge.confirm(2)))
+    // The purge is a job: the dialog follows it and says what it did, then closes on request.
+    await settle(
+      () => q('[data-slot="audit-purge-result"]')?.textContent === tsec.audit.purge.done(2),
+      'the result of the job',
+    )
+    await click(button(tsec.audit.purge.close))
+    await settle(() => dialog() === null, 'the dialog closing')
+    const real = posts().filter((r) => !r.url.includes('dry_run'))
+    expect(real).toHaveLength(1)
+    expect(JSON.parse(real[0].body!)).toEqual({ category: 'security' })
+    // The log is read again and shows the one record of the purge.
+    await settle(
+      () => q('[data-slot="audit-rows"]')?.textContent?.includes(tsec.audit.kinds.audit_purged) === true,
+      'the record',
+    )
+  })
+
+  it('does not delete when cancelled', async () => {
+    await open('/admin/audit')
+    await click(q('[data-slot="audit-purge-open"]'))
+    await settle(() => countText().includes('5'), 'the count')
+    await click(button(tsec.audit.purge.cancel))
+    await settle(() => dialog() === null, 'the dialog closing')
+    expect(posts().filter((r) => !r.url.includes('dry_run'))).toHaveLength(0)
+  })
+})

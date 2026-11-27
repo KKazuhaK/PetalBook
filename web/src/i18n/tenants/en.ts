@@ -311,10 +311,18 @@ export const tenantsEn: TenantsMessages = {
       'audit.reads': 'Record people opening pages and files',
       'audit.downloads': 'Record attachment and file downloads',
       'audit.api': 'Record API token and MCP calls',
-      'audit.keepDays': 'Days audit rows are kept (core rows: at least 90)',
+      'audit.keepDays': 'Days audit rows are kept (0: no age limit)',
       'audit.keepRows': 'Audit rows kept in all',
       'audit.keepMode': 'How the days and the row count combine',
       'audit.optionalKeepDays': 'Days rows of the optional categories are kept',
+      'audit.keepDays.security': 'Days Security rows are kept',
+      'audit.keepDays.admin': 'Days Administration rows are kept',
+      'audit.keepDays.data': 'Days Data rows are kept',
+      'audit.keepDays.system': 'Days System rows are kept',
+      'audit.keepDays.signins': 'Days Sign-ins rows are kept',
+      'audit.keepDays.reads': 'Days Reads rows are kept',
+      'audit.keepDays.downloads': 'Days Downloads rows are kept',
+      'audit.keepDays.api': 'Days API calls rows are kept',
       'recycle.days': 'Days the recycle bin keeps things',
       'jobs.maxRunning': 'Background jobs running at once on the server',
       'jobs.perTenant': 'Background jobs running at once for one organisation',
@@ -417,13 +425,29 @@ export const tenantsEn: TenantsMessages = {
         'Off by default. On: downloading an attachment or a file writes a row. Exports are core and always recorded.',
       'audit.api': 'Off by default. On: a call made with an API token or through MCP writes a row.',
       'audit.keepDays':
-        'A row is kept while it is younger than this many days, subject to the mode below. Rows of the core categories are never deleted before 90 days, whatever is set. Site administrators only: the audit log is one table for every organization.',
+        'A row is kept while it is younger than this many days, subject to the mode below. 0 is no age limit. Every category can also have days of its own, below; nothing is kept by a floor. Site administrators only: the audit log is one table for every organization.',
       'audit.keepRows':
         'A row is kept while it is among this many newest rows, subject to the mode below. Site administrators only.',
       'audit.keepMode':
         'or: a row goes only when it is both older than the days and outside the newest rows. and: a row goes when it is either. Site administrators only.',
       'audit.optionalKeepDays':
-        'Rows of the optional categories (sign-ins, reads, downloads, API calls) also go after this many days, at most 90. Site administrators only.',
+        'Rows of the optional categories (sign-ins, reads, downloads, API calls) also go after this many days (1 to 3650). A category with days of its own follows those instead. Site administrators only.',
+      'audit.keepDays.security':
+        'Leave empty to follow the days and rows above. 0 keeps Security rows forever; 1 or more deletes them after that many days, whatever the row count says. Site administrators only.',
+      'audit.keepDays.admin':
+        'Leave empty to follow the days and rows above. 0 keeps Administration rows forever; 1 or more deletes them after that many days, whatever the row count says. Site administrators only.',
+      'audit.keepDays.data':
+        'Leave empty to follow the days and rows above. 0 keeps Data rows forever; 1 or more deletes them after that many days, whatever the row count says. Site administrators only.',
+      'audit.keepDays.system':
+        'Leave empty to follow the days and rows above. 0 keeps System rows forever; 1 or more deletes them after that many days, whatever the row count says. Site administrators only.',
+      'audit.keepDays.signins':
+        'Leave empty to follow the days and rows above. 0 keeps Sign-ins rows forever; 1 or more deletes them after that many days, whatever the row count says. Site administrators only.',
+      'audit.keepDays.reads':
+        'Leave empty to follow the days and rows above. 0 keeps Reads rows forever; 1 or more deletes them after that many days, whatever the row count says. Site administrators only.',
+      'audit.keepDays.downloads':
+        'Leave empty to follow the days and rows above. 0 keeps Downloads rows forever; 1 or more deletes them after that many days, whatever the row count says. Site administrators only.',
+      'audit.keepDays.api':
+        'Leave empty to follow the days and rows above. 0 keeps API calls rows forever; 1 or more deletes them after that many days, whatever the row count says. Site administrators only.',
       'jobs.maxRunning':
         'How many bulk actions, exports and moves run at the same time on the whole server; the others wait their turn. Lowering it stops nothing that is running. Site administrators only.',
       'jobs.perTenant':

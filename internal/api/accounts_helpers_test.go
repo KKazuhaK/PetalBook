@@ -90,6 +90,9 @@ type accOpts struct {
 	mod     func(*auth.Config)
 	// maxSpaces is how many spaces one user may own (0: no limit).
 	maxSpaces int
+	// defaultQuota leaves quota.spacesPerPerson at the registry's default (3);
+	// otherwise most tests, which make more spaces than that, lift it to 20.
+	defaultQuota bool
 	// spaces and draftCfg adjust the manager and the draft service.
 	spaces   func(*spaces.Options)
 	draftCfg func(*drafts.Config)
@@ -208,6 +211,11 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	// a minute is lifted here, and the tests of the limits set it back.
 	if _, err := settings.Of(st).SetSite(ctx, settings.SigninPerMinute, settings.Change{HasValue: true, Value: int64(100000)}); err != nil {
 		t.Fatal(err)
+	}
+	if !o.defaultQuota && o.maxSpaces == 0 {
+		if _, err := settings.Of(st).SetSite(ctx, settings.QuotaSpacesPerPerson, settings.Change{HasValue: true, Value: int64(20)}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	dcfg := drafts.Config{Now: clk.Now}
 	if o.draftCfg != nil {

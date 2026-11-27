@@ -47,6 +47,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ApiError, api, fileUrl, markSignedIn, request, spaceApi, type SpaceApi } from './client'
 import { adminApi } from './admin'
+import { manageApi } from './manage'
 import { join, misfits, routeOf, shapeOf, type Shape } from './contractShapes'
 import type {
   AdminSpace,
@@ -175,7 +176,7 @@ function suite(target: Target) {
   let SP_PAGES = ''
   const created: { users: string[] } = { users: [] }
   // A real accounts server's sign-in limits as they were before the run.
-  let savedLimits: { perMinute: number; maxFailures: number } | undefined
+  let savedLimits: { perMinute: number; maxFailures: number; spaces: number } | undefined
 
   const browser = () => newBrowser(base)
   // Run `fn` as another browser (the client reads `globalThis.fetch`).
@@ -287,10 +288,16 @@ function suite(target: Target) {
         if (got.status !== 200) throw new Error(`could not read the settings: ${got.status} ${await got.text()}`)
         const list = ((await got.json()) as { settings: { key: string; site: { value: number } }[] }).settings
         const of = (key: string) => list.find((x) => x.key === key)!.site.value
-        savedLimits = { perMinute: of('signin.perMinute'), maxFailures: of('signin.maxFailures') }
+        savedLimits = {
+          perMinute: of('signin.perMinute'),
+          maxFailures: of('signin.maxFailures'),
+          spaces: of('quota.spacesPerPerson'),
+        }
         for (const [key, value] of [
           ['signin.perMinute', 1000],
           ['signin.maxFailures', 1000],
+          // The suite's administrator makes far more spaces than the default of 3.
+          ['quota.spacesPerPerson', 100],
         ] as const) {
           const r = await fetch(`/api/admin/settings/${key}`, {
             method: 'PUT',
@@ -313,6 +320,7 @@ function suite(target: Target) {
       for (const [key, value] of [
         ['signin.perMinute', savedLimits.perMinute],
         ['signin.maxFailures', savedLimits.maxFailures],
+        ['quota.spacesPerPerson', savedLimits.spaces],
       ] as const)
         await fetch(`/api/admin/settings/${key}`, {
           method: 'PUT',
@@ -7309,6 +7317,34 @@ function suite(target: Target) {
       expect(rows.items[0]).toMatchObject({ kind: 'audit_downloaded', category: 'data' })
       const bad = await fetch(adminApi.auditDownloadUrl({ category: ['nope' as never] }))
       expect(bad.status).toBe(400)
+    })
+
+    it('a purge by hand: a dry run counts and writes nothing, a real one writes one audit_purged row', async () => {
+      const dry = await adminApi.countAuditPurge({ category: 'all' })
+      expect(dry).toMatchObject({ dryRun: true, category: 'all', more: false })
+      expect(dry.count).toBeGreaterThan(0)
+      const before = await adminApi.audit({ kind: 'audit_purged', limit: 100 })
+      // Nothing is that old, so nothing goes, and the purge still says so once.
+      const { job } = await adminApi.purgeAudit({ category: 'reads', before: '2000-01-01' })
+      expect(job).toMatchObject({ kind: 'audit.purge' })
+      // The purge is a job: followed until it ends, then its one record is in the log.
+      let ended = job
+      for (let i = 0; i < 200 && (ended.state === 'queued' || ended.state === 'running'); i++) {
+        await new Promise((r) => setTimeout(r, 25))
+        ended = (await manageApi.job(job.id)).job
+      }
+      expect(ended).toMatchObject({ state: 'done', done: 0 })
+      let after = await adminApi.audit({ kind: 'audit_purged', limit: 100 })
+      for (let i = 0; i < 200 && after.items.length === before.items.length; i++) {
+        await new Promise((r) => setTimeout(r, 25))
+        after = await adminApi.audit({ kind: 'audit_purged', limit: 100 })
+      }
+      expect(after.items.length).toBe(before.items.length + 1)
+      expect(after.items[0]).toMatchObject({ category: 'system', detail: { category: 'reads', deleted: 0 } })
+      for (const body of [{ category: 'nope' }, { before: 'last week' }]) {
+        const e = await failure(request('/admin/audit/purge', { method: 'POST', body }))
+        expect([e.status, e.code], JSON.stringify(body)).toEqual([400, 'invalid'])
+      }
     })
   })
 

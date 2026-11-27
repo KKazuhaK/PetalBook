@@ -82,7 +82,7 @@ describe('the Usage page', () => {
     expect(personRow('名 cat').textContent).toContain(tu.neverMeasured)
     expect(personRow('名 bob').textContent).not.toContain(tu.neverMeasured)
     // The default limit on spaces is shown against each count; disk and pages have none.
-    expect(personRow('名 bob').querySelector('[data-quota="spaces"]')!.textContent).toContain('1 / 20')
+    expect(personRow('名 bob').querySelector('[data-quota="spaces"]')!.textContent).toContain('1 / 3')
     expect(personRow('名 bob').querySelector('[data-quota="bytes"]')!.textContent).not.toContain('/')
     expect(document.querySelector('[data-slot="tenant-usage"]')).toBeNull()
     expect(document.querySelector('#usage-tenant')).toBeNull()
@@ -334,8 +334,8 @@ describe('the quotas on the Settings page', () => {
       expect(rows(key)).toHaveLength(2)
       expect(rows(key)[0].textContent).toContain((tt.settings.names as Record<string, string>)[key])
     }
-    // The site's value of the number of spaces is the default 20; disk and pages are not limited.
-    expect(rows('quota.spacesPerPerson')[0].querySelector<HTMLInputElement>('input[type="number"]')!.value).toBe('20')
+    // The site's value of the number of spaces is the default 3; disk and pages are not limited.
+    expect(rows('quota.spacesPerPerson')[0].querySelector<HTMLInputElement>('input[type="number"]')!.value).toBe('3')
     expect(rows('quota.bytesPerPerson')[0].querySelector<HTMLInputElement>('input[type="number"]')!.value).toBe('')
   })
 

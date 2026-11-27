@@ -35,6 +35,15 @@ func TestEverySettingIsPerTenantOrServerWide(t *testing.T) {
 
 const ten2 = "T000000003"
 
+// siteSpaces sets the site's quota.spacesPerPerson, which these tests read
+// numbers against (the registry's default is 3).
+func siteSpaces(t *testing.T, s *settings.Service, n int64) {
+	t.Helper()
+	if _, err := s.SetSite(ctx, settings.QuotaSpacesPerPerson, settings.Change{HasValue: true, Value: n}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func setupTwo(t *testing.T, st *store.Store) *settings.Service {
 	t.Helper()
 	s := setup(t, st)
@@ -136,6 +145,7 @@ func TestPrecedenceOfTheLayers(t *testing.T) {
 func TestTheSitesRuleForOneTenantIsTheCapability(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setupTwo(t, st)
+		siteSpaces(t, s, 20)
 		site := settings.Change{Site: true, HasSiteRule: true}
 
 		off := site
@@ -194,6 +204,7 @@ func ptr[T any](v T) *T { return &v }
 func TestLockingForOneTenantKeepsWhatItSees(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setupTwo(t, st)
+		siteSpaces(t, s, 20)
 		lock := settings.Change{Site: true, HasSiteLock: true, SiteLock: true}
 		check := func(name, tenant, key string, want any) {
 			t.Helper()
@@ -240,6 +251,7 @@ func TestLockingForOneTenantKeepsWhatItSees(t *testing.T) {
 func TestARestrictionBoundsTheValueInEffect(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setupTwo(t, st)
+		siteSpaces(t, s, 20)
 		for key, l := range map[string]settings.Lower{
 			settings.QuotaSpacesPerPerson: {Mode: settings.Restrict, Max: ptr(int64(5))},
 			settings.QuotaBytesPerPerson:  {Mode: settings.Restrict, Max: ptr(int64(1 << 30))},
@@ -423,6 +435,7 @@ func TestTheVersionOfATenantsSettingsFollowsItsChanges(t *testing.T) {
 func TestASiteValueAboveItsOwnMaxIsRefused(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
+		siteSpaces(t, s, 20)
 		k := settings.QuotaSpacesPerPerson
 		max10 := &settings.Lower{Mode: settings.Restrict, Max: ptr(int64(10))}
 		refused := func(name string, err error) {
