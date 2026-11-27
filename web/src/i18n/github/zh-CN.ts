@@ -270,7 +270,7 @@ export const githubZhCN: GitHubMessages = {
         client_rejected: 'GitHub 不接受这对 client id 和 secret。',
         provider_in_use: '还有空间通过这个 App 同步，或有用户已连接。请先换掉或断开它们。',
         provider_host_mismatch:
-          '“用 GitHub 登录”配置的是另一个 GitHub 主机，并且已有人关联了那里的账号。请先删除那个登录提供方，或把它的基础地址改成这个 App 所在的主机。',
+          '“用 GitHub 登录”配置的是另一个 GitHub 主机，并且已有人关联了那里的账号。请先删除那个登录提供方，或移除它已关联的账号。',
         unavailable: '连不上 GitHub，什么也没有保存。',
         provider_not_configured: 'GitHub 不再接受已保存的密钥。请重新保存 App。',
         public_url_needed: '服务器没有公开地址（--public-url），GitHub 没法把你送回来。',

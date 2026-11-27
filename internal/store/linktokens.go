@@ -366,7 +366,12 @@ func CountProviderLinks(ctx context.Context, q Q, providerID string) (n int, err
 
 // ProviderInUseError refuses to delete a provider that spaces sync through
 // (Spaces of them), found in the deleting transaction.
-type ProviderInUseError struct{ Spaces int }
+type ProviderInUseError struct {
+	Spaces int
+	// Connections is how many people are connected, when the deletion
+	// refuses those too (DeleteUnusedConnProviderRow).
+	Connections int
+}
 
 func (e *ProviderInUseError) Error() string { return "spaces sync through the provider" }
 
@@ -375,7 +380,10 @@ func (e *ProviderInUseError) Error() string { return "spaces sync through the pr
 // too (PutRemote), so no space starts to sync through it between this check
 // and the deletion of the row in the same transaction.
 func lockUnusedProvider(ctx context.Context, q Q, id string) error {
-	if _, err := q.Exec(ctx, `UPDATE providers SET id = id WHERE id = ?`, id); err != nil {
+	// The lock comes before anything of usage the deletion writes (settling
+	// whether people are connected), as in every write that locks a provider
+	// (LockProvider).
+	if err := LockProvider(ctx, q, id); err != nil && !errors.Is(err, ErrProviderGone) {
 		return err
 	}
 	n, err := CountProviderSpaces(ctx, q, id)

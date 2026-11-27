@@ -116,6 +116,7 @@ var scopeAllowlist = map[string]string{
 	"PutGitHubApp":           "the GitHub App set up by a site administrator, on the GitHub provider row",
 	"CompareAndSetGitHubApp": "what a re-check of the GitHub App found, written only to the App it was made with",
 	"UserTenant":             "the tenant of a user already found, to scope what they may use of the App",
+	"LockProvider":           "a lock of a provider row by its id, taken by writes that already checked who may make them",
 	// --- 3.8: GitLab and Gitea providers. A provider is the server's own (or its
 	// tenant's: owner), set up by site administrators; a connection and a reminder are
 	// their user's; the account link is unique per provider on the whole server ---

@@ -108,3 +108,104 @@ func TestAProviderWithASpaceOnItIsNeverDeleted(t *testing.T) {
 		}
 	})
 }
+
+// A GitHub sign-in row's base URL moves to another host only while nobody is
+// linked to it, whoever writes it (here the sign-in side's UpdateProvider):
+// the links are GitHub's numeric ids of the host they were made on.
+func TestAGitHubRowNeverMovesHostWhileAccountsAreLinked(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		now := time.Date(2026, 11, 26, 8, 0, 0, 0, time.UTC)
+		mkUser(t, st, "U1", "u1", "member")
+		row := store.ProviderRow{ID: "ghe", Owner: store.ProviderSite, Slug: "ghe", Kind: "github", Name: "GHE", Enabled: true,
+			Config: `{"clientId":"c","baseUrl":"https://ghe.example.test"}`, Created: now, Updated: now}
+		if err := store.InsertProvider(ctx, q, row); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.InsertLink(ctx, q, store.Link{ID: "L1", ProviderID: "ghe", UserID: "U1", Subject: "42", SignIn: true, Created: now}); err != nil {
+			t.Fatal(err)
+		}
+		moved := row
+		moved.Config = `{"clientId":"c","baseUrl":"https://github.com"}`
+		var he *store.GitHubHostError
+		if err := store.UpdateProvider(ctx, q, moved); !errors.As(err, &he) || he.Links != 1 || he.Want != "https://github.com" {
+			t.Fatalf("%v", err)
+		}
+		if got, _ := store.GetProvider(ctx, q, "ghe"); got.Config != row.Config {
+			t.Fatalf("a refused move was written: %s", got.Config)
+		}
+		// Other changes, and the same host written otherwise, are written.
+		same := row
+		same.Name, same.Config = "GHE 2", `{"clientId":"c","baseUrl":"https://GHE.example.test/"}`
+		if err := store.UpdateProvider(ctx, q, same); err != nil {
+			t.Fatal(err)
+		}
+		// Without links it moves.
+		if _, err := q.Exec(ctx, `DELETE FROM linked_accounts WHERE provider_id = 'ghe'`); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateProvider(ctx, q, moved); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// A remote names a provider whose row is there: one deleted meanwhile takes
+// none (its deletion counted no space and left nothing to hold it).
+func TestARemoteIsRefusedOnAProviderThatIsGone(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		now := time.Date(2026, 11, 26, 8, 0, 0, 0, time.UTC)
+		if err := store.InsertSpace(ctx, q, store.DefaultTenantID, "S1", "S1", "", "", now); err != nil {
+			t.Fatal(err)
+		}
+		r := store.Remote{SpaceID: "S1", URL: "https://gitlab.example.test/o/s1.git", Branch: "main", State: "ok", Updated: now,
+			CredType: "connection", Provider: "gone", Via: "user", CredUserID: "U1"}
+		if err := store.PutRemote(ctx, q, r); !errors.Is(err, store.ErrProviderGone) {
+			t.Fatalf("%v", err)
+		}
+		if _, err := store.GetRemote(ctx, q, "S1", store.RoleContent); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("the remote was written: %v", err)
+		}
+		// A plain address names no provider row.
+		r.Provider, r.CredType = store.ProviderGit, "token"
+		if err := store.PutRemote(ctx, q, r); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// A host's provider is deleted only while nobody is connected and no space
+// syncs through it, counted in the deleting transaction.
+func TestAHostInUseIsNeverDeleted(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		now := time.Date(2026, 11, 26, 8, 0, 0, 0, time.UTC)
+		if err := store.InsertConnProviderRow(ctx, q, store.ConnProviderRow{ID: "gl", Type: "gitlab", Host: "gitlab.example.test", Scheme: "https", Name: "GL", Owner: store.ConnProviderSite, Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.InsertSpace(ctx, q, store.DefaultTenantID, "S1", "S1", "", "", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "S1", URL: "https://gitlab.example.test/o/s1.git", Branch: "main", State: "ok", Updated: now,
+			CredType: "connection", Provider: "gl", Via: "user", CredUserID: "U1"}); err != nil {
+			t.Fatal(err)
+		}
+		var iu *store.ProviderInUseError
+		if err := store.DeleteUnusedConnProviderRow(ctx, q, "gl"); !errors.As(err, &iu) || iu.Spaces != 1 {
+			t.Fatalf("%v", err)
+		}
+		if err := store.DeleteRemote(ctx, q, "S1", store.RoleContent); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.DeleteUnusedConnProviderRow(ctx, q, "gl"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.DeleteUnusedConnProviderRow(ctx, q, "gl"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("%v", err)
+		}
+	})
+}

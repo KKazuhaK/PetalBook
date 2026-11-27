@@ -81,7 +81,7 @@ func TestTheAppIsRefusedOnASigninRowOfAnotherHost(t *testing.T) {
 		}
 		r := admin.do("PUT", "/api/admin/providers/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
 			"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 409, "provider_host_mismatch")
-		if msg, _ := r.body["message"].(string); !strings.Contains(msg, "https://ghe.example.test") || msg[0] < 'A' || msg[0] > 'Z' {
+		if msg, _ := r.body["message"].(string); !strings.Contains(msg, "https://ghe.example.test") || msg[0] < 'A' || msg[0] > 'Z' || strings.Contains(msg, "change its base URL") {
 			t.Fatalf("%s", r.raw)
 		}
 		row, err := store.GetProvider(context.Background(), a.st.Q(), "github")
@@ -130,5 +130,31 @@ func TestUnlinkingASigninThatHoldsRepositoriesIsOneStep(t *testing.T) {
 			t.Fatal("the link or its grant survived")
 		}
 		c.do("GET", "/api/account/links/github/repos?mine=true", nil).want(t, 409, "not_connected")
+	})
+}
+
+// A GitHub sign-in provider people linked their accounts on keeps its host:
+// changing its base URL to another is refused, and the answer never suggests it.
+func TestAGitHubSigninProviderKeepsItsHostWhileAccountsAreLinked(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		admin := a.setup("root", pw)
+		admin.do("POST", "/api/admin/providers", map[string]any{"slug": "ghe", "kind": "github", "name": "GHE",
+			"github": map[string]any{"baseUrl": "https://ghe.example.test", "clientId": "c", "clientSecret": "s"}}).want(t, 201, "")
+		a.addUser("ann", pw, "member")
+		if err := store.InsertLink(context.Background(), a.st.Q(), store.Link{ID: "L1", ProviderID: "ghe", UserID: mustUserID(t, a, "ann"),
+			Subject: "1", SignIn: true, Created: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		r := admin.do("PATCH", "/api/admin/providers/ghe", map[string]any{"github": map[string]any{"baseUrl": "https://github.com"}}).want(t, 409, "provider_host_mismatch")
+		if msg, _ := r.body["message"].(string); !strings.Contains(msg, "remove its linked accounts") || strings.Contains(msg, "change its base URL") {
+			t.Fatalf("%s", r.raw)
+		}
+		got := admin.do("GET", "/api/admin/providers/ghe", nil).want(t, 200, "")
+		if !strings.Contains(string(got.raw), "ghe.example.test") {
+			t.Fatalf("a refused move was written: %s", got.raw)
+		}
+		// Other changes are made.
+		admin.do("PATCH", "/api/admin/providers/ghe", map[string]any{"name": "GHE 2"}).want(t, 200, "")
 	})
 }

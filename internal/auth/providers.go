@@ -1107,6 +1107,10 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, id string, in
 		dropped, err = s.dropUnmapped(ctx, q, id, cur.cfg.Groups, b.cfg.Groups)
 		return err
 	})
+	var he *store.GitHubHostError
+	if errors.As(err, &he) {
+		return nil, coded(409, "provider_host_mismatch", "%d account(s) are linked to this provider on %s, so its base URL cannot change to %s. Delete the provider, or remove its linked accounts, first.", he.Links, he.Have, he.Want)
+	}
 	if err != nil {
 		return nil, err
 	}

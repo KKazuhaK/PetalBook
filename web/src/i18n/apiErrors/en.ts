@@ -87,7 +87,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   mail_not_configured: 'Mail is not set up, so that cannot be done.',
   needs_mail: 'Mail is not set up, so that cannot be turned on yet.',
   needs_tenancy: 'Multiple organisations are not turned on, so that cannot be turned on yet.',
-  slug_reserved: 'That organisation address is reserved. Choose another.',
+  slug_reserved: 'That name is reserved. Choose another.',
   slug_taken: 'That organisation address is taken. Choose another.',
   org_limit: 'No more organisations can be made.',
   mail_insecure: 'The mail connection is not encrypted. Use an encrypted one.',
@@ -150,7 +150,7 @@ export const apiErrorsEn: ApiErrorTexts = {
     `Accounts still sign in or connect through this platform${p.accounts ? ` (${p.accounts} accounts)` : ''}. Deal with them first.`,
   provider_limit: 'The limit on platforms of this kind is reached.',
   provider_host_mismatch:
-    'The GitHub sign-in provider is on another GitHub host, and people have linked accounts there. Delete it, or change its base URL to the App’s host, first.',
+    'People have linked accounts to this GitHub provider on its current host, so it cannot move to another GitHub host. Delete the provider, or remove its linked accounts, first.',
   name_taken: 'That name is already taken. Choose another.',
   push_failed: 'The content could not be pushed to the repository, so the space was not created.',
   repo_not_in_installation: 'The repository is not among those the installed app reaches. Add it on the platform.',

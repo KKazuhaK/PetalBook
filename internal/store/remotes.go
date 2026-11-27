@@ -119,6 +119,22 @@ func GetRemote(ctx context.Context, q Q, spaceID, role string) (*Remote, error) 
 	return scanRemote(q.QueryRow(ctx, `SELECT `+remoteCols+` FROM remotes WHERE space_id = ? AND role = ?`, spaceID, roleOr(role)))
 }
 
+// LockProvider locks a provider's row for the rest of the transaction, or is
+// ErrProviderGone when there is none. The writes that make something depend on
+// a provider (a remote on it, a space made with one) and its deletion all take
+// this lock first, before any row of usage: one order, so they never wait on
+// each other in a circle.
+func LockProvider(ctx context.Context, q Q, id string) error {
+	err := lockRow(ctx, q, "providers", id)
+	if errors.Is(err, ErrNotFound) {
+		return ErrProviderGone
+	}
+	return err
+}
+
+// ErrProviderGone refuses a write that names a provider whose row is gone.
+var ErrProviderGone = errors.New("the provider is gone")
+
 // PutRemote inserts or replaces the remote of a space in its role (r.Role, ""
 // for RoleContent): its address, credential and state. Of an attachment
 // repository, Used and JobID are kept while the address stays the same (another
@@ -138,7 +154,8 @@ func PutRemote(ctx context.Context, q Q, r Remote) error {
 			// The provider's row is locked as its deletion locks it
 			// (lockUnusedProvider): a deletion that counted no space waits
 			// for this one, or this one for it.
-			if _, err := q.Exec(ctx, `UPDATE providers SET id = id WHERE id = ?`, r.Provider); err != nil {
+			// A provider whose row is gone (deleted meanwhile) takes no remote.
+			if err := LockProvider(ctx, q, r.Provider); err != nil {
 				return err
 			}
 		}

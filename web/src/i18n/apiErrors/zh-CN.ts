@@ -79,7 +79,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   mail_not_configured: '还没有配置发信，所以不能这样做。',
   needs_mail: '还没有配置发信，所以现在不能开启。',
   needs_tenancy: '还没有开启多组织，所以现在不能开启。',
-  slug_reserved: '这个组织地址是保留的，换一个吧。',
+  slug_reserved: '这个名字是保留的，换一个吧。',
   slug_taken: '这个组织地址已被占用，换一个吧。',
   org_limit: '不能再创建组织了。',
   mail_insecure: '发信连接没有加密，请换成加密的连接。',
@@ -139,7 +139,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
     `还有账号在通过这个平台登录或连接${p.accounts ? `（${p.accounts} 个账号）` : ''}，请先处理它们。`,
   provider_limit: '这种平台的数量已达上限。',
   provider_host_mismatch:
-    'GitHub 登录提供方在另一个 GitHub 主机上，并且已有人关联了那里的账号。请先删除它，或把它的基础地址改成 App 所在的主机。',
+    '已有人在这个 GitHub 提供方当前的主机上关联了账号，所以它不能换到另一个 GitHub 主机。请先删除这个提供方，或移除它已关联的账号。',
   name_taken: '这个名字已经被占用了，请换一个。',
   push_failed: '没能把内容推送到仓库，空间没有创建。',
   repo_not_in_installation: '这个仓库不在已安装的应用范围内，请在平台上把它加进去。',

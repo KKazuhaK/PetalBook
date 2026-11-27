@@ -373,6 +373,13 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 	m.createMu.Lock()
 	unreserve() // the row below takes the place
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
+		// The provider's row first, before InsertSpace and AddMember write
+		// usage: its deletion locks the row and then usage (lockUnusedProvider,
+		// then settling who is connected), and one order means neither waits
+		// on the other in a circle. A provider deleted meanwhile takes no space.
+		if err := store.LockProvider(ctx, q, g.Provider); err != nil {
+			return err
+		}
 		if err := store.InsertSpace(ctx, q, tenantID, id, stg.Name(), "", inbox, now); err != nil {
 			return err
 		}
@@ -386,6 +393,12 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 		}
 		return store.PutRemote(ctx, q, row)
 	})
+	if errors.Is(err, store.ErrProviderGone) {
+		os.RemoveAll(m.assetsDir(id))
+		m.createMu.Unlock()
+		return Info{}, failed(connections.CodeNotConfigured, http.StatusConflict,
+			connections.Errorf(g.Provider, http.StatusConflict, connections.CodeNotConfigured, "The provider was removed while the space was being made; nothing was kept."))
+	}
 	if err != nil {
 		os.RemoveAll(m.assetsDir(id))
 		m.createMu.Unlock()

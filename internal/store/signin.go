@@ -131,6 +131,15 @@ func UpdateProvider(ctx context.Context, q Q, p ProviderRow) error {
 			if err != nil {
 				return err
 			}
+			// The base URL moves only while nobody is linked (refuseGitHubRehost).
+			have, _ := configMap(cur)
+			next, err := configMap(merged)
+			if err != nil {
+				return err
+			}
+			if err := refuseGitHubRehost(ctx, q, p.ID, baseURLOf(have), baseURLOf(next)); err != nil {
+				return err
+			}
 			p.Config = merged
 		}
 		res, err := q.Exec(ctx, `UPDATE providers SET name = ?, icon = ?, enabled = ?, position = ?, auto_create = ?, trust_email_optin = ?, legacy_callback = ?, issuer = ?,

@@ -177,6 +177,7 @@ func TestGitHubSpaceCountsIncludeAttachmentRepositories(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
 		q := st.Q()
+		mkGitHubRow(t, st, now)
 		for _, id := range []string{"S1", "S2", "S3"} {
 			if err := store.InsertSpace(ctx, q, store.DefaultTenantID, id, id, "", "", now); err != nil {
 				t.Fatal(err)

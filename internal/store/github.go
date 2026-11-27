@@ -355,22 +355,9 @@ func PutGitHubApp(ctx context.Context, q Q, a GitHubApp, now time.Time) error {
 			return err
 		}
 		if !missing {
-			// The links of the row are keyed by GitHub's numeric user ids, which
-			// are only unique on one host: a row people signed in with on one
-			// GitHub never takes another's App, or an account there with the
-			// same id would sign in as them.
-			var have string
-			if raw, ok := m[githubBaseURLKey]; ok {
-				_ = json.Unmarshal(raw, &have)
-			}
-			if !SameGitHubHost(have, a.BaseURL) {
-				var n int
-				if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM linked_accounts WHERE provider_id = ?`, ProviderGitHub).Scan(&n); err != nil {
-					return err
-				}
-				if n > 0 {
-					return &GitHubHostError{Have: githubHostOr(have), Want: a.BaseURL, Links: n}
-				}
+			// A row people signed in with on one GitHub never takes another's App.
+			if err := refuseGitHubRehost(ctx, q, ProviderGitHub, baseURLOf(m), a.BaseURL); err != nil {
+				return err
 			}
 		}
 		m[githubAppKey] = json.RawMessage(a.App)
@@ -402,6 +389,34 @@ type GitHubHostError struct {
 
 func (e *GitHubHostError) Error() string {
 	return "the GitHub provider is on " + e.Have + ", not " + e.Want
+}
+
+// baseURLOf is the base URL of a GitHub config ("" when it has none).
+func baseURLOf(m map[string]json.RawMessage) string {
+	var s string
+	if raw, ok := m[githubBaseURLKey]; ok {
+		_ = json.Unmarshal(raw, &s)
+	}
+	return s
+}
+
+// refuseGitHubRehost refuses (GitHubHostError) to move a GitHub provider row
+// from host have to host want while accounts are linked to it: its links are
+// keyed by GitHub's numeric user ids, which are only unique on one host, so
+// an account of the new host with the same id would sign in as one of them.
+// Every write of a GitHub row's base URL asks it, the row locked.
+func refuseGitHubRehost(ctx context.Context, q Q, id, have, want string) error {
+	if SameGitHubHost(have, want) {
+		return nil
+	}
+	var n int
+	if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM linked_accounts WHERE provider_id = ?`, id).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return &GitHubHostError{Have: githubHostOr(have), Want: githubHostOr(want), Links: n}
+	}
+	return nil
 }
 
 // githubHostOr is a stored base URL, github.com when there is none.

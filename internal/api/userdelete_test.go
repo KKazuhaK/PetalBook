@@ -77,6 +77,10 @@ func TestTheDeletionOfAPersonIsPlannedByTheContractsRules(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		f := newUdFix(t, a)
+		// The GitHub row the remote names (a remote is refused on a provider that has none).
+		if err := store.PutGitHubApp(context.Background(), a.st.Q(), store.GitHubApp{App: `{"appId":"1"}`, BaseURL: "https://github.com"}, a.clock.Now()); err != nil {
+			t.Fatal(err)
+		}
 		// A remote token of olive's own syncs Team: after the transfer it stops until reconnected.
 		if err := store.PutRemote(context.Background(), a.st.Q(), store.Remote{SpaceID: f.sid, URL: "https://github.com/o/team.git", Branch: "main", CredType: store.CredConnection,
 			Provider: store.ProviderGitHub, Via: "user", CredUserID: f.ownerID, State: "ok", Updated: a.clock.Now()}); err != nil {

@@ -11467,7 +11467,10 @@ unless asked otherwise, with `status.ok: false`.
 #### `PATCH /api/admin/providers/{id}`
 
 Any fields but `slug`, `kind` and `owner`. `clientSecret` absent keeps the stored one,
-`""` clears it. `200` with the provider.
+`""` clears it. `200` with the provider. A `kind: "github"` provider's `github.baseUrl` moves to
+another host only while no account is linked to it (links are GitHub's numeric
+ids, unique only on one host): `409 provider_host_mismatch` otherwise; delete
+the provider, or remove its linked accounts, first.
 
 #### `DELETE /api/admin/providers/{id}?force=1`
 
@@ -11784,7 +11787,7 @@ A GitHub sign-in provider (the `github` row) set up for another GitHub host is
 not taken over while accounts are linked to it: their links name accounts of
 that host by GitHub's numeric ids, which an account on the App's host could
 share. `409 provider_host_mismatch` then (`message` names both hosts): delete
-that sign-in provider, or change its base URL to the App's host, first.
+that sign-in provider, or remove its linked accounts, first.
 `200` as `GET`.
 
 An App made before the connections moved to `/api/account/links` (its
