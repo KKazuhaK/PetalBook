@@ -326,6 +326,8 @@ func New(opt Options) *Handler {
 		s.localAccess = auth.AccessOf(s.local)
 	}
 	s.settings.SetClock(s.now)
+	// Billing does not switch off a feature a tenant uses (capabilities.go).
+	s.settings.UseGuard(s.billingGuard)
 	s.domains = opt.Domains
 	if s.domains == nil {
 		s.domains = domains.New(domains.Options{Store: opt.Store, Settings: s.settings, SiteHost: SiteHostOf(opt.PublicURL), Now: now, Logger: s.log})
@@ -679,6 +681,8 @@ type errorBody struct {
 	Field  string `json:"field,omitempty"`
 	// Accounts is how many accounts a refused provider deletion would have left without a way in.
 	Accounts *int `json:"accounts,omitempty"`
+	// Plan is what a change would stop, by tenant (confirm_required).
+	Plan []any `json:"plan,omitempty"`
 	// Organization is the organisation that manages an email domain (domain_managed).
 	Organization *auth.OrgRef `json:"organization,omitempty"`
 	// What a refused group request is about: how many spaces and provider

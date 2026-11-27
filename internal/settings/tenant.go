@@ -372,16 +372,9 @@ func (s *Service) SetTenantResult(ctx context.Context, tenant, key string, ch Ch
 	return res, err
 }
 
-// PreviewTenant is what the setting would come to for the tenant after the
-// change, with every check SetTenantResult makes, and nothing written.
-func (s *Service) PreviewTenant(ctx context.Context, tenant, key string, ch Change) (*Effective, error) {
-	_, after, err := s.setTenant(ctx, tenant, key, ch, true)
-	return after, err
-}
-
-// setTenant is SetTenantResult, or with preview the effective value it would
-// leave instead of the write.
-func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, preview bool) (TenantResult, *Effective, error) {
+// setTenant is SetTenantResult, or with preview the inputs of the tenant's value
+// as the change would leave them, instead of the write (TenantSwitchesOff).
+func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, preview bool) (TenantResult, *inputs, error) {
 	var res TenantResult
 	d, ok := s.byK[key]
 	if !ok || !d.PerTenant() {
@@ -554,8 +547,7 @@ func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, 
 				}
 			}
 		}
-		after, _ := tenantEffective(d, eff.Site, views, tv, s.now())
-		return res, after, nil
+		return res, &inputs{site: eff.Site, rules: views, own: tv}, nil
 	}
 	err = s.write(ctx, func(q store.Q) error {
 		if s.beforeTenantWrite != nil && !ch.Site {

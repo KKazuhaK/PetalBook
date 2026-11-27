@@ -8493,12 +8493,23 @@ tenant that has the feature now and uses it:
 not a bulk action's (`POST /api/admin/bulk` refuses it): it goes as `confirm`
 with the change itself, `PUT /api/admin/settings/{key}` or
 `PUT /api/admin/tenants/{tenant}/settings/{key}` (`{"value": false, "confirm":
-"c_…"}`, or `{"siteRule": {"value": false}, "confirm": …}`). Such a change (a
-value, rule or lock of `false`, or any lock) while the plan is not empty and
-without a token answers `409 confirm_required`; a token whose plan changed,
-`409 confirm_stale`. Nothing stored is deleted: the domains have no effect
-while the feature is off, and work again as they were when it is on. Changes
-through a plan's rules are not previewed yet.
+"c_…"}`, or `{"siteRule": {"value": false}, "confirm": …}`). What decides is
+the value each tenant that uses the feature gets, before and after the change,
+now and at every start and end of a rule's window either way (a rule dated to
+switch it off later, or a site value of `false` under a rule that holds the
+tenant on until a date), whatever words the change uses (a value, a rule, a
+lock, a restriction to `[false]`). A change that switches it off for one of
+them, now or later, without a token answers `409 confirm_required` with `plan`
+(those tenants' lines); a token whose plan changed, `409 confirm_stale`. The
+same holds for a plan: `PUT /api/admin/tenants/{tenant}/plan` (`{"plan": …,
+"confirm": …}`, with the tenant's token) when the new plan, or the manual rules
+the change clears, leave the feature off, and `PATCH /api/admin/plans/{slug}`
+(`{"rules": …, "confirm": …}`, with the site's token) for every tenant on the
+plan. Plans keep carrying features. Billing (the internal writer, which has
+nobody to confirm) is refused (`confirm_required`) a rule that would switch a
+feature off for a tenant that uses it. Nothing stored is deleted: the domains
+have no effect while the feature is off, and work again as they were when it
+is on.
 
 `200`:
 
@@ -9922,6 +9933,7 @@ claim another tenant holds is `404 not_found` as one that does not exist.
   domain are one claim (`409 domain_exists`). `mixedScript` is true when a label
   mixes scripts beyond what UTS #39's "highly restrictive" level allows (a
   Cyrillic `а` in `аpple.example`): a warning the pages show, not a refusal.
+  It misses a lookalike written in one script only (an all-Cyrillic `аре.com`).
 - `state` is `unverified`, `verified`, `missing` (verified, and the daily
   recheck has not found the record since `missingSince`), or `lapsed` (the
   recheck cancelled it at `lapsedAt`: as unverified, it needs a valid code and a
@@ -10918,7 +10930,7 @@ exist, a `before` that is not a time, or a `dry_run` that is not a boolean.
 | `email_not_ascii` | 400 | an address with characters outside ASCII while `users.emailNonAscii` is off; also asking to verify such a stored address then |
 | `feature_off` | 403 | the tenant does not have the feature (`features.*`) what was asked needs; with `feature` (and `permission`, the key, when a route's key needs it); the message is a capitalised sentence naming it ("The API tokens feature is turned off for this organization.") |
 | `takeover_required` | 403 | an administrator who is not a member of the space asked for what only taking it over gives (see "Taking over a space") |
-| `confirm_required` | 409 | a change of a feature that stops something in use (`features.domains`), without the confirmation of `change_capabilities` |
+| `confirm_required` | 409 | a change of a feature, a plan or its assignment that stops something in use (`features.domains`), now or at a later start or end of a rule, without the confirmation of `change_capabilities`; with `plan` |
 | `plan_in_use` | 409 | deleting a plan that tenants use; with `tenants` |
 | `partial_unsupported` | 409 | connecting a space to a host that cannot sync partially while `storage.partial.unsupported` is `refuse`; with `host` |
 | `storage_target_error` | 502 | the storage target refused to make a space's repository; with `reason`, `status` |

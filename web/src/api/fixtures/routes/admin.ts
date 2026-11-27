@@ -292,7 +292,19 @@ function capabilityRefusal(c: Ctx, tenant?: string) {
   const b = c.body as { value?: unknown; siteRule?: { value?: unknown } | null; confirm?: string }
   if (c.params.key !== 'features.domains' || b.confirm) return
   if (b.value !== false && b.siteRule?.value !== false) return
-  if (capabilityLines(c, tenant).length) throw new Refusal(409, 'confirm_required', 'The feature is in use')
+  refuseOff(c, capabilityLines(c, tenant))
+}
+// A plan whose rule has features.domains off, given to (or changed for) tenants that have domains.
+function planRefusal(c: Ctx, rules: Record<string, unknown> | undefined, tenants: string[]) {
+  const r = rules?.['features.domains'] as { value?: unknown } | null | undefined
+  if ((c.body as { confirm?: string }).confirm || r?.value !== false) return
+  refuseOff(
+    c,
+    capabilityLines(c).filter((l) => tenants.includes(l.tenant)),
+  )
+}
+function refuseOff(_c: Ctx, lines: CapabilityPlanLine[]) {
+  if (lines.length) throw new Refusal(409, 'confirm_required', 'The feature is in use', { plan: lines })
 }
 function capabilityLines(c: Ctx, tenant?: string): CapabilityPlanLine[] {
   return Object.entries(A(c).domains)
@@ -1011,6 +1023,7 @@ export const adminRoutes: Route[] = [
     (c) => {
       const t = find(A(c).tenants, (x) => x.id === c.params.id, 'the tenant')
       const plan = c.body.plan ? find(A(c).plans, (p) => p.slug === c.body.plan, 'the plan') : null
+      planRefusal(c, plan?.rules as Record<string, unknown> | undefined, [t.id])
       t.plan = plan ? { slug: plan.slug, name: plan.name } : null
       return { plan: t.plan, cleared: [] }
     },
@@ -1256,6 +1269,14 @@ export const adminRoutes: Route[] = [
     (c) => {
       const p = find(A(c).plans, (x) => x.slug === c.params.slug, 'the plan')
       const { rules, ...rest } = c.body
+      delete rest.confirm
+      planRefusal(
+        c,
+        rules,
+        A(c)
+          .tenants.filter((t) => t.plan?.slug === p.slug)
+          .map((t) => t.id),
+      )
       Object.assign(p, rest)
       for (const [k, v] of Object.entries((rules ?? {}) as Record<string, unknown>)) {
         if (v === null) delete p.rules[k]

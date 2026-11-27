@@ -23,6 +23,7 @@ import { tt } from '@/i18n/tenants'
 import { AdminPageActions } from './AdminPageHeader'
 import { RuleDialog, nameOf } from './RuleDialog'
 import { settingError } from './SettingsPanel'
+import { needsCapabilityConfirm, refusedFeature, useCapabilityConfirm } from './CapabilityConfirm'
 import { lowerText, showValue } from './TenantRules'
 
 const tp = tt.plans
@@ -248,6 +249,8 @@ function PlanDetail({ plan, onBack }: { plan: Plan; onBack: () => void }) {
       },
     )
   }
+  // Rules that switch off a feature a tenant on the plan uses go through its preview and a second confirmation.
+  const capability = useCapabilityConfirm(() => setMessage({ tone: 'info', text: tp.saved }))
   const writeRule = (key: string, rule: PlanRule | null, done: () => void) => {
     setRuleError('')
     update.mutate(
@@ -265,7 +268,15 @@ function PlanDetail({ plan, onBack }: { plan: Plan; onBack: () => void }) {
           })
         },
         onError: (err) =>
-          setRuleError(err instanceof ApiError && err.code.startsWith('setting_') ? settingError(err) : planError(err)),
+          needsCapabilityConfirm(err)
+            ? capability.ask({
+                key: refusedFeature(err),
+                send: (confirm) =>
+                  update.mutateAsync({ slug: plan.slug, rules: { [key]: rule }, confirm }).then(() => done()),
+              })
+            : setRuleError(
+                err instanceof ApiError && err.code.startsWith('setting_') ? settingError(err) : planError(err),
+              ),
       },
     )
   }
@@ -307,6 +318,7 @@ function PlanDetail({ plan, onBack }: { plan: Plan; onBack: () => void }) {
   const editRow = editing ? rows.find((r) => r.key === editing.key) : undefined
   return (
     <div className="grid min-w-0 gap-8" data-slot="plan-detail" data-plan={plan.slug}>
+      {capability.dialog}
       <div>
         <Button type="button" variant="ghost" size="sm" onClick={onBack}>
           <ArrowLeft aria-hidden="true" />

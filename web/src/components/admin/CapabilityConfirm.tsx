@@ -1,8 +1,7 @@
 import { useEffect, useId, useState, type ReactNode } from 'react'
-import { usePutSetting } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import { useConfirm } from '@/api/manage'
-import type { CapabilityPlanLine, ConfirmResult, RuleWrite, SettingLower } from '@/api/types'
+import type { CapabilityPlanLine, ConfirmResult } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
@@ -25,22 +24,26 @@ import { featureName } from '@/i18n/featureNames'
 
 const tc = tdom.capability
 
-// The change of a setting as usePutSetting takes it.
-export interface SettingChange {
-  tenant?: string
+// A change that was refused for want of the confirmation: the feature it switches off, the tenant of a rule or of a
+// plan's assignment (none: the site's value, or a plan's change), and how to send it again with the token.
+export interface CapabilityChange {
   key: string
-  value?: unknown
-  lower?: SettingLower | null
-  siteLock?: boolean
-  siteRule?: RuleWrite | null
+  tenant?: string
+  send: (confirm: string) => Promise<unknown>
 }
 
 export const needsCapabilityConfirm = (e: unknown) => e instanceof ApiError && e.code === 'confirm_required'
 
+// The feature a refusal names (its preview's lines), for a change that is not of one setting (a plan).
+export function refusedFeature(e: unknown): string {
+  const body = e instanceof ApiError ? (e.body as { plan?: { feature?: string }[] } | undefined) : undefined
+  return body?.plan?.[0]?.feature ?? 'features.domains'
+}
+
 // The dialog, and the function that opens it with a change that was refused for want of the confirmation. onDone is
 // told when the change went through.
-export function useCapabilityConfirm(onDone: () => void): { ask: (c: SettingChange) => void; dialog: ReactNode } {
-  const [change, setChange] = useState<SettingChange | null>(null)
+export function useCapabilityConfirm(onDone: () => void): { ask: (c: CapabilityChange) => void; dialog: ReactNode } {
+  const [change, setChange] = useState<CapabilityChange | null>(null)
   const dialog = (
     <Dialog open={change !== null} onOpenChange={(open) => !open && setChange(null)}>
       <DialogContent>
@@ -60,9 +63,9 @@ export function useCapabilityConfirm(onDone: () => void): { ask: (c: SettingChan
   return { ask: setChange, dialog }
 }
 
-function ConfirmBody({ change, onClose }: { change: SettingChange; onClose: (done: boolean) => void }) {
+function ConfirmBody({ change, onClose }: { change: CapabilityChange; onClose: (done: boolean) => void }) {
   const confirm = useConfirm()
-  const put = usePutSetting()
+  const [sending, setSending] = useState(false)
   const [plan, setPlan] = useState<ConfirmResult | null>(null)
   const [typed, setTyped] = useState('')
   const [error, setError] = useState('')
@@ -79,11 +82,12 @@ function ConfirmBody({ change, onClose }: { change: SettingChange; onClose: (don
   const go = () => {
     if (!plan) return
     setError('')
-    put.mutate(
-      { ...change, confirm: plan.confirm },
-      {
-        onSuccess: () => onClose(true),
-        onError: (e) => setError(e instanceof ApiError ? e.message : tc.failed),
+    setSending(true)
+    change.send(plan.confirm).then(
+      () => onClose(true),
+      (e: unknown) => {
+        setSending(false)
+        setError(e instanceof ApiError ? e.message : tc.failed)
       },
     )
   }
@@ -133,7 +137,7 @@ function ConfirmBody({ change, onClose }: { change: SettingChange; onClose: (don
           type="button"
           variant="destructive"
           className="h-10 sm:h-9"
-          disabled={!plan || put.isPending || typed.trim() !== String(n)}
+          disabled={!plan || sending || typed.trim() !== String(n)}
           onClick={go}
         >
           {tc.confirm}

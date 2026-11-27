@@ -303,14 +303,15 @@ export const adminApi = {
   plans: (signal?: AbortSignal) => request<{ plans: Plan[] }>('/admin/plans', { signal }),
   createPlan: (input: PlanWrite & { slug: string; name: string }) =>
     request<Plan>('/admin/plans', { method: 'POST', body: input }),
-  updatePlan: (slug: string, input: PlanWrite) =>
+  // `confirm`: change_capabilities' token, when the rules switch a feature off for a tenant on the plan that uses it.
+  updatePlan: (slug: string, input: PlanWrite & { confirm?: string }) =>
     request<Plan & { affected: string[] }>(`/admin/plans/${enc(slug)}`, { method: 'PATCH', body: input }),
   deletePlan: (slug: string) => request<void>(`/admin/plans/${enc(slug)}`, { method: 'DELETE' }),
   // Gives a tenant a plan (null: none). Every manual rule of the tenant is cleared, and the answer lists them.
-  putTenantPlan: (tenant: string, plan: string | null) =>
+  putTenantPlan: (tenant: string, plan: string | null, confirm?: string) =>
     request<{ plan: PlanRef | null; cleared: ClearedRule[] }>(`/admin/tenants/${enc(tenant)}/plan`, {
       method: 'PUT',
-      body: { plan },
+      body: confirm ? { plan, confirm } : { plan },
     }),
   siteSettings: (signal?: AbortSignal) => request<{ settings: SiteSetting[] }>('/admin/settings', { signal }),
   // `confirm` is change_capabilities' token, for switching off a feature that is in use.
@@ -786,7 +787,8 @@ export function useCreatePlan() {
 export function useUpdatePlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ slug, ...input }: { slug: string } & PlanWrite) => adminApi.updatePlan(slug, input),
+    mutationFn: ({ slug, ...input }: { slug: string; confirm?: string } & PlanWrite) =>
+      adminApi.updatePlan(slug, input),
     onSuccess: () => plansChanged(qc),
   })
 }
@@ -800,7 +802,8 @@ export function useDeletePlan() {
 export function usePutTenantPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ tenant, plan }: { tenant: string; plan: string | null }) => adminApi.putTenantPlan(tenant, plan),
+    mutationFn: ({ tenant, plan, confirm }: { tenant: string; plan: string | null; confirm?: string }) =>
+      adminApi.putTenantPlan(tenant, plan, confirm),
     onSuccess: () => plansChanged(qc),
   })
 }

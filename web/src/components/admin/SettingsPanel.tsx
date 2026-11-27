@@ -290,7 +290,9 @@ export function SiteRow({
     put.mutate(change, {
       onSuccess: (r) => setMessage({ tone: 'info', text: r.affected ? ts.affected(r.affected) : ts.saved }),
       onError: (e) =>
-        needsCapabilityConfirm(e) ? capability.ask(change) : setMessage({ tone: 'error', text: settingError(e) }),
+        needsCapabilityConfirm(e)
+          ? capability.ask({ key: change.key, send: (confirm) => put.mutateAsync({ ...change, confirm }) })
+          : setMessage({ tone: 'error', text: settingError(e) }),
     })
   }
   return (
@@ -391,7 +393,13 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
     put.mutate(change, {
       onSuccess: () => setMessage({ tone: 'info', text: ts.saved }),
       onError: (e) =>
-        needsCapabilityConfirm(e) ? capability.ask(change) : setMessage({ tone: 'error', text: settingError(e) }),
+        needsCapabilityConfirm(e)
+          ? capability.ask({
+              key: change.key,
+              tenant: change.tenant,
+              send: (confirm) => put.mutateAsync({ ...change, confirm }),
+            })
+          : setMessage({ tone: 'error', text: settingError(e) }),
     })
   }
   const kept = mine && mine.value != null && !mine.inEffect

@@ -97,6 +97,85 @@ func TestTwoVerificationsOfOneDomainRaceToOneWinner(t *testing.T) {
 	})
 }
 
+// The index itself refuses a second verified holder, whatever writes it.
+func TestASecondVerifiedHolderIsRefusedByTheIndex(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		ctx := context.Background()
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T000000002", Slug: "acme", Name: "Acme", Created: time.Now(), Updated: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		ins := `INSERT INTO tenant_domains(tenant_id, domain, verified_at, created, updated) VALUES (?, 'one.example', 1, 0, 0)`
+		if _, err := st.Q().Exec(ctx, ins, store.DefaultTenantID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Q().Exec(ctx, ins, "T000000002"); !store.IsUnique(err) {
+			t.Fatalf("a second verified row: %v", err)
+		}
+	})
+}
+
+// PostgreSQL, step by step: A verifies inside a transaction it has not
+// committed; B's verification is held by the index until A commits, and then
+// told ErrDomainClaimed. (SQLite has one writer at a time: there B waits for
+// the lock instead, which TestTwoVerificationsOfOneDomainRaceToOneWinner
+// covers by its outcome.)
+func TestAVerificationHeldByAnotherIsToldClaimedWhenItCommits(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		if st.Dialect() != store.Postgres {
+			t.Skip("PostgreSQL only: SQLite has one writer at a time")
+		}
+		ctx := context.Background()
+		now := time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T000000002", Slug: "acme", Name: "Acme", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		for _, tn := range []string{store.DefaultTenantID, "T000000002"} {
+			if err := store.InsertDomain(ctx, st.Q(), store.DomainRow{TenantID: tn, Domain: "held.example", CodeHash: "h", CodeExpires: now.Add(time.Hour), Created: now, Updated: now}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		done := make(chan error, 1)
+		err := st.Tx(ctx, func(q store.Q) error {
+			if ok, err := store.VerifyDomain(ctx, q, store.DefaultTenantID, "held.example", "", now, now.Add(time.Hour)); err != nil || !ok {
+				t.Fatalf("A: %v %v", ok, err)
+			}
+			go func() {
+				_, err := store.VerifyDomain(ctx, st.Q(), "T000000002", "held.example", "", now, now.Add(time.Hour))
+				done <- err
+			}()
+			// B is waiting on A's row of the index before A commits.
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				var n int
+				if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE 'UPDATE tenant_domains%'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("B finished before A committed: %v", err)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("B never waited on A")
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; !errors.Is(err, store.ErrDomainClaimed) {
+			t.Fatalf("B: %v", err)
+		}
+	})
+}
+
 func countAudit(t *testing.T, st *store.Store, kind string) int {
 	t.Helper()
 	var n int

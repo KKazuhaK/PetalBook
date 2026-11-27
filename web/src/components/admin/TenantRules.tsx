@@ -270,7 +270,14 @@ function TenantRuleDialog({
     const change = { tenant: tenant.id, key: s.key, siteRule }
     put.mutate(change, {
       onSuccess: (r) => onSaved(r.warning),
-      onError: (e) => (needsCapabilityConfirm(e) ? capability.ask(change) : setError(settingError(e))),
+      onError: (e) =>
+        needsCapabilityConfirm(e)
+          ? capability.ask({
+              key: change.key,
+              tenant: change.tenant,
+              send: (confirm) => put.mutateAsync({ ...change, confirm }),
+            })
+          : setError(settingError(e)),
     })
   }
   return (
