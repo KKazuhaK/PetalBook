@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 import { Building2, ChevronsUpDown, Globe } from 'lucide-react'
-import { adminApi, useTenant } from '@/api/admin'
-import { keys, useSession } from '@/api/hooks'
+import { consoleScopesQuery, useTenant } from '@/api/admin'
+import { useSession } from '@/api/hooks'
 import { acrossSite } from '@/lib/access'
 import { adminPath, type AdminSection } from '@/lib/urls'
 import {
@@ -23,16 +23,7 @@ import { useMainClient, useScope } from './TenantScope'
 // The places the person may act in, as the server lists them (GET /api/admin/scopes). It is a request of the site's
 // own client, never sent in a scope (the header is for the requests of a scope, and this route answers the person's own).
 export function useConsoleScopes() {
-  const main = useMainClient()
-  return useQuery(
-    {
-      queryKey: keys.consoleScopes,
-      queryFn: ({ signal }) => adminApi.scopes(signal),
-      staleTime: 60_000,
-      select: (d) => d.scopes,
-    },
-    main,
-  )
+  return useQuery(consoleScopesQuery, useMainClient())
 }
 
 interface Choice {

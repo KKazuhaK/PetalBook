@@ -8,6 +8,9 @@ import { tt } from '@/i18n/tenants'
 import { click, installDomShims, locationText, mount, settle, type FxMounted } from '@/testing/harness'
 import { addTenant, asTenantAdmin, tenancyOn } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
+import { UserMenu } from '@/components/layout/UserMenu'
+import { t } from '@/i18n'
+import { MEMBER_PERMISSIONS } from '@/api/fixtures/data/people'
 
 // The console's scope selector: the site and every tenant the person administers, chosen from the header. A choice is
 // an address, so the scope survives a reload, and the requests of each scope carry their own header.
@@ -180,5 +183,88 @@ describe("the console's scope selector", () => {
     await settle(() => trigger()?.getAttribute('aria-label') === tt.scope.selector.current(long), 'chosen')
     expect(trigger()!.title).toBe(long)
     expect(trigger()!.querySelector('span')?.className).toContain('truncate')
+  })
+
+  describe('for a member of one tenant who administers another', () => {
+    // Only a member in their own tenant: no key of their own, a role in Acme.
+    const memberOf = (d: FixtureData) => {
+      const me = d.auth.users[0]
+      me.siteAdmin = false
+      me.role = 'member'
+      me.permissions = MEMBER_PERMISSIONS
+    }
+    const menu = (
+      <SidebarProvider>
+        <UserMenu />
+        <Routes>
+          <Route path="/admin/*" element={<AdminGate />} />
+          <Route path="*" element={<div>elsewhere</div>} />
+        </Routes>
+      </SidebarProvider>
+    )
+    const adminItem = () =>
+      [...document.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent === t.userMenu.admin)
+    const openMenu = async (to: string, scene: (d: FixtureData) => void) => {
+      await m?.unmount()
+      m = await mount(menu, {
+        signIn: true,
+        fixtures: {
+          mode: 'accounts',
+          empty: true,
+          data: (d) => {
+            tenancyOn(d)
+            ids.acme = addTenant(d, 'acme', 'Acme').id
+            ids.beta = addTenant(d, 'beta', 'Beta Labs').id
+            scene(d)
+          },
+        },
+        entries: () => [to],
+      })
+    }
+    const userButton = () => document.querySelector<HTMLElement>('[data-slot="dropdown-menu-trigger"]')
+
+    it('opens the console in the first tenant they administer, and only that one', async () => {
+      await open(
+        () => '/admin',
+        (d) => {
+          memberOf(d)
+          d.admin.scopeTenants.push(ids.acme)
+        },
+      )
+      await settle(() => locationText() === `/admin/t/${ids.acme}/users`, 'in Acme')
+      await settle(() => adminCalls().some((r) => r.scope === `tenant:${ids.acme}`), "Acme's people, in its scope")
+      expect(bar()!.textContent).toBe('Acme')
+      expect(trigger()).toBeNull()
+      // Their own tenant and any other is not theirs to act in: the address goes to Acme.
+      await open(
+        (id) => `/admin/t/${id.beta}/users/all`,
+        (d) => {
+          memberOf(d)
+          d.admin.scopeTenants.push(ids.acme)
+        },
+      )
+      await settle(() => locationText().startsWith(`/admin/t/${ids.acme}/`), 'sent to Acme')
+      expect(adminCalls().filter((r) => r.scope && r.scope !== `tenant:${ids.acme}`)).toEqual([])
+    })
+
+    it('shows the way into the console in their menu; someone who administers nothing gets neither', async () => {
+      await openMenu('/', (d) => {
+        memberOf(d)
+        d.admin.scopeTenants.push(ids.acme)
+      })
+      await settle(() => userButton() !== null, 'the user menu')
+      await click(userButton())
+      await settle(() => adminItem() !== undefined, 'the console item')
+
+      await openMenu('/admin', memberOf)
+      await settle(() => m!.requests.some((r) => r.url === '/api/admin/scopes'), 'the scope list asked')
+      await settle(() => userButton() !== null, 'the user menu')
+      await click(userButton())
+      await settle(() => document.querySelectorAll('[role="menuitem"]').length > 0, 'the menu')
+      expect(adminItem()).toBeUndefined()
+      // And the address is one that does not exist.
+      await settle(() => document.body.textContent?.includes('elsewhere') === false, 'no page')
+      expect(locationText().startsWith('/admin/t/')).toBe(false)
+    })
   })
 })

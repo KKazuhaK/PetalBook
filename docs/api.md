@@ -10544,12 +10544,13 @@ opened in a view records the viewer's capacity.
 "capacity": "tenant_admin"}]}`. `site` comes first, for whoever holds
 `tenant.settings.read` across the site; then every tenant the person holds it
 in through a role of that tenant (their own tenant's administrator, and a
-custom role held in another tenant), by name. It reads the session's cached
-subject and the cached tenants' names: no query. Needs `tenant.settings.read`
-(`403 forbidden` for anyone who administers nothing, who has no console).
-A site administrator's other tenants are not listed (there may be thousands):
-they are entered from the tenant list. The console sends it without the scope
-header; sent with one, it lists only that tenant.
+built-in or custom role held in another tenant), by name. It asks for no key
+of the person's own tenant: a member of one tenant who administers another has
+the console for that one. `403 forbidden` when the list would be empty (no
+console). It reads the session's cached subject and the cached tenants' names:
+no query. It is a person's own route, so the scope header on it is `400`. A
+site administrator's other tenants are not listed (there may be thousands):
+they are entered from the tenant list.
 
 ### Taking over a space
 

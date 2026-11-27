@@ -66,15 +66,13 @@ func TestAnotherTenantsIdInTheScopeIsRefusedAndACapacityFollowsTheList(t *testin
 		inB := []string{scopeHeader, "tenant:" + f.tenB}
 		f.admB.do("GET", "/api/users", nil, inA...).want(t, 404, "not_found")
 		f.admA.do("GET", "/api/users", nil, inB...).want(t, 404, "not_found")
-		f.admA.do("GET", "/api/admin/scopes?scope=tenant:"+f.tenB, nil).want(t, 404, "not_found")
+		// The list is a person's own route: it takes no scope and answers their own.
+		f.admA.do("GET", "/api/admin/scopes", nil, inB...).want(t, 400, "invalid")
 		f.admB.do("GET", "/api/users", nil, inB...).want(t, 200, "")
 
-		// Once the list holds B for adm-a, B's scope opens, and only B's.
+		// Once adm-a holds a role in B, B's scope opens.
 		grantRole(t, a, "RB", store.RoleScopeTenant, f.tenB, store.GrantToUser, mustUserID(t, a, "adm-a"), "tenant.settings.read", "tenant.users.read")
 		f.admA.do("GET", "/api/users", nil, inB...).want(t, 200, "")
-		if got := scopeList(t, f.admA, inB...); !slices.Equal(got, []string{"tenant:" + f.tenB + "=tenant_admin"}) {
-			t.Errorf("in B's scope the list is B's alone: %v", got)
-		}
 
 		// A site administrator who also holds a key in B acts there as its administrator.
 		grantRole(t, a, "RC", store.RoleScopeTenant, f.tenB, store.GrantToUser, mustUserID(t, a, "root"), "tenant.settings.read", "tenant.users.manage")
@@ -86,5 +84,34 @@ func TestAnotherTenantsIdInTheScopeIsRefusedAndACapacityFollowsTheList(t *testin
 		if rows := f.admB.audit(t, "tenant_console_opened"); len(rows) != 0 {
 			t.Fatalf("entering a tenant one administers is no site action: %v", rows)
 		}
+	})
+}
+
+// Someone who is only a member of their own tenant and administers another
+// one through a role gets the console for that tenant alone: the list holds
+// it and nothing else, they act there and not in their own, and the list asks
+// for no key in their own tenant.
+func TestAMemberOfOneTenantWhoAdministersAnotherGetsItsConsole(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		inA := []string{scopeHeader, "tenant:" + store.DefaultTenantID}
+		inB := []string{scopeHeader, "tenant:" + f.tenB}
+		// Before the role: nothing to administer, no console.
+		f.memA.do("GET", "/api/admin/scopes", nil).want(t, 403, "forbidden")
+		f.memA.do("GET", "/api/users", nil, inB...).want(t, 404, "not_found")
+
+		grantRole(t, a, "RB", store.RoleScopeTenant, f.tenB, store.GrantToUser, f.userA, "tenant.settings.read", "tenant.users.read")
+		if got := scopeList(t, f.memA); !slices.Equal(got, []string{"tenant:" + f.tenB + "=tenant_admin"}) {
+			t.Fatalf("the member's list: %v", got)
+		}
+		// They act in B, as its administrator, and not in A (their own).
+		f.memA.do("GET", "/api/users", nil, inB...).want(t, 200, "")
+		f.memA.do("GET", "/api/users", nil, inA...).want(t, 404, "not_found")
+		f.memA.do("GET", "/api/users", nil).want(t, 403, "forbidden")
+		f.memA.do("PATCH", "/api/users/"+f.userB, map[string]any{"name": "nope"}, inB...).want(t, 403, "forbidden")
+
+		// The scopes list is a person's own route: it never takes the scope header.
+		f.memA.do("GET", "/api/admin/scopes", nil, inB...).want(t, 400, "invalid")
 	})
 }

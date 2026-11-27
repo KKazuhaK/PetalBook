@@ -601,14 +601,16 @@ export const adminRoutes: Route[] = [
     '/api/admin/scopes',
     (c) => {
       const me = signedIn(c.data)
-      if (!(me.permissions ?? []).includes('tenant.settings.read')) throw new Refusal(403, 'forbidden', 'Not for you.')
       const site = (me.permissions ?? []).includes('site.tenants.manage')
-      const ids = new Set([...(site ? [] : [me.tenant?.id ?? DEFAULT_TENANT]), ...A(c).scopeTenants])
+      const own = (me.permissions ?? []).includes('tenant.settings.read')
+      const ids = new Set([...(!site && own ? [me.tenant?.id ?? DEFAULT_TENANT] : []), ...A(c).scopeTenants])
       const tenants = A(c)
         .tenants.filter((t) => ids.has(t.id))
         .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.id.localeCompare(b.id))
         .map((t) => ({ kind: 'tenant' as const, id: t.id, name: t.name, capacity: 'tenant_admin' as const }))
-      return { scopes: [...(site ? [{ kind: 'site' as const, capacity: 'site_admin' as const }] : []), ...tenants] }
+      const scopes = [...(site ? [{ kind: 'site' as const, capacity: 'site_admin' as const }] : []), ...tenants]
+      if (scopes.length === 0) throw new Refusal(403, 'forbidden', 'Only an administrator may do that.')
+      return { scopes }
     },
   ],
 

@@ -4,7 +4,7 @@ import { LogOut, Settings, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { applySession, useSession } from '@/api/hooks'
-import { administers } from '@/lib/access'
+import { useConsoleAccess } from '@/api/admin'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +26,7 @@ export function UserMenu() {
   const navigate = useNavigate()
   const openSettings = useOpenSettings()
   const user = session?.user
+  const consoleOpen = useConsoleAccess().open
   if (!user) return null
 
   const signOut = async () => {
@@ -64,7 +65,7 @@ export function UserMenu() {
           <Settings />
           {t.userMenu.settings}
         </DropdownMenuItem>
-        {administers(user) && (
+        {consoleOpen && (
           <DropdownMenuItem onClick={() => navigate(adminPath())}>
             <ShieldCheck />
             {t.userMenu.admin}

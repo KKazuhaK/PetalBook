@@ -183,8 +183,10 @@ type scopeResp struct {
 // console, from the subject the session cache holds and the cached tenants'
 // names, with no query. The site first, for whoever holds the tenant keys
 // across it; then every tenant they administer (hold tenant.settings.read in,
-// the key the header needs), by name. A person who administers nothing gets an
-// empty list, and no console.
+// the key the header needs), by name. It asks for no key of the person's own
+// tenant: someone who is a member of theirs and administers another one has
+// the console for that. It is a person's own route (it never takes the scope
+// header), and answers 403 when the list would be empty: no console.
 func (s *server) adminScopes(c *call) {
 	out := []scopeResp{}
 	acc := c.p.Access
@@ -208,7 +210,12 @@ func (s *server) adminScopes(c *call) {
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
-	writeJSON(c.w, http.StatusOK, map[string]any{"scopes": append(out, tenants...)})
+	out = append(out, tenants...)
+	if len(out) == 0 {
+		writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator may do that.")
+		return
+	}
+	writeJSON(c.w, http.StatusOK, map[string]any{"scopes": out})
 }
 
 // maxConsoleAudit bounds the console-open throttle's table.

@@ -1473,8 +1473,7 @@
  },
  "GET /api/admin/scopes 403": {
   "error": "string",
-  "message": "string",
-  "permission": "string"
+  "message": "string"
  },
  "GET /api/admin/secrets 200": {
   "secrets": [

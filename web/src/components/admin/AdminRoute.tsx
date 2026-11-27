@@ -4,7 +4,7 @@ import { useTenant } from '@/api/admin'
 import { useSession } from '@/api/hooks'
 import { PageFallback } from '@/components/common'
 import { NotFoundPage } from '@/pages/NotFoundPage'
-import { acrossSite } from '@/lib/access'
+import { acrossSite, administers } from '@/lib/access'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
@@ -49,6 +49,12 @@ export default function AdminRoute() {
     if (scopes.isPending) return <PageFallback />
     const listed = scope !== user?.tenant?.id && scopes.data?.some((s) => s.kind === 'tenant' && s.id === scope)
     if (!listed) return <Navigate to={['/admin', ...rest].join('/')} replace />
+  }
+  // Someone who administers nothing in their own tenant, only others (a role there), lands in the first of them.
+  if (scope === null && !administers(user)) {
+    if (scopes.isPending) return <PageFallback />
+    const first = scopes.data?.find((s) => s.kind === 'tenant' && s.id)
+    if (first?.id) return <Navigate to={['/admin', 't', encodeURIComponent(first.id), ...rest].join('/')} replace />
   }
   return (
     <TenantScope tenant={scope}>
