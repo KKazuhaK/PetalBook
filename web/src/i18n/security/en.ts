@@ -185,6 +185,45 @@ export const securityEn: SecurityMessages = {
       '1 to 32 characters: lower-case letters, digits and hyphens, starting with a letter or digit. It is in the callback addresses and cannot change.',
     kind: 'Kind',
     kindFixed: 'The kind cannot change once made.',
+    classLabel: 'Class',
+    classes: { social: 'Social sign-in', sso: 'Single sign-on' },
+    classHelp:
+      "Social sign-in is a button on every sign-in page (personal accounts); single sign-on is an organisation's. It cannot change once made.",
+    classFixed: 'The class cannot change once made.',
+    pickTitle: 'Add a sign-in method',
+    pickHelp: 'A template fills in the addresses and scopes; you give only the client.',
+    moreTemplates: 'More templates',
+    regions: { global: 'General' } as Record<string, string>,
+    custom: 'Custom provider',
+    customHelp: 'Any OpenID Connect or SAML provider, or a GitHub Enterprise Server.',
+    back: 'Back',
+    templateTitle: (name: string) => `Add ${name}`,
+    fromTemplate: (name: string) => `Made from the ${name} template`,
+    templateFixed: "The issuer and the addresses are the template's and cannot change.",
+    templateHelp: {
+      google: 'Google accounts. Make an OAuth client (web application) in the Google Cloud console.',
+      microsoft:
+        'Personal Microsoft accounts and those of any Entra tenant (/common). An address counts as verified only when the token has xms_edov (the tenant that issued it owns the domain); add the optional claims email and xms_edov to the application.',
+      apple:
+        'Sign in with Apple. The client is a Services ID; the server signs the client secret with your .p8 key and renews it before it ends.',
+      github: 'github.com accounts. Make an OAuth App in GitHub’s developer settings.',
+      'gitlab-com':
+        'GitLab.com accounts. Make an application in GitLab’s settings with the scopes openid, email and profile.',
+    } as Record<string, string>,
+    redirectHint: 'Register it at the provider as the redirect address, with the slug above.',
+    apple: {
+      teamId: 'Team ID',
+      teamIdHelp: '10 letters and digits, in the membership details of the Apple developer account.',
+      keyId: 'Key ID',
+      keyIdHelp: '10 letters and digits, given when the Sign in with Apple key is made.',
+      privateKey: 'Private key (.p8)',
+      privateKeyHelp:
+        'The contents of AuthKey_<key id>.p8, which Apple lets you download once. It is kept sealed and never shown again.',
+      chooseFile: 'Choose the .p8 file',
+      clientIdHelp: 'The Services ID (such as com.example.web), not the App ID.',
+      keySaved: 'Saved',
+      keyReplace: 'Replace',
+    },
     name: 'Name',
     nameHelp: 'The name on the sign-in button, 1 to 60 characters.',
     icon: 'Icon',
@@ -192,6 +231,7 @@ export const securityEn: SecurityMessages = {
     icons: {
       google: 'Google',
       microsoft: 'Microsoft',
+      apple: 'Apple',
       github: 'GitHub',
       gitlab: 'GitLab',
       okta: 'Okta',
@@ -280,6 +320,9 @@ export const securityEn: SecurityMessages = {
     errors: {
       invalid: 'A value is not right.',
       exists: 'That slug is taken.',
+      template_unknown: 'There is no such template.',
+      template_fixed: "A provider made from a template keeps the template's issuer and addresses.",
+      apple_key_invalid: 'The private key must be the .p8 file Apple gave (a P-256 private key in PEM).',
       domain_required: 'A provider owned by a tenant needs the tenant to have a verified domain first.',
       provider_limit: 'There are 50 providers already.',
       oidc_issuer_invalid: 'The issuer has to be an https address.',

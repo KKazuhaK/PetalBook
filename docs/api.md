@@ -9738,8 +9738,14 @@ provider. A tenant's SSO provider:
 `POST`/`PATCH`/`DELETE /api/admin/providers…` in a tenant's scope need the
 tenant's feature `features.ownSso` (`403 feature_off` otherwise). Slugs stay
 unique on the server (they are in the callback addresses registered at the
-identity provider); `409 exists` says only that the slug is taken. `kind`
-`github` is social only.
+identity provider), whoever owns them, and the database holds that with one
+unique index on `slug` (a GitLab or Gitea host's id is its slug, so they share
+it); `409 exists` says only that the slug is taken. The reserved slugs
+(`github`, `git`) stay reserved (`409 slug_reserved`). `kind` `github` is
+social only, and a tenant's own provider is `sso` only (`400 invalid`).
+`class` defaults to `social` for `github` and a template, `sso` otherwise;
+a `PATCH` with another `class` is `400 invalid`, and the store never writes
+it after the row is made.
 
 **Several sign-in methods per account** (owner, 2026-11-23). An account may
 have a password and any number of identities (Google, GitHub, Microsoft, …) at
@@ -9769,14 +9775,67 @@ way to sign in), and an account without a password adds one with
 
   ```json
   {"templates": [{"id": "google", "name": "Google", "kind": "oidc", "class": "social",
-                  "issuer": "https://accounts.google.com", "scopes": ["openid", "email", "profile"],
-                  "icon": "preset:google"}]}
+                  "icon": "preset:google", "issuer": "https://accounts.google.com",
+                  "authorizationEndpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+                  "tokenEndpoint": "https://oauth2.googleapis.com/token",
+                  "jwksUri": "https://www.googleapis.com/oauth2/v3/certs",
+                  "scopes": ["openid", "email", "profile"], "secret": "client",
+                  "common": true, "region": "global"}]}
   ```
 
+  `secret` is what the administrator gives besides the client id (`client`, or
+  `apple`); `responseMode` is `form_post` for Apple; `common` and `region`
+  order the page's picker ("More templates" holds the others). `github` is the
+  `github` kind on `https://github.com`; the others are `kind: "oidc"`.
+
   `POST /api/admin/providers` takes `{"template": "google", "slug": "google",
-  "clientId": "…", "clientSecret": "…"}`; the template fills the rest, and the
-  provider is then an ordinary one (a template that changes in a later release
-  does not change providers already made).
+  "clientId": "…", "clientSecret": "…"}` (`slug`, `name` and `icon` default
+  to the template's); the template fills the rest. Its issuer, addresses,
+  token-endpoint methods and scopes are **copied into the row**, with
+  `"template": "google"` and `class: "social"`: a template that changes in a
+  later release does not change providers already made, and nothing is
+  discovered or fetched (the addresses are the template's). The Provider
+  object has `template` (`""` for none), fixed like `class`; the issuer of a
+  provider made from a template cannot change (`400 template_fixed`), its
+  client and scopes can. An unknown template is `400 template_unknown`; a
+  template is site-owned and social only (`400 invalid` otherwise). The
+  addresses a provider made from Google's, Apple's or Microsoft's template
+  gives follow that template's trust rule (below); GitLab.com's those of a
+  configured provider.
+
+  - **Microsoft** is multi-tenant (`/common`): its issuer is
+    `https://login.microsoftonline.com/{tenantid}/v2.0`. Each token's `iss`
+    must be that with the token's own `tid` (a tenant id) in place of
+    `{tenantid}`; it is checked, never skipped, and a token whose `iss` names
+    another tenant, or with no `tid`, is refused (`sso_error=idp_error`).
+  - **Apple** takes `{"template": "apple", "clientId": "<Services ID>",
+    "apple": {"teamId": "…", "keyId": "…", "privateKey": "<AuthKey_….p8>"}}`
+    and no client secret (`400 invalid`): the client secret is an ES256 JWT
+    the server signs with that key (`iss` the team, `sub` the client, `aud`
+    `https://appleid.apple.com`, 180 days), when it needs one, and replaces
+    once it has less than 7 days left (nothing renews it on a timer). The key
+    is the site's secret `signin.appleKey` (write-only, changed only here, so
+    one Apple provider per site: a second is `409 exists`; deleting the
+    provider clears it); a key that is not a P-256 PKCS #8 PEM is
+    `400 apple_key_invalid`. The Provider object has
+    `"apple": {"teamId", "keyId", "hasKey"}`; `PATCH` takes the same `apple`
+    block. Apple answers with `response_mode=form_post`: it posts `code`,
+    `state` and, at the first sign-in only, `user` (the name) to
+    `POST /api/auth/oidc/{slug}/callback` (a form, from Apple's site; only
+    for a provider that asked for it, otherwise a redirect to
+    `/login?sso_error=provider_unavailable`). That answers a small page of this
+    site that goes on to `GET …/callback` with `code`, `state` (and `error`)
+    only, so the browser's `SameSite=Lax` cookies (the attempt's binding, the
+    session for a link) are sent and the callback checks the attempt as for
+    any redirect. The name in `user` is kept on the server with the attempt
+    (by its state, taken with it, once) and never put in that address; the
+    address in `user` is dropped (the ID token's is the one used).
+  - The template ids `google`, `microsoft`, `apple` and `gitlab-com` are
+    reserved slugs for the site's own providers: an organisation's provider
+    cannot take one (`409 slug_reserved`). The `template` column takes only
+    the known templates, in the database too.
+  - The `oauth2` kind is reserved in the database for plain OAuth 2.0
+    providers (below); it is not offered yet.
 - **Custom providers.** Besides the templates a site administrator may add any
   OpenID Connect provider (`kind: "oidc"`, by its discovery document, as
   before) or a plain OAuth 2.0 one, `kind: "oauth2"`:
@@ -10233,17 +10292,26 @@ From 3.6 the email address is the main way in; the username stays.
     as verified (today's `github` kind), and only github.com itself: a GitHub
     Enterprise server (another `baseUrl`), whose administrators can mark any
     address verified, only with the provider's `mergeVerifiedEmail` switch on;
-    Microsoft only when the token proves
-    the address: the `xms_edov` claim, or an address on a domain verified here.
-    Microsoft's plain `email` claim is never trusted (any Entra tenant can put
-    any address in it).
+    Microsoft only with the `xms_edov` claim (the tenant that issued the token
+    owns the address's domain). Microsoft's plain `email` claim is never
+    trusted, whatever its domain, a domain verified here included: any Entra
+    tenant can put any address in it ("nOAuth"). **Recorded decision
+    (2026-11-27):** this is the safe rule; the owner may loosen it later (for
+    example for personal Microsoft accounts).
+  - Apple's private-relay addresses (`@privaterelay.appleid.com`, or
+    `is_private_email`) are verified, but never meet another account's: a
+    relay address another account holds (verified or not) is neither
+    `email_in_use` nor taken from it; the new account is made without it.
+    They route to no organisation's domain.
   - An organisation's SSO (OpenID Connect or SAML): only addresses on that
-    organisation's verified domains. Until domain verification exists it
-    vouches for nothing; a SAML provider, which has no verified-address claim,
-    is treated so.
-  - A provider the administrators configured (OpenID Connect): only with its
-    `mergeVerifiedEmail` switch on (shown as "trust this provider's verified
-    email addresses", off by default) and the `email_verified` claim.
+    organisation's verified domains, each matched exactly (a subdomain is
+    claimed by itself). Until domain verification exists it vouches for
+    nothing; a SAML provider, which has no verified-address claim, is treated
+    so.
+  - A provider the administrators configured (OpenID Connect, and the
+    GitLab.com template): only with its `mergeVerifiedEmail` switch on (shown
+    as "trust this provider's verified email addresses", off by default) and
+    the `email_verified` claim.
 
 ### Joining an organisation
 

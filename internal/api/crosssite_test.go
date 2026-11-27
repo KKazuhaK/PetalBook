@@ -63,9 +63,17 @@ func TestOIDCCallbackIsExemptFromTheCrossSiteRules(t *testing.T) {
 		if r.code != 303 || r.resp.Header.Get("Location") != "/login?sso_error=provider_unavailable" {
 			t.Fatalf("%d %s %s", r.code, r.resp.Header.Get("Location"), r.raw)
 		}
-		// Only that one route is exempt.
+		// The answer a provider posts (form_post) is cross-site too; it is
+		// taken only for a provider that asked for it (none here).
+		r = c.do("POST", "/api/auth/oidc/x/callback", "state=x&code=y", "Sec-Fetch-Site", "cross-site", "Origin", "https://idp.example", "Content-Type", "application/x-www-form-urlencoded")
+		if r.code != 303 || r.resp.Header.Get("Location") != "/login?sso_error=provider_unavailable" {
+			t.Fatalf("%d %s %s", r.code, r.resp.Header.Get("Location"), r.raw)
+		}
+		// Only those routes are exempt.
 		c.do("GET", "/api/session", nil, "Sec-Fetch-Site", "cross-site").want(t, 403, "forbidden")
-		c.do("POST", "/api/auth/oidc/x/callback", "{}", "Sec-Fetch-Site", "cross-site").want(t, 403, "forbidden")
+		c.do("POST", "/api/auth/github/x/callback", "{}", "Sec-Fetch-Site", "cross-site").want(t, 403, "forbidden")
+		c.do("POST", "/api/auth/oidc/x/start", "{}", "Sec-Fetch-Site", "cross-site").want(t, 403, "forbidden")
+		c.do("POST", "/api/auth/oidc/x/y/callback", "{}", "Sec-Fetch-Site", "cross-site").want(t, 403, "forbidden")
 		c.do("GET", "/api/auth/oidc/x/callback", nil, "Origin", "https://idp.example").want(t, 303, "")
 	})
 }

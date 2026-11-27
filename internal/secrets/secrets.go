@@ -26,6 +26,9 @@ const (
 	GitHubWebhookSecret = "github.webhookSecret"
 	MailPassword        = "mail.password"
 	CaptchaSecret       = "captcha.secret"
+	// AppleSignInKey is the key (an AuthKey_<id>.p8) Sign in with Apple's
+	// client secret is signed with: one Apple provider per site.
+	AppleSignInKey = "signin.appleKey"
 )
 
 // MaxBytes is the longest secret (a private key in PEM form is the largest).
@@ -53,6 +56,7 @@ var Known = []Spec{
 	{Name: GitHubWebhookSecret, Site: true, ManagedBy: "/api/admin/providers/github"},
 	{Name: MailPassword, Site: true, Tenant: true, Feature: "mail.ownSender"},
 	{Name: CaptchaSecret, Site: true},
+	{Name: AppleSignInKey, Site: true, ManagedBy: "/api/admin/providers"},
 }
 
 // SpecOf returns the spec of a name.

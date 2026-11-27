@@ -374,7 +374,7 @@ func New(opt Options) *Handler {
 	bodyType := func(r *http.Request) string {
 		if _, pattern := mux.Handler(r); uploads[pattern] {
 			return "application/octet-stream"
-		} else if pattern == "POST "+samlACSPattern {
+		} else if formRoute(pattern) {
 			return "application/x-www-form-urlencoded"
 		}
 		return "application/json"
@@ -504,7 +504,7 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 
 // fromIdentityProvider is true for the requests an identity provider's site
 // sends the browser to, or the provider itself makes: the redirects of
-// OpenID Connect and GitHub, the form posted to a SAML ACS, and the metadata.
+// OpenID Connect and GitHub, the form posted to a SAML ACS or by form_post, and the metadata.
 // None changes anything unless it matches a sign-in this browser started.
 func fromIdentityProvider(r *http.Request) bool {
 	p := r.URL.Path
@@ -523,6 +523,11 @@ func fromIdentityProvider(r *http.Request) bool {
 		if rest, ok := strings.CutPrefix(p, "/api/auth/saml/"); ok {
 			parts := strings.Split(rest, "/")
 			return len(parts) == 2 && parts[0] != "" && parts[1] == "acs"
+		}
+		// An OpenID Connect provider's answer posted by form_post (Apple's).
+		if rest, ok := strings.CutPrefix(p, "/api/auth/oidc/"); ok {
+			parts := strings.Split(rest, "/")
+			return len(parts) == 2 && parts[0] != "" && parts[1] == "callback"
 		}
 	}
 	return false

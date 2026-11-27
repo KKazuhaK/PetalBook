@@ -34,7 +34,7 @@ func typeFor(rt api.RouteInfo) []string {
 	if rt.Upload {
 		return []string{"Content-Type", "application/octet-stream"}
 	}
-	if rt.Method == "POST" && rt.Pattern == "/api/auth/saml/{slug}/acs" {
+	if rt.Form {
 		// The identity provider posts a form there.
 		return []string{"Content-Type", "application/x-www-form-urlencoded"}
 	}

@@ -60,7 +60,9 @@ func TestACopiedIssuerNeverReachesAnotherProvidersAccounts(t *testing.T) {
 		// on (it has no verified domain), never reached by a slug, and it has no accounts.
 		admin.putSetting("features.tenancy", true).want(t, 200, "")
 		org := admin.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme"}).want(t, 201, "").body["id"].(string)
-		p := admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"owner": org})).want(t, 201, "")
+		// Slugs are the server's: the site's "one" is taken for the organisation too.
+		admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"owner": org})).want(t, 409, "exists")
+		p := admin.do("POST", "/api/admin/providers", f.providerBody("acme-one", map[string]any{"owner": org})).want(t, 201, "")
 		if p.body["owner"] != org || p.body["enabled"] != false || p.body["id"] == "one" || p.body["tenant"] != org {
 			t.Fatal(p.raw)
 		}
@@ -74,11 +76,12 @@ func TestACopiedIssuerNeverReachesAnotherProvidersAccounts(t *testing.T) {
 		if n := len(pub.body["providers"].([]any)); n != 2 {
 			t.Fatalf("the sign-in page lists %d providers: %s", n, pub.raw)
 		}
-		// The slug "one" is the site's: the organisation's one of the same slug is another provider.
+		// The slug "one" is still the site's; the organisation's is another provider.
 		if got := admin.do("GET", "/api/admin/providers/one", nil).want(t, 200, "").body["owner"]; got != "site" {
 			t.Fatal(got)
 		}
-		admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"owner": org})).want(t, 409, "exists")
+		admin.do("POST", "/api/admin/providers", f.providerBody("acme-one", map[string]any{"owner": org})).want(t, 409, "exists")
+		admin.do("POST", "/api/admin/providers", f.providerBody("acme-one", map[string]any{})).want(t, 409, "exists")
 		// An unknown owner is refused.
 		admin.do("POST", "/api/admin/providers", f.providerBody("three", map[string]any{"owner": "NOSUCHTENANT"})).want(t, 400, "invalid")
 		// Deleting the organisation deletes its providers (and the accounts linked to them).
@@ -117,12 +120,7 @@ func TestAnOrganisationsProviderNeedsAVerifiedDomain(t *testing.T) {
 			issuer, id, secret := f.srv.URL, idpClient, idpSecret
 			o := org
 			return auth.ProviderInput{Owner: &o, Slug: &slug, Kind: &kind, Name: &name, Enabled: &on,
-				OIDC: &struct {
-					Issuer       *string   `json:"issuer"`
-					ClientID     *string   `json:"clientId"`
-					ClientSecret *string   `json:"clientSecret"`
-					Scopes       *[]string `json:"scopes"`
-				}{Issuer: &issuer, ClientID: &id, ClientSecret: &secret}}
+				OIDC: &auth.OIDCInput{Issuer: &issuer, ClientID: &id, ClientSecret: &secret}}
 		}
 		var ae *auth.Error
 		if _, err := svc.CreateProvider(ctx, "", "", in("acme-sso")); !errors.As(err, &ae) || ae.Code != "domain_required" {

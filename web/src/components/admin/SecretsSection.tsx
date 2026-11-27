@@ -35,7 +35,12 @@ import { tt } from '@/i18n/tenants'
 const ts = tt.secrets
 
 // Secrets that are changed where the service checks them, not here: listed as set or not.
-const MANAGED = new Set(['github.appKey', 'github.clientSecret', 'github.webhookSecret'])
+const MANAGED: Record<string, string> = {
+  'github.appKey': ts.managedBy,
+  'github.clientSecret': ts.managedBy,
+  'github.webhookSecret': ts.managedBy,
+  'signin.appleKey': ts.managedByApple,
+}
 // A secret of a tenant that belongs to a feature, and the feature: the site has to allow it the tenant.
 const FEATURE_OF: Record<string, string> = { 'mail.password': 'mail.ownSender' }
 
@@ -70,7 +75,7 @@ export function SecretsSection({ tenant, name }: { tenant?: string; name?: strin
       <ul className="w-full min-w-0 divide-y rounded-lg border" data-slot="secrets">
         {q.data.map((s) => {
           const gated = off(s.name)
-          const managed = !tenant && MANAGED.has(s.name)
+          const managed = tenant ? undefined : MANAGED[s.name]
           return (
             <li
               key={s.name}
@@ -87,7 +92,7 @@ export function SecretsSection({ tenant, name }: { tenant?: string; name?: strin
                 {s.set && s.updatedAt && (
                   <p className="text-xs text-muted-foreground">{ts.changed(absoluteTime(s.updatedAt))}</p>
                 )}
-                {managed && <p className="text-xs text-muted-foreground">{ts.managedBy}</p>}
+                {managed && <p className="text-xs text-muted-foreground">{managed}</p>}
                 {gated && (
                   <p role="status" className="text-xs break-words text-muted-foreground" data-slot="feature-off">
                     {ts.featureOff}

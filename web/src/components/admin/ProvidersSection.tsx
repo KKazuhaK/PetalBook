@@ -1,12 +1,31 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Copy, Eraser, FlaskConical, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import {
+  ArrowLeft,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Eraser,
+  FileKey,
+  FlaskConical,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { adminApi, useAuthProviders, useSyncedGroups } from '@/api/admin'
+import { adminApi, useAuthProviders, useProviderTemplates, useSyncedGroups } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import { useSearchParams } from 'react-router'
 import { keys } from '@/api/hooks'
-import type { AuthProvider, ProviderInput, ProviderKind, ProviderTestResult } from '@/api/types'
+import type {
+  AuthProvider,
+  ProviderClass,
+  ProviderInput,
+  ProviderKind,
+  ProviderTemplate,
+  ProviderTestResult,
+} from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ssoErrorMessage } from '@/pages/auth/LoginPage'
 import { ProviderIcon } from '@/components/auth/ProviderIcon'
@@ -81,18 +100,16 @@ export function ProvidersSection() {
       )}
       <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100vw-1rem)] max-w-2xl gap-4 overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {editing === 'new' || editing === null ? tp.createTitle : tp.editTitle(editing.name)}
-            </DialogTitle>
-            <DialogDescription className="sr-only">{tp.help}</DialogDescription>
-          </DialogHeader>
-          {editing !== null && (
-            <ProviderForm
-              key={editing === 'new' ? 'new' : editing.id}
-              initial={editing === 'new' ? null : editing}
-              onDone={() => setEditing(null)}
-            />
+          {editing === 'new' ? (
+            <NewProvider onDone={() => setEditing(null)} />
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>{editing === null ? tp.createTitle : tp.editTitle(editing.name)}</DialogTitle>
+                <DialogDescription className="sr-only">{tp.help}</DialogDescription>
+              </DialogHeader>
+              {editing !== null && <ProviderForm key={editing.id} initial={editing} onDone={() => setEditing(null)} />}
+            </>
           )}
         </DialogContent>
       </Dialog>
@@ -209,6 +226,7 @@ function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => v
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="min-w-0 truncate text-sm font-medium">{p.name}</span>
             <Badge variant="secondary">{tp.kinds[p.kind]}</Badge>
+            {p.class && <Badge variant="outline">{tp.classes[p.class]}</Badge>}
             {p.status.ok ? (
               <Badge variant="secondary">{tp.statusOk}</Badge>
             ) : (
@@ -346,6 +364,9 @@ function DeleteDialog({ provider, onClose }: { provider: AuthProvider | null; on
 interface F {
   slug: string
   kind: ProviderKind
+  class: ProviderClass
+  // Sign in with Apple's: the key is write-only (null keeps the stored one).
+  apple: { teamId: string; keyId: string; privateKey: string | null }
   name: string
   icon: string
   enabled: boolean
@@ -371,6 +392,8 @@ interface F {
 const blank = (): F => ({
   slug: '',
   kind: 'oidc',
+  class: 'sso',
+  apple: { teamId: '', keyId: '', privateKey: null },
   name: '',
   icon: '',
   enabled: true,
@@ -397,6 +420,8 @@ function formOf(p: AuthProvider): F {
   const f = blank()
   f.slug = p.slug
   f.kind = p.kind
+  f.class = p.class
+  if (p.apple) f.apple = { teamId: p.apple.teamId, keyId: p.apple.keyId, privateKey: null }
   f.name = p.name
   f.icon = p.icon
   f.enabled = p.enabled
@@ -448,7 +473,10 @@ const lines = (s: string) =>
 // What to send: the whole provider for a new one; for an existing one only what changed.
 function inputOf(f: F, was: AuthProvider | null): ProviderInput {
   const base = was ? formOf(was) : null
-  const out: ProviderInput = was ? {} : { slug: f.slug.trim(), kind: f.kind }
+  // The class is chosen once, when the provider is made; GitHub is always social sign-in.
+  const out: ProviderInput = was
+    ? {}
+    : { slug: f.slug.trim(), kind: f.kind, class: f.kind === 'github' ? 'social' : f.class }
   const diff = <K extends keyof F>(k: K) => !base || JSON.stringify(f[k]) !== JSON.stringify(base[k])
   if (diff('name')) out.name = f.name.trim()
   if (diff('icon')) out.icon = f.icon
@@ -475,6 +503,15 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
     if (o.secret !== null) block.clientSecret = o.secret
     if (!b || o.scopes !== b.scopes) block.scopes = words(o.scopes)
     if (Object.keys(block).length || !was) out.oidc = block
+    if (was?.template === 'apple') {
+      const a = f.apple
+      const ab = base?.apple
+      const apple: NonNullable<ProviderInput['apple']> = {}
+      if (a.teamId !== ab?.teamId) apple.teamId = a.teamId.trim()
+      if (a.keyId !== ab?.keyId) apple.keyId = a.keyId.trim()
+      if (a.privateKey !== null) apple.privateKey = a.privateKey
+      if (Object.keys(apple).length) out.apple = apple
+    }
   } else if (f.kind === 'saml') {
     const s = f.saml
     const b = base?.saml
@@ -575,6 +612,24 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
           </NativeSelect>
           {edit && <p className="text-xs text-muted-foreground">{tp.kindFixed}</p>}
         </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="provider-class">{tp.classLabel}</Label>
+          <NativeSelect
+            id="provider-class"
+            value={f.kind === 'github' ? 'social' : f.class}
+            disabled={edit || f.kind === 'github'}
+            onChange={(e) => set({ class: e.target.value as ProviderClass })}
+          >
+            <option value="social">{tp.classes.social}</option>
+            <option value="sso">{tp.classes.sso}</option>
+          </NativeSelect>
+          <p className="text-xs text-muted-foreground">{edit ? tp.classFixed : tp.classHelp}</p>
+        </div>
+        {initial?.template && (
+          <p className="text-xs text-muted-foreground" data-slot="from-template">
+            {tp.fromTemplate(templateName(initial.template))}
+          </p>
+        )}
         <Field
           label={tp.name}
           requiredMark
@@ -924,35 +979,51 @@ type Sub = { f: F; set: (p: Partial<F>) => void; initial: AuthProvider | null }
 function OidcFields({ f, set, initial }: Sub) {
   const o = f.oidc
   const up = (p: Partial<F['oidc']>) => set({ oidc: { ...o, ...p } })
+  // A template's issuer and addresses are its own; Apple's secret is signed by the server with the team's key.
+  const fromTemplate = !!initial?.template
+  const apple = initial?.template === 'apple'
   return (
     <fieldset className="grid min-w-0 grid-cols-1 gap-4">
       <legend className="pb-1 text-sm font-semibold">{tp.kinds.oidc}</legend>
-      <Field
-        label={tp.oidc.issuer}
-        requiredMark
-        help={tp.oidc.issuerHelp}
-        value={o.issuer}
-        onChange={(e) => up({ issuer: e.target.value })}
-        autoComplete="off"
-        spellCheck={false}
-        className="break-all"
-      />
+      {fromTemplate ? (
+        <ReadOnly label={tp.oidc.issuer} value={o.issuer} help={tp.templateFixed} />
+      ) : (
+        <Field
+          label={tp.oidc.issuer}
+          requiredMark
+          help={tp.oidc.issuerHelp}
+          value={o.issuer}
+          onChange={(e) => up({ issuer: e.target.value })}
+          autoComplete="off"
+          spellCheck={false}
+          className="break-all"
+        />
+      )}
       <Field
         label={tp.oidc.clientId}
         requiredMark
+        help={apple ? tp.apple.clientIdHelp : undefined}
         value={o.clientId}
         onChange={(e) => up({ clientId: e.target.value })}
         autoComplete="off"
         spellCheck={false}
         className="break-all"
       />
-      <WriteOnly
-        label={tp.oidc.clientSecret}
-        help={tp.oidc.clientSecretHelp}
-        stored={initial?.oidc?.hasSecret === true}
-        value={o.secret}
-        onChange={(v) => up({ secret: v })}
-      />
+      {apple ? (
+        <AppleFields
+          value={f.apple}
+          stored={initial?.apple?.hasKey === true}
+          onChange={(a) => set({ apple: { ...f.apple, ...a } })}
+        />
+      ) : (
+        <WriteOnly
+          label={tp.oidc.clientSecret}
+          help={fromTemplate ? undefined : tp.oidc.clientSecretHelp}
+          stored={initial?.oidc?.hasSecret === true}
+          value={o.secret}
+          onChange={(v) => up({ secret: v })}
+        />
+      )}
       <Field
         label={tp.oidc.scopes}
         help={tp.oidc.scopesHelp}
@@ -1115,5 +1186,332 @@ function GithubFields({ f, set, initial }: Sub) {
       </div>
       {initial?.github && <ReadOnly label={tp.github.redirectUrl} value={initial.github.redirectUrl} />}
     </fieldset>
+  )
+}
+
+// --- adding one: a template, or a provider of one's own -----------------------------------
+
+const TEMPLATE_NAMES: Record<string, string> = {
+  google: 'Google',
+  microsoft: 'Microsoft',
+  apple: 'Apple',
+  github: 'GitHub',
+  'gitlab-com': 'GitLab.com',
+}
+const templateName = (id: string) => TEMPLATE_NAMES[id] ?? id
+
+// "Add a sign-in method": first a template (the common ones, the rest under "More templates") or a custom provider,
+// then the few fields that one needs.
+function NewProvider({ onDone }: { onDone: () => void }) {
+  const [step, setStep] = useState<ProviderTemplate | 'pick' | 'custom'>('pick')
+  const title = step === 'pick' ? tp.pickTitle : step === 'custom' ? tp.createTitle : tp.templateTitle(step.name)
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription className={step === 'pick' ? '' : 'sr-only'}>{tp.pickHelp}</DialogDescription>
+      </DialogHeader>
+      {step === 'pick' ? (
+        <TemplatePicker onPick={setStep} onCustom={() => setStep('custom')} />
+      ) : (
+        <>
+          <div>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setStep('pick')}>
+              <ArrowLeft aria-hidden="true" />
+              {tp.back}
+            </Button>
+          </div>
+          {step === 'custom' ? (
+            <ProviderForm initial={null} onDone={onDone} />
+          ) : (
+            <TemplateForm key={step.id} tm={step} onDone={onDone} />
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
+function TemplateTile({
+  id,
+  icon,
+  name,
+  help,
+  onClick,
+}: {
+  id: string
+  icon: string
+  name: string
+  help: string
+  onClick: () => void
+}) {
+  return (
+    <li className="min-w-0">
+      <button
+        type="button"
+        onClick={onClick}
+        data-template={id}
+        className="flex h-full w-full min-w-0 items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <ProviderIcon icon={icon} className="mt-0.5 size-6 shrink-0" />
+        <span className="min-w-0">
+          <span className="block text-sm font-medium break-words">{name}</span>
+          <span className="block text-xs break-words text-muted-foreground">{help}</span>
+        </span>
+      </button>
+    </li>
+  )
+}
+
+function TemplatePicker({ onPick, onCustom }: { onPick: (t: ProviderTemplate) => void; onCustom: () => void }) {
+  const q = useProviderTemplates()
+  const [more, setMore] = useState(false)
+  if (q.isPending) return <div aria-busy="true" className="h-32 animate-pulse rounded-lg bg-muted" />
+  if (q.isError)
+    return <ErrorState message={t.fmt.labelled(tp.loadFailed, q.error.message)} onRetry={() => void q.refetch()} />
+  const list = q.data.templates
+  const tile = (tm: ProviderTemplate) => (
+    <TemplateTile
+      key={tm.id}
+      id={tm.id}
+      icon={tm.icon}
+      name={tm.name}
+      help={tp.templateHelp[tm.id] ?? tm.issuer}
+      onClick={() => onPick(tm)}
+    />
+  )
+  const rest = list.filter((x) => !x.common)
+  const regions = [...new Set(rest.map((x) => x.region))]
+  return (
+    <div className="grid min-w-0 gap-4" data-slot="template-picker">
+      <ul className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">{list.filter((x) => x.common).map(tile)}</ul>
+      {rest.length > 0 && (
+        <div className="grid min-w-0 gap-2">
+          <div>
+            <Button type="button" variant="outline" size="sm" aria-expanded={more} onClick={() => setMore((m) => !m)}>
+              {more ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+              {tp.moreTemplates}
+            </Button>
+          </div>
+          {more &&
+            regions.map((r) => (
+              <section key={r} className="grid min-w-0 gap-2" data-region={r}>
+                <h4 className="text-xs font-medium text-muted-foreground">{tp.regions[r] ?? r}</h4>
+                <ul className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+                  {rest.filter((x) => x.region === r).map(tile)}
+                </ul>
+              </section>
+            ))}
+        </div>
+      )}
+      <ul className="grid min-w-0 grid-cols-1">
+        <TemplateTile id="custom" icon="preset:key" name={tp.custom} help={tp.customHelp} onClick={onCustom} />
+      </ul>
+    </div>
+  )
+}
+
+// A provider from a template: its slug and name (the template's by default), and its client.
+function TemplateForm({ tm, onDone }: { tm: ProviderTemplate; onDone: () => void }) {
+  const changed = useChanged()
+  const apple = tm.secret === 'apple'
+  const [slug, setSlug] = useState<string>(tm.id)
+  const [name, setName] = useState(tm.name)
+  const [clientId, setClientId] = useState('')
+  const [secret, setSecret] = useState('')
+  const [keys, setKeys] = useState<F['apple']>({ teamId: '', keyId: '', privateKey: null })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const messageRef = useRef<HTMLParagraphElement>(null)
+  const redirect = `${window.location.origin}/api/auth/${tm.kind}/${slug.trim() || tm.id}/callback`
+  const ready =
+    slug.trim() !== '' &&
+    name.trim() !== '' &&
+    clientId.trim() !== '' &&
+    (apple ? keys.teamId.trim() !== '' && keys.keyId.trim() !== '' && !!keys.privateKey : secret !== '')
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy || !ready) return
+    setBusy(true)
+    setError('')
+    const input: ProviderInput = { template: tm.id, slug: slug.trim(), name: name.trim(), clientId: clientId.trim() }
+    if (apple) input.apple = { teamId: keys.teamId.trim(), keyId: keys.keyId.trim(), privateKey: keys.privateKey ?? '' }
+    else input.clientSecret = secret
+    try {
+      const saved = await adminApi.createAuthProvider(input)
+      changed()
+      toast.success(tp.created)
+      if (!saved.status.ok) toast.warning(tp.unreachable)
+      onDone()
+      return
+    } catch (err) {
+      setError(refusal(err))
+      setTimeout(() => messageRef.current?.focus(), 0)
+    }
+    setBusy(false)
+  }
+
+  return (
+    <form
+      className="grid min-w-0 grid-cols-1 gap-4"
+      onSubmit={(e) => void submit(e)}
+      noValidate
+      data-slot="template-form"
+      data-template={tm.id}
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <ProviderIcon icon={tm.icon} className="mt-0.5 size-6 shrink-0" />
+        <p className="min-w-0 text-xs break-words text-muted-foreground">{tp.templateHelp[tm.id] ?? tm.issuer}</p>
+      </div>
+      <FormMessage focusRef={messageRef}>{error}</FormMessage>
+      <Field
+        label={tp.slug}
+        requiredMark
+        help={tp.slugHelp}
+        value={slug}
+        onChange={(e) => setSlug(e.target.value)}
+        autoComplete="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        maxLength={32}
+      />
+      <Field
+        label={tp.name}
+        requiredMark
+        help={tp.nameHelp}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        maxLength={60}
+        autoComplete="off"
+      />
+      <ReadOnly label={tp.oidc.redirectUrl} value={redirect} help={tp.redirectHint} />
+      <Field
+        label={tp.oidc.clientId}
+        requiredMark
+        help={apple ? tp.apple.clientIdHelp : undefined}
+        value={clientId}
+        onChange={(e) => setClientId(e.target.value)}
+        autoComplete="off"
+        spellCheck={false}
+        className="break-all"
+      />
+      {apple ? (
+        <AppleFields value={keys} stored={false} onChange={(a) => setKeys((k) => ({ ...k, ...a }))} />
+      ) : (
+        <div className="grid min-w-0 gap-1.5">
+          <Label htmlFor={`template-secret-${tm.id}`}>
+            {tp.oidc.clientSecret}
+            <RequiredMark />
+          </Label>
+          <Input
+            id={`template-secret-${tm.id}`}
+            type="password"
+            autoComplete="new-password"
+            aria-required
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+          />
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" disabled={busy || !ready}>
+          {busy ? tp.creating : tp.create}
+        </Button>
+        <Button type="button" variant="ghost" onClick={onDone}>
+          {tp.cancel}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+// Sign in with Apple's client secret is signed by the server: the team id, the key id and the key (.p8), which is
+// write-only once stored.
+function AppleFields({
+  value,
+  stored,
+  onChange,
+}: {
+  value: F['apple']
+  stored: boolean
+  onChange: (a: Partial<F['apple']>) => void
+}) {
+  const ta = tp.apple
+  const [replacing, setReplacing] = useState(!stored)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const read = async (file: File | undefined) => {
+    if (file) onChange({ privateKey: await file.text() })
+  }
+  return (
+    <div className="grid min-w-0 gap-4" data-slot="apple-fields">
+      <Field
+        label={ta.teamId}
+        requiredMark
+        help={ta.teamIdHelp}
+        value={value.teamId}
+        onChange={(e) => onChange({ teamId: e.target.value })}
+        autoComplete="off"
+        autoCapitalize="characters"
+        spellCheck={false}
+        maxLength={10}
+      />
+      <Field
+        label={ta.keyId}
+        requiredMark
+        help={ta.keyIdHelp}
+        value={value.keyId}
+        onChange={(e) => onChange({ keyId: e.target.value })}
+        autoComplete="off"
+        autoCapitalize="characters"
+        spellCheck={false}
+        maxLength={10}
+      />
+      <div className="grid min-w-0 gap-1.5">
+        <Label htmlFor="apple-key">
+          {ta.privateKey}
+          <RequiredMark />
+        </Label>
+        {!replacing ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm" data-slot="secret-saved">
+            <span>
+              {ta.keySaved} ·{' '}
+              <button type="button" className="underline underline-offset-4" onClick={() => setReplacing(true)}>
+                {ta.keyReplace}
+              </button>
+            </span>
+          </div>
+        ) : (
+          <>
+            <Textarea
+              id="apple-key"
+              value={value.privateKey ?? ''}
+              onChange={(e) => onChange({ privateKey: e.target.value === '' ? null : e.target.value })}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="-----BEGIN PRIVATE KEY-----"
+              className="min-w-0 font-mono text-xs break-all"
+              rows={4}
+            />
+            <div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".p8,.pem,.txt,text/plain"
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
+                onChange={(e) => void read(e.target.files?.[0])}
+              />
+              <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+                <FileKey aria-hidden="true" />
+                {ta.chooseFile}
+              </Button>
+            </div>
+          </>
+        )}
+        <p className="text-xs text-muted-foreground">{ta.privateKeyHelp}</p>
+      </div>
+    </div>
   )
 }

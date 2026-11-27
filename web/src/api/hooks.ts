@@ -76,6 +76,7 @@ export const keys = {
   providers: ['auth', 'providers'] as const,
   adminSecurity: ['admin', 'security'] as const,
   adminProviders: ['admin', 'providers'] as const,
+  providerTemplates: ['admin', 'provider-templates'] as const,
   accountUsage: ['account', 'usage'] as const,
   accountLinks: ['account', 'links'] as const,
   adminUsage: (tenant: string, over: boolean) => ['admin', 'usage', tenant, over] as const,

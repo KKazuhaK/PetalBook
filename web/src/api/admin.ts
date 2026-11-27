@@ -70,6 +70,7 @@ import type {
   AuditPurgeCount,
   AuditPurgeStarted,
   AuthProvider,
+  ProviderTemplate,
   Passkey,
   ProviderInput,
   CaptchaCredentials,
@@ -351,6 +352,9 @@ export const adminApi = {
     request<{ providers: AuthProvider[] }>('/admin/providers', { signal }).then(({ providers }) => ({
       providers: providers.filter((p) => p.signin === true),
     })),
+  // The presets of social sign-in that ship with the server.
+  providerTemplates: (signal?: AbortSignal) =>
+    request<{ templates: ProviderTemplate[] }>('/admin/provider-templates', { signal }),
   createAuthProvider: (input: ProviderInput) =>
     request<AuthProvider>('/admin/providers', { method: 'POST', body: input }),
   patchAuthProvider: (id: string, input: ProviderInput) =>
@@ -1165,6 +1169,16 @@ export function useSecuritySettings(enabled = true): UseQueryResult<SecuritySett
   })
   const settings = useSiteSettings(enabled)
   return useJoined(body, settings, (b, s) => securityOf(s.settings, b))
+}
+
+// The templates do not change while the server runs.
+export function useProviderTemplates(enabled = true) {
+  return useQuery({
+    queryKey: keys.providerTemplates,
+    queryFn: ({ signal }) => adminApi.providerTemplates(signal),
+    staleTime: Infinity,
+    enabled,
+  })
 }
 
 export function useAuthProviders() {
