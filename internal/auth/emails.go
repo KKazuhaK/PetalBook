@@ -73,6 +73,41 @@ func (s *Service) Emails(ctx context.Context, u store.User) ([]store.EmailRow, e
 	return out, nil
 }
 
+// EmailsForAdmin lists the addresses of an account as an administrator sees
+// them. wide is a site administrator acting across the whole site: all the
+// addresses Emails shows. Anyone else (a tenant's administrator, or a site
+// administrator in a tenant's scope) sees the primary address and the
+// addresses in the tenant's verified domains (orgDomains), nothing else: the
+// other addresses are the person's own business. Until a tenant has a verified
+// domain that is the primary address alone.
+func (s *Service) EmailsForAdmin(ctx context.Context, u store.User, wide bool) ([]store.EmailRow, error) {
+	rows, err := s.Emails(ctx, u)
+	if err != nil || wide {
+		return rows, err
+	}
+	domains := s.orgDomains(ctx, u.TenantID)
+	out := rows[:0]
+	for _, r := range rows {
+		if r.Primary || domainAllowed(r.Email, domains) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// AddressShownToTenantAdmin says whether an administrator who is not a site
+// administrator across the whole site may see email, an address of an account
+// of the tenant whose primary address is primary: the primary, or one in the
+// tenant's verified domains.
+func (s *Service) AddressShownToTenantAdmin(ctx context.Context, tenant, primary, email string) bool {
+	if a, ok := store.EmailKey(email); ok {
+		if b, ok := store.EmailKey(primary); ok && a == b {
+			return true
+		}
+	}
+	return domainAllowed(email, s.orgDomains(ctx, tenant))
+}
+
 // PendingClaims lists the claims the account waits on: addresses it asked to
 // add that another account holds unverified, which have no row until the link
 // sent to them is followed. None while the switch is off.

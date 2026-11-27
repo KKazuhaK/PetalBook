@@ -800,7 +800,7 @@ and keeps it. The categories:
 | `security` | sign-in failures (`login_failed`, `rate_limited`, `lockout`, `passkey_clone`), passkeys, identities, addresses, passwords, `sessions_ended`, sign-in providers, mail, `secret_changed` | core: always written |
 | `admin` | settings and rules, plans, tenants, people, invites, groups, tokens and grants, bulk jobs | core |
 | `data` | deleting, restoring and purging spaces, `space_taken_over`, `space_transferred`, space and page views, exports, `audit_downloaded` | core |
-| `system` | `dropped` | core |
+| `system` | `dropped`, `audit_purged` | core |
 | `signins` | `login`, a session was started | `audit.signins`, on by default |
 | `reads` | a member opening a page or file | `audit.reads`, off |
 | `downloads` | attachments and file downloads | `audit.downloads`, off |
@@ -816,20 +816,23 @@ A tenant's administrators see the rows about their tenant, a site
 administrator's changes to it included. Only the server's own doings are
 site-only: `provider_created`, `provider_changed`, `provider_deleted`,
 `connection_provider_changed`, `mail_changed`, `mail_test`, `rate_limited`,
-`lockout` and `dropped`.
+`lockout`, `dropped` and `audit_purged`.
 
-Retention is the server's, one table for every tenant, so site settings only:
+Retention is the server's, one table for every tenant, so site settings only,
+and all of it the site's to set: there is no floor for any category.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `audit.keepDays` | 90 (at least 90) | a row is kept while it is younger than this |
+| `audit.keepDays` | 90 (0 to 3,650) | a row is kept while it is younger than this; `0` is no age limit (keep forever by age) |
 | `audit.keepRows` | 100,000 | ... or while it is among this many newest rows |
 | `audit.keepMode` | `or` | `or`: kept if either holds (deleted when old and outside the newest rows); `and`: kept only if both hold |
-| `audit.optionalKeepDays` | 30 (1 to 90) | a row of an optional category is also deleted after this many days |
+| `audit.optionalKeepDays` | 30 (1 to 3,650) | a row of an optional category is also deleted after this many days |
+| `audit.keepDays.<category>`, one for each of the eight categories | none (0 to 3,650) | that category's own days, kept by them alone, whatever `keepRows` and `keepDays` say: `0` keeps it forever, `n` deletes its rows after `n` days; none (`null`) follows the rules above |
 
-A row of a core category younger than 90 days is never deleted, whatever these
-say. The daily sweep deletes in batches by primary key (and by category for the
-optional ones); it never scans the table.
+The daily sweep deletes in batches by `(category, id)`, one range for each
+category; it never scans the table.
+
+A site administrator can also purge by hand, see `POST /api/admin/audit/purge`.
 
 | `kind` | When | `detail` |
 |---|---|---|
@@ -850,6 +853,7 @@ optional ones); it never scans the table.
 | `token_revoked` | an API token was revoked through the server (once: revoking one already revoked writes nothing) | `token`, `name`, `by` (`user`, `admin`) |
 | `grant_revoked` | an OAuth grant was revoked through the server | `grant`, `client` (its name), `by` (`user`, `admin`) |
 | `dropped` | rows were lost because the queue was full | `count` |
+| `audit_purged` | a site administrator purged the log by hand (`POST /api/admin/audit/purge`); one row for each purge, written after the delete, never deleted by a purge | `category` (`all` for every one), `before` (RFC 3339), `deleted`, and `partial: true` when the purge stopped on an error |
 
 Each row has `at`, `kind`, `category`, `capacity` (`site_admin` or
 `tenant_admin` when written while acting in that capacity, else `null`),
@@ -1029,7 +1033,16 @@ activity, written at most every few minutes).
 ### `GET /api/users/{id}`
 
 `{"user": {…}}` as one row of the list has it, with `emails`, the person's
-addresses as `GET /api/account` shows them (read-only here). `404 not_found`
+addresses as `GET /api/account` shows them (read-only here). A site
+administrator across the whole site sees every address. A tenant's
+administrator, and a site administrator acting in a tenant's scope, see the
+primary address and the addresses in the tenant's verified domains
+(`internal/auth`'s `OrgDomains`, which 3.6 (d) supplies; until a tenant has a
+verified domain that is the primary address alone). The lists have the primary
+address only; the audit rows of the address kinds (`email_added`,
+`email_verified`, `email_removed`, `email_claim_withdrawn`,
+`email_primary_changed`) say `"(hidden)"` for an address such a reader may not
+see, in the list and in the CSV. `404 not_found`
 for a person who does not exist, is deleted, or is of another tenant than a
 tenant administrator's.
 
@@ -1261,7 +1274,7 @@ characters; `inbox` is optional (default `Inbox`) and must be a valid folder
 path. `201` with the space.
 The server makes the Git repository. The caller is its owner. `403 forbidden` when
 the caller already owns as many spaces as the server allows (`--max-spaces`,
-20 by default). From 3.3 this is `403 quota_exceeded` with `quota`, `limit` and
+3 by default). From 3.3 this is `403 quota_exceeded` with `quota`, `limit` and
 `used` (see "Quotas"), and the limit is the setting `quota.spacesPerPerson`, or
 the person's own, or the tenant's total of spaces.
 
@@ -6764,7 +6777,7 @@ The settings of 3.3 (others join this table as they are made):
 | `registration.domains` | list of domains (`[]`: any) | site, tenant | `[]` | `allow` |
 | `registration.perHour` | limit, 1 to 10,000 | site, tenant | 50 | `restrict`, `max` 50 |
 | `legal.termsUrl`, `legal.privacyUrl` | an `https` address or `""` | site, tenant | `""` | `allow` |
-| `quota.spacesPerPerson` | limit, 0 (none) to 10,000 | site, tenant, person | 20 (`--max-spaces`) | `allow` |
+| `quota.spacesPerPerson` | limit, 0 (none) to 10,000 | site, tenant, person | 3 (`--max-spaces`) | `allow` |
 | `quota.bytesPerPerson` | limit in bytes, or `null` | site, tenant, person | `null` | `allow` |
 | `quota.pagesPerPerson` | limit, or `null` | site, tenant, person | `null` | `allow` |
 | `daily.own`, `daily.api` | boolean (what a space may do) | site, tenant | `true` | `allow` |
@@ -7638,7 +7651,7 @@ text above:
   `409 conflict`); without it the stored setting counts, 20 to begin with. The
   setting's lower rule can be set either way. `0` is no limit.
 - The quota settings are `limit` settings with layers site, tenant and person:
-  `quota.spacesPerPerson` is 0 to 10,000 (a `null` value sets it back to 20),
+  `quota.spacesPerPerson` is 0 to 10,000 (a `null` value sets it back to 3),
   `quota.bytesPerPerson` 1 to 2^50 and `quota.pagesPerPerson` 1 to 2^40, both
   may be `null` (no limit). The person layer is the user's own `quota`: it is
   not among what `GET /api/settings` offers a person, who cannot set it.
@@ -9272,7 +9285,8 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`; `mail.ownSender` | boolean (features) | S + rule |
 | `features.passkeys`, `features.tenancy` | boolean | S! |
 | `audit.signins`, `.reads`, `.downloads`, `.api` | boolean | S, T |
-| `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` at least 90), choice `or`, `and` | S! |
+| `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` 0 for no age limit), choice `or`, `and` | S! |
+| `audit.keepDays.<category>` (eight) | limit, 0 (forever) to 3,650, or none | S! |
 | `quota.people`, `.spaces`, `.bytes`, `.pages` | limit or none | S + rule (no tenant layer) |
 | `quota.spacesPerPerson`, `.bytesPerPerson`, `.pagesPerPerson` | limit | S, T, P |
 | `rate.apiPerMinute`, `.mcpPerMinute`, `.mailPerDay`, `.outboundPerMinute` | limit or none | S + rule |
@@ -10170,6 +10184,7 @@ own organisation**.
 | `PUT /api/admin/tenants/{tenant}/settings/{key}` with `siteRule` or `siteLock`, `PUT …/plan`, `/api/admin/plans…`, `/api/admin/secrets…` | `403 forbidden` | yes |
 | `POST /api/admin/spaces/{space}/view`, `/api/admin/exports…` (3.5) | their tenant's organisation spaces, with `features.adminView` | every space |
 | `GET /api/admin/audit/download` | their tenant's rows, with `features.auditDownload` | every row |
+| `POST /api/admin/audit/purge` (`site.audit.purge`) | `403 forbidden` | yes |
 | `POST /api/spaces/{space}/storage/move` | their tenant's spaces (and owners their own) | every space |
 | `/api/admin/security`, `/api/admin/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
 
@@ -10201,6 +10216,7 @@ held by the built-in site administrator only: no custom role may hold it.
 | `site.status.read` | site | — | Read the server's status |
 | `site.storage.manage` | site | — | Change the server's storage budget and a space's storage, evict and pin spaces, see the disk, and exempt a person from the site's requirement of a remote |
 | `site.recycle.purge` | site | — | Purge an item of the recycle bin for good |
+| `site.audit.purge` | site | — | Purge rows of the audit log by hand, whatever the retention settings say |
 | `site.admins.manage` | site | — | Change administrators of the whole server (their accounts, passwords, passkeys, sessions and tokens), delete them, and make or end one |
 | `site.spaces.personal.meta` | site | — | See people's personal spaces in the administration (in lists, the recycle bin and a person's page, with their size), restore them with their person, and manage one without being its member; not their content |
 | `site.spaces.personal.content` | site | — | Open an audited view of a person's personal space and export it; held by the built-in site administrator only |
@@ -10458,6 +10474,23 @@ administrators see, while the tenant has `features.auditDownload` (`403
 feature_off` otherwise). One download at a time per caller (`429
 rate_limited`). A bad filter is `400 invalid` before anything is sent. Every
 download is audited as `audit_downloaded`.
+
+#### `POST /api/admin/audit/purge`
+
+Deletes rows of the audit log by hand, whatever the retention settings say.
+Site administrators only (`site.audit.purge`); a tenant's administrator and a
+site administrator in a tenant's scope get `403 forbidden`. Body, all optional:
+`category` (a category id, or `all`, the default) and `before` (an RFC 3339 time
+or a day; the default and the most is now). It covers the rows of the category
+written before `before`, the rows of kind `audit_purged` never. With the query
+`dry_run=true` it deletes nothing, writes nothing and counts: the web asks that
+first and says what will be deleted before it asks to confirm. The delete runs
+in batches of 5,000 rows, each its own statement, so it never holds the database
+for long. Answer: `{"dryRun": false, "count": 1234, "category": "all",
+"before": "2026-11-26T08:00:00Z"}` (`count` is how many were, or would be,
+deleted). A purge that is not a dry run writes exactly one `audit_purged` row,
+after the delete. `400 invalid` for a category that does not exist, a `before`
+that is not a time, or a `dry_run` that is not a boolean.
 
 ### Errors of this section
 

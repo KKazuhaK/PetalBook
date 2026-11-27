@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"petalbook.app/server/internal/authz"
 	"strconv"
 	"strings"
 	"time"
@@ -577,7 +578,10 @@ func (s *server) getUser(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	emails, err := s.auth.Emails(c.r.Context(), e.User)
+	// A site administrator across the whole site sees every address; a
+	// tenant's administrator (and a site administrator in a tenant's scope)
+	// the primary one and those in the tenant's verified domains.
+	emails, err := s.auth.EmailsForAdmin(c.r.Context(), e.User, c.siteWide(authz.TenantUsersRead))
 	if err != nil {
 		s.fail(c.w, err)
 		return

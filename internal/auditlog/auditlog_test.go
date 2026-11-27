@@ -32,7 +32,7 @@ func TestRegistryIsConsistent(t *testing.T) {
 	if got := auditlog.CategoryOf("nobody-knows"); got != auditlog.Admin {
 		t.Errorf("an unregistered kind is filed under %s", got)
 	}
-	want := []string{"connection_provider_changed", "dropped", "lockout", "mail_changed", "mail_test", "plan_changed", "plan_created", "plan_deleted", "provider_changed", "provider_created", "provider_deleted", "rate_limited"}
+	want := []string{"audit_purged", "connection_provider_changed", "dropped", "lockout", "mail_changed", "mail_test", "plan_changed", "plan_created", "plan_deleted", "provider_changed", "provider_created", "provider_deleted", "rate_limited"}
 	if got := auditlog.SiteOnlyKinds(); !slices.Equal(got, want) {
 		t.Errorf("site-only kinds %v, want %v", got, want)
 	}
@@ -62,7 +62,7 @@ func TestSettingsFollowTheRegistry(t *testing.T) {
 			t.Errorf("optional category %s: %+v", c.ID, d)
 		}
 	}
-	if d := defs[settings.AuditKeepDays]; d == nil || d.Min != auditlog.CoreFloorDays || len(d.Layers) != 1 || d.ServerWide == "" {
+	if d := defs[settings.AuditKeepDays]; d == nil || d.Min != 0 || d.Default != int64(90) || len(d.Layers) != 1 || d.ServerWide == "" {
 		t.Errorf("keepDays: %+v", d)
 	}
 	for _, k := range []string{settings.AuditKeepRows, settings.AuditKeepMode, settings.AuditOptionalKeepDays} {
@@ -70,7 +70,11 @@ func TestSettingsFollowTheRegistry(t *testing.T) {
 			t.Errorf("%s is not site-only: %+v", k, d)
 		}
 	}
-	if d := defs[settings.AuditOptionalKeepDays]; d.Max > auditlog.CoreFloorDays {
-		t.Errorf("optional rows are kept longer than core ones: %d", d.Max)
+	// No floor: every category, core or not, has days of its own, none by default.
+	for _, c := range auditlog.Categories() {
+		d := defs[settings.AuditCategoryKeepDays(c.ID)]
+		if d == nil || d.Min != 0 || !d.Nullable || d.Default != nil || len(d.Layers) != 1 || d.ServerWide == "" {
+			t.Errorf("category %s has no days of its own: %+v", c.ID, d)
+		}
 	}
 }

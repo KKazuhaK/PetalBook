@@ -202,9 +202,9 @@ func (s *Service) FlushAudit(ctx context.Context) {
 }
 
 // AuditRetention is what the site's settings say the log keeps (the audit.keep*
-// settings; the defaults while they cannot be read).
+// settings, and each category's own days; the defaults while they cannot be read).
 func (s *Service) AuditRetention(ctx context.Context) store.AuditRetention {
-	p := store.AuditRetention{Days: auditlog.CoreFloorDays, Rows: 100_000, Mode: "or", OptionalDays: 30}
+	p := store.AuditRetention{Days: settings.AuditDefaultKeepDays, Rows: 100_000, Mode: "or", OptionalDays: 30}
 	st := s.settings.Load()
 	if st == nil {
 		return p
@@ -224,7 +224,28 @@ func (s *Service) AuditRetention(ctx context.Context) store.AuditRetention {
 			p.Mode = m
 		}
 	}
+	for _, c := range auditlog.Categories() {
+		if e, err := st.Get(ctx, "", settings.AuditCategoryKeepDays(c.ID)); err == nil {
+			if n, ok := e.Value.(int64); ok {
+				if p.CategoryDays == nil {
+					p.CategoryDays = map[string]int{}
+				}
+				p.CategoryDays[string(c.ID)] = int(n)
+			}
+		}
+	}
 	return p
+}
+
+// PurgeAudit deletes the rows of the log p covers (a purge by hand, see
+// store.AuditPurge), after writing what is queued; dry only counts them. The
+// purge writes no row itself: the caller records it once, after.
+func (s *Service) PurgeAudit(ctx context.Context, p store.AuditPurge, dry bool) (int64, error) {
+	s.FlushAudit(ctx)
+	if dry {
+		return store.CountAuditPurge(ctx, s.st.Q(), p)
+	}
+	return store.PurgeAudit(ctx, s.st.Q(), p)
 }
 
 func (s *Service) trimAudit(ctx context.Context) {

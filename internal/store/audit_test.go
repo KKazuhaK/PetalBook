@@ -117,9 +117,9 @@ func TestTrimAuditModes(t *testing.T) {
 	}
 }
 
-// A core row younger than the floor is never deleted, whatever the days and
-// rows say; past it, it goes by the same rules.
-func TestTrimAuditKeepsCoreRowsForTheFloor(t *testing.T) {
+// No floor: a core row goes by the days and rows asked for, however few the
+// days. 0 days is no age limit.
+func TestTrimAuditHasNoFloor(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		day := 24 * hour
@@ -128,9 +128,61 @@ func TestTrimAuditKeepsCoreRowsForTheFloor(t *testing.T) {
 		if _, err := store.TrimAudit(ctx, st.Q(), trimNow, p); err != nil {
 			t.Fatal(err)
 		}
-		// Only the rows older than 90 days go; the days and rows asked for far less.
-		if got, want := leftAudit(t, st), []time.Duration{80 * day, 10 * day, hour}; fmt.Sprint(got) != fmt.Sprint(want) {
+		if got, want := leftAudit(t, st), []time.Duration{hour}; fmt.Sprint(got) != fmt.Sprint(want) {
 			t.Fatalf("left %v, want %v", got, want)
+		}
+	})
+}
+
+// Days 0 keeps by age forever: "or" deletes nothing, "and" only what is
+// outside the newest rows.
+func TestTrimAuditZeroDaysKeepsForever(t *testing.T) {
+	t.Parallel()
+	for mode, want := range map[string][]time.Duration{"or": {400 * 24 * hour, 200 * 24 * hour, hour}, "and": {200 * 24 * hour, hour}} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			storetest.Each(t, func(t *testing.T, st *store.Store) {
+				putAudit(t, st, "admin", 400*24*hour, 200*24*hour, hour)
+				if mode == "and" {
+					putAudit(t, st, "admin", 1000*24*hour)
+				}
+				p := store.AuditRetention{Days: 0, Rows: 2, Mode: mode, OptionalDays: 1}
+				if _, err := store.TrimAudit(ctx, st.Q(), trimNow, p); err != nil {
+					t.Fatal(err)
+				}
+				got := leftAudit(t, st)
+				if mode == "and" {
+					// The newest two rows stay.
+					want = []time.Duration{200 * 24 * hour, hour}
+				}
+				if fmt.Sprint(got) != fmt.Sprint(want) {
+					t.Fatalf("left %v, want %v", got, want)
+				}
+			})
+		})
+	}
+}
+
+// A category with days of its own is kept by them alone: 0 forever whatever
+// the rows say, n days whatever the general days say; the others follow the
+// general rules.
+func TestTrimAuditCategoryDays(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		day := 24 * hour
+		putAudit(t, st, "security", 400*day, 5*day)
+		putAudit(t, st, "data", 400*day, 5*day)
+		putAudit(t, st, "admin", 400*day, 5*day)
+		putAudit(t, st, "reads", 400*day, 5*day)
+		putAudit(t, st, "system", hour) // the newest row
+		p := store.AuditRetention{Days: 90, Rows: 1, Mode: "and", OptionalDays: 30, CategoryDays: map[string]int{"security": 0, "data": 3, "reads": 1000}}
+		if _, err := store.TrimAudit(ctx, st.Q(), trimNow, p); err != nil {
+			t.Fatal(err)
+		}
+		for cat, want := range map[string]int{"security": 2, "data": 0, "admin": 0, "reads": 2} {
+			if n := count(t, st, `SELECT COUNT(*) FROM audit_log WHERE category = '`+cat+`'`); n != want {
+				t.Errorf("%s: %d rows left, want %d", cat, n, want)
+			}
 		}
 	})
 }

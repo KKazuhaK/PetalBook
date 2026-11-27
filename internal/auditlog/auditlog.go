@@ -9,11 +9,11 @@ package auditlog
 import (
 	"context"
 	"sort"
-	"time"
 )
 
-// Category groups kinds. The core categories are always written and never
-// trimmed below CoreFloorDays; the optional ones have a setting each.
+// Category groups kinds. The core categories are always written; the optional
+// ones have a setting each. How long each is kept is the site's to set
+// (audit.keepDays and the like): there is no floor.
 type Category string
 
 const (
@@ -29,13 +29,6 @@ const (
 	Downloads Category = "downloads" // attachments and file downloads
 	API       Category = "api"       // token and MCP calls
 )
-
-// CoreFloorDays is how long a row of a core category is kept at least,
-// whatever the retention settings say.
-const CoreFloorDays = 90
-
-// CoreFloor is CoreFloorDays as a duration.
-const CoreFloor = CoreFloorDays * 24 * time.Hour
 
 // Info describes a category.
 type Info struct {

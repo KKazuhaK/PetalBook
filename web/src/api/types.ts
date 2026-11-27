@@ -1880,6 +1880,19 @@ export interface AuditList {
   items: AuditItem[]
   next: string
 }
+// POST /api/admin/audit/purge (site administrators): `category` is a category or "all", `before` a time or a day, both
+// optional. With dry_run it only counts.
+export interface AuditPurgeInput {
+  category?: AuditCategory | 'all'
+  before?: string
+}
+export interface AuditPurgeResult {
+  dryRun: boolean
+  // How many rows were deleted, or would be.
+  count: number
+  category: AuditCategory | 'all'
+  before: string
+}
 
 // --- offline sync (docs/api.md, "Offline sync") -------------------------------------
 //

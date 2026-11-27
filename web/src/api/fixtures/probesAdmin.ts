@@ -301,6 +301,8 @@ export function adminProbes(fx: FixtureServer): Call[] {
     ['DELETE', '/api/admin/providers/other'],
     ['GET', '/api/admin/audit'],
     ['GET', '/api/admin/audit/kinds'],
+    ['POST', '/api/admin/audit/purge?dry_run=true', { category: 'all' }],
+    ['POST', '/api/admin/audit/purge', { category: 'reads', before: '2000-01-01' }],
     ['GET', '/api/admin/tokens'],
     ['DELETE', '/api/admin/tokens/01TK000001'],
     ['GET', '/api/admin/grants'],

@@ -108,7 +108,7 @@ type Options struct {
 	// provider "git" is added when it is missing.
 	Connections *connections.Registry
 	// MaxSpaces is --max-spaces when the flag was given: then it is the site's
-	// quota.spacesPerPerson, read only. Nil leaves the stored setting (20).
+	// quota.spacesPerPerson, read only. Nil leaves the stored setting (3).
 	MaxSpaces *int
 	// Now is the clock (default time.Now), for what has an end: confirmations and
 	// views of spaces.

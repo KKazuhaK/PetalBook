@@ -98,6 +98,9 @@ var registered = []Kind{
 
 	// system: what the log says about itself.
 	{Name: "dropped", Category: System, Visibility: Site},
+	// audit_purged: a site administrator purged rows of the log by hand; the
+	// one row a purge writes about itself, which a purge never deletes.
+	{Name: "audit_purged", Category: System, Visibility: Site},
 
 	// signins: a session was started.
 	{Name: "login", Category: Signins},

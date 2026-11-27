@@ -131,6 +131,60 @@ func (s *server) pathRedactor(c *call) func(kind string, detail json.RawMessage)
 	}
 }
 
+// addressKinds are the kinds whose detail names an email address of the
+// person the row is about, under these keys.
+var addressKinds = map[string][]string{
+	"email_added": {"email"}, "email_verified": {"email"}, "email_removed": {"email"},
+	"email_claim_withdrawn": {"email"}, "email_primary_changed": {"email", "old"},
+}
+
+// hiddenAddress is what a row says in place of an address its reader may not see.
+const hiddenAddress = "(hidden)"
+
+// addressRedactor returns the function that makes a row's detail safe for this
+// reader: a site administrator across the whole site sees every address; any
+// other reader (a tenant's administrator, a site administrator in a tenant's
+// scope) sees the person's primary address and the addresses in the tenant's
+// verified domains, and the rest read "(hidden)". The person's primary address
+// is asked once for each person in the list.
+func (s *server) addressRedactor(c *call) func(kind, user, tenant string, detail json.RawMessage) json.RawMessage {
+	if c.siteWide(authz.TenantAuditRead) {
+		return func(_, _, _ string, detail json.RawMessage) json.RawMessage { return detail }
+	}
+	primary := map[string]string{}
+	return func(kind, user, tenant string, detail json.RawMessage) json.RawMessage {
+		keys := addressKinds[kind]
+		if len(keys) == 0 || len(detail) == 0 {
+			return detail
+		}
+		var d map[string]any
+		if json.Unmarshal(detail, &d) != nil {
+			return detail
+		}
+		p, seen := primary[user]
+		if !seen {
+			if u, err := store.GetUser(c.r.Context(), s.opt.Store.Q(), store.AllTenants(), user); err == nil {
+				p = u.Email
+			}
+			primary[user] = p
+		}
+		changed := false
+		for _, k := range keys {
+			if a, ok := d[k].(string); ok && a != "" && !s.auth.AddressShownToTenantAdmin(c.r.Context(), tenant, p, a) {
+				d[k], changed = hiddenAddress, true
+			}
+		}
+		if !changed {
+			return detail
+		}
+		out, err := json.Marshal(d)
+		if err != nil {
+			return json.RawMessage(`{}`)
+		}
+		return out
+	}
+}
+
 func (s *server) adminAudit(c *call) {
 	q := c.r.URL.Query()
 	limit := 50
@@ -169,10 +223,10 @@ func (s *server) adminAudit(c *call) {
 		}
 		return v
 	}
-	redact := s.pathRedactor(c)
+	redact, redactAddr := s.pathRedactor(c), s.addressRedactor(c)
 	items := make([]item, len(rows))
 	for i, r := range rows {
-		items[i] = item{r.ID, rfc3339(r.At), r.Kind, r.Category, nullable(r.Capacity), nullable(r.Actor), nullable(r.User), r.Username, r.IP, redact(r.Kind, r.Detail)}
+		items[i] = item{r.ID, rfc3339(r.At), r.Kind, r.Category, nullable(r.Capacity), nullable(r.Actor), nullable(r.User), r.Username, r.IP, redactAddr(r.Kind, r.User, r.Tenant, redact(r.Kind, r.Detail))}
 	}
 	var nx any
 	if next != "" {
@@ -263,12 +317,12 @@ func (s *server) adminAuditDownload(c *call) {
 		_ = w.Write([]string{"id", "time", "category", "kind", "capacity", "tenant", "actor", "user", "username", "ip", "detail"})
 	}
 	flusher, _ := c.w.(http.Flusher)
-	redact := s.pathRedactor(c)
+	redact, redactAddr := s.pathRedactor(c), s.addressRedactor(c)
 	rows := 0
 	n, more, err := s.auth.StreamAudit(c.r.Context(), sc, f, auditDownloadMax, func(e auth.AuditEntry) error {
 		start()
 		if err := w.Write([]string{csvCell(e.ID), rfc3339(e.At), csvCell(e.Category), csvCell(e.Kind), csvCell(e.Capacity), csvCell(e.Tenant),
-			csvCell(e.Actor), csvCell(e.User), csvCell(e.Username), csvCell(e.IP), csvCell(string(redact(e.Kind, e.Detail)))}); err != nil {
+			csvCell(e.Actor), csvCell(e.User), csvCell(e.Username), csvCell(e.IP), csvCell(string(redactAddr(e.Kind, e.User, e.Tenant, redact(e.Kind, e.Detail))))}); err != nil {
 			return err
 		}
 		if rows++; rows%store.AuditStreamPage == 0 {
@@ -308,6 +362,88 @@ func (s *server) adminAuditDownload(c *call) {
 		}
 	}
 	s.auditRow(c, "audit_downloaded", tenant, detail)
+}
+
+// adminAuditPurge deletes rows of the audit log by hand, whatever the retention
+// settings say: POST {category?: a category or "all", before?: RFC 3339 time or
+// a day} with the query dry_run=true to count what it would delete and delete
+// nothing. Without category every category is covered; without before every
+// row up to now. Site administrators only (the key site.audit.purge: a tenant's
+// administrator, and a site administrator in a tenant's scope, are refused).
+// The rows of kind audit_purged are never deleted. A purge that deletes writes
+// one audit_purged row, after the delete, saying who, when and what.
+func (s *server) adminAuditPurge(c *call) {
+	var req struct {
+		Category string `json:"category"`
+		Before   string `json:"before"`
+	}
+	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
+		return
+	}
+	dry := false
+	if v := c.r.URL.Query().Get("dry_run"); v != "" {
+		var err error
+		if dry, err = strconv.ParseBool(v); err != nil {
+			writeError(c.w, http.StatusBadRequest, "invalid", "Dry_run is true or false.")
+			return
+		}
+	}
+	p := store.AuditPurge{}
+	if cat := strings.TrimSpace(req.Category); cat != "" && cat != "all" {
+		if _, ok := auditlog.CategoryInfo(auditlog.Category(cat)); !ok {
+			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown category "+cat+".")
+			return
+		}
+		p.Category = cat
+	}
+	// A purge covers what was written up to now, the rows written while it runs
+	// excluded.
+	end := s.now().Add(time.Millisecond)
+	p.Before = end
+	if v := strings.TrimSpace(req.Before); v != "" {
+		t, _, err := auditTime(v)
+		if err != nil {
+			writeError(c.w, http.StatusBadRequest, "invalid", "Before is a time (RFC 3339) or a day (YYYY-MM-DD).")
+			return
+		}
+		if t.Before(end) {
+			p.Before = t
+		}
+	}
+	n, err := s.auth.PurgeAudit(c.r.Context(), p, dry)
+	if err != nil {
+		if !dry && n > 0 {
+			// Some of it went: say so, once, before the error.
+			s.auditRow(c, "audit_purged", "-", purgeDetail(p, n, true))
+		}
+		s.fail(c.w, err)
+		return
+	}
+	if !dry {
+		s.auditRow(c, "audit_purged", "-", purgeDetail(p, n, false))
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		DryRun   bool   `json:"dryRun"`
+		Count    int64  `json:"count"`
+		Category string `json:"category"`
+		Before   string `json:"before"`
+	}{dry, n, purgeCategory(p.Category), rfc3339(p.Before)})
+}
+
+func purgeCategory(c string) string {
+	if c == "" {
+		return "all"
+	}
+	return c
+}
+
+// purgeDetail is the detail of an audit_purged row.
+func purgeDetail(p store.AuditPurge, n int64, partial bool) map[string]any {
+	d := map[string]any{"category": purgeCategory(p.Category), "before": rfc3339(p.Before), "deleted": n}
+	if partial {
+		d["partial"] = true
+	}
+	return d
 }
 
 func timeText(t time.Time) string {

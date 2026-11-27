@@ -71,6 +71,13 @@
       "builtInOnly": false
     },
     {
+      "name": "site.audit.purge",
+      "scope": "site",
+      "feature": "",
+      "description": "Purge rows of the audit log by hand, whatever the retention settings say",
+      "builtInOnly": false
+    },
+    {
       "name": "site.admins.manage",
       "scope": "site",
       "feature": "",
@@ -635,6 +642,10 @@
       "default": true,
       "kinds": [
         {
+          "name": "audit_purged",
+          "site": true
+        },
+        {
           "name": "dropped",
           "site": true
         }
@@ -777,6 +788,14 @@
     "audit.keepDays",
     "audit.keepRows",
     "audit.keepMode",
-    "audit.optionalKeepDays"
+    "audit.optionalKeepDays",
+    "audit.keepDays.security",
+    "audit.keepDays.admin",
+    "audit.keepDays.data",
+    "audit.keepDays.system",
+    "audit.keepDays.signins",
+    "audit.keepDays.reads",
+    "audit.keepDays.downloads",
+    "audit.keepDays.api"
   ]
 }

@@ -63,6 +63,8 @@ import type {
   AuditFilters,
   AuditKinds,
   AuditList,
+  AuditPurgeInput,
+  AuditPurgeResult,
   AuthProvider,
   Passkey,
   ProviderInput,
@@ -362,6 +364,13 @@ export const adminApi = {
   },
   // The registry of kinds with their categories, and which optional categories are on in the caller's scope.
   auditKinds: (signal?: AbortSignal) => request<AuditKinds>('/admin/audit/kinds', { signal }),
+  // Deletes rows of the log by hand (site administrators); `dryRun` counts and deletes nothing.
+  purgeAudit: (input: AuditPurgeInput, dryRun = false, signal?: AbortSignal) =>
+    request<AuditPurgeResult>(`/admin/audit/purge${dryRun ? '?dry_run=true' : ''}`, {
+      method: 'POST',
+      body: input,
+      signal,
+    }),
   // The address of the CSV of a filter (the browser downloads it; the server streams it). A link cannot carry the scope
   // header, so in a tenant's scope the address names it (?scope=, which the server reads as the header).
   auditDownloadUrl: (filters: Partial<AuditFilters>, scope: string | null = null) => {
@@ -1162,6 +1171,26 @@ export function useAuditKinds() {
     queryKey: keys.adminAuditKinds,
     queryFn: ({ signal }) => adminApi.auditKinds(signal),
     staleTime: 30_000,
+  })
+}
+
+// How many rows a purge of this category and date would delete: asked again when either changes, never cached.
+export function useAuditPurgeCount(input: AuditPurgeInput, enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin', 'audit-purge-count', input.category ?? 'all', input.before ?? ''],
+    queryFn: ({ signal }) => adminApi.purgeAudit(input, true, signal),
+    enabled,
+    gcTime: 0,
+    staleTime: 0,
+  })
+}
+
+// The purge itself; the log and its registry are read again after it.
+export function usePurgeAudit() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: AuditPurgeInput) => adminApi.purgeAudit(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'audit'] }),
   })
 }
 

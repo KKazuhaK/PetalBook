@@ -14,6 +14,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { useAcrossSite } from './TenantScope'
+import { AuditPurge } from './AuditPurge'
 import { useFeature } from '@/lib/features'
 import { scopeOfClient } from '@/lib/scopedClient'
 import { absoluteTime } from '@/lib/time'
@@ -94,6 +95,8 @@ export function AuditSection() {
   const rows = log.data?.pages.flatMap((p) => p.items) ?? []
   const phone = usePhone()
   const downloadOn = useFeature('features.auditDownload') !== false
+  // Purging is the site's alone: not in a tenant's scope, whoever is signed in.
+  const site = useAcrossSite()
   // The scope of the client the log is read through: the download is the same rows.
   const scope = scopeOfClient(useQueryClient())
   const count = activeCount(filters)
@@ -133,6 +136,7 @@ export function AuditSection() {
             <RefreshCw aria-hidden="true" />
             {ta.refresh}
           </Button>
+          {site && <AuditPurge compact={phone} />}
           {downloadOn && (
             <a
               href={adminApi.auditDownloadUrl(filters, scope)}

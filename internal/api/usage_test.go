@@ -37,11 +37,11 @@ func addPages(t *testing.T, c *client, space string, n int) {
 
 func TestAccountUsageIsTheCallersOwnNumbers(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+	eachAccounts(t, accOpts{defaultQuota: true}, func(t *testing.T, a *acc) {
 		f := newTenFx(t, a)
 		u := usageOf(t, f.memA)
 		// The personal space is one; the person has nothing measured yet.
-		if usedOf(t, u, "spaces") != 1 || limitOf(u, "spaces") != float64(20) || usedOf(t, u, "bytes") != 0 || limitOf(u, "bytes") != nil ||
+		if usedOf(t, u, "spaces") != 1 || limitOf(u, "spaces") != float64(3) || usedOf(t, u, "bytes") != 0 || limitOf(u, "bytes") != nil ||
 			limitOf(u, "pages") != nil || u["measuredAt"] != nil || len(u["notices"].([]any)) != 0 {
 			t.Fatalf("%v", u)
 		}
@@ -126,7 +126,7 @@ func TestTheSpaceLimitIsLayeredAndRefused(t *testing.T) {
 }
 
 // --max-spaces, when given, is the site's value and read only; without it the
-// stored setting (20) is.
+// stored setting (3) is.
 func TestMaxSpacesFlagIsTheSitesReadOnlyQuota(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{maxSpaces: 4}, func(t *testing.T, a *acc) {
@@ -143,10 +143,10 @@ func TestMaxSpacesFlagIsTheSitesReadOnlyQuota(t *testing.T) {
 			t.Fatalf("%v", u)
 		}
 	})
-	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+	eachAccounts(t, accOpts{defaultQuota: true}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
 		s := settingOf(t, root.do("GET", "/api/admin/settings", nil).want(t, 200, ""), "quota.spacesPerPerson")["site"].(map[string]any)
-		if s["value"] != float64(20) || s["fromFlag"] != nil {
+		if s["value"] != float64(3) || s["fromFlag"] != nil {
 			t.Fatalf("%v", s)
 		}
 	})
@@ -161,7 +161,7 @@ func TestSettingValuesOfTheQuotasAreChecked(t *testing.T) {
 		}
 		put("quota.spacesPerPerson", -1).want(t, 400, "invalid")
 		put("quota.spacesPerPerson", 10001).want(t, 400, "invalid")
-		if r := put("quota.spacesPerPerson", nil).want(t, 200, ""); r.body["site"].(map[string]any)["value"] != float64(20) { // null: back to the default
+		if r := put("quota.spacesPerPerson", nil).want(t, 200, ""); r.body["site"].(map[string]any)["value"] != float64(3) { // null: back to the default
 			t.Fatalf("%s", r.raw)
 		}
 		put("quota.bytesPerPerson", 0).want(t, 400, "invalid")
@@ -395,7 +395,7 @@ func TestTenantUsageAndItsTotals(t *testing.T) {
 // administrator can ask for one tenant.
 func TestAdminUsageListsPeopleByBytesInTheirScope(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+	eachAccounts(t, accOpts{defaultQuota: true}, func(t *testing.T, a *acc) {
 		f := newTenFx(t, a)
 		for _, c := range []*client{f.memA, f.admA} {
 			addPages(t, c, c.personalSpace(), 1)
@@ -416,7 +416,7 @@ func TestAdminUsageListsPeopleByBytesInTheirScope(t *testing.T) {
 			t.Fatalf("%s", raw)
 		}
 		first := items[0].(map[string]any)
-		if first["user"].(map[string]any)["id"] != f.userA || first["pages"] != float64(6) || first["limits"].(map[string]any)["spaces"] != float64(20) || first["limits"].(map[string]any)["bytes"] != nil {
+		if first["user"].(map[string]any)["id"] != f.userA || first["pages"] != float64(6) || first["limits"].(map[string]any)["spaces"] != float64(3) || first["limits"].(map[string]any)["bytes"] != nil {
 			t.Fatalf("%v", first)
 		}
 		if own, _ := first["own"].(map[string]any); own == nil || own["spaces"] != nil || own["bytes"] != nil || own["pages"] != nil {

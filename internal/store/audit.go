@@ -230,31 +230,43 @@ const AuditTrimBatch = 5000
 // number (see NewAuditID), so the ids below it are the rows older than t.
 func AuditIDBefore(t time.Time) string { return fmt.Sprintf("%012x", ms(t)) }
 
-// AuditRetention is what the log keeps (the audit.keep* settings).
+// AuditRetention is what the log keeps (the audit.keep* settings). Nothing is
+// kept by a floor: every category's retention is the site's to set.
 type AuditRetention struct {
 	// Days and Rows: a row is kept while it is younger than Days OR (Mode "or",
-	// the default) / AND (Mode "and") among the newest Rows rows.
+	// the default) / AND (Mode "and") among the newest Rows rows. Days 0 is no
+	// age limit: with "or" nothing is deleted, with "and" only the rows outside
+	// the newest Rows.
 	Days, Rows int
 	Mode       string
-	// OptionalDays is how long a row of an optional category is kept at most.
+	// OptionalDays is how long a row of an optional category is kept at most
+	// (0: no limit of its own).
 	OptionalDays int
+	// CategoryDays says how long the rows of one category (by id) are kept,
+	// instead of all of the above: 0 keeps them forever, n deletes them after n
+	// days, whatever Rows says. A category not in it follows the rules above.
+	CategoryDays map[string]int
 }
 
-// auditTrimBounds works out what a trim deletes: every row below core in id, and
-// every row of an optional category below optional. "" is nothing. The rows
-// kept are ids from the bounds up, so each is a plain range of the primary
-// key (or of (category, id)).
+// auditTrimBounds works out what a trim deletes: for every category the id
+// below which its rows go ("" is nothing). The rows kept are ids from the bound
+// up, so each is a plain range of (category, id).
 //
-//	old      = id < D (older than Days)
+//	old      = id < D (older than Days; "" when Days is 0)
 //	outside  = id < R (not among the newest Rows; "" when there are fewer rows)
 //	or:  delete what is old and outside        -> min(D, R)
 //	and: delete what is old or outside         -> max(D, R)
 //
-// A core row is never deleted while younger than the floor, so its bound is at
-// most the floor's; an optional row also goes when older than OptionalDays.
-func auditTrimBounds(now time.Time, p AuditRetention, oldestKept string) (core, optional string) {
-	d := AuditIDBefore(now.Add(-time.Duration(p.Days) * 24 * time.Hour))
-	general := d
+// An optional category's rows also go when older than OptionalDays; a category
+// with its own days has that bound alone.
+func auditTrimBounds(now time.Time, p AuditRetention, oldestKept string) map[string]string {
+	before := func(days int) string {
+		if days <= 0 {
+			return ""
+		}
+		return AuditIDBefore(now.Add(-time.Duration(days) * 24 * time.Hour))
+	}
+	general := before(p.Days)
 	if p.Mode == "and" {
 		if oldestKept > general {
 			general = oldestKept
@@ -262,23 +274,30 @@ func auditTrimBounds(now time.Time, p AuditRetention, oldestKept string) (core, 
 	} else if oldestKept == "" || oldestKept < general {
 		general = oldestKept
 	}
-	core = general
-	if floor := AuditIDBefore(now.Add(-auditlog.CoreFloor)); general > floor {
-		core = floor
+	out := map[string]string{}
+	for _, c := range auditlog.Categories() {
+		id := string(c.ID)
+		if d, own := p.CategoryDays[id]; own {
+			out[id] = before(d)
+			continue
+		}
+		b := general
+		if !c.Core {
+			if o := before(p.OptionalDays); o > b {
+				b = o
+			}
+		}
+		out[id] = b
 	}
-	optional = general
-	if o := AuditIDBefore(now.Add(-time.Duration(p.OptionalDays) * 24 * time.Hour)); o > optional {
-		optional = o
-	}
-	return core, optional
+	return out
 }
 
 // TrimAudit deletes what p says the log does not keep, in batches of
 // AuditTrimBatch rows, each batch its own statement: on q the database (not a
 // transaction) each is its own transaction, so a large trim never holds
 // SQLite's one write connection, nor PostgreSQL's locks, for long. It reads one
-// id (the newest-Rows cut) and runs a range delete by primary key, then one by
-// (category, id) for each optional category; no table scan.
+// id (the newest-Rows cut) and runs a range delete by (category, id) for each
+// category; no table scan.
 func TrimAudit(ctx context.Context, q Q, now time.Time, p AuditRetention) (int64, error) {
 	if p.Rows < 1 {
 		p.Rows = 1
@@ -288,28 +307,59 @@ func TrimAudit(ctx context.Context, q Q, now time.Time, p AuditRetention) (int64
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	core, optional := auditTrimBounds(now, p, oldestKept)
+	bounds := auditTrimBounds(now, p, oldestKept)
 	var total int64
-	if core != "" {
-		n, err := trimAuditWhere(ctx, q, `id < ?`, core)
+	for _, c := range auditlog.Categories() {
+		b := bounds[string(c.ID)]
+		if b == "" {
+			continue
+		}
+		n, err := trimAuditWhere(ctx, q, `category = ? AND id < ?`, string(c.ID), b)
 		total += n
 		if err != nil {
 			return total, err
 		}
 	}
-	if optional > core {
-		for _, c := range auditlog.Categories() {
-			if c.Core {
-				continue
-			}
-			n, err := trimAuditWhere(ctx, q, `category = ? AND id < ?`, string(c.ID), optional)
-			total += n
-			if err != nil {
-				return total, err
-			}
-		}
-	}
 	return total, nil
+}
+
+// AuditPurgedKind is the kind of the one row a purge writes about itself.
+const AuditPurgedKind = "audit_purged"
+
+// AuditPurge says which rows a manual purge covers: those of Category ("" for
+// every category) written before Before (zero for any time). The rows of the
+// kind AuditPurgedKind, the record of purges, are never covered.
+type AuditPurge struct {
+	Category string
+	Before   time.Time
+}
+
+func (p AuditPurge) where() (string, []any) {
+	cond, args := `kind <> ?`, []any{AuditPurgedKind}
+	if p.Category != "" {
+		cond += ` AND category = ?`
+		args = append(args, p.Category)
+	}
+	if !p.Before.IsZero() {
+		cond += ` AND id < ?`
+		args = append(args, AuditIDBefore(p.Before))
+	}
+	return cond, args
+}
+
+// CountAuditPurge is how many rows PurgeAudit would delete now (the dry run).
+func CountAuditPurge(ctx context.Context, q Q, p AuditPurge) (int64, error) {
+	cond, args := p.where()
+	var n int64
+	err := q.QueryRow(ctx, `SELECT COUNT(*) FROM audit_log WHERE `+cond, args...).Scan(&n)
+	return n, err
+}
+
+// PurgeAudit deletes the rows p covers, oldest first, in batches of
+// AuditTrimBatch like TrimAudit, and returns how many went.
+func PurgeAudit(ctx context.Context, q Q, p AuditPurge) (int64, error) {
+	cond, args := p.where()
+	return trimAuditWhere(ctx, q, cond, args...)
 }
 
 // trimAuditWhere deletes the rows cond matches (a range of ids, with the

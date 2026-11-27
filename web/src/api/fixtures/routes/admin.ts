@@ -34,7 +34,7 @@ import {
 } from '../data/admin.ts'
 import type { FixtureData, SpaceData } from '../data/model.ts'
 import type { UserRec } from '../data/people.ts'
-import { add, find, newId, paged, remove, reply, rfc3339, type Ctx, type Route } from '../kit.ts'
+import { add, find, newId, paged, Refusal, remove, reply, rfc3339, type Ctx, type Route } from '../kit.ts'
 
 const now = (c: Ctx) => rfc3339(c.now())
 const A = (c: Ctx) => c.data.admin
@@ -1255,6 +1255,40 @@ export const adminRoutes: Route[] = [
     },
   ],
   ['GET', '/api/admin/audit/kinds', () => ({ categories: AUDIT_CATEGORIES })],
+  // A purge by hand (site administrators): the same rules as the server's, the record of purges never deleted, one
+  // `audit_purged` row after a delete that was not a dry run.
+  [
+    'POST',
+    '/api/admin/audit/purge',
+    (c) => {
+      const category = typeof c.body.category === 'string' && c.body.category !== '' ? c.body.category : 'all'
+      if (category !== 'all' && !AUDIT_CATEGORIES.some((k) => k.id === category))
+        throw new Refusal(400, 'invalid', `Unknown category ${category}.`)
+      const before = typeof c.body.before === 'string' ? c.body.before : ''
+      const cutoff = before === '' ? Infinity : Date.parse(before)
+      if (Number.isNaN(cutoff)) throw new Refusal(400, 'invalid', 'Before is a time (RFC 3339) or a day (YYYY-MM-DD).')
+      const dry = c.query.get('dry_run') === 'true'
+      const covers = (a: AuditItem) =>
+        a.kind !== 'audit_purged' && (category === 'all' || a.category === category) && Date.parse(a.at) < cutoff
+      const count = A(c).audit.filter(covers).length
+      if (!dry) {
+        A(c).audit = A(c).audit.filter((a) => !covers(a))
+        A(c).audit.unshift({
+          id: newId(c.data, '01AU'),
+          at: now(c),
+          kind: 'audit_purged',
+          category: 'system',
+          capacity: 'site_admin',
+          actor: c.data.auth.signedIn,
+          user: null,
+          username: '',
+          ip: '',
+          detail: { category, before: now(c), deleted: count },
+        })
+      }
+      return { dryRun: dry, count, category, before: now(c) }
+    },
+  ],
 
   // --- machine access ---
   ['GET', '/api/admin/tokens', (c) => page(c, A(c).tokens)],
