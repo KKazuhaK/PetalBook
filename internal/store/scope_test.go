@@ -31,6 +31,7 @@ var scopeAllowlist = map[string]string{
 	"HasUsers":                   "whether the server has any account (setup)",
 	"CountEnabledAdminsOutside":  "the rule 'keep one administrator' counts site administrators, the server's own",
 	"CountEnabledPasswordAdmins": "the same rule for password sign-in: the server's own",
+	"CountTenantPasswordAdmins":  "one tenant by its id, given: an organisation requiring its single sign-on keeps an administrator with a password (3.6 d4)",
 	"CountPasskeyRequired":       "a count for the security page, which is the server's own",
 	"DeleteOldInvites":           "background job: expired invites of every tenant",
 	"NotifyUser":                 "a notification for one person by id: the row carries the person's own tenant, read here",
