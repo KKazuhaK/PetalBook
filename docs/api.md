@@ -512,9 +512,10 @@ one. Counts against the address's sign-in starts (30 a minute).
 
 `login_hint` is optional: the sign-in page sends the email of the person who is
 coming back after a session ended. For an `oidc` provider it is passed on as the
-`login_hint` of the authorization request; a value that is over 254 bytes or has
-a control character is dropped. `saml` and `github` have no such parameter and
-ignore it.
+`login_hint` of the authorization request. For a `saml` provider whose
+`nameIdFormat` is `emailAddress` it is the AuthnRequest's `<Subject><NameID>`
+(3.6 d4). For either, a value that is over 254 bytes or has a control character
+is dropped. `github` has no such parameter and ignores it.
 
 #### Starting: `POST /api/auth/{kind}/{slug}/start`
 
@@ -628,7 +629,7 @@ own.
 | `saml_no_email` | SAML: the assertion has no address, neither in the attribute the provider names for it (`mail` by default) nor, with a `NameID` in the `emailAddress` format, as the `NameID`; the administrator maps an email attribute |
 | `invite_invalid` | `invite`: the invite is unknown, used or expired |
 | `setup_invalid` | `setup`: setup is done, or the token is wrong |
-| `rate_limited` | the address made too many requests (SAML ACS, starts); from 3.6 d4 also a tenant's provider whose outbound share (`rate.outboundPerMinute`) is used up |
+| `rate_limited` | the address made too many requests (SAML ACS, starts) |
 | `sso_required` | from 3.6 d4: the site's social sign-in, for a person whose tenant requires its own single sign-on (`signin.ssoOnly`) |
 | `saml_destination` | the response has no `Destination`, or another one |
 | `saml_weak_signature` | the response is signed or digested with something weaker than SHA-256 |
@@ -8422,7 +8423,7 @@ Their username stays taken while they are in the recycle bin.
 - `DELETE /api/users/{id}` answers `409 heir_required` with `spaces` (`id`,
   `name`) before anything is changed; `409 conflict` for the caller themself and
   the last enabled site administrator (the preview lists them as `blockers` with
-  a `reason`: `self`, `last_admin`); `403 forbidden` for a site administrator when
+  a `reason`: `self`, `last_admin`, from 3.6 d4 `last_local_admin`); `403 forbidden` for a site administrator when
   the caller is a tenant administrator; `404 user_not_found` for a person who does
   not exist, is in another tenant or is deleted already. The answer is the person's
   recycle item, `with` the spaces recycled with them.
@@ -9491,7 +9492,7 @@ applies to every layered (b) key of the inventory:
 | `lock` | 强制 / forced | nothing: the site's value applies |
 
 - Every key says what "stricter" means for it (`strictness`): `higher`
-  (booleans where `true` is stricter, e.g. `auth.ssoOnly`), `lower` (limits,
+  (booleans where `true` is stricter, e.g. `signin.ssoOnly`), `lower` (limits,
   e.g. `session.maxDays`), an order of options (`captcha.contexts.*`:
   `off` < `after_failures` < `always`), or `subset` (lists, e.g. `storage.hosts`: a
   lower layer keeps only some of the site's entries). A key without an order
@@ -10205,7 +10206,8 @@ or `{"sso": null}`.
   else after the password (`403 local_login_refused`). Without `enforced`, the
   password step shows the button above the password field.
 - The start carries the address as the hint: the page adds `login_hint` to
-  `start` (`GET …/start?login_hint=`, at most 254 bytes, one line). An OpenID
+  `start` (`GET …/start?login_hint=`; a hint over 254 bytes or with a control
+  character is dropped, for both kinds). An OpenID
   Connect provider gets it as `login_hint`. A SAML provider gets it as the
   AuthnRequest's `<Subject><NameID>` (format `emailAddress`), and only when its
   `nameIdFormat` is `emailAddress`: an identity provider that honours a
@@ -10269,12 +10271,18 @@ tenant with a rule, as for any key.
   organisation of one's own), and for any address in a tenant that requires
   it. The link of a registration made before the tenant turned it on answers
   the same when followed. It is about the domain only, never the account.
+- **The last administrator with a password stays.** While the tenant's
+  `signin.ssoOnly` is on (in its own layer or by the site's rule, whether or not
+  a single sign-on meets it now), demoting, disabling or deleting its last
+  enabled administrator who has a password answers `409 last_local_admin`: the
+  site's 2.8 rule, per tenant.
 - **The sign-in calls of a tenant's provider** (discovery, keys, tokens, user
-  information, SAML metadata) count against the tenant's outbound share
-  (`rate.outboundPerMinute`), one per request, the same share its domain checks
-  spend. Used up, the call is not made: a start answers `429 rate_limited`
-  with `Retry-After`, a callback returns to `/login?sso_error=rate_limited`.
-  The site's providers have no share.
+  information) do **not** spend the tenant's outbound share
+  (`rate.outboundPerMinute`; decided in the d4 review): anyone may start
+  sign-ins and send callbacks, so charging them would let a stranger drain the
+  share, stop the tenant's domain checks and, with `ssoOnly` on, lock its people
+  out. The per-address sign-in limits (starts, callbacks) bound them; d3's
+  public-address check on every connection stays.
 
 #### Mail: `GET/PUT /api/admin/tenants/{tenant}/mail`, `POST …/mail/test`
 
@@ -10334,7 +10342,7 @@ The tenant's own providers (2.7b). For GitHub:
 
 #### Security: `GET/PUT /api/admin/tenants/{tenant}/security`
 
-The tenant's layer of `auth.ssoOnly`, `auth.loginMode`,
+The tenant's layer of `signin.ssoOnly`, `auth.loginMode`,
 `auth.passkeys.requireRoles`, `auth.social`, `session.*` and the captcha
 contexts above, gathered as one page with 2.8's checks scoped to the tenant:
 `local_admin_required` counts the tenant's enabled administrators with a
@@ -11212,7 +11220,7 @@ switcher's list: id, slug, name, role, managed), answered from the cache.
 
 ### Security rules per organisation
 
-An organisation's `auth.ssoOnly`, `auth.passkeys.requireRoles` and
+An organisation's `signin.ssoOnly`, `auth.passkeys.requireRoles` and
 `session.idleDays`/`maxDays` (3.6) apply to the person **when they act in that
 organisation** (a request whose current tenant, or whose space's tenant, is it):
 
@@ -11384,6 +11392,7 @@ tokens and OAuth grants, `current_tenant` and `proofs` on sessions,
 | `managed_account` | 403 | a managed account creating a personal space or an organisation, or leaving its organisation |
 | `account_not_held` | 403 | an account action by a tenant administrator on a member the tenant does not hold |
 | `last_admin` | 409 | the last enabled administrator of a tenant leaving it, or being demoted or removed |
+| `last_local_admin` | 409 | while a tenant's `signin.ssoOnly` is on: demoting, disabling or deleting its last enabled administrator with a password (3.6 d4) |
 | `tenant_limit` | 409 | a signed-in person over `tenant.selfService.perPerson` |
 | `tenant_sso_required` | 403 | acting in an organisation that requires its SSO without that proof; a managed account signing in another way; with `start` |
 | `session_expired_for_tenant` | 401 | the organisation's session length passed for this session's proof |

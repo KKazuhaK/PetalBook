@@ -963,6 +963,7 @@ export type ErrorCode =
   | 'rate_limited'
   | 'captcha_failed'
   | 'local_login_refused'
+  | 'last_local_admin'
   | 'passkey_required'
   | 'passkey_failed'
   | 'recent_login_required'
@@ -2495,7 +2496,7 @@ export interface UserDeletionPlan {
   }
   groups: number
   needsHeir: PlanSpace[]
-  blockers: { reason: 'self' | 'last_admin' | string; message?: string }[]
+  blockers: { reason: 'self' | 'last_admin' | 'last_local_admin' | string; message?: string }[]
   bytes: number
   recycleDays: number
 }

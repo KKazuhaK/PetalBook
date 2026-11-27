@@ -336,7 +336,13 @@ func (s *Service) ruleRow(ctx context.Context, d *Def, layer, layerID, tenant, s
 	}
 	row.Starts, row.Ends = r.From.UTC(), r.Until.UTC()
 	if r.Value != nil {
-		v, err := s.check(ctx, d, tenant, r.Value)
+		check := s.check
+		if layer == store.LayeredPlan {
+			// A plan is no tenant's: its value is checked for each tenant on it
+			// (checkPlanFor), never as the site's.
+			check = s.checkShape
+		}
+		v, err := check(ctx, d, tenant, r.Value)
 		if err != nil {
 			return nil, err
 		}

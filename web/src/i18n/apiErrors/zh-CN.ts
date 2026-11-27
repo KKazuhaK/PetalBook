@@ -108,6 +108,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   github_app_client: '这个提供方的客户端就是 GitHub 应用的客户端：请在仓库提供方里改应用的设置。',
   auto_create_needs_org: '自动创建账号需要先指定组织。',
   local_admin_required: '要先有一个能用密码登录的管理员，才能这样设置。',
+  last_local_admin: '这个组织要求单点登录：至少要留一位能用密码登录、未停用的组织管理员。',
   sso_only_with_registration: '关闭密码登录后没人能完成注册，请先关闭开放注册。',
   sso_provider_required: '请先为这个组织开启单点登录（自己的，或站点提供给它的），否则它的成员无法登录。',
   sso_required: '这个组织的成员要通过单点登录进入，不能用密码注册或登录。',

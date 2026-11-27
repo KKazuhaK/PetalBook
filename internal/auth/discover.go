@@ -3,10 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
-	"net/http"
 	"strings"
-	"sync/atomic"
-	"time"
 
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
@@ -113,7 +110,7 @@ func (s *Service) anyRouted(ctx context.Context) bool {
 	if s.cfg.RoutedProviders == nil {
 		return false
 	}
-	for _, id := range s.cfg.RoutedProviders() {
+	for _, id := range s.cfg.RoutedProviders(ctx) {
 		if rt := s.provs.getID(id); rt != nil && s.signInOn(ctx, rt) {
 			return true
 		}
@@ -140,6 +137,13 @@ func (s *Service) identifierFirst(ctx context.Context, st *secState, info *Publi
 // ssoOnly is not in effect while no provider is (a lock-out otherwise). The
 // site's own ssoOnly is ssoOnlyInEffect. From the settings' cache and memory.
 func (s *Service) tenantSSOOnly(ctx context.Context, tenant string) bool {
+	return s.tenantSSOOnlyOn(ctx, tenant) && s.tenantHasSSO(ctx, tenant)
+}
+
+// tenantSSOOnlyOn says whether the tenant's signin.ssoOnly is on (in its own
+// layer, or by the site's rule for it), whether or not a single sign-on can
+// meet it now: what keeps its last administrator with a password.
+func (s *Service) tenantSSOOnlyOn(ctx context.Context, tenant string) bool {
 	st := s.settings.Load()
 	if st == nil || tenant == "" {
 		return false
@@ -149,10 +153,36 @@ func (s *Service) tenantSSOOnly(ctx context.Context, tenant string) bool {
 		return false
 	}
 	tv := e.Tenant
-	on := tv.Value == true && tv.InEffect ||
+	return tv.Value == true && tv.InEffect ||
 		tv.SiteRule != nil && tv.SiteRule.InEffect && tv.SiteRule.Value == true
-	return on && s.tenantHasSSO(ctx, tenant)
 }
+
+// errLastLocalAdmin refuses taking away a tenant's last enabled administrator
+// with a password while its ssoOnly is on: the back door while its identity
+// provider fails (2.8's rule, per tenant, 3.6 d4).
+func errLastLocalAdmin() *Error {
+	return coded(409, "last_local_admin", "This organization requires single sign-on: keep at least one enabled administrator of it with a password.")
+}
+
+// LastLocalAdmin says whether u is its tenant's last enabled administrator
+// with a password while the tenant's ssoOnly is on: demoting, disabling or
+// deleting them is refused (409 last_local_admin). q is the transaction the
+// change is made in.
+func (s *Service) LastLocalAdmin(ctx context.Context, q store.Q, u store.User) (bool, error) {
+	if !u.IsAdmin() || u.Disabled || !s.tenantSSOOnlyOn(ctx, u.TenantID) {
+		return false, nil
+	}
+	if _, err := store.GetPasswordHash(ctx, q, u.ID); errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	n, err := store.CountTenantPasswordAdmins(ctx, q, u.TenantID)
+	return n <= 1, err
+}
+
+// ErrLastLocalAdmin is the refusal LastLocalAdmin calls for.
+func ErrLastLocalAdmin() error { return errLastLocalAdmin() }
 
 // tenantHasSSO says whether the tenant's people have a single sign-on that
 // can sign in now: one of the tenant's own, or a site SSO offered to it.
@@ -211,65 +241,4 @@ func ssoRequiredErr(d *Discovered) *Error {
 	e := coded(409, "sso_required", "This organization signs its people in with single sign-on, not with a password.")
 	e.SSO = d
 	return e
-}
-
-// errOutbound is a tenant's provider call refused by its outbound share.
-type errOutbound struct{ wait time.Duration }
-
-func (e *errOutbound) Error() string { return "the organization's outbound share is used up" }
-
-// outboundNote records that a call made under its context was refused by the
-// outbound share: the identity-provider libraries keep only their own error
-// categories, so the refusal is told beside the error, not in it.
-type outboundNote struct{ wait atomic.Int64 }
-
-type outboundNoteKey struct{}
-
-// noteOutbound is ctx with a note of refusals by the outbound share.
-func noteOutbound(ctx context.Context) (context.Context, *outboundNote) {
-	n := &outboundNote{}
-	return context.WithValue(ctx, outboundNoteKey{}, n), n
-}
-
-// outboundOf is the wait of a refusal by the outbound share, from the note of
-// the context the calls were made under or from err itself; ok false when
-// none was refused.
-func outboundOf(n *outboundNote, err error) (time.Duration, bool) {
-	if n != nil {
-		if w := n.wait.Load(); w > 0 {
-			return time.Duration(w), true
-		}
-	}
-	var e *errOutbound
-	if errors.As(err, &e) {
-		return e.wait, true
-	}
-	return 0, false
-}
-
-// outboundTransport spends one request of the tenant's outbound share
-// (rate.outboundPerMinute) before each call its provider makes: discovery,
-// keys, tokens, user info, metadata. A call the share refuses is not made.
-type outboundTransport struct {
-	base   http.RoundTripper
-	tenant string
-	take   func(ctx context.Context, tenant string) (time.Duration, bool, error)
-}
-
-func (t *outboundTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	wait, ok, err := t.take(r.Context(), t.tenant)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		if r.Body != nil {
-			r.Body.Close()
-		}
-		wait = max(wait, time.Second)
-		if n, _ := r.Context().Value(outboundNoteKey{}).(*outboundNote); n != nil {
-			n.wait.Store(int64(wait))
-		}
-		return nil, &errOutbound{wait: wait}
-	}
-	return t.base.RoundTrip(r)
 }

@@ -2000,26 +2000,18 @@ func (s *Service) httpClient() *http.Client {
 // server makes the connections: they reach public addresses only, checked on
 // the address each name resolves to as it is dialled (docs/api.md, "Outgoing
 // requests made for a tenant"), with at most 3 redirects. The site's own
-// providers, and a client the tests give, are not held to it. Each call a
-// tenant's provider makes counts against the tenant's outbound share (3.6 d4).
+// providers, and a client the tests give, are not held to it.
+//
+// A sign-in's calls do not spend the tenant's outbound share
+// (rate.outboundPerMinute): anyone may start sign-ins and send callbacks, and
+// would drain the share, stopping the tenant's domain checks and, while its
+// ssoOnly is on, its people's sign-in. The per-address sign-in limits bound
+// them (3.6 d4 review).
 func (s *Service) httpClientFor(owner string) *http.Client {
-	if owner == "" || owner == store.ProviderSite {
+	if owner == "" || owner == store.ProviderSite || s.cfg.HTTPClient != nil {
 		return s.httpClient()
 	}
-	c := tenantHTTPClient
-	if s.cfg.HTTPClient != nil {
-		c = s.cfg.HTTPClient
-	}
-	if s.cfg.Outbound == nil {
-		return c
-	}
-	out := *c
-	base := out.Transport
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	out.Transport = &outboundTransport{base: base, tenant: owner, take: s.cfg.Outbound}
-	return &out
+	return tenantHTTPClient
 }
 
 // tenantHTTPClient is httpClientFor's client of the tenants' providers. It

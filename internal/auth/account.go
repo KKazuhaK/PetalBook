@@ -450,6 +450,15 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, access authz
 				}
 			}
 		}
+		// While the tenant's ssoOnly is on, its last administrator with a
+		// password stays one, enabled (3.6 d4).
+		if !store.IsAdminRole(role) || disabled {
+			if last, err := s.LastLocalAdmin(ctx, q, *u); err != nil {
+				return err
+			} else if last {
+				return errLastLocalAdmin()
+			}
+		}
 		if role != u.Role {
 			if err := store.SetRole(ctx, q, u.ID, role); err != nil {
 				return err

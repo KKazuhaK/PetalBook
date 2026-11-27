@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"io"
 	"net/url"
+	"strings"
 	"testing"
 
 	crewjamsaml "github.com/crewjam/saml"
@@ -58,9 +59,14 @@ func TestTheSAMLStartCarriesTheAddressAsTheSubject(t *testing.T) {
 			req.Subject.NameID.Format != string(crewjamsaml.EmailAddressNameIDFormat) {
 			t.Fatalf("%+v", req.Subject)
 		}
-		// A hint that is not one line is not sent.
-		if req := start("a\nb@acme.example"); req.Subject != nil {
-			t.Fatalf("%+v", req.Subject.NameID)
+		// A hint that is not one line, or longer than 254 bytes (as for login_hint), is not sent.
+		for _, hint := range []string{"a\nb@acme.example", strings.Repeat("a", 242) + "@acme.example"} {
+			if req := start(hint); req.Subject != nil {
+				t.Fatalf("%d bytes: %+v", len(hint), req.Subject.NameID)
+			}
+		}
+		if req := start(strings.Repeat("a", 241) + "@acme.example"); req.Subject == nil {
+			t.Fatal("a hint of 254 bytes was dropped")
 		}
 		if req := samlRequestAt(t, a.newClient("").do("GET", "/api/auth/saml/"+samlSlug+"/start", nil)); req.Subject != nil {
 			t.Fatal("a Subject without a hint")

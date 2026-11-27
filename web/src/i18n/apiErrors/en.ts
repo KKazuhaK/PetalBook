@@ -120,6 +120,8 @@ export const apiErrorsEn: ApiErrorTexts = {
     "This provider's client is the GitHub App's: change it with the App's settings in the repository providers.",
   auto_create_needs_org: 'Creating accounts automatically needs an organisation to be named first.',
   local_admin_required: 'An administrator who can sign in with a password has to exist first.',
+  last_local_admin:
+    'This organisation requires single sign-on: keep at least one enabled administrator of it with a password.',
   sso_only_with_registration:
     'With password sign-in off nobody could finish registering. Turn open registration off first.',
   sso_provider_required:
