@@ -368,14 +368,28 @@ func (s *Service) ruleRow(ctx context.Context, d *Def, layer, layerID, tenant, s
 // changed here. A setting with no tenant layer (ForTenant) has only the rule; a
 // value given for it is the site's value for that tenant.
 func (s *Service) SetTenantResult(ctx context.Context, tenant, key string, ch Change) (TenantResult, error) {
+	res, _, err := s.setTenant(ctx, tenant, key, ch, false)
+	return res, err
+}
+
+// PreviewTenant is what the setting would come to for the tenant after the
+// change, with every check SetTenantResult makes, and nothing written.
+func (s *Service) PreviewTenant(ctx context.Context, tenant, key string, ch Change) (*Effective, error) {
+	_, after, err := s.setTenant(ctx, tenant, key, ch, true)
+	return after, err
+}
+
+// setTenant is SetTenantResult, or with preview the effective value it would
+// leave instead of the write.
+func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, preview bool) (TenantResult, *Effective, error) {
 	var res TenantResult
 	d, ok := s.byK[key]
 	if !ok || !d.PerTenant() {
-		return res, &Error{Code: CodeNotFound, Msg: "no such setting"}
+		return res, nil, &Error{Code: CodeNotFound, Msg: "no such setting"}
 	}
 	eff, err := s.Get(ctx, tenant, key)
 	if err != nil {
-		return res, err
+		return res, nil, err
 	}
 	// The manual rule now, and the rules as they are.
 	var cur *Rule
@@ -392,18 +406,18 @@ func (s *Service) SetTenantResult(ctx context.Context, tenant, key string, ch Ch
 		}
 	}
 	if (ch.HasSiteLock || ch.HasSiteRule) && !ch.Site {
-		return res, &Error{Code: CodeLocked, Msg: key + ": only the site's administrators set a rule for a tenant"}
+		return res, nil, &Error{Code: CodeLocked, Msg: key + ": only the site's administrators set a rule for a tenant"}
 	}
 	if ch.HasSiteLock && ch.HasSiteRule {
-		return res, bad("%s: give siteRule or siteLock, not both", key)
+		return res, nil, bad("%s: give siteRule or siteLock, not both", key)
 	}
 	siteOnly := !d.Has(Tenant)
 	if siteOnly {
 		if !ch.Site {
-			return res, &Error{Code: CodeLocked, Msg: key + " is the site's: only its administrators set it for a tenant"}
+			return res, nil, &Error{Code: CodeLocked, Msg: key + " is the site's: only its administrators set it for a tenant"}
 		}
 		if ch.HasLower {
-			return res, bad("%s has no tenant layer: give the rule for the tenant as siteRule", key)
+			return res, nil, bad("%s has no tenant layer: give the rule for the tenant as siteRule", key)
 		}
 	}
 	// siteLock is the short form of a rule: true locks the value given, or
@@ -432,14 +446,14 @@ func (s *Service) SetTenantResult(ctx context.Context, tenant, key string, ch Ch
 		ch.HasSiteRule, ch.SiteRule, ch.HasValue, ch.Value = true, r, false, nil
 	}
 	if !ch.Site && eff.Tenant != nil && eff.Tenant.SiteLocked && eff.Tenant.SiteRule.InEffect {
-		return res, &Error{Code: CodeLocked, Msg: key + " is locked for this tenant by the site's administrators"}
+		return res, nil, &Error{Code: CodeLocked, Msg: key + " is locked for this tenant by the site's administrators"}
 	}
 
 	// The site's manual rule for the tenant.
 	var ruleRow *store.LayeredRow
 	if ch.HasSiteRule {
 		if ruleRow, err = s.ruleRow(ctx, d, store.LayeredSite, tenant, tenant, store.SourceManual, ch.By, ch.SiteRule); err != nil {
-			return res, err
+			return res, nil, err
 		}
 	}
 
@@ -449,7 +463,7 @@ func (s *Service) SetTenantResult(ctx context.Context, tenant, key string, ch Ch
 		var nv *RuleView
 		if ruleRow.Value != "" || ruleRow.Lower != "" {
 			if nv, err = ruleView(d, ruleRow); err != nil {
-				return res, err
+				return res, nil, err
 			}
 		}
 		views := append([]*RuleView{nv}, others...)
@@ -462,43 +476,87 @@ func (s *Service) SetTenantResult(ctx context.Context, tenant, key string, ch Ch
 				lim = *nv.Lower
 			}
 			if err := aboveMax(d, lim, nv.Value); err != nil {
-				return res, err
+				return res, nil, err
 			}
 		}
 	}
 	var rawValue, rawLower string
 	if ch.HasValue && ch.Value != nil {
 		if above.Mode == Lock {
-			return res, &Error{Code: CodeLocked, Msg: key + " is locked by the site's administrators"}
+			return res, nil, &Error{Code: CodeLocked, Msg: key + " is locked by the site's administrators"}
 		}
 		val, err := s.check(ctx, d, tenant, ch.Value)
 		if err != nil {
-			return res, err
+			return res, nil, err
 		}
 		if !above.Allows(d, val) {
-			return res, &Error{Code: CodeRestricted, Msg: key + ": " + describe(d, above)}
+			return res, nil, &Error{Code: CodeRestricted, Msg: key + ": " + describe(d, above)}
 		}
 		raw, err := json.Marshal(val)
 		if err != nil {
-			return res, err
+			return res, nil, err
 		}
 		rawValue = string(raw)
 	}
 	if ch.HasLower && ch.Lower != nil {
 		l, err := d.CheckLower(*ch.Lower)
 		if err != nil {
-			return res, err
+			return res, nil, err
 		}
 		if above.Mode == Lock && l.Mode != Lock {
-			return res, &Error{Code: CodeLocked, Msg: key + " is locked by the site's administrators"}
+			return res, nil, &Error{Code: CodeLocked, Msg: key + " is locked by the site's administrators"}
 		}
 		if !l.Tightens(d, above) {
-			return res, &Error{Code: CodeRestricted, Msg: key + ": the tenant's rule must be at least as strict as the site's"}
+			return res, nil, &Error{Code: CodeRestricted, Msg: key + ": the tenant's rule must be at least as strict as the site's"}
 		}
 		raw, _ := json.Marshal(l)
 		rawLower = string(raw)
 	}
 
+	if preview {
+		views := make([]*RuleView, 0, 3)
+		if ruleRow != nil {
+			var nv *RuleView
+			if ruleRow.Value != "" || ruleRow.Lower != "" {
+				if nv, err = ruleView(d, ruleRow); err != nil {
+					return res, nil, err
+				}
+			}
+			views = append(append(views, nv), others...)
+		} else if eff.Tenant != nil {
+			for i := range eff.Tenant.Rules {
+				r := eff.Tenant.Rules[i]
+				views = append(views, &r)
+			}
+		}
+		var tv *TenantView
+		if d.Has(Tenant) && eff.Tenant != nil {
+			tv = &TenantView{InEffect: true, Value: eff.Tenant.Value, Lower: eff.Tenant.Lower}
+			if ch.HasValue {
+				tv.Value = nil
+				if rawValue != "" {
+					if tv.Value, err = decode(rawValue); err != nil {
+						return res, nil, err
+					}
+					if nv, err := d.Value(tv.Value); err == nil {
+						tv.Value = nv
+					}
+				}
+			}
+			if ch.HasLower {
+				tv.Lower = nil
+				if rawLower != "" {
+					var l Lower
+					if err := json.Unmarshal([]byte(rawLower), &l); err != nil {
+						return res, nil, err
+					}
+					tv.Lower = &l
+				}
+			}
+		}
+		after, _ := tenantEffective(d, eff.Site, views, tv, s.now())
+		return res, after, nil
+	}
 	err = s.write(ctx, func(q store.Q) error {
 		if s.beforeTenantWrite != nil && !ch.Site {
 			s.beforeTenantWrite()
@@ -531,5 +589,5 @@ func (s *Service) SetTenantResult(ctx context.Context, tenant, key string, ch Ch
 	if ruleRow != nil {
 		s.rearm(ctx)
 	}
-	return res, err
+	return res, nil, err
 }

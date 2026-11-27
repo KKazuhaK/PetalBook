@@ -82,8 +82,9 @@ function Console({ scope, segments, siteUser }: { scope: string | null; segments
   const auditOff = useConsoleFeature('features.tenantAudit') === false && !site
   const sections = navFor(site, org).filter((s) => s.key !== 'audit' || !auditOff)
   const person = first === 'user' && second !== undefined
-  // A tenant's own page: `/admin/tenants/<id>/<tab>`; the list's two pages are tenants and plans.
-  const ofTenant = site && first === 'tenants' && second !== undefined && second !== 'tenants' && second !== 'plans'
+  // A tenant's own page: `/admin/tenants/<id>/<tab>`; the section's own pages are tenants, plans and domains.
+  const ofTenant =
+    site && first === 'tenants' && second !== undefined && !['tenants', 'plans', 'domains'].includes(second)
   const section = person ? sections.find((s) => s.key === 'users') : sections.find((s) => s.key === first)
   const tabs = section?.tabs ?? []
   const tab = person || ofTenant ? undefined : (tabs.find((x) => x.key === second) ?? tabs[0])

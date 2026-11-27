@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type FormEvent } from 'react'
-import { Copy, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
+import { Copy, Plus, RefreshCw, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { useDomainChange, useTenantDomains, useTenantSettings } from '@/api/admin'
 import { ApiError } from '@/api/client'
@@ -140,7 +140,18 @@ function ClaimForm({ tenant }: { tenant: string }) {
   )
 }
 
-function StateBadge({ d }: { d: TenantDomain }) {
+// The warning of a domain whose label mixes scripts, with the reason as its title.
+export function MixedBadge({ d }: { d: TenantDomain }) {
+  if (!d.mixedScript) return null
+  return (
+    <Badge variant="destructive" data-slot="mixed-script" title={td.mixedHelp}>
+      <TriangleAlert aria-hidden="true" />
+      {td.mixedBadge}
+    </Badge>
+  )
+}
+
+export function StateBadge({ d }: { d: TenantDomain }) {
   switch (d.state) {
     case 'verified':
       return (
@@ -327,6 +338,7 @@ function DomainCard({
         <span className="min-w-0 text-sm font-medium break-all">{d.display}</span>
         <StateBadge d={d} />
         {d.restrictOrgs && <Badge variant="secondary">{td.restrictedBadge}</Badge>}
+        <MixedBadge d={d} />
       </div>
       {d.display !== d.domain && (
         <p className="-mt-2 font-mono text-xs break-all text-muted-foreground">{td.punycode(d.domain)}</p>

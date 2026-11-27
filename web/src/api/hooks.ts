@@ -101,6 +101,7 @@ export const keys = {
   plans: ['admin', 'plans'] as const,
   secrets: (tenant: string) => ['admin', 'secrets', tenant] as const,
   tenantDomains: (tenant: string) => ['admin', 'domains', tenant] as const,
+  siteDomains: ['admin', 'domains', '-site'] as const,
   adminMail: ['admin', 'mail'] as const,
   tenants: ['admin', 'tenants'] as const,
   // Under the tenants, so a rename (a write that reads the tenants again) reads the selector's names again.

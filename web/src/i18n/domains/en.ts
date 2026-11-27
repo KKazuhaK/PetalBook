@@ -23,6 +23,28 @@ export const domainsEn: DomainsMessages = {
     lapsed: 'Lapsed',
   },
   restrictedBadge: 'No other organizations',
+  mixedBadge: 'Mixed scripts',
+  mixedHelp:
+    'A part of this domain mixes scripts (such as a Cyrillic letter among Latin ones), which is how a name is made to look like another. Make sure it is the one you mean before you trust or move it.',
+  // The site's list: every organization's claims, and moving a verified domain to another organization.
+  site: {
+    title: 'Email domains',
+    help: 'The email domains every organization has claimed. A verified domain can be moved to another organization: its record in DNS keeps counting.',
+    loadFailed: 'Could not read the domains',
+    empty: 'No organization has claimed a domain yet.',
+    more: 'Load more',
+    tenant: (name: string) => `Organization: ${name}`,
+    transfer: 'Transfer',
+    transferLabel: (domain: string) => `Transfer ${domain}`,
+    transferTitle: (domain: string) => `Transfer ${domain}`,
+    transferHelp:
+      'Move this verified domain to another organization. The one that holds it loses it; each sees only its own side in its audit log.',
+    to: 'To',
+    pick: 'Choose an organization',
+    confirm: 'Transfer',
+    cancel: 'Cancel',
+    done: (domain: string, name: string) => `Moved ${domain} to ${name}`,
+  },
   punycode: (key: string) => `In DNS: ${key}`,
   records: {
     title: 'Publish one of these records',

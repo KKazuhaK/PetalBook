@@ -93,6 +93,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   saml_needs_https: 'SAML 需要 https 的公开地址。',
   domain_required: '租户拥有的登录提供方，需要租户先有一个已验证的域名。',
   domain_public: '这是公共邮箱服务的域名，谁都可以在那里有地址，所以任何组织都不能认领。',
+  domain_suffix: '这是公共后缀（例如 co.uk 或 github.io），谁都可以在它下面注册名字。请认领它下面你自己的域名。',
   domain_exists: '这个组织已经认领过这个域名。',
   domain_limit: '一个组织最多认领 20 个域名。',
   domain_claimed: '另一个组织已经验证了这个域名。全站管理员可以把它转过来。',

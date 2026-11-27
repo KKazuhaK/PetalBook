@@ -9860,14 +9860,17 @@ claim another tenant holds is `404 not_found` as one that does not exist.
 
 - `domain` is the key: the IDNA (UTS #46) form in punycode, lower case, without
   the root's dot; `display` is the same as people read it. Two spellings of one
-  domain are one claim (`409 domain_exists`).
+  domain are one claim (`409 domain_exists`). `mixedScript` is true when a label
+  mixes scripts beyond what UTS #39's "highly restrictive" level allows (a
+  Cyrillic `а` in `аpple.example`): a warning the pages show, not a refusal.
 - `state` is `unverified`, `verified`, `missing` (verified, and the daily
   recheck has not found the record since `missingSince`), or `lapsed` (the
   recheck cancelled it at `lapsedAt`: as unverified, it needs a valid code and a
   check).
 - `code` and `records` are given only by the answer that made the code; the
   code is stored as a hash, so a lost code is replaced with `POST …/code`.
-  `records.cname` is `null` when the server has no `--public-url`.
+  `records.cname` is `null` when the server has no `--public-url`, or its host
+  is an IP address or a name with one label; a Unicode host is given in punycode.
 - `nextCheckAllowedAt` is a minute after the last check by hand (`null` when
   the last check was the daily one).
 
@@ -9898,9 +9901,9 @@ also to re-check a verified one):
   `domains.checksPerMinute` on the server (site only, 60 by default), and the
   tenant's outbound share. Over any of them: `429 rate_limited` with
   `Retry-After` in seconds (the page counts down on the button, from
-  `nextCheckAllowedAt` or `Retry-After`). A refused check looks nothing up and
-  writes nothing. The minute's limits are taken all or none, before the hour's,
-  so a refusal within the minute does not spend one of the hour's 20.
+  `nextCheckAllowedAt` or `Retry-After`). A refused check looks nothing up,
+  writes nothing and spends nothing: every limit is asked before any is spent.
+  The minute of a domain is the domain's, whichever tenant asks.
 - `200` with the claim and `lastCheck`: `result` is `found` (the record is
   there with this code: an unverified claim becomes verified; `via` is `txt` or
   `cname`), `missing` (no TXT or CNAME at that name), or `wrong_value` (a
@@ -9913,10 +9916,13 @@ also to re-check a verified one):
   `via`, `seen`, and `claimed: true` for a refused one); a verification also
   writes `domain_verified`. It does not move the daily check; a `found` of a
   verified claim clears `missingSince`.
-- A claim is for exactly that domain (subdomains are claimed one by one). Public
-  mail domains (a list shipped with the server and kept by site administrators:
-  `gmail.com`, `outlook.com`, `qq.com`, `163.com`, …) cannot be claimed
-  (`400 domain_public`).
+- A claim is for exactly that domain (subdomains are claimed one by one), and
+  so is everything a verified one does: a restriction, an SSO's trust of an
+  address, never a subdomain's address. Public mail domains (a list shipped
+  with the server, not editable: `gmail.com`, `outlook.com`, `qq.com`, `163.com`,
+  …) cannot be claimed (`400 domain_public`), nor can a public suffix of the
+  Public Suffix List, ICANN's or a private one (`co.uk`, `com.cn`, `github.io`:
+  `400 domain_suffix`); a name below one (`acme.co.uk`) can.
 - **Two tenants and one domain**: any number of tenants may hold an unverified
   claim; at most one claim of a domain is verified. The first to verify has it;
   a later `verify` that finds its own record answers `409 domain_claimed` (it
@@ -9937,7 +9943,10 @@ also to re-check a verified one):
   and a check verify it again), routing, joining and `restrictOrgs` stop at
   once, the tenant's administrators get a `domain_lapsed` notification, and
   `domain_lapsed` is audited, in one transaction. A DNS failure is neither found
-  nor missing and does not count; that domain is asked again in an hour.
+  nor missing and does not count; that domain is asked again in an hour. While
+  the database fails the timer (the due domains cannot be read, or a failed one
+  cannot be moved on), it waits 5 seconds, doubled each time, at most 10
+  minutes, instead of coming straight back.
 - The map of verified domains is in memory (domain → tenant, `restrictOrgs`;
   provider and `join` with d3 and d5), read at start and again after every
   change (a claim verified, removed, lapsed, assigned, `restrictOrgs` changed,
@@ -10833,6 +10842,7 @@ exist, a `before` that is not a time, or a `dry_run` that is not a boolean.
 |---|---|---|
 | `setting_locked`, `setting_restricted` | 409 | as 3.3; `setting_restricted` also for a value looser than a `tighten`; `setting_locked` also for a tenant value a site administrator locked (`reason.by: "site"`) |
 | `domain_public` | 400 | claiming a public mail domain |
+| `domain_suffix` | 400 | claiming a public suffix (`co.uk`, `github.io`) |
 | `domain_code_expired` | 409 | checking an unverified claim whose code is older than 7 days |
 | `domain_exists`, `domain_verified` | 409 | claiming a domain the tenant has claimed already; asking a new code for a verified claim |
 | `domain_managed` | 409 | creating an organisation with an address of a domain with `restrictOrgs`; with `organization` (`slug`, `name`); `join` and `start` with d5 |

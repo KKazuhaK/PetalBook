@@ -102,6 +102,8 @@ export const apiErrorsEn: ApiErrorTexts = {
   domain_required: 'A provider owned by a tenant needs the tenant to have a verified domain first.',
   domain_public:
     'That is a public mail service’s domain: anyone can have an address there, so no organization can claim it.',
+  domain_suffix:
+    'That is a public suffix (such as co.uk or github.io), under which anyone can register a name. Claim your own domain below it.',
   domain_exists: 'This organization has claimed that domain already.',
   domain_limit: 'An organization can claim at most 20 domains.',
   domain_claimed: 'Another organization has verified this domain. A site administrator can transfer it.',

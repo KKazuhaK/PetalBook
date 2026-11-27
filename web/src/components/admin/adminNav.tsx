@@ -43,6 +43,7 @@ const ProvidersSection = lazyNamed(() => import('./ProvidersSection'), 'Provider
 const PlansPanel = lazyNamed(() => import('./PlansPanel'), 'PlansPanel')
 const AuditSection = lazyNamed(() => import('./AuditSection'), 'AuditSection')
 const OrgDomains = lazyNamed(() => import('./OrgDomains'), 'OrgDomains')
+const SiteDomains = lazyNamed(() => import('./SiteDomains'), 'SiteDomains')
 
 export interface NavTab {
   key: string
@@ -151,6 +152,7 @@ export const NAV: readonly NavSection[] = [
     tabs: [
       { key: 'tenants', label: tc.tabs.tenants.tenants, render: () => <TenantsPanel /> },
       { key: 'plans', label: tc.tabs.tenants.plans, render: () => later(<PlansPanel />) },
+      { key: 'domains', label: tdom.site.title, render: () => later(<SiteDomains />) },
     ],
   },
   {

@@ -159,4 +159,39 @@ describe("a tenant's email domains", () => {
     const puts = m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/settings/features.domains')
     expect(puts.map((r) => JSON.parse(r.body!).confirm ?? null)).toEqual([null, expect.stringMatching(/^c_/)])
   })
+
+  it("the site's list warns of a mixed-script domain, there and in the transfer, which moves it", async () => {
+    let beta = ''
+    await open(
+      () => '/admin/tenants/domains',
+      (d, id) => {
+        beta = addTenant(d, 'beta', 'Beta').id
+        d.admin.domains[id] = [
+          {
+            ...newDomain('xn--pple-43d.example', at, at),
+            display: 'аpple.example',
+            mixedScript: true,
+            state: 'verified',
+            verifiedAt: at,
+          },
+          { ...newDomain('plain.example', at, at), state: 'verified', verifiedAt: at },
+        ]
+      },
+    )
+    const row = (d: string) => document.querySelector<HTMLElement>(`[data-slot="site-domain"][data-domain="${d}"]`)
+    await settle(() => row('plain.example') !== null, 'the site list')
+    expect(row('xn--pple-43d.example')!.querySelector('[data-slot="mixed-script"]')!.textContent).toContain(
+      tdom.mixedBadge,
+    )
+    expect(row('plain.example')!.querySelector('[data-slot="mixed-script"]')).toBeNull()
+    await click(buttonIn(row('xn--pple-43d.example'), tdom.site.transferLabel('аpple.example')))
+    const dlg = () => document.querySelector<HTMLElement>('[role="dialog"]')
+    await settle(() => dlg()?.querySelector('select option[value]:not([value=""])') != null, 'the tenants')
+    expect(dlg()!.querySelector('[data-slot="transfer-mixed"]')!.textContent).toContain(tdom.mixedHelp)
+    await type(dlg()!.querySelector('select')!, beta)
+    await click(buttonIn(dlg(), tdom.site.confirm))
+    await settle(() => dlg() === null, 'the dialog closes')
+    const post = m!.requests.find((r) => r.method === 'POST' && r.url.endsWith('/assign'))!
+    expect([post.url, JSON.parse(post.body!).tenant]).toEqual(['/api/admin/domains/xn--pple-43d.example/assign', beta])
+  })
 })

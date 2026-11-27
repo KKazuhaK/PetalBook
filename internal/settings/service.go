@@ -659,6 +659,78 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 	return affected, err
 }
 
+// PreviewSite is what a setting would come to for each of the tenants after a
+// change of the site's layer, with SetSite's checks and nothing written: the
+// site's row as it would be, under each tenant's rules and own layer as they
+// are. The caller compares it with Get (a feature that some tenant would lose).
+func (s *Service) PreviewSite(ctx context.Context, key string, ch Change, tenants []string) (map[string]*Effective, error) {
+	d, ok := s.byK[key]
+	if !ok || !d.PerTenant() {
+		return nil, &Error{Code: CodeNotFound, Msg: "no such setting"}
+	}
+	var val any
+	var err error
+	if ch.HasValue {
+		if val, err = s.check(ctx, d, "", ch.Value); err != nil {
+			return nil, err
+		}
+	}
+	q := s.st.Q()
+	row, err := store.GetLayered(ctx, q, string(Site), "", key, store.SourceManual)
+	if errors.Is(err, store.ErrNotFound) {
+		row, err = &store.LayeredRow{Layer: string(Site), Key: key}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	r := *row
+	if ch.HasValue {
+		raw, err := json.Marshal(val)
+		if err != nil {
+			return nil, err
+		}
+		r.Value = string(raw)
+	}
+	if ch.HasLower {
+		r.Lower = ""
+		if ch.Lower != nil {
+			l, err := d.CheckLower(*ch.Lower)
+			if err != nil {
+				return nil, err
+			}
+			raw, _ := json.Marshal(l)
+			r.Lower = string(raw)
+		}
+	}
+	site, err := s.siteView(ctx, q, d, &r)
+	if err != nil {
+		return nil, err
+	}
+	if b, bound := s.binding(key); ch.HasValue && bound && b.Get != nil {
+		site.Value = val // a bound value is read from its binding, which is not written here
+	}
+	out := make(map[string]*Effective, len(tenants))
+	for _, t := range tenants {
+		eff, err := s.Get(ctx, t, key)
+		if err != nil {
+			return nil, err
+		}
+		var views []*RuleView
+		var tv *TenantView
+		if eff.Tenant != nil {
+			for i := range eff.Tenant.Rules {
+				rv := eff.Tenant.Rules[i]
+				views = append(views, &rv)
+			}
+			if d.Has(Tenant) {
+				tv = &TenantView{InEffect: true, Value: eff.Tenant.Value, Lower: eff.Tenant.Lower}
+			}
+		}
+		out[t], _ = tenantEffective(d, site, views, tv, s.now())
+	}
+	return out, nil
+}
+
 // putSite writes the site's row of a setting in the transaction q: the value
 // (already checked) when ch.HasValue, through the binding's Set and After when
 // it has them, and the rule when ch.HasLower. before is the value in effect

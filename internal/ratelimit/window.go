@@ -152,6 +152,31 @@ func (w *Window) TakeAll(keys ...Cost) (wait time.Duration, ok bool) {
 	return 0, true
 }
 
+// Allows says whether TakeAll of the keys would pass now, spending nothing:
+// for a caller that spends in two tables and must not spend in one when the
+// other refuses (it holds its own lock over both). When not, it returns how
+// long until the refusing key's window ends.
+func (w *Window) Allows(keys ...Cost) (wait time.Duration, ok bool) {
+	now := w.now()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	need := 0
+	for _, k := range keys {
+		e := w.live(k.Key, now)
+		if e == nil {
+			need++
+			continue
+		}
+		if e.n >= k.Limit {
+			return e.start.Add(w.window).Sub(now), false
+		}
+	}
+	if len(w.m)+need > w.max {
+		return w.room(need, now, KeepLive)
+	}
+	return 0, true
+}
+
 // Len is the number of keys held.
 func (w *Window) Len() int {
 	w.mu.Lock()

@@ -906,6 +906,24 @@ export function useDomainChange(tenant: string) {
   })
 }
 
+// The site's list of every tenant's claims, page after page, and the transfer of a verified domain.
+export function useSiteDomains() {
+  return useInfiniteQuery({
+    queryKey: keys.siteDomains,
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.siteDomains({ cursor: pageParam || undefined, limit: 100 }, signal),
+    getNextPageParam: (last) => last.next ?? undefined,
+    staleTime: 10_000,
+  })
+}
+export function useAssignDomain() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ domain, tenant }: { domain: string; tenant: string }) => adminApi.assignDomain(domain, tenant),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'domains'] }),
+  })
+}
+
 // --- secrets ----------------------------------------------------------------------------------
 
 // The secrets the scope may hold, each as set or not and when it changed; never a value. The site's, or one tenant's.

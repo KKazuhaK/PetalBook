@@ -24,6 +24,10 @@ const (
 	// LapseAfter is how long a verified domain's record may be missing before
 	// the claim lapses.
 	LapseAfter = 7 * 24 * time.Hour
+	// BackoffBase and MaxBackoff bound the wait of the recheck's timer while the
+	// database fails it: the base doubles with each failed pass up to the max.
+	BackoffBase = 5 * time.Second
+	MaxBackoff  = 10 * time.Minute
 	// RetryAfterError is when a recheck DNS could not answer is tried again: a
 	// failure to ask is not "missing".
 	RetryAfterError = time.Hour
@@ -58,6 +62,7 @@ func refuse(status int, code, msg string) *Error { return &Error{Status: status,
 var (
 	ErrInvalid  = refuse(http.StatusBadRequest, "invalid", "That is not a domain that can be claimed: give a domain name such as example.com.")
 	ErrPublic   = refuse(http.StatusBadRequest, "domain_public", "That is a public mail service's domain: anyone can have an address there, so no organization can claim it.")
+	ErrSuffix   = refuse(http.StatusBadRequest, "domain_suffix", "That is a public suffix (such as co.uk or github.io), under which anyone can register a name: claim your own domain below it.")
 	ErrExists   = refuse(http.StatusConflict, "domain_exists", "This organization has claimed that domain already.")
 	ErrTooMany  = refuse(http.StatusConflict, "domain_limit", "An organization can claim at most 20 domains.")
 	ErrNotFound = refuse(http.StatusNotFound, "not_found", "No such domain.")
@@ -103,9 +108,12 @@ type Service struct {
 	// outbound share; hour each tenant's hour of checks by hand.
 	minute, hour *ratelimit.Window
 	reloadMu     sync.Mutex
+	// takeMu makes the checks of the two tables and the spending one step.
+	takeMu sync.Mutex
 
-	// dueHook, when set, runs before each pass of the recheck (tests).
-	dueHook func()
+	// dueFault and lapseFault, when set, fail the read of the due domains and
+	// the lapse's transaction after the claim is written (tests).
+	dueFault, lapseFault func() error
 }
 
 // New makes a service; Load fills its map, Run runs its recheck.
@@ -228,6 +236,9 @@ func (s *Service) Claim(ctx context.Context, tenant, input, by string) (Claim, e
 	if Public(key) {
 		return Claim{}, ErrPublic
 	}
+	if Suffix(key) {
+		return Claim{}, ErrSuffix
+	}
 	q := s.opt.Store.Q()
 	if n, err := store.CountTenantDomains(ctx, q, tenant); err != nil {
 		return Claim{}, err
@@ -344,7 +355,9 @@ func (s *Service) takeManual(ctx context.Context, tenant, domain string) error {
 			}
 		}
 	}
-	costs := []ratelimit.Cost{{Key: "d:" + tenant + ":" + domain, Limit: PerDomainMinute}, {Key: "site", Limit: int(site)}}
+	// The domain's minute is the domain's, whichever tenant asks: DNS is asked
+	// about the name, not about the claim.
+	costs := []ratelimit.Cost{{Key: "d:" + domain, Limit: PerDomainMinute}, {Key: "site", Limit: int(site)}}
 	if c, ok, err := s.outboundCost(ctx, tenant); err != nil {
 		return err
 	} else if ok {
@@ -353,10 +366,19 @@ func (s *Service) takeManual(ctx context.Context, tenant, domain string) error {
 		}
 		costs = append(costs, c)
 	}
+	hour := ratelimit.Cost{Key: "t:" + tenant, Limit: PerTenantHour}
+	// Every limit is asked before any is spent, under one lock over both
+	// tables: a refused check spends nothing anywhere.
+	s.takeMu.Lock()
+	defer s.takeMu.Unlock()
+	if wait, ok := s.hour.Allows(hour); !ok {
+		return &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "This organization has checked its domains 20 times this hour: try again later.", RetryAfter: wait}
+	}
 	if wait, ok := s.minute.TakeAll(costs...); !ok {
 		return &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "Checked a moment ago: try again shortly.", RetryAfter: wait}
 	}
-	if wait, ok := s.hour.TakeAll(ratelimit.Cost{Key: "t:" + tenant, Limit: PerTenantHour}); !ok {
+	if wait, ok := s.hour.TakeAll(hour); !ok {
+		// Not reached: the hour was asked under the same lock.
 		return &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "This organization has checked its domains 20 times this hour: try again later.", RetryAfter: wait}
 	}
 	return nil
@@ -447,27 +469,38 @@ func (s *Service) ask(ctx context.Context, r store.DomainRow, by string) Check {
 // domain is due (or until a change wakes it), rechecks what is due, and sleeps
 // again. Nothing polls. It returns when ctx ends.
 func (s *Service) Run(ctx context.Context) {
+	// fails counts the passes in a row the database failed: the timer then
+	// waits BackoffBase, doubled each time up to MaxBackoff, instead of
+	// coming straight back to rows it could not read or move.
+	fails := 0
+	backoff := func() time.Duration {
+		fails++
+		return min(BackoffBase<<min(fails-1, 20), MaxBackoff)
+	}
 	for {
 		select {
 		case <-s.wake:
 		default:
 		}
-		if s.dueHook != nil {
-			s.dueHook()
-		}
-		more := s.RecheckDue(ctx)
+		more, failed := s.recheckDue(ctx)
 		if ctx.Err() != nil {
 			return
 		}
 		var fire <-chan time.Time
 		stop := func() {}
-		if more {
+		switch {
+		case failed:
+			fire, stop = s.opt.After(backoff())
+		case more:
+			fails = 0
 			fire, stop = s.opt.After(0)
-		} else if next, ok, err := store.NextDomainCheck(ctx, s.opt.Store.Q()); err != nil {
-			s.log.Error("could not look for the next domain to check", "error", err)
-			fire, stop = s.opt.After(RetryAfterError)
-		} else if ok {
-			fire, stop = s.opt.After(max(next.Sub(s.opt.Now()), 0))
+		default:
+			if next, ok, err := store.NextDomainCheck(ctx, s.opt.Store.Q()); err != nil {
+				s.log.Error("could not look for the next domain to check", "error", err)
+				fire, stop = s.opt.After(backoff())
+			} else if fails = 0; ok {
+				fire, stop = s.opt.After(max(next.Sub(s.opt.Now()), 0))
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -483,22 +516,39 @@ func (s *Service) Run(ctx context.Context) {
 // RecheckDue rechecks the verified domains due now, at most a batch of them;
 // it reports whether more may be due.
 func (s *Service) RecheckDue(ctx context.Context) bool {
+	more, _ := s.recheckDue(ctx)
+	return more
+}
+
+// recheckDue is RecheckDue, also saying whether the database failed it: the
+// due domains could not be read, or one that failed could not be moved on.
+func (s *Service) recheckDue(ctx context.Context) (more, failed bool) {
 	q := s.opt.Store.Q()
-	due, err := store.DueDomains(ctx, q, s.opt.Now(), recheckBatch)
+	var due []store.DomainRow
+	err := error(nil)
+	if s.dueFault != nil {
+		err = s.dueFault()
+	}
+	if err == nil {
+		due, err = store.DueDomains(ctx, q, s.opt.Now(), recheckBatch)
+	}
 	if err != nil {
 		s.log.Error("could not read the domains due for a check", "error", err)
-		return false
+		return false, true
 	}
 	changed := false
 	for _, r := range due {
 		if ctx.Err() != nil {
-			return false
+			return false, false
 		}
 		lapsed, err := s.recheck(ctx, r)
 		if err != nil {
 			s.log.Error("could not record a domain's check", "domain", r.Domain, "error", err)
 			// Not again at once: the next pass is in an hour for this one.
-			_ = store.PostponeDomainCheck(ctx, q, r, s.opt.Now().Add(RetryAfterError))
+			if err := store.PostponeDomainCheck(ctx, q, r, s.opt.Now().Add(RetryAfterError)); err != nil {
+				s.log.Error("could not move a domain's check on", "domain", r.Domain, "error", err)
+				failed = true
+			}
 		}
 		changed = changed || lapsed
 	}
@@ -507,7 +557,7 @@ func (s *Service) RecheckDue(ctx context.Context) bool {
 			s.log.Error("could not read the verified domains", "error", err)
 		}
 	}
-	return len(due) == recheckBatch
+	return len(due) == recheckBatch && !failed, failed
 }
 
 // recheck looks at one verified domain again. Found: it is not missing, and is
@@ -526,7 +576,10 @@ func (s *Service) recheck(ctx context.Context, r store.DomainRow) (bool, error) 
 		if c.Limit <= 0 {
 			return false, store.PostponeDomainCheck(ctx, q, r, now.Add(PostponeOutbound))
 		}
-		if _, took := s.minute.TakeAll(c); !took {
+		s.takeMu.Lock()
+		_, took := s.minute.TakeAll(c)
+		s.takeMu.Unlock()
+		if !took {
 			return false, store.PostponeDomainCheck(ctx, q, r, now.Add(PostponeOutbound))
 		}
 	}
@@ -544,12 +597,25 @@ func (s *Service) recheck(ctx context.Context, r store.DomainRow) (bool, error) 
 			s.audit(ctx, r, notify.DomainMissing, map[string]any{"domain": r.Domain, "check": c}, c.At)
 		}
 		if c.At.Sub(missing) >= LapseAfter {
-			ok, err := store.LapseDomain(ctx, q, r, c.JSON(), c.At)
-			if err != nil || !ok {
-				return false, err
-			}
-			s.lapsed(ctx, r, missing, c)
-			return true, nil
+			// The lapse, its notice and its audit row: one transaction.
+			lapsed := false
+			err := s.opt.Store.Tx(ctx, func(q store.Q) error {
+				ok, err := store.LapseDomain(ctx, q, r, c.JSON(), c.At)
+				if err != nil || !ok {
+					return err
+				}
+				if s.lapseFault != nil {
+					if err := s.lapseFault(); err != nil {
+						return err
+					}
+				}
+				if err := s.lapsed(ctx, q, r, missing, c); err != nil {
+					return err
+				}
+				lapsed = true
+				return nil
+			})
+			return lapsed && err == nil, err
 		}
 	}
 	_, err := store.RecheckDomain(ctx, q, r, c.JSON(), c.At, missing, next)
@@ -566,11 +632,10 @@ func (s *Service) audit(ctx context.Context, r store.DomainRow, ev notify.Event,
 
 // lapsed tells the tenant's administrators that the claim lapsed, with its
 // audit row, in one transaction.
-func (s *Service) lapsed(ctx context.Context, r store.DomainRow, missing time.Time, c Check) {
-	q := s.opt.Store.Q()
+func (s *Service) lapsed(ctx context.Context, q store.Q, r store.DomainRow, missing time.Time, c Check) error {
 	admins, _, err := store.TenantAdmins(ctx, q, store.InTenant(r.TenantID), 200)
 	if err != nil {
-		s.log.Error("could not find whom to tell of a lapsed domain", "error", err)
+		return err
 	}
 	to := make([]string, 0, len(admins))
 	for _, a := range admins {
@@ -579,12 +644,9 @@ func (s *Service) lapsed(ctx context.Context, r store.DomainRow, missing time.Ti
 		}
 	}
 	sort.Strings(to)
-	err = notify.WithAudit(ctx, q, notify.DomainLapsed, notify.Entry{Tenant: r.TenantID, Now: c.At,
+	return notify.WithAudit(ctx, q, notify.DomainLapsed, notify.Entry{Tenant: r.TenantID, Now: c.At,
 		Detail:  map[string]any{"domain": r.Domain, "missingSince": missing.UTC().Format(time.RFC3339), "check": c},
 		To:      to,
 		Ref:     r.Domain,
 		Payload: map[string]any{"domain": Display(r.Domain), "missingSince": missing.UTC().Format(time.RFC3339)}})
-	if err != nil {
-		s.log.Error("could not record a lapsed domain", "domain", r.Domain, "error", err)
-	}
 }

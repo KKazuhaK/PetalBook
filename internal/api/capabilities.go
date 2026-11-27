@@ -44,20 +44,46 @@ func (s *server) domainUse(ctx context.Context) (map[string]capabilityCount, err
 	return out, nil
 }
 
-// turnsOff says whether a change of a feature may switch it off: a value,
-// rule or lock of false.
-func turnsOff(ch settings.Change) bool {
-	switch {
-	case ch.HasValue && ch.Value == false:
-		return true
-	case ch.HasSiteRule && ch.SiteRule != nil && ch.SiteRule.Value == false:
-		return true
-	case ch.HasSiteLock && ch.SiteLock && ch.Value == false:
-		return true
-	case ch.HasLower && ch.Lower != nil && ch.Lower.Mode == settings.Lock:
-		return true
+// switchesOff is the tenants that use the feature, have it now, and would not
+// after the change: what the change would stop, from the value each tenant
+// gets before and after (settings.PreviewSite, PreviewTenant), whatever words
+// the change uses (a value, a rule, a lock or a restriction to false). For one
+// tenant ("" for the site's layer). A change the settings refuse answers that
+// refusal, so the caller's write answers it as it would.
+func (s *server) switchesOff(ctx context.Context, key, tenant string, ch settings.Change) ([]string, error) {
+	counts, err := capabilityUse[key](s, ctx)
+	if err != nil {
+		return nil, err
 	}
-	return false
+	var using []string
+	for id := range counts {
+		if (tenant == "" || id == tenant) && s.knownTenant(id) {
+			using = append(using, id)
+		}
+	}
+	if len(using) == 0 {
+		return nil, nil
+	}
+	slices.Sort(using)
+	after := map[string]*settings.Effective{}
+	if tenant == "" {
+		if after, err = s.settings.PreviewSite(ctx, key, ch, using); err != nil {
+			return nil, err
+		}
+	} else if after[tenant], err = s.settings.PreviewTenant(ctx, tenant, key, ch); err != nil {
+		return nil, err
+	}
+	var off []string
+	for _, id := range using {
+		on, err := s.settings.Feature(ctx, id, key)
+		if err != nil {
+			return nil, err
+		}
+		if a := after[id]; on && a != nil && a.Value != true {
+			off = append(off, id)
+		}
+	}
+	return off, nil
 }
 
 // capabilityItem is one tenant of the preview.
@@ -131,15 +157,15 @@ func (s *server) planCapabilities(c *call, req confirmRequest) (confirmPlan, boo
 // and the client asks POST /api/admin/confirm for the preview. It reports
 // false after answering.
 func (s *server) capabilityGate(c *call, key, tenant string, ch settings.Change, tok string) bool {
-	if _, ok := capabilityUse[key]; !ok || !turnsOff(ch) {
+	if _, ok := capabilityUse[key]; !ok {
 		return true
 	}
-	p, err := s.capabilityPlan(c.r.Context(), key, tenant)
+	off, err := s.switchesOff(c.r.Context(), key, tenant, ch)
 	if err != nil {
-		s.fail(c.w, err)
+		s.failSetting(c, err)
 		return false
 	}
-	if len(p.Plan) == 0 {
+	if len(off) == 0 {
 		return true
 	}
 	if tok == "" {

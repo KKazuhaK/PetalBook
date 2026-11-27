@@ -20,6 +20,27 @@ export const domainsZhCN = {
     lapsed: '已失效',
   },
   restrictedBadge: '不允许另建组织',
+  mixedBadge: '混用文字',
+  mixedHelp:
+    '这个域名的某一段混用了不同的文字（例如拉丁字母里夹着西里尔字母），可能是在冒充另一个名字。请确认无误再信任或转移它。',
+  // 全站的列表：所有组织的认领，以及把已验证的域名转给另一个组织。
+  site: {
+    title: '邮箱域名',
+    help: '所有组织认领的邮箱域名。已验证的域名可以转给另一个组织：DNS 里的记录继续有效。',
+    loadFailed: '读不出域名列表',
+    empty: '还没有任何组织认领域名。',
+    more: '加载更多',
+    tenant: (name: string) => `组织：${name}`,
+    transfer: '转移',
+    transferLabel: (domain: string) => `转移 ${domain}`,
+    transferTitle: (domain: string) => `转移 ${domain}`,
+    transferHelp: '把这个已验证的域名转给另一个组织。原来的组织会失去它，审计日志里各自只看到自己这一方。',
+    to: '转给',
+    pick: '选择组织',
+    confirm: '转移',
+    cancel: '取消',
+    done: (domain: string, name: string) => `已把 ${domain} 转给 ${name}`,
+  },
   punycode: (key: string) => `DNS 中的写法：${key}`,
   records: {
     title: '发布其中一条记录',

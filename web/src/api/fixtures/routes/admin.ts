@@ -211,6 +211,7 @@ export function newDomain(key: string, at: string, codeExpires: string): TenantD
   return {
     domain: key,
     display: key,
+    mixedScript: false,
     state: 'unverified',
     verifiedAt: null,
     missingSince: null,

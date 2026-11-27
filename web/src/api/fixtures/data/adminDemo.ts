@@ -107,6 +107,7 @@ export function seedAdminDemo(d: FixtureData) {
   const base = (key: string, display = key): TenantDomain => ({
     domain: key,
     display,
+    mixedScript: false,
     state: 'unverified',
     verifiedAt: null,
     missingSince: null,
@@ -151,6 +152,15 @@ export function seedAdminDemo(d: FixtureData) {
       lapsedAt: at,
       codeExpired: true,
       lastCheck: { ...found, result: 'wrong_value', via: '', seen: ['petalbook-verify=an-old-code-from-last-year'] },
+    },
+    {
+      ...base('xn--pple-store-yqi.example', 'аpple-store.example'),
+      mixedScript: true,
+      state: 'verified',
+      verifiedAt: at,
+      checkedAt: at,
+      nextCheckAt: iso(t0 + day),
+      lastCheck: found,
     },
     { ...base('a-rather-long-subdomain-name.engineering.example-company.co.uk') },
   ]

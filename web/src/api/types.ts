@@ -972,6 +972,7 @@ export type ErrorCode =
   | 'domain_required'
   // The email domains (3.6 d2).
   | 'domain_public'
+  | 'domain_suffix'
   | 'domain_exists'
   | 'domain_limit'
   | 'domain_claimed'
@@ -2672,6 +2673,8 @@ export interface DomainRecords {
 export interface TenantDomain {
   domain: string
   display: string
+  // A label mixes scripts (a Cyrillic а in a Latin name): a lookalike to warn of, not a refusal.
+  mixedScript: boolean
   state: DomainState
   verifiedAt: string | null
   missingSince: string | null

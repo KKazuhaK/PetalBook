@@ -1,5 +1,7 @@
 package domains
 
+import "golang.org/x/net/publicsuffix"
+
 // publicDomains are the domains of mail services anyone may have an address
 // at: no organisation may claim them, whatever its DNS says (a tenant that
 // could would take every such address's sign-in). The list is the large
@@ -42,3 +44,11 @@ func init() {
 
 // Public says whether a domain (a key) is a public mail service's.
 func Public(key string) bool { return publicDomains[key] }
+
+// Suffix says whether a domain (a key) is itself a public suffix of the Public
+// Suffix List, ICANN's (co.uk, com.cn) or a private one (github.io): names
+// below it are registered by anyone, so it is no organisation's.
+func Suffix(key string) bool {
+	s, _ := publicsuffix.PublicSuffix(key)
+	return s == key
+}

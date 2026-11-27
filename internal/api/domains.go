@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -54,8 +55,10 @@ type domainTenantResp struct {
 }
 
 type domainResp struct {
-	Domain       string           `json:"domain"`
-	Display      string           `json:"display"`
+	Domain  string `json:"domain"`
+	Display string `json:"display"`
+	// MixedScript warns that a label mixes scripts (a lookalike of another name).
+	MixedScript  bool             `json:"mixedScript"`
 	State        string           `json:"state"`
 	VerifiedAt   *string          `json:"verifiedAt"`
 	MissingSince *string          `json:"missingSince"`
@@ -109,7 +112,7 @@ func checkOf(c *domains.Check) *domainCheckResp {
 }
 
 func (s *server) domainOf(r store.DomainRow, code string) domainResp {
-	out := domainResp{Domain: r.Domain, Display: domains.Display(r.Domain), State: domainState(r),
+	out := domainResp{Domain: r.Domain, Display: domains.Display(r.Domain), MixedScript: domains.MixedScript(r.Domain), State: domainState(r),
 		VerifiedAt: optTime(r.VerifiedAt), MissingSince: optTime(r.MissingSince), LapsedAt: optTime(r.LapsedAt), CheckedAt: optTime(r.CheckedAt),
 		NextCheckAt: optTime(r.NextCheckAt), CodeExpires: optTime(r.CodeExpires), LastCheck: checkOf(domains.ParseCheck(r.LastCheck)),
 		RestrictOrgs: r.RestrictOrgs, RecordName: domains.RecordName(r.Domain), Created: rfc3339(r.Created)}
@@ -350,12 +353,22 @@ func (s *server) adminSiteDomains(c *call) {
 
 // SiteHostOf is the host name of the public address, which a CNAME record of
 // a domain claim points under ("" without one).
+// An IP address, or a name that is not a domain one could claim (localhost),
+// has none: a CNAME points at a name. A Unicode name is given as punycode.
 func SiteHostOf(publicURL string) string {
 	u, err := url.Parse(publicURL)
 	if err != nil {
 		return ""
 	}
-	return strings.ToLower(u.Hostname())
+	h := u.Hostname()
+	if h == "" || net.ParseIP(h) != nil {
+		return ""
+	}
+	k, ok := domains.Key(h)
+	if !ok {
+		return ""
+	}
+	return k
 }
 
 // adminAssignDomain is POST /api/admin/domains/{domain}/assign {"tenant"}: a
