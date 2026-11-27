@@ -59,6 +59,7 @@ func TestNoHandlerChecksAFeatureTheTableCouldDeclare(t *testing.T) {
 		"tenants.go":         "a tenant is shown with its effective registration, which is also held to mail being ready",
 		"github_installs.go": "an installation's callback is a public route: the feature is asked again there for the owner it is connected to",
 		"github_webhook.go":  "GitHub's webhook is a public route of no tenant: the site's own switch is asked there",
+		"capabilities.go":    "the preview of switching a feature off counts what each tenant uses of it: it reads the switch to know who has it, and gates nothing",
 	}
 	isKey := func(s string) bool { return strings.HasPrefix(s, "features.") || s == settings.MailOwnSender }
 	consts := []string{"RegistrationOpen", "OfflineCopies", "MailOwnSender"}

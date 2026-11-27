@@ -262,7 +262,7 @@ func (s *server) adminPatchDomain(c *call) {
 			return
 		}
 		if json.Unmarshal(v, &restrict) != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "restrictOrgs is true or false.")
+			writeError(c.w, http.StatusBadRequest, "invalid", "RestrictOrgs is true or false.")
 			return
 		}
 	}
@@ -313,7 +313,7 @@ func (s *server) adminSiteDomains(c *call) {
 	case "true":
 		f.VerifiedOnly = true
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "verified is true or false.")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Verified is true or false.")
 		return
 	}
 	if cur := q.Get("cursor"); cur != "" {
