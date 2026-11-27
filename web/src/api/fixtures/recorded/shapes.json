@@ -765,7 +765,6 @@
      "disabled?": "boolean",
      "domain?": "string",
      "dryRun?": "boolean",
-     "email?": "string",
      "export?": "string",
      "failed?": "number",
      "from?": {
@@ -838,6 +837,7 @@
      "history?": "boolean",
      "item?": "string",
      "job?": "string",
+     "join?": "string",
      "key?": "string",
      "layer?": "string",
      "limit?": "number",
@@ -846,7 +846,6 @@
      "newTenant?": "boolean",
      "old?": {
       "disabled?": "boolean",
-      "email?": "string",
       "name?": "string",
       "remoteExempt?": "boolean",
       "role?": "string",
@@ -1192,7 +1191,7 @@
     "created": "string",
     "display": "string",
     "domain": "string",
-    "join": "null",
+    "join": "string",
     "lapsedAt": "null",
     "lastCheck": {
      "$or": [
@@ -2079,7 +2078,7 @@
     "created": "string",
     "display": "string",
     "domain": "string",
-    "join": "null",
+    "join": "string",
     "lapsedAt": "null",
     "lastCheck": {
      "$or": [
@@ -2107,6 +2106,10 @@
    }
   ],
   "siteHost": "string"
+ },
+ "GET /api/admin/tenants/{}/join-requests 200": {
+  "items": [],
+  "next": "null"
  },
  "GET /api/admin/tenants/{}/limits 404": {
   "error": "string",
@@ -2479,6 +2482,7 @@
   "message": "string"
  },
  "GET /api/register 200": {
+  "domainJoin": "boolean",
   "open": "boolean",
   "orgCreation": {
    "open": "boolean"
@@ -4269,7 +4273,7 @@
   "created": "string",
   "display": "string",
   "domain": "string",
-  "join": "null",
+  "join": "string",
   "lapsedAt": "null",
   "lastCheck": {
    "$or": [
@@ -4295,7 +4299,15 @@
   "state": "string",
   "verifiedAt": "null"
  },
+ "PATCH /api/admin/tenants/{}/domains/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
  "PATCH /api/admin/tenants/{}/domains/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/admin/tenants/{}/domains/{} 409": {
   "error": "string",
   "message": "string"
  },
@@ -5040,7 +5052,7 @@
   "created": "string",
   "display": "string",
   "domain": "string",
-  "join": "null",
+  "join": "string",
   "lapsedAt": "null",
   "lastCheck": "null",
   "missingSince": "null",
@@ -5076,7 +5088,7 @@
   "created": "string",
   "display": "string",
   "domain": "string",
-  "join": "null",
+  "join": "string",
   "lapsedAt": "null",
   "lastCheck": {
    "at": "string",
@@ -5111,7 +5123,7 @@
   "created": "string",
   "display": "string",
   "domain": "string",
-  "join": "null",
+  "join": "string",
   "lapsedAt": "null",
   "lastCheck": {
    "at": "string",
@@ -5133,6 +5145,10 @@
   "verifiedAt": "null"
  },
  "POST /api/admin/tenants/{}/domains/{}/verify 429": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/tenants/{}/join-requests/{}/approve 404": {
   "error": "string",
   "message": "string"
  },
@@ -5293,6 +5309,10 @@
   "message": "string"
  },
  "POST /api/register 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/register/request 404": {
   "error": "string",
   "message": "string"
  },

@@ -1515,7 +1515,11 @@ function suite(target: Target) {
           expect(mail.enabled).toBe(false)
           expect(mail).toMatchObject({ security: 'starttls', hasPassword: false })
           const anon = browser()
-          expect((await call(anon, 'GET', '/api/register')).json).toEqual({ open: false, orgCreation: { open: false } })
+          expect((await call(anon, 'GET', '/api/register')).json).toEqual({
+            open: false,
+            orgCreation: { open: false },
+            domainJoin: false,
+          })
           const pr = (await call(anon, 'GET', '/api/auth/providers')).json
           expect([pr.register, pr.forgot]).toEqual([false, false])
           expect((await call(anon, 'POST', '/api/password/forgot', { login: 'nobody' })).json.error).toBe(
@@ -1662,6 +1666,30 @@ function suite(target: Target) {
             expect((await call(admin, 'DELETE', `${own}/${key}`)).status).toBe(204)
             expect((await call(admin, 'DELETE', `${own}/${other}`)).status).toBe(204)
           }
+        })
+
+        it('joining by email domain: only a verified domain takes a mode, the requests list is empty, a request that does not exist is not found', async () => {
+          const domains = '/api/admin/tenants/0000000000/domains'
+          const key = `ct4-${run}.example`.toLowerCase()
+          const made = await call(admin, 'POST', domains, { domain: key })
+          expect([made.status, made.json.join]).toEqual([201, 'off'])
+          try {
+            // Nothing can be verified here (no DNS): a mode other than off is refused, and off is taken.
+            const auto = await call(admin, 'PATCH', `${domains}/${key}`, { join: 'auto' })
+            expect([auto.status, auto.json.error]).toEqual([409, 'domain_required'])
+            expect((await call(admin, 'PATCH', `${domains}/${key}`, { join: 'maybe' })).json.error).toBe('invalid')
+            const off = await call(admin, 'PATCH', `${domains}/${key}`, { join: 'off' })
+            expect([off.status, off.json.join]).toEqual([200, 'off'])
+          } finally {
+            expect((await call(admin, 'DELETE', `${domains}/${key}`)).status).toBe(204)
+          }
+          const list = await call(admin, 'GET', '/api/admin/tenants/0000000000/join-requests?state=all')
+          expect([list.status, Array.isArray(list.json.items), list.json.next]).toEqual([200, true, null])
+          const none = await call(admin, 'POST', '/api/admin/tenants/0000000000/join-requests/0000000ZZZ/approve', {})
+          expect([none.status, none.json.error]).toEqual([404, 'not_found'])
+          const anon = browser()
+          const waiting = await call(anon, 'POST', '/api/register/request', { token: 'not-a-token' })
+          expect([waiting.status, waiting.json.error]).toEqual([404, 'not_found'])
         })
 
         it("an organisation's own single sign-on: its list, OIDC or SAML only, and a domain routed to none", async () => {

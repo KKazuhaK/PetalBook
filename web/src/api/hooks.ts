@@ -102,6 +102,7 @@ export const keys = {
   plans: ['admin', 'plans'] as const,
   secrets: (tenant: string) => ['admin', 'secrets', tenant] as const,
   tenantDomains: (tenant: string) => ['admin', 'domains', tenant] as const,
+  joinRequests: (tenant: string) => ['admin', 'join-requests', tenant] as const,
   tenantProviders: (tenant: string) => ['admin', 'providers', 'tenant', tenant] as const,
   siteDomains: ['admin', 'domains', '-site'] as const,
   adminMail: ['admin', 'mail'] as const,

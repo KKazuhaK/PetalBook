@@ -54,6 +54,9 @@ export const mailEn: MailMessages = {
     orgSubmit: 'Create organisation',
     orgDialogTitle: 'Create an organisation',
     orgNone: 'Nothing here can make an organisation right now.',
+    // Registration closed, but some organisations take people by the domain of their address (3.6 d5).
+    domainOnly: 'Registration is open to people whose work address is on a domain an organisation here accepts.',
+    domainOnlyHelp: 'Use your work email address: the organisation that holds its domain decides whether you join.',
   },
   confirm: {
     title: 'Confirm your registration',
@@ -72,6 +75,37 @@ export const mailEn: MailMessages = {
       `The address you asked for was taken a moment ago, so this organisation's address is ${slug}. You can change it later.`,
     orgContinue: 'Continue',
     orgLimit: 'No more organisations can be made, so nothing was made.',
+    // The account joined the organisation that holds the domain of its address (3.6 d5).
+    joinedTitle: (name: string) => `You joined ${name}`,
+    joinedBody: (name: string) =>
+      `Your address is on a domain of “${name}”, so your account is made in that organisation.`,
+    joinPending:
+      'You have already asked to join this organisation. Wait for its answer, or withdraw that request first.',
+  },
+  // The waiting page of a sign-up that asked to join an organisation (3.6 d5).
+  waiting: {
+    title: 'Waiting for approval',
+    loading: 'Reading your request…',
+    pending: (name: string) =>
+      `You asked to join “${name}”. Its administrators approve or deny the request, and you get an email either way.`,
+    expires: (when: string) => `The request waits until ${when}; then it expires and the username is free again.`,
+    account: (username: string, email: string) => `Account ${username} · ${email}`,
+    approved: (name: string) => `“${name}” approved your request. Your account is ready: sign in with your password.`,
+    denied: (name: string) => `“${name}” did not approve your request. No account was made.`,
+    withdrawn: 'You withdrew this request. No account was made.',
+    expired: 'Nobody answered this request in 30 days, so it expired. You can register again.',
+    cancelled: (name: string) =>
+      `“${name}” no longer takes people by this email domain, so the request was cancelled. No account was made.`,
+    withdraw: 'Withdraw my request',
+    withdrawing: 'Withdrawing…',
+    withdrawTitle: 'Withdraw this request?',
+    withdrawBody: 'No account is made, and the username is free again. You can register again later.',
+    cancel: 'Keep waiting',
+    signIn: 'Sign in',
+    toRegister: 'Register again',
+    invalid: 'This link is not valid. Open the link from the confirmation email again.',
+    failed: 'Could not read your request',
+    noToken: 'There is no token in the address. Open the link from the confirmation email.',
   },
   verify: {
     title: 'Confirm your email',

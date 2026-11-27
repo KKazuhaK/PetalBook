@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, providerStartUrl } from '@/api/client'
 import { applySignIn, useSession } from '@/api/hooks'
 import { AuthLayout } from '@/components/auth/AuthLayout'
@@ -8,8 +8,9 @@ import { CaptchaField, useCaptcha } from '@/components/auth/Captcha'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { forgetFragmentToken, fragmentToken } from '@/lib/auth'
-import type { DiscoveredSSO, RegisteredOrg, RegisterInfo } from '@/api/types'
+import { forgetFragmentToken, fragmentToken, passFragmentToken } from '@/lib/auth'
+import type { DiscoveredSSO, RegisteredOrg, RegisterInfo, RegisterOrg } from '@/api/types'
+import { absoluteTime } from '@/lib/time'
 import { lang, t } from '@/i18n'
 import { tm } from '@/i18n/mail'
 import { ts } from '@/i18n/signin'
@@ -59,7 +60,7 @@ export function RegisterPage() {
         onRetry={() => void info.refetch()}
       />
     )
-  if (!info.data.open && !info.data.orgCreation.open) {
+  if (!info.data.open && !info.data.orgCreation.open && !info.data.domainJoin) {
     return (
       <AuthLayout title={tm.register.title} intro={tm.register.closed}>
         <p className="text-sm text-muted-foreground">{tm.register.closedHelp}</p>
@@ -88,7 +89,9 @@ export function slugFromName(name: string): string {
 const SLUG = /^[a-z0-9][a-z0-9-]{1,31}$/
 
 function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: RegisterInfo; wantsOrg: boolean }) {
-  const joinOpen = info.open
+  // Joining by the domain of a work address (3.6 d5) is offered as joining is, while registration is closed.
+  const byDomainOnly = !info.open && info.domainJoin
+  const joinOpen = info.open || info.domainJoin
   const orgOpen = info.orgCreation.open
   const [mode, setMode] = useState<'join' | 'org'>(orgOpen && (wantsOrg || !joinOpen) ? 'org' : 'join')
   const org = mode === 'org'
@@ -198,7 +201,9 @@ function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: Regis
   return (
     <AuthLayout
       title={org ? tm.register.orgDialogTitle : tm.register.title}
-      intro={org ? tm.register.orgIntro : tm.register.intro(info.tenant?.name ?? '')}
+      intro={
+        org ? tm.register.orgIntro : byDomainOnly ? tm.register.domainOnly : tm.register.intro(info.tenant?.name ?? '')
+      }
     >
       <FormMessage focusRef={messageRef}>{error}</FormMessage>
       {ssoFor && (
@@ -214,7 +219,7 @@ function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: Regis
           <div role="radiogroup" aria-label={tm.register.choiceLabel} className="grid gap-2 sm:grid-cols-2">
             {(
               [
-                ['join', tm.register.join(info.tenant?.name ?? '')],
+                ['join', byDomainOnly ? tm.register.title : tm.register.join(info.tenant?.name ?? '')],
                 ['org', tm.register.createOrg],
               ] as const
             ).map(([value, text]) => (
@@ -280,9 +285,11 @@ function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: Regis
           label={tm.register.email}
           type="email"
           help={
-            domains.length && !org
-              ? `${tm.register.emailHelp} ${tm.register.domains(domains.join(', '))}`
-              : tm.register.emailHelp
+            byDomainOnly && !org
+              ? tm.register.domainOnlyHelp
+              : domains.length && !org
+                ? `${tm.register.emailHelp} ${tm.register.domains(domains.join(', '))}`
+                : tm.register.emailHelp
           }
           error={fields.email}
           value={email}
@@ -365,22 +372,45 @@ export function RegisterConfirmPage() {
   const navigate = useNavigate()
   const [token] = useState(() => fragmentToken('register-confirm'))
   const [state, setState] = useState<
-    { kind: 'working' } | { kind: 'error'; message: string } | { kind: 'org'; org: RegisteredOrg }
+    | { kind: 'working' }
+    | { kind: 'error'; message: string }
+    | { kind: 'org'; org: RegisteredOrg }
+    | { kind: 'joined'; org: RegisterOrg }
   >(token ? { kind: 'working' } : { kind: 'error', message: '' })
   const started = useRef(false)
   useEffect(() => () => forgetFragmentToken('register-confirm'), [])
   useEffect(() => {
     if (gate !== null || !token || started.current) return
     started.current = true
-    api.registerConfirm(token).then(
-      ({ tenant: org, ...answer }) => {
-        applySignIn(qc, answer)
-        // A person who made an organisation is told so, and what its address is.
+    api.registerConfirm(token, mailLang()).then(
+      (answer) => {
+        // A request to join waits for the organisation's administrators: the waiting page, with the same token.
+        if (answer.request) {
+          passFragmentToken('register-waiting', token)
+          navigate('/register/waiting', { replace: true })
+          return
+        }
+        const { tenant: org, joined, ...signedIn } = answer
+        applySignIn(qc, signedIn)
+        // A person who made an organisation is told so, and what its address is; one who joined one, which.
         if (org) setState({ kind: 'org', org })
+        else if (joined) setState({ kind: 'joined', org: joined })
         else navigate('/', { replace: true })
       },
-      (err: unknown) => {
+      async (err: unknown) => {
         const code = err instanceof ApiError ? err.code : ''
+        // The link of a sign-up that became a request to join is used: it opens the request's waiting page.
+        if (code === 'not_found') {
+          const waiting = await api.joinStatus(token).then(
+            () => true,
+            () => false,
+          )
+          if (waiting) {
+            passFragmentToken('register-waiting', token)
+            navigate('/register/waiting', { replace: true })
+            return
+          }
+        }
         setState({
           kind: 'error',
           message:
@@ -392,9 +422,13 @@ export function RegisterConfirmPage() {
                   ? tm.confirm.exists
                   : code === 'org_limit'
                     ? tm.confirm.orgLimit
-                    : code === 'rate_limited' && err instanceof ApiError
-                      ? rateText(err)
-                      : tm.confirm.failed,
+                    : code === 'join_pending'
+                      ? tm.confirm.joinPending
+                      : code === 'sso_required' && err instanceof ApiError
+                        ? err.message
+                        : code === 'rate_limited' && err instanceof ApiError
+                          ? rateText(err)
+                          : tm.confirm.failed,
         })
       },
     )
@@ -424,12 +458,130 @@ export function RegisterConfirmPage() {
         </Button>
       </AuthLayout>
     )
+  if (state.kind === 'joined')
+    return (
+      <AuthLayout title={tm.confirm.joinedTitle(state.org.name)} intro={tm.confirm.joinedBody(state.org.name)}>
+        <Button type="button" onClick={() => navigate('/', { replace: true })}>
+          {tm.confirm.orgContinue}
+        </Button>
+      </AuthLayout>
+    )
   return (
     <AuthLayout title={tm.confirm.title}>
       <FormMessage>{state.message}</FormMessage>
       <Link to="/register" className="text-sm text-brand underline underline-offset-4">
         {tm.confirm.toRegister}
       </Link>
+    </AuthLayout>
+  )
+}
+
+// The waiting page of a sign-up that asked to join an organisation (3.6 d5): what became of the request, and a way to
+// withdraw it while it waits. The registration link's token is the request's: it stays in this tab only.
+export function RegisterWaitingPage() {
+  const gate = useAccountsOnly()
+  const qc = useQueryClient()
+  const [token] = useState(() => fragmentToken('register-waiting'))
+  const [asking, setAsking] = useState(false)
+  const status = useQuery({
+    queryKey: ['register', 'waiting', token],
+    queryFn: ({ signal }) => api.joinStatus(token, signal),
+    enabled: gate === null && token !== '',
+    retry: false,
+  })
+  const withdraw = useMutation({
+    mutationFn: () => api.withdrawJoin(token),
+    onSuccess: (s) => {
+      qc.setQueryData(['register', 'waiting', token], s)
+      setAsking(false)
+    },
+  })
+  if (gate) return gate
+  if (!token)
+    return (
+      <AuthLayout title={tm.waiting.title}>
+        <FormMessage>{tm.waiting.noToken}</FormMessage>
+      </AuthLayout>
+    )
+  if (status.isPending)
+    return (
+      <AuthLayout title={tm.waiting.title} intro={tm.waiting.loading}>
+        <div aria-busy="true" role="status" className="h-16 animate-pulse rounded-lg bg-muted" />
+      </AuthLayout>
+    )
+  if (status.isError)
+    return (
+      <AuthLayout title={tm.waiting.title}>
+        <FormMessage>
+          {status.error instanceof ApiError && status.error.code === 'not_found'
+            ? tm.waiting.invalid
+            : tm.waiting.failed}
+        </FormMessage>
+        <Link to="/register" className="text-sm text-brand underline underline-offset-4">
+          {tm.waiting.toRegister}
+        </Link>
+      </AuthLayout>
+    )
+  const s = status.data
+  const name = s.tenant.name
+  const text =
+    s.state === 'pending'
+      ? tm.waiting.pending(name)
+      : s.state === 'approved'
+        ? tm.waiting.approved(name)
+        : s.state === 'denied'
+          ? tm.waiting.denied(name)
+          : s.state === 'withdrawn'
+            ? tm.waiting.withdrawn
+            : s.state === 'expired'
+              ? tm.waiting.expired
+              : tm.waiting.cancelled(name)
+  return (
+    <AuthLayout title={tm.waiting.title} intro={text}>
+      <div className="grid min-w-0 gap-1 text-sm" data-slot="join-status" data-state={s.state}>
+        <p className="min-w-0 break-words text-muted-foreground">{tm.waiting.account(s.username, s.email)}</p>
+        {s.state === 'pending' && (
+          <p className="text-muted-foreground">{tm.waiting.expires(absoluteTime(s.expires))}</p>
+        )}
+      </div>
+      <FormMessage>
+        {withdraw.error ? (withdraw.error instanceof ApiError ? withdraw.error.message : t.auth.failed) : ''}
+      </FormMessage>
+      {s.state === 'pending' &&
+        (asking ? (
+          <div className="grid gap-3 rounded-lg border p-3" role="group" aria-label={tm.waiting.withdrawTitle}>
+            <p className="text-sm font-medium">{tm.waiting.withdrawTitle}</p>
+            <p className="text-sm text-muted-foreground">{tm.waiting.withdrawBody}</p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={withdraw.isPending}
+                onClick={() => withdraw.mutate()}
+              >
+                {withdraw.isPending ? tm.waiting.withdrawing : tm.waiting.withdraw}
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setAsking(false)}>
+                {tm.waiting.cancel}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button type="button" variant="outline" onClick={() => setAsking(true)}>
+            {tm.waiting.withdraw}
+          </Button>
+        ))}
+      {s.state === 'approved' ? (
+        <Link to="/login" className={buttonVariants()}>
+          {tm.waiting.signIn}
+        </Link>
+      ) : (
+        s.state !== 'pending' && (
+          <Link to="/register" className="text-sm text-brand underline underline-offset-4">
+            {tm.waiting.toRegister}
+          </Link>
+        )
+      )}
     </AuthLayout>
   )
 }

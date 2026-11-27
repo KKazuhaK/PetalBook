@@ -4,7 +4,7 @@
 import type { SessionInfo, SessionUser, SignInAnswer } from '../../types.ts'
 import type { AuthData } from '../data/model.ts'
 import { DEMO_ADMIN, DEMO_MEMBER, type UserRec } from '../data/people.ts'
-import { add, newId, Refusal, reply, type Ctx, type Route } from '../kit.ts'
+import { add, newId, Refusal, reply, rfc3339, type Ctx, type Route } from '../kit.ts'
 
 export const view = ({ password: _p, passkeys: _k, ...user }: UserRec): SessionUser => (void _p, void _k, user)
 export const current = (a: AuthData) => a.users.find((u) => u.id === a.signedIn)
@@ -152,6 +152,7 @@ export const authRoutes: Route[] = [
     (c) => ({
       open: c.data.auth.register,
       orgCreation: { open: c.data.auth.orgCreation },
+      domainJoin: Object.keys(c.data.auth.joinDomains).length > 0,
       ...(c.data.auth.termsUrl ? { termsUrl: c.data.auth.termsUrl } : {}),
     }),
   ],
@@ -164,7 +165,20 @@ export const authRoutes: Route[] = [
       const sso = c.data.auth.ssoDomains[email.slice(email.lastIndexOf('@') + 1).toLowerCase()]
       if (sso?.enforced)
         throw new Refusal(409, 'sso_required', 'this organization signs its people in with single sign-on', { sso })
-      c.data.sent.mail.push({ to: c.body.email, kind: c.body.org ? 'register_org' : 'register' })
+      // An address of a domain that joins its organisation registers there, open or not (3.6 d5).
+      const join = c.body.org
+        ? undefined
+        : c.data.auth.joinDomains[email.slice(email.lastIndexOf('@') + 1).toLowerCase()]
+      c.data.sent.mail.push({
+        to: c.body.email,
+        kind: c.body.org
+          ? 'register_org'
+          : join
+            ? join.mode === 'request'
+              ? 'register_join_request'
+              : 'register_join'
+            : 'register',
+      })
       return reply(202, { sent: true })
     },
   ],
@@ -173,7 +187,35 @@ export const authRoutes: Route[] = [
     '/api/register/confirm',
     (c) => {
       const a = c.data.auth
+      // A sign-up that asked to join waits for approval (3.6 d5): its token shows the request.
+      const waiting = a.joinWaiting[String(c.body.token)]
+      if (waiting) {
+        if (waiting.state !== 'pending' || waiting.decidedAt)
+          throw new Refusal(404, 'not_found', 'That link is not valid.')
+        return reply(202, { request: waiting })
+      }
       return signIn(a, add(a.users, accountFrom(c, 'member')))
+    },
+  ],
+  [
+    'POST',
+    '/api/register/request',
+    (c) => {
+      const s = c.data.auth.joinWaiting[String(c.body.token)]
+      if (!s) throw new Refusal(404, 'not_found', 'That link is not valid, or has expired.')
+      return s
+    },
+  ],
+  [
+    'POST',
+    '/api/register/request/withdraw',
+    (c) => {
+      const s = c.data.auth.joinWaiting[String(c.body.token)]
+      if (!s) throw new Refusal(404, 'not_found', 'That link is not valid, or has expired.')
+      if (s.state !== 'pending') throw new Refusal(409, 'join_decided', 'This request is no longer waiting.')
+      s.state = 'withdrawn'
+      s.decidedAt = rfc3339(c.now())
+      return s
     },
   ],
   [

@@ -160,6 +160,80 @@ describe("a tenant's email domains", () => {
     expect(puts.map((r) => JSON.parse(r.body!).confirm ?? null)).toEqual([null, expect.stringMatching(/^c_/)])
   })
 
+  it('a verified domain takes a join mode; turning it off while requests wait asks first, then cancels them', async () => {
+    await open(
+      (id) => `/admin/tenants/${id}/signin`,
+      (d, id) => {
+        d.admin.domains[id] = [
+          { ...newDomain('acme.example', at, at), state: 'verified', verifiedAt: at, join: 'request' },
+          newDomain('fresh.example', at, '2099-01-01T00:00:00Z'),
+        ]
+        d.admin.joinRequests[id] = [
+          {
+            id: '01JRWAIT01',
+            username: 'bob',
+            name: 'Bob',
+            email: 'bob@acme.example',
+            domain: 'acme.example',
+            state: 'pending',
+            created: at,
+            expires: '2099-01-01T00:00:00Z',
+            decidedAt: null,
+            decidedBy: null,
+            user: null,
+          },
+        ]
+      },
+    )
+    await settle(() => card('acme.example') !== null, 'the list')
+    // Only a verified domain has the control.
+    expect(card('fresh.example')!.querySelector('[data-slot="domain-join-mode"]')).toBeNull()
+    expect(card('acme.example')!.querySelector('[data-slot="domain-join"]')!.textContent).toBe(tdom.join.badge.request)
+    const select = card('acme.example')!.querySelector<HTMLSelectElement>('[data-slot="domain-join-mode"] select')!
+    await type(select, 'off')
+    const dlg = () => document.querySelector<HTMLElement>('[role="dialog"]')
+    await settle(() => dlg()?.textContent?.includes(tdom.joinOff.body(1)) === true, 'the question')
+    await click(buttonIn(dlg(), tdom.joinOff.confirm))
+    await settle(() => card('acme.example')?.querySelector('[data-slot="domain-join"]') === null, 'off')
+    const patches = m!.requests.filter((r) => r.method === 'PATCH' && r.url.endsWith('/domains/acme.example'))
+    expect(patches.map((r) => JSON.parse(r.body!).confirm ?? null)).toEqual([null, expect.stringMatching(/^c_/)])
+    expect(m!.fx.data.admin.joinRequests[tenant][0].state).toBe('cancelled')
+  })
+
+  it('the requests to join: an administrator approves one and denies another', async () => {
+    const req = (id: string, username: string) => ({
+      id,
+      username,
+      name: username,
+      email: `${username}@acme.example`,
+      domain: 'acme.example',
+      state: 'pending' as const,
+      created: at,
+      expires: '2099-01-01T00:00:00Z',
+      decidedAt: null,
+      decidedBy: null,
+      user: null,
+    })
+    await open(
+      (id) => `/admin/tenants/${id}/signin`,
+      (d, id) => {
+        d.admin.domains[id] = [
+          { ...newDomain('acme.example', at, at), state: 'verified', verifiedAt: at, join: 'request' },
+        ]
+        d.admin.joinRequests[id] = [req('01JRWAIT01', 'bob'), req('01JRWAIT02', 'eve')]
+      },
+    )
+    const rows = () => [...document.querySelectorAll<HTMLElement>('[data-slot="join-request"]')]
+    await settle(() => rows().length === 2, 'the requests')
+    await click(buttonIn(rows()[0], tdom.requests.approveLabel('bob')))
+    await settle(() => rows().length === 1, 'approved')
+    await click(buttonIn(rows()[0], tdom.requests.denyLabel('eve')))
+    await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
+    await click(buttonIn(document.querySelector('[role="alertdialog"]'), tdom.requests.deny))
+    await settle(() => document.querySelector('[data-slot="join-requests-empty"]') !== null, 'none waits')
+    expect(m!.fx.data.admin.joinRequests[tenant].map((r) => r.state)).toEqual(['approved', 'denied'])
+  })
+
   it("the site's list warns of a mixed-script domain, there and in the transfer, which moves it", async () => {
     let beta = ''
     await open(

@@ -113,6 +113,7 @@ function ConfirmBody({ change, onClose }: { change: CapabilityChange; onClose: (
                 {l.providers !== undefined
                   ? tc.providersLine(l.providers, l.enabled ?? 0)
                   : tc.line(l.domains ?? 0, l.verified ?? 0)}
+                {l.requests ? ` · ${tc.requestsLine(l.requests)}` : ''}
               </span>
             </li>
           ))}

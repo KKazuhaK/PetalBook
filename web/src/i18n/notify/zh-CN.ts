@@ -35,6 +35,8 @@ export const notifyZhCN = {
     viewed_as: '以你的身份查看',
     link_reauth: '关联账号',
     domain_lapsed: '邮箱域名',
+    join_requested: '加入申请',
+    join_approved: '已加入',
   },
   unreadMark: '未读',
   moreProblems: (n: number) => `还有 ${n} 个空间有问题。`,
@@ -107,6 +109,14 @@ export const notifyZhCN = {
         since
           ? `从 ${since} 起就找不到它的 DNS 记录，认领已失效。请生成新的验证码，重新发布记录并检查。`
           : '连续 7 天找不到它的 DNS 记录，认领已失效。请生成新的验证码，重新发布记录并检查。',
+    },
+    joinRequested: {
+      title: (name: string) => `${name} 申请加入`,
+      body: (domain: string) => `对方用 ${domain} 的邮箱注册。请到组织的登录设置里批准或拒绝。`,
+    },
+    joinApproved: {
+      title: (tenant: string) => `欢迎加入 ${tenant}`,
+      body: (by: string) => (by ? `${by} 批准了你的加入申请。` : '你的加入申请已获批准。'),
     },
     viewedAs: {
       title: (by: string) => (by ? `${by} 以你的身份查看了应用` : '管理员以你的身份查看了应用'),

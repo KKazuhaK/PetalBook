@@ -3,9 +3,10 @@ import { Copy, Plus, RefreshCw, ShieldCheck, Trash2, TriangleAlert } from 'lucid
 import { toast } from 'sonner'
 import { useDomainChange, useTenantDomains, useTenantSettings } from '@/api/admin'
 import { ApiError } from '@/api/client'
-import type { AuthProvider, DomainCheck, OfferedSSO, TenantDomain } from '@/api/types'
+import { useConfirm } from '@/api/manage'
+import type { AuthProvider, DomainCheck, DomainJoinMode, JoinOffPlanLine, OfferedSSO, TenantDomain } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
-import { ErrorState, PageFallback } from '@/components/common'
+import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import {
   AlertDialog,
@@ -19,6 +20,14 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -308,11 +317,28 @@ function DomainCard({
   const [removing, setRemoving] = useState(false)
   const restrictId = useId()
   const routeId = useId()
+  const joinId = useId()
+  // A change that would cancel requests to join that wait (join off, removal), waiting for the confirmation.
+  const [joinOff, setJoinOff] = useState<((confirm: string) => void) | null>(null)
   const held = d.state === 'verified' || d.state === 'missing'
   const busy = change.isPending
   const fail = (e: unknown) => {
     if (e instanceof ApiError && e.code === 'rate_limited') onCooldown(Date.now() + (e.retryAfter ?? 60) * 1000)
     setMessage({ tone: 'error', text: explain(e) })
+  }
+  const join = (mode: DomainJoinMode, confirm?: string) => {
+    setMessage(null)
+    change.mutate(
+      { op: 'join', domain: d.domain, join: mode, ...(confirm ? { confirm } : {}) },
+      {
+        onSuccess: () => setMessage({ tone: 'info', text: td.join.saved }),
+        onError: (e) => {
+          if (!confirm && e instanceof ApiError && e.code === 'confirm_required')
+            setJoinOff(() => (c: string) => join(mode, c))
+          else fail(e)
+        },
+      },
+    )
   }
   const check = () => {
     setMessage(null)
@@ -348,10 +374,17 @@ function DomainCard({
       { onSuccess: () => setMessage({ tone: 'info', text: td.route.saved }), onError: fail },
     )
   }
-  const remove = () =>
+  const remove = (confirm?: string) =>
     change.mutate(
-      { op: 'delete', domain: d.domain },
-      { onSuccess: () => toast.success(td.remove.done(d.display)), onError: fail },
+      { op: 'delete', domain: d.domain, ...(confirm ? { confirm } : {}) },
+      {
+        onSuccess: () => toast.success(td.remove.done(d.display)),
+        onError: (e) => {
+          if (!confirm && e instanceof ApiError && e.code === 'confirm_required')
+            setJoinOff(() => (c: string) => remove(c))
+          else fail(e)
+        },
+      },
     )
   return (
     <li
@@ -364,6 +397,11 @@ function DomainCard({
         <span className="min-w-0 text-sm font-medium break-all">{d.display}</span>
         <StateBadge d={d} />
         {d.restrictOrgs && <Badge variant="secondary">{td.restrictedBadge}</Badge>}
+        {held && d.join !== 'off' && (
+          <Badge variant="secondary" data-slot="domain-join" data-join={d.join}>
+            {td.join.badge[d.join]}
+          </Badge>
+        )}
         <MixedBadge d={d} />
       </div>
       {d.display !== d.domain && (
@@ -439,6 +477,26 @@ function DomainCard({
           <p className="text-xs text-muted-foreground">{td.route.help}</p>
         </div>
       )}
+      {held && (
+        <div className="grid min-w-0 gap-1.5" data-slot="domain-join-mode">
+          <Label htmlFor={joinId}>{td.join.short}</Label>
+          <NativeSelect
+            id={joinId}
+            aria-label={td.join.label(d.display)}
+            className="w-full sm:max-w-xs"
+            value={d.join}
+            disabled={busy}
+            onChange={(e) => join(e.target.value as DomainJoinMode)}
+          >
+            {(['off', 'auto', 'request'] as const).map((m) => (
+              <option key={m} value={m}>
+                {td.join.modes[m]}
+              </option>
+            ))}
+          </NativeSelect>
+          <p className="text-xs text-muted-foreground">{td.join.help}</p>
+        </div>
+      )}
       <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap">
         <Button
@@ -479,12 +537,67 @@ function DomainCard({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{td.remove.cancel}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={remove}>
+            <AlertDialogAction variant="destructive" onClick={() => remove()}>
               {td.remove.confirm}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog open={joinOff !== null} onOpenChange={(open) => !open && setJoinOff(null)}>
+        <DialogContent>
+          {joinOff && (
+            <JoinOffBody
+              tenant={tenant}
+              d={d}
+              onClose={(token) => {
+                const send = joinOff
+                setJoinOff(null)
+                if (token) send(token)
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </li>
+  )
+}
+
+// The confirmation of a change that cancels the requests to join waiting on a domain (domain_join_off): the count is
+// asked of the server, and the change is sent again with its token.
+function JoinOffBody({ tenant, d, onClose }: { tenant: string; d: TenantDomain; onClose: (token: string) => void }) {
+  const confirm = useConfirm()
+  const { mutate } = confirm
+  useEffect(() => {
+    mutate({ action: 'domain_join_off', tenant, domain: d.domain })
+  }, [mutate, tenant, d.domain])
+  const n = ((confirm.data?.plan ?? []) as unknown as JoinOffPlanLine[])[0]?.requests ?? 0
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="break-words">{td.joinOff.title(d.display)}</DialogTitle>
+        {confirm.data && <DialogDescription>{td.joinOff.body(n)}</DialogDescription>}
+      </DialogHeader>
+      {confirm.isPending && (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Spinner />
+          {td.joinOff.loading}
+        </p>
+      )}
+      <FormMessage>{confirm.error ? explain(confirm.error) : ''}</FormMessage>
+      <DialogFooter>
+        <Button type="button" variant="outline" className="h-10 sm:h-9" onClick={() => onClose('')}>
+          {td.joinOff.cancel}
+        </Button>
+        <Button
+          type="button"
+          variant="destructive"
+          className="h-10 sm:h-9"
+          disabled={!confirm.data}
+          onClick={() => confirm.data && onClose(confirm.data.confirm)}
+        >
+          {td.joinOff.confirm}
+        </Button>
+      </DialogFooter>
+    </>
   )
 }

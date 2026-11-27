@@ -83,6 +83,16 @@ export function describeNotification(n: NotificationItem): Described {
         body: p2.domainLapsed.body(str(p.missingSince) ? absoluteTime(str(p.missingSince)) : ''),
         to: adminPath('settings', 'signin'),
       }
+    // Someone with an address on a verified domain asked to join the organisation (3.6 d5): to its administrators.
+    case 'join_requested':
+      return {
+        title: p2.joinRequested.title(str(p.name, str(p.username))),
+        body: p2.joinRequested.body(str(p.domain)),
+        to: adminPath('settings', 'signin'),
+      }
+    // The person's request to join was approved, which made this account.
+    case 'join_approved':
+      return { title: p2.joinApproved.title(str(p.tenant)), body: p2.joinApproved.body(str(p.by)), to: '' }
     // An administrator viewed the app as the person (made only once the owner decides the person is told).
     case 'viewed_as':
       return { title: p2.viewedAs.title(str(p.by)), body: p2.viewedAs.body(str(p.reason)), to: '' }

@@ -13,7 +13,8 @@ import { ENDED_REASONS } from './types'
 import type {
   SignInAnswer,
   RegisterInfo,
-  RegisteredOrg,
+  JoinStatus,
+  RegisterConfirmAnswer,
   RegisterInput,
   MySettings,
   EffectiveMemberList,
@@ -910,14 +911,22 @@ export const api = {
   registerInfo: (tenant?: string, signal?: AbortSignal) =>
     request<RegisterInfo>(`/register${tenant ? `?tenant=${enc(tenant)}` : ''}`, { signal }),
   register: (input: RegisterInput) => request<{ sent: boolean }>('/register', { method: 'POST', body: input }),
-  registerConfirm: async (token: string) => {
-    const r = await request<SignInAnswer & { tenant?: RegisteredOrg }>('/register/confirm', {
+  registerConfirm: async (token: string, lang?: string) => {
+    const r = await request<RegisterConfirmAnswer>('/register/confirm', {
       method: 'POST',
       body: { token },
+      ...(lang ? { headers: { 'Accept-Language': lang } } : {}),
     })
-    markSignedIn()
+    // A request to join signs nobody in.
+    if (!r.request) markSignedIn()
     return r
   },
+  // The waiting page of a sign-up that asked to join an organisation (3.6 d5): the registration link's token shows the
+  // request, and withdraws it.
+  joinStatus: (token: string, signal?: AbortSignal) =>
+    request<JoinStatus>('/register/request', { method: 'POST', body: { token }, signal }),
+  withdrawJoin: (token: string) =>
+    request<JoinStatus>('/register/request/withdraw', { method: 'POST', body: { token } }),
   // More than one address (accounts.multipleEmails): add one (a link is sent to it), send its link again, make a
   // verified one primary, remove one that is not.
   addEmail: (email: string, lang?: string) =>

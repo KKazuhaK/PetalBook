@@ -982,6 +982,9 @@ export type ErrorCode =
   | 'domain_code_expired'
   | 'domain_verified'
   | 'domain_managed'
+  // Joining by email domain at sign-up (3.6 d5).
+  | 'join_pending'
+  | 'join_decided'
   | 'confirm_required'
   | 'provider_in_use'
   | 'group_not_found'
@@ -1291,6 +1294,8 @@ export interface MailTestResult {
 export interface RegisterInfo {
   open: boolean
   orgCreation: { open: boolean }
+  // Some verified domain joins people to its organisation at sign-up (3.6 d5): the form is offered while open is false.
+  domainJoin: boolean
   tenant?: { slug: string; name: string }
   domains?: string[]
   termsUrl?: string
@@ -1306,6 +1311,10 @@ export interface RegisterOrg {
 export interface RegisteredOrg extends RegisterOrg {
   renamed: boolean
 }
+// What following a registration link made: an account (signed in; `tenant` the organisation it made, `joined` the one
+// it joined by its address's domain), or a request to join that waits for approval (nobody is signed in).
+export type RegisterConfirmAnswer =
+  (SignInAnswer & { tenant?: RegisteredOrg; joined?: RegisterOrg; request?: undefined }) | { request: JoinStatus }
 export interface RegisterInput {
   tenant?: string
   org?: RegisterOrg
@@ -2516,7 +2525,7 @@ export type ConfirmAction =
 export interface ConfirmRequest {
   // change_capabilities is not a bulk action: switching a feature off that is in use, `key` the feature, `tenant` a
   // site rule's tenant (none: the site's value); its token goes with the setting's change.
-  action: ConfirmAction | 'change_capabilities'
+  action: ConfirmAction | 'change_capabilities' | 'domain_join_off'
   spaces?: string[]
   users?: string[]
   items?: string[]
@@ -2524,6 +2533,8 @@ export interface ConfirmRequest {
   transfers?: Record<string, string>
   key?: string
   tenant?: string
+  // domain_join_off: the domain whose waiting requests to join are cancelled (with tenant).
+  domain?: string
 }
 // One line of change_capabilities' plan: a tenant that uses the feature, and how much of it.
 // One tenant of the preview: its claims of features.domains, or its own sign-in providers of features.ownSso.
@@ -2534,6 +2545,8 @@ export interface CapabilityPlanLine {
   feature: string
   domains?: number
   verified?: number
+  // features.domains: the requests to join by a domain that wait (3.6 d5).
+  requests?: number
   providers?: number
   enabled?: number
 }
@@ -2689,6 +2702,8 @@ export const NOTIFY_KINDS = [
   'viewed_as',
   'link_reauth',
   'domain_lapsed',
+  'join_requested',
+  'join_approved',
 ] as const
 export type NotifyKind = (typeof NOTIFY_KINDS)[number]
 
@@ -2766,9 +2781,9 @@ export interface TenantDomain {
   lastCheck: DomainCheck | null
   nextCheckAllowedAt: string | null
   restrictOrgs: boolean
-  // Reserved: the provider sign-in is routed to (3.6 d3), how people join (d5).
+  // The provider sign-in is routed to (3.6 d3), and how people of the domain join the organisation at sign-up (d5).
   provider: string | null
-  join: string | null
+  join: DomainJoinMode
   recordName: string
   code: string | null
   records: DomainRecords | null
@@ -2779,4 +2794,44 @@ export interface TenantDomain {
 export interface TenantDomainList {
   domains: TenantDomain[]
   siteHost: string
+}
+
+// Joining an organisation by email domain at sign-up (3.6 d5, docs/api.md "Joining an organisation"): per verified
+// domain, off, auto (the confirmed address makes an account in the organisation) or request (an administrator approves).
+export type DomainJoinMode = 'off' | 'auto' | 'request'
+export type JoinRequestState = 'pending' | 'approved' | 'denied' | 'withdrawn' | 'expired' | 'cancelled'
+// A request as the organisation's administrators list it. `user` is the account an approval made.
+export interface JoinRequest {
+  id: string
+  username: string
+  name: string
+  email: string
+  domain: string
+  state: JoinRequestState
+  created: string
+  expires: string
+  decidedAt: string | null
+  decidedBy: { id: string; name: string } | null
+  user: string | null
+}
+export interface JoinRequestList {
+  items: JoinRequest[]
+  next: string | null
+}
+// A request as the person who made it sees it (the waiting page).
+export interface JoinStatus {
+  state: JoinRequestState
+  tenant: { slug: string; name: string }
+  username: string
+  email: string
+  created: string
+  expires: string
+  decidedAt: string | null
+}
+// One line of domain_join_off's plan: the requests that wait on the domain, which turning its join off or removing it
+// cancels.
+export interface JoinOffPlanLine {
+  tenant: string
+  domain: string
+  requests: number
 }
