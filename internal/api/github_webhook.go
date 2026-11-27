@@ -77,8 +77,10 @@ func (s *server) githubWebhook(c *call) {
 
 // claimerMayStill says whether the person who made a pending claim may still
 // claim for its owner, now that GitHub's event completes it: their account is
-// active and, for an organisation, they hold tenant.github.manage in that
-// tenant. It reads the person from the cache sessions use.
+// active, GitHub connections are on for the owner's tenant (the person's own,
+// or the organisation), and, for an organisation, they hold
+// tenant.github.manage in that tenant. It reads the person from the cache
+// sessions use.
 func (s *server) claimerMayStill(ctx context.Context, o store.InstallOwner, userID string) error {
 	refused := connections.Errorf(github.ProviderID, http.StatusForbidden, connections.CodeForbidden, "The person who started connecting it may no longer.")
 	if s.auth == nil || !o.Valid() {
@@ -91,10 +93,20 @@ func (s *server) claimerMayStill(ctx context.Context, o store.InstallOwner, user
 	if u.Disabled {
 		return refused
 	}
+	tenant := o.TenantID
 	if o.UserID != "" {
 		if o.UserID != userID {
 			return refused
 		}
+		tenant = u.TenantID
+	}
+	if !s.single && s.settings != nil {
+		on, err := s.featureOn(ctx, tenant, settings.FeatureGitHubConnect)
+		if err != nil || !on {
+			return refused
+		}
+	}
+	if o.UserID != "" {
 		return nil
 	}
 	feats := &featureRead{s: s}

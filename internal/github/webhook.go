@@ -15,6 +15,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"petalbook.app/server/internal/connections"
@@ -101,6 +102,14 @@ func (s *Service) Webhook(ctx context.Context, event, signature string, body []b
 		if err := h.NewInstalls(ctx); err != nil {
 			return nil, err
 		}
+		// An installation connected here already has had its one claim: a
+		// redelivery does not record who installed it again (the record a
+		// claim used up stays used).
+		if _, err := store.GetGitHubInstallation(ctx, s.opt.Store.Q(), id); err == nil {
+			return res, nil
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
 		now := s.opt.Now()
 		inst := store.GitHubInstaller{InstallationID: id, AccountID: a.ID, Account: a.Login, AccountType: a.Type,
 			SenderID: ev.Sender.ID, Sender: ev.Sender.Login, Created: now}
@@ -160,6 +169,8 @@ func (s *Service) settle(ctx context.Context, p *store.GitHubPendingClaim, inst 
 	switch {
 	case inst.SenderID != p.ClaimerGitHub || inst.AccountID != p.AccountID:
 		code = cbNotInstaller
+	case p.Owner.TenantID != "" && !s.appMayClaimOrgs(ctx):
+		code = CodeMissingPermission
 	case recheck && !s.mayStill(ctx, p):
 		code = cbForbidden
 	default:
@@ -169,6 +180,18 @@ func (s *Service) settle(ctx context.Context, p *store.GitHubPendingClaim, inst 
 		s.log.Error("could not end a pending GitHub claim", "error", err)
 	}
 	return code
+}
+
+// appMayClaimOrgs says whether the App asks for Repository administration:
+// only then can only an organisation's owners install it there (GitHub lets a
+// member install an App that does not), which is what an organisation's
+// claim by its installer rests on.
+func (s *Service) appMayClaimOrgs(ctx context.Context) bool {
+	st, err := s.state(ctx)
+	if err != nil || st == nil {
+		return false
+	}
+	return !slices.Contains(missingPermissions(st.rec.Permissions), "administration")
 }
 
 // mayStill asks the caller's Recheck hook whether the claimer may still claim
@@ -197,6 +220,11 @@ func (s *Service) claim(ctx context.Context, o store.InstallOwner, claimer strin
 	case err != nil:
 		s.log.Error("could not connect a GitHub installation", "error", err)
 		return cbError
+	}
+	// Who installed it proved this one claim: a later one (after a disconnect)
+	// needs the App installed afresh on GitHub.
+	if err := store.ForgetGitHubInstaller(ctx, s.opt.Store.Q(), id); err != nil {
+		s.log.Error("could not forget who installed a GitHub installation", "error", err)
 	}
 	s.forgetNoApp(acct.Login)
 	s.changed("") // spaces that lost access through it are fetched again
@@ -237,6 +265,9 @@ func (s *Service) PendingClaims(ctx context.Context, o store.InstallOwner) ([]Pe
 // asked for: who is the claimer on GitHub (who), and whether GitHub says the
 // installation was just made (action "install").
 func (s *Service) claimOrg(ctx context.Context, a *attempt, in *githubapp.Installation, who githubapp.User, action string) (to, code string) {
+	if !s.appMayClaimOrgs(ctx) {
+		return "", CodeMissingPermission
+	}
 	q := s.opt.Store.Q()
 	inst, err := store.GetGitHubInstaller(ctx, q, in.ID)
 	switch {
@@ -247,6 +278,17 @@ func (s *Service) claimOrg(ctx context.Context, a *attempt, in *githubapp.Instal
 		return "", s.claim(ctx, a.owner, a.userID, in.ID, in.Account)
 	case !errors.Is(err, store.ErrNotFound):
 		s.log.Error("could not read who installed a GitHub installation", "error", err)
+		return "", cbError
+	}
+	// No record: connected here already (its claim used the record up), it is
+	// someone else's, or already the owner's (nothing new to grant).
+	if held, err := store.GetGitHubInstallation(ctx, q, in.ID); err == nil {
+		if held.Owner() != a.owner {
+			return "", cbTaken
+		}
+		return "", ""
+	} else if !errors.Is(err, store.ErrNotFound) {
+		s.log.Error("could not read a GitHub installation", "error", err)
 		return "", cbError
 	}
 	// No webhook said who installed it. When GitHub says it was just

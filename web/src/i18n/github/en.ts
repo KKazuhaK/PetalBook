@@ -230,7 +230,7 @@ export const githubEn = {
     pending: 'Connecting…',
     pendingFailed: 'Not connected',
     pendingHelp: (until: string) =>
-      `Waiting for GitHub to confirm who installed it. This usually takes a few seconds: refresh to see it; if nothing comes by ${until}, install again.`,
+      `Waiting for GitHub to confirm who installed it. This usually takes a few seconds: refresh to see it; if nothing comes by ${until}, uninstall the App on GitHub, then install it again from here.`,
     refresh: 'Refresh',
     refreshFor: (account: string) => `Refresh ${account}`,
     spaces: (n: number) => (n === 1 ? '1 space syncs through it' : `${n} spaces sync through it`),
@@ -245,7 +245,7 @@ export const githubEn = {
     disconnectFor: (account: string) => `Disconnect ${account}`,
     disconnectTitle: (account: string) => `Disconnect ${account}?`,
     disconnectBody:
-      'It stays installed on GitHub (uninstall it there). The spaces below lose GitHub access: their notes are kept, and they stop syncing until GitHub is connected again or they are connected to another repository.',
+      'It stays installed on GitHub (uninstall it there). The spaces below lose GitHub access: their notes are kept, and they stop syncing until GitHub is connected again or they are connected to another repository. To connect an organisation’s installation again later, uninstall the App on GitHub, then install it again from here.',
     disconnectGrace:
       'Where this server requires every space to sync to a repository, they count as having none: a space whose time to get one has already run out (it counts from when the space was made or when the requirement began, whichever is later) becomes read only at once; the others keep what is left of theirs.',
     disconnectSpaces: (n: number) => (n === 1 ? '1 space syncs through it:' : `${n} spaces sync through it:`),

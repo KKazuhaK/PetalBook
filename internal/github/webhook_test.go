@@ -227,14 +227,13 @@ func TestARedeliveredWebhookIsHarmless(t *testing.T) {
 		if claims != 1 {
 			t.Fatalf("connected %d times", claims)
 		}
-		if in := installerOf(t, st, inst); in == nil || in.Sender != "kaz-admin" {
-			t.Fatalf("%+v", in)
-		}
 		list, _ := o.svc.Installations(ctx, t1)
 		if len(list) != 1 || list[0].ID != inst || list[0].ClaimedBy != "A1" {
 			t.Fatalf("%+v", list)
 		}
-		if n := countRows(t, st, `SELECT COUNT(*) FROM github_installers`); n != 1 {
+		// The record was used up by the claim, and a redelivery of an installation
+		// connected here does not bring it back.
+		if n := countRows(t, st, `SELECT COUNT(*) FROM github_installers`); n != 0 {
 			t.Fatalf("%d installer rows", n)
 		}
 		// Another event, of no interest, is ignored.
@@ -396,6 +395,118 @@ func TestAPendingClaimIsCompletedOnlyWhileTheClaimerMayStill(t *testing.T) {
 		}
 		if _, err := store.GetGitHubInstallation(ctx, st.Q(), second); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("%v", err)
+		}
+	})
+}
+
+// An organisation's owners alone install an App on it only while the App asks
+// for Repository administration (a member may install one that does not): an
+// App without it connects no organisation's installation, on the callback or
+// when GitHub's event completes a waiting claim.
+func TestAnOrgClaimNeedsRepositoryAdministration(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		o := newOrg(t, st)
+		t1 := store.InstallOwner{TenantID: "T1"}
+		full := o.f.AppPerms
+		o.f.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
+		if _, err := o.svc.Recheck(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if to := o.installFor("A1", t1, "petal-team", "kaz-admin", "petal-team", true); to != "/back?connection_error=app_missing_permission" {
+			t.Fatalf("%q", to)
+		}
+		if list, _ := o.svc.Installations(ctx, t1); len(list) != 0 {
+			t.Fatalf("%+v", list)
+		}
+		// Waiting for GitHub's event while the App had it; lost before the event came.
+		o.f.AppPerms = full
+		if _, err := o.svc.Recheck(ctx); err != nil {
+			t.Fatal(err)
+		}
+		o.f.AddOrg("second-org", "kaz-admin")
+		q, binding := o.startOrg("A1", "T1", "second-org", "kaz-admin")
+		ev := o.f.Events()
+		if to, _ := o.svc.CompleteAuthorization(allowAll(ctx), binding, "A1", q); !strings.Contains(to, "connection_pending=") {
+			t.Fatalf("%q", to)
+		}
+		o.f.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
+		if _, err := o.svc.Recheck(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if r, err := o.svc.Webhook(receiving(ctx), ev[0].Name, ev[0].Signature, ev[0].Body); err != nil || len(r.Claimed) != 0 {
+			t.Fatalf("%+v %v", r, err)
+		}
+		if p, _ := o.svc.PendingClaims(ctx, t1); len(p) != 1 || p[0].Error != "app_missing_permission" {
+			t.Fatalf("%+v", p)
+		}
+		// A person's own installation does not rest on it.
+		o.f.AddRepo("tang", "notes", true)
+		o.installMine("U1", "tang")
+	})
+}
+
+// Who installed an installation proves one claim: the record is used up when
+// the claim succeeds. Disconnected, the installation is connected again only
+// after it is installed afresh on GitHub (a new event), so an installer who
+// lost the right since cannot claim it again later on the old event.
+func TestAClaimUsesUpTheInstallerRecord(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		o := newOrg(t, st)
+		t1 := store.InstallOwner{TenantID: "T1"}
+		o.peti = o.installOrg("A1", "T1", "petal-team", "kaz-admin")
+		if installerOf(t, st, o.peti) != nil {
+			t.Fatal("the installer record outlived the claim")
+		}
+		if _, err := o.svc.DisconnectInstallation(ctx, t1, o.peti); err != nil {
+			t.Fatal(err)
+		}
+		if to := o.installFor("A1", t1, "petal-team", "kaz-admin", "petal-team", true); to != "/back?connection_error=not_installer" {
+			t.Fatalf("connected again on a used record: %q", to)
+		}
+		// Uninstalled and installed afresh on GitHub: a new event, a new claim.
+		o.f.Uninstall(o.peti, "kaz-admin")
+		o.deliver()
+		if id := o.installOrg("A1", "T1", "petal-team", "kaz-admin"); id == o.peti {
+			t.Fatalf("the same installation: %d", id)
+		}
+	})
+}
+
+// A second callback of the claimer while GitHub's event is completing their
+// claim does not reset it: the write leaves a claim being completed as it is
+// (a claim that failed may be made again).
+func TestARepeatedCallbackDoesNotResetAClaimBeingCompleted(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		o := newOrg(t, st)
+		t1 := store.InstallOwner{TenantID: "T1"}
+		now := o.clk.Now()
+		p := store.GitHubPendingClaim{InstallationID: 77, UserID: "A1", Owner: t1, ClaimerGitHub: 5, AccountID: 9, Account: "petal-team",
+			AccountType: "Organization", Created: now, Expires: now.Add(10 * time.Minute)}
+		if err := store.PutGitHubPendingClaim(ctx, st.Q(), p); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.TakeGitHubPendingClaim(ctx, st.Q(), 77, "A1", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutGitHubPendingClaim(ctx, st.Q(), p); err != nil {
+			t.Fatal(err)
+		}
+		rows, _ := store.ListGitHubPendingClaimsOwned(ctx, st.Q(), t1, now)
+		if len(rows) != 1 || rows[0].State != store.PendingClaiming {
+			t.Fatalf("%+v", rows)
+		}
+		if _, err := store.TakeGitHubPendingClaim(ctx, st.Q(), 77, "A1", now); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("taken twice: %v", err)
+		}
+		// Failed, it may be made again.
+		if err := store.EndGitHubPendingClaim(ctx, st.Q(), 77, "A1", "not_installer"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutGitHubPendingClaim(ctx, st.Q(), p); err != nil {
+			t.Fatal(err)
+		}
+		if rows, _ := store.ListGitHubPendingClaimsOwned(ctx, st.Q(), t1, now); len(rows) != 1 || rows[0].State != store.PendingWaiting {
+			t.Fatalf("%+v", rows)
 		}
 	})
 }

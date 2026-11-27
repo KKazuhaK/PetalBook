@@ -2250,10 +2250,17 @@ administrator who installed it; any of its administrators manages it).
      goes to `return?connection_pending=<account>`; the event completes it
      when it comes, if its sender is the claimer (else the pending claim
      shows `not_installer`) and the claimer may still claim for that owner,
-     asked again then: an active account and, for an organisation,
-     `tenant.github.manage` in that tenant (else it shows `forbidden`). The
+     asked again then: an active account, GitHub connections on for the
+     owner's tenant (the site's switch and the tenant's rule) and, for an
+     organisation, `tenant.github.manage` in that tenant (else it shows
+     `forbidden`). The
      server never polls GitHub for it. Any other
-     `setup_action` with no event is `not_installer` at once;
+     `setup_action` with no event is `not_installer` at once (or
+     `installation_taken` when another owner here has it). An organisation's
+     claim needs the App to ask for Repository administration (only then do
+     an organisation's owners alone install it there; GitHub lets a member
+     install an App that does not): without it, on the callback and when the
+     event completes a claim, `app_missing_permission`;
   5. no other person or organisation on this server has it (one statement; of
      two at once one wins): `installation_taken`, "already connected to another
      organisation or person on this server".
@@ -2290,7 +2297,9 @@ administrator who installed it; any of its administrators manages it).
   began, whichever is later, so a space whose grace
   has already run out is `Overdue` (read only) at once, and the others keep what
   is left of theirs. Connecting the same installation again by the same owner
-  restores them. The spaces listed, counted and marked are the owner's only: a
+  restores them; for an organisation that needs the App uninstalled on GitHub
+  and installed again from here, since who installed it proved one claim (the
+  record is used up when the claim succeeds). The spaces listed, counted and marked are the owner's only: a
   space of an earlier owner that still names the installation is not.
 - Another owner's installation is as good as not there: `404 not_found`.
 
@@ -2312,7 +2321,10 @@ turns it on). It is public (no session, no token) and answers GitHub only:
 - `X-GitHub-Event: installation`, `action: created`: who installed it
   (`installation.id`, `installation.account`, `sender`) is recorded, the same
   again when GitHub redelivers, and the pending claims of that installation
-  are completed (each by one request: the event, or a callback that saw it).
+  are completed (each by one request: the event, or a callback that saw it;
+  a second callback of the same person does not reset a claim being
+  completed). The record proves one claim: it is removed when a claim
+  succeeds, and an event for an installation connected here records nothing.
   `action: deleted`: the installation is disconnected from whoever has it here,
   as `DELETE …/installations/{id}` does (its spaces show `access_lost`), and
   who installed it, and the claims waiting for it, are forgotten.

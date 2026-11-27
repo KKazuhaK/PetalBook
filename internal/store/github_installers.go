@@ -59,6 +59,13 @@ func DeleteGitHubInstaller(ctx context.Context, q Q, id int64) error {
 	})
 }
 
+// ForgetGitHubInstaller forgets who installed an installation, the claims
+// waiting for it left as they are: a successful claim uses the record up.
+func ForgetGitHubInstaller(ctx context.Context, q Q, id int64) error {
+	_, err := q.Exec(ctx, `DELETE FROM github_installers WHERE installation_id = ?`, id)
+	return err
+}
+
 // States of a pending claim besides a failure code.
 const (
 	PendingWaiting  = ""
@@ -96,7 +103,9 @@ func scanPending(row interface{ Scan(...any) error }) (*GitHubPendingClaim, erro
 }
 
 // PutGitHubPendingClaim stores a claim that waits (it replaces the claimer's
-// earlier one of the installation), and drops the claims that expired.
+// earlier one of the installation, waiting or failed, but never one that is
+// being completed: a second callback does not reset what the webhook is
+// doing), and drops the claims that expired.
 func PutGitHubPendingClaim(ctx context.Context, q Q, p GitHubPendingClaim) error {
 	if !p.Owner.Valid() || p.InstallationID <= 0 || p.UserID == "" {
 		return errors.New("store: a pending claim names an installation, its claimer and one owner")
@@ -109,7 +118,8 @@ func PutGitHubPendingClaim(ctx context.Context, q Q, p GitHubPendingClaim) error
 			VALUES (?,?,?,?,?,?,?,?,'',?,?)
 			ON CONFLICT (installation_id, user_id) DO UPDATE SET owner_user = excluded.owner_user, owner_tenant = excluded.owner_tenant,
 				claimer_gh = excluded.claimer_gh, account_id = excluded.account_id, account = excluded.account, account_type = excluded.account_type,
-				state = '', created = excluded.created, expires = excluded.expires`,
+				state = '', created = excluded.created, expires = excluded.expires
+			WHERE github_pending_claims.state <> 'claiming'`,
 			p.InstallationID, p.UserID, nullIfEmpty(p.Owner.UserID), nullIfEmpty(p.Owner.TenantID), p.ClaimerGitHub, p.AccountID, p.Account, p.AccountType,
 			ms(p.Created), ms(p.Expires))
 		return err

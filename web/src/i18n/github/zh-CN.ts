@@ -216,7 +216,7 @@ export const githubZhCN: GitHubMessages = {
     pending: '正在连接……',
     pendingFailed: '未连接',
     pendingHelp: (until: string) =>
-      `正在等 GitHub 确认是谁安装的。通常只要几秒钟，点「刷新」查看；如果到 ${until} 还没有结果，请重新安装。`,
+      `正在等 GitHub 确认是谁安装的。通常只要几秒钟，点「刷新」查看；如果到 ${until} 还没有结果，请先在 GitHub 上卸载 App，再从这里重新安装。`,
     refresh: '刷新',
     refreshFor: (account: string) => `刷新 ${account}`,
     spaces: (n: number) => `${n} 个空间通过它同步`,
@@ -231,7 +231,7 @@ export const githubZhCN: GitHubMessages = {
     disconnectFor: (account: string) => `断开 ${account}`,
     disconnectTitle: (account: string) => `断开 ${account}？`,
     disconnectBody:
-      '它仍装在 GitHub 上（要卸载请到 GitHub 上操作）。下面这些空间会失去 GitHub 访问：笔记都会保留，但会停止同步，直到重新连接 GitHub，或者把它们连到别的仓库。',
+      '它仍装在 GitHub 上（要卸载请到 GitHub 上操作）。下面这些空间会失去 GitHub 访问：笔记都会保留，但会停止同步，直到重新连接 GitHub，或者把它们连到别的仓库。之后要重新连接组织的安装，请先在 GitHub 上卸载 App，再从这里重新安装。',
     disconnectGrace:
       '如果这台服务器要求每个空间都同步到仓库，它们会被当作没有仓库：期限（从空间创建或这项要求开始时算起，取较晚的那个）已经过了的空间会立刻变成只读；其余的保留剩下的期限。',
     disconnectSpaces: (n: number) => `${n} 个空间通过它同步：`,

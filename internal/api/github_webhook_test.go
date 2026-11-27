@@ -159,3 +159,30 @@ func TestTheWebhookTakesUninstallsWhenOffAndRechecksTheClaimer(t *testing.T) {
 		}
 	})
 }
+
+// The organisation's own switch counts when GitHub's event completes a waiting
+// claim, not only the site's: off for the tenant since the callback, the claim
+// is refused.
+func TestTheTenantsSwitchIsAskedWhenTheClaimCompletes(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		f := ghTenFx(t, a)
+		a.fake.AddUser("adm-b-gh")
+		a.fake.AddOrg("beta-gh", "adm-b-gh")
+		r := f.admB.do("POST", "/api/admin/github/install", map[string]any{"account": "beta-gh"}).want(t, 200, "")
+		back, _ := url.Parse(a.fake.InstallAppOn(r.body["url"].(string), "adm-b-gh", "beta-gh", "https://notes.example.test/api/account/links/github/callback", true))
+		cb := f.admB.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site")
+		if to := cb.resp.Header.Get("Location"); to != "/admin/storage/github?connection_pending=beta-gh" {
+			t.Fatalf("%q", to)
+		}
+		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.githubConnect", map[string]any{"siteLock": true, "value": false}).want(t, 200, "")
+		for _, e := range a.fake.Events() {
+			deliverGitHub(t, a, e).want(t, 204, "")
+		}
+		list := f.admB.do("GET", "/api/admin/github/installations", nil).want(t, 200, "")
+		pend := list.body["pending"].([]any)
+		if len(items(t, list)) != 0 || len(pend) != 1 || pend[0].(map[string]any)["error"] != "forbidden" {
+			t.Fatalf("%s", list.raw)
+		}
+	})
+}
