@@ -106,6 +106,14 @@ type Scoped interface {
 type InstallHooks struct {
 	Allow   func(ctx context.Context, o store.InstallOwner) error
 	Claimed func(ctx context.Context, o store.InstallOwner, id int64, account string)
+	// NewInstalls (GitHub's webhook) says whether a new installation's event is
+	// taken now: refused while the site has GitHub connections off. An
+	// uninstall is always taken. nil: refused.
+	NewInstalls func(ctx context.Context) error
+	// Recheck (GitHub's webhook) says whether the person who made a pending
+	// claim may still claim for its owner when the event completes it. nil:
+	// refused.
+	Recheck func(ctx context.Context, o store.InstallOwner, userID string) error
 }
 
 type installHooksKey struct{}

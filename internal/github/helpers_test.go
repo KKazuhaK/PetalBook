@@ -172,6 +172,15 @@ func allowAll(c context.Context) context.Context {
 	return connections.WithInstallHooks(c, connections.InstallHooks{Allow: func(context.Context, store.InstallOwner) error { return nil }})
 }
 
+// receiving lends the hooks of GitHub's webhook: new installations are taken
+// (the switch on) and every claimer may still claim.
+func receiving(c context.Context) context.Context {
+	return connections.WithInstallHooks(c, connections.InstallHooks{
+		NewInstalls: func(context.Context) error { return nil },
+		Recheck:     func(context.Context, store.InstallOwner, string) error { return nil },
+	})
+}
+
 // installFor plays a browser of userID that installs the App for owner o
 // (account: the GitHub organisation named for a tenant): GitHub login installs
 // it on the account on, authorising during installation when authorize. It
@@ -194,7 +203,7 @@ func (h *harness) deliver() []*github.WebhookResult {
 	h.t.Helper()
 	var out []*github.WebhookResult
 	for _, e := range h.f.Events() {
-		r, err := h.svc.Webhook(ctx, e.Name, e.Signature, e.Body)
+		r, err := h.svc.Webhook(receiving(ctx), e.Name, e.Signature, e.Body)
 		if err != nil {
 			h.t.Fatalf("a delivery was refused: %v", err)
 		}
@@ -221,7 +230,7 @@ func (h *harness) installOrg(admin, tenant, org, login string) int64 {
 	if id := h.f.InstallationOn(org); id != 0 {
 		// Installed before (the world's setup): by login, GitHub says.
 		e := h.f.InstallationEvent("created", id, login)
-		if _, err := h.svc.Webhook(ctx, e.Name, e.Signature, e.Body); err != nil {
+		if _, err := h.svc.Webhook(receiving(ctx), e.Name, e.Signature, e.Body); err != nil {
 			h.t.Fatal(err)
 		}
 	}

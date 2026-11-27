@@ -230,7 +230,9 @@ export const githubEn = {
     pending: 'Connecting…',
     pendingFailed: 'Not connected',
     pendingHelp: (until: string) =>
-      `Waiting for GitHub to confirm who installed it. This usually takes a few seconds and the list updates by itself; if nothing comes by ${until}, install again.`,
+      `Waiting for GitHub to confirm who installed it. This usually takes a few seconds: refresh to see it; if nothing comes by ${until}, install again.`,
+    refresh: 'Refresh',
+    refreshFor: (account: string) => `Refresh ${account}`,
     spaces: (n: number) => (n === 1 ? '1 space syncs through it' : `${n} spaces sync through it`),
     manage: 'Manage on GitHub',
     repos: 'Repositories',

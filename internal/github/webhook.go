@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 
+	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/githubapp"
 	"petalbook.app/server/internal/store"
 )
@@ -62,7 +63,10 @@ type WebhookResult struct {
 // Webhook takes one delivery of GitHub's webhook: its X-GitHub-Event, its
 // X-Hub-Signature-256 and its body. The signature is checked, with the App's
 // webhook secret and in constant time, before anything of the body is read.
-// Events other than installation's created and deleted do nothing.
+// Events other than installation's created and deleted do nothing. A created
+// event is taken only when the caller's NewInstalls hook says so (the site's
+// switch); a deleted one always is. A pending claim it completes is asked of
+// the caller's Recheck hook first. Either hook missing refuses.
 func (s *Service) Webhook(ctx context.Context, event, signature string, body []byte) (*WebhookResult, error) {
 	st, err := s.state(ctx)
 	if err != nil {
@@ -90,6 +94,13 @@ func (s *Service) Webhook(ctx context.Context, event, signature string, body []b
 		if id <= 0 || a.ID <= 0 || ev.Sender.ID <= 0 || (a.Type != "User" && a.Type != "Organization") {
 			return nil, errf(http.StatusBadRequest, CodeInvalid, "The installation event names no installation, account or sender.")
 		}
+		h := connections.InstallHooksOf(ctx)
+		if h.NewInstalls == nil {
+			return nil, errf(http.StatusForbidden, CodeForbidden, "New installations are not taken here.")
+		}
+		if err := h.NewInstalls(ctx); err != nil {
+			return nil, err
+		}
 		now := s.opt.Now()
 		inst := store.GitHubInstaller{InstallationID: id, AccountID: a.ID, Account: a.Login, AccountType: a.Type,
 			SenderID: ev.Sender.ID, Sender: ev.Sender.Login, Created: now}
@@ -108,7 +119,7 @@ func (s *Service) Webhook(ctx context.Context, event, signature string, body []b
 			if err != nil {
 				return nil, err
 			}
-			if c := s.settle(ctx, p, &inst); c == "" {
+			if c := s.settle(ctx, p, &inst, true); c == "" {
 				res.Claimed = append(res.Claimed, Claimed{Owner: p.Owner, ID: id, Account: p.Account, ClaimedBy: p.UserID})
 			}
 		}
@@ -140,14 +151,17 @@ func (s *Service) Webhook(ctx context.Context, event, signature string, body []b
 }
 
 // settle completes a pending claim taken for completion, now that GitHub said
-// who installed the installation: connected when the claimer is that user. It
-// answers the code it failed with, "" when connected; the claim is removed, or
-// kept with its code until it expires.
-func (s *Service) settle(ctx context.Context, p *store.GitHubPendingClaim, inst *store.GitHubInstaller) string {
+// who installed the installation: connected when the claimer is that user and,
+// with recheck (the webhook, minutes after the callback asked), may still claim
+// for the owner. It answers the code it failed with, "" when connected; the
+// claim is removed, or kept with its code until it expires.
+func (s *Service) settle(ctx context.Context, p *store.GitHubPendingClaim, inst *store.GitHubInstaller, recheck bool) string {
 	code := ""
 	switch {
 	case inst.SenderID != p.ClaimerGitHub || inst.AccountID != p.AccountID:
 		code = cbNotInstaller
+	case recheck && !s.mayStill(ctx, p):
+		code = cbForbidden
 	default:
 		code = s.claim(ctx, p.Owner, p.UserID, p.InstallationID, githubapp.Account{ID: p.AccountID, Login: p.Account, Type: p.AccountType})
 	}
@@ -155,6 +169,20 @@ func (s *Service) settle(ctx context.Context, p *store.GitHubPendingClaim, inst 
 		s.log.Error("could not end a pending GitHub claim", "error", err)
 	}
 	return code
+}
+
+// mayStill asks the caller's Recheck hook whether the claimer may still claim
+// for the claim's owner; no hook is a refusal.
+func (s *Service) mayStill(ctx context.Context, p *store.GitHubPendingClaim) bool {
+	h := connections.InstallHooksOf(ctx)
+	if h.Recheck == nil {
+		return false
+	}
+	if err := h.Recheck(ctx, p.Owner, p.UserID); err != nil {
+		s.log.Info("a pending GitHub claim was refused: its claimer may no longer claim", "installation", p.InstallationID, "reason", err.Error())
+		return false
+	}
+	return true
 }
 
 // claim connects an installation to its owner; it answers a callback failure
@@ -247,7 +275,7 @@ func (s *Service) claimOrg(ctx context.Context, a *attempt, in *githubapp.Instal
 		// The webhook has it: the list shows how it ends.
 		return withParam(a.ret, "connection_pending", in.Account.Login), ""
 	}
-	if c := s.settle(ctx, taken, inst); c != "" {
+	if c := s.settle(ctx, taken, inst, false); c != "" {
 		return "", c
 	}
 	return "", ""

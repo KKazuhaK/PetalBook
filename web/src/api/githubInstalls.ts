@@ -36,9 +36,9 @@ export const githubInstallsApi = {
 
 export const githubInstallsKey = (of: GitHubInstallationsOf) => ['github', 'installations', of] as const
 
-// While a claim waits for GitHub's event the list is read again every few seconds (the server never asks GitHub:
-// the event comes to it); a claim waits ten minutes at most.
-export const PENDING_POLL_MS = 5_000
+// Nothing polls (the owner's rule): a claim waiting for GitHub's event is read again a few times right after GitHub
+// sends the browser back (PENDING_RETRY_MS), when the window gets the focus again, and on request.
+export const PENDING_RETRY_MS = [1_000, 2_000, 4_000] as const
 
 export function useGitHubInstallations(of: GitHubInstallationsOf, enabled = true) {
   return useQuery({
@@ -46,7 +46,8 @@ export function useGitHubInstallations(of: GitHubInstallationsOf, enabled = true
     queryFn: ({ signal }) => githubInstallsApi.list(of, signal),
     enabled,
     staleTime: 15_000,
-    refetchInterval: (q) => (q.state.data?.pending.some((p) => p.error === '') ? PENDING_POLL_MS : false),
+    // A claim that waits is shown as it is now when the person comes back to the window.
+    refetchOnWindowFocus: (q) => (q.state.data?.pending.some((p) => p.error === '') ? 'always' : true),
   })
 }
 

@@ -648,7 +648,11 @@ func (e *ghEnv) claimOrg(tenant, org string) int64 {
 		events = append(events, e.f.InstallationEvent("created", before, "tang")) // installed by tang before
 	}
 	for _, ev := range events {
-		if _, err := e.svc.Webhook(ctx, ev.Name, ev.Signature, ev.Body); err != nil {
+		wh := connections.WithInstallHooks(ctx, connections.InstallHooks{
+			NewInstalls: func(context.Context) error { return nil },
+			Recheck:     func(context.Context, store.InstallOwner, string) error { return nil },
+		})
+		if _, err := e.svc.Webhook(wh, ev.Name, ev.Signature, ev.Body); err != nil {
 			e.t.Fatal(err)
 		}
 	}

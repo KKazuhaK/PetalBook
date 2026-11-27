@@ -111,3 +111,51 @@ func TestTheOrgConsoleClaimsThroughGitHubsEvent(t *testing.T) {
 		}
 	})
 }
+
+// With GitHub connections off for the site, GitHub's uninstall is still taken
+// (recording one is always safe); only new installations are refused. A claim
+// waiting for GitHub's event is completed only if its claimer is still the
+// organisation's administrator when the event comes.
+func TestTheWebhookTakesUninstallsWhenOffAndRechecksTheClaimer(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		f := ghTenFx(t, a)
+		b2 := secondAdminB(t, a, f)
+		a.fake.AddUser("adm-b-gh")
+		a.fake.AddOrg("beta-gh", "adm-b-gh")
+		r := f.admB.do("POST", "/api/admin/github/install", map[string]any{"account": "beta-gh"}).want(t, 200, "")
+		back, _ := url.Parse(a.fake.InstallAppOn(r.body["url"].(string), "adm-b-gh", "beta-gh", "https://notes.example.test/api/account/links/github/callback", true))
+		cb := f.admB.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site")
+		if to := cb.resp.Header.Get("Location"); to != "/admin/storage/github?connection_pending=beta-gh" {
+			t.Fatalf("%q", to)
+		}
+		// adm-b is no longer an administrator when GitHub's event comes.
+		admBID := f.admB.do("GET", "/api/session", nil).body["user"].(map[string]any)["id"].(string)
+		b2.do("PATCH", "/api/users/"+admBID, map[string]any{"role": "member"}).want(t, 200, "")
+		for _, e := range a.fake.Events() {
+			deliverGitHub(t, a, e).want(t, 204, "")
+		}
+		list := b2.do("GET", "/api/admin/github/installations", nil).want(t, 200, "")
+		pend := list.body["pending"].([]any)
+		if len(items(t, list)) != 0 || len(pend) != 1 || pend[0].(map[string]any)["error"] != "forbidden" {
+			t.Fatalf("%s", list.raw)
+		}
+		// b2 connects acme-gh; then the site switches GitHub connections off and GitHub uninstalls it.
+		a.fake.AddUser("b2-gh")
+		a.fake.AddMember("acme-gh", "b2-gh")
+		installGitHub(t, a, b2, "/api/admin/github/install", map[string]any{"account": "acme-gh"}, "b2-gh", "acme-gh")
+		got := items(t, b2.do("GET", "/api/admin/github/installations", nil).want(t, 200, ""))
+		if len(got) != 1 {
+			t.Fatalf("%v", got)
+		}
+		f.root.putSetting("features.githubConnect", false).want(t, 200, "")
+		acme := int64(got[0]["id"].(float64))
+		a.fake.Uninstall(acme, "b2-gh")
+		for _, e := range a.fake.Events() {
+			deliverGitHub(t, a, e).want(t, 204, "")
+		}
+		if l := items(t, b2.do("GET", "/api/admin/github/installations", nil).want(t, 200, "")); len(l) != 0 {
+			t.Fatalf("an uninstall was not taken with the switch off: %v", l)
+		}
+	})
+}

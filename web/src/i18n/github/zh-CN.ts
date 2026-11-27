@@ -216,7 +216,9 @@ export const githubZhCN: GitHubMessages = {
     pending: '正在连接……',
     pendingFailed: '未连接',
     pendingHelp: (until: string) =>
-      `正在等 GitHub 确认是谁安装的。通常只要几秒钟，列表会自己更新；如果到 ${until} 还没有结果，请重新安装。`,
+      `正在等 GitHub 确认是谁安装的。通常只要几秒钟，点「刷新」查看；如果到 ${until} 还没有结果，请重新安装。`,
+    refresh: '刷新',
+    refreshFor: (account: string) => `刷新 ${account}`,
     spaces: (n: number) => `${n} 个空间通过它同步`,
     manage: '到 GitHub 管理',
     repos: '仓库',

@@ -1,12 +1,14 @@
 package github_test
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/githubapp/githubapptest"
 	"petalbook.app/server/internal/store"
 	"petalbook.app/server/internal/store/storetest"
@@ -184,7 +186,7 @@ func TestTheWebhookAfterTheCallbackCompletesThePendingClaim(t *testing.T) {
 		}
 		// GitHub says kaz-admin installed it.
 		e := o.f.InstallationEvent("created", other, "kaz-admin")
-		if r, err := o.svc.Webhook(ctx, e.Name, e.Signature, e.Body); err != nil || len(r.Claimed) != 0 {
+		if r, err := o.svc.Webhook(receiving(ctx), e.Name, e.Signature, e.Body); err != nil || len(r.Claimed) != 0 {
 			t.Fatalf("%+v %v", r, err)
 		}
 		if p, _ := o.svc.PendingClaims(ctx, t2); len(p) != 1 || p[0].Error != "not_installer" {
@@ -216,7 +218,7 @@ func TestARedeliveredWebhookIsHarmless(t *testing.T) {
 		}
 		claims := 0
 		for range 3 {
-			r, err := o.svc.Webhook(ctx, ev[0].Name, ev[0].Signature, ev[0].Body)
+			r, err := o.svc.Webhook(receiving(ctx), ev[0].Name, ev[0].Signature, ev[0].Body)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -307,4 +309,93 @@ func countRows(t *testing.T, st *store.Store, query string) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// With GitHub connections switched off, a new installation's event is refused
+// (and so is any claim it would complete), but an uninstall is still taken:
+// recording one is always safe. Without the caller's word, nothing new is taken.
+func TestTheSwitchOffRefusesOnlyNewInstallations(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		o := newOrg(t, st)
+		t1 := store.InstallOwner{TenantID: "T1"}
+		o.peti = o.installOrg("A1", "T1", "petal-team", "kaz-admin")
+		off := connections.WithInstallHooks(ctx, connections.InstallHooks{
+			NewInstalls: func(context.Context) error { return connections.Errorf("github", 403, "feature_off", "off") },
+			Recheck:     func(context.Context, store.InstallOwner, string) error { return nil },
+		})
+		e := o.f.InstallationEvent("created", o.kazuhahub, "tang")
+		if _, err := o.svc.Webhook(off, e.Name, e.Signature, e.Body); code(err) != "feature_off" {
+			t.Fatalf("%v", err)
+		}
+		if _, err := o.svc.Webhook(ctx, e.Name, e.Signature, e.Body); code(err) != "forbidden" {
+			t.Fatalf("no hooks: %v", err)
+		}
+		if installerOf(t, st, o.kazuhahub) != nil {
+			t.Fatal("a new installation was recorded with the switch off")
+		}
+		o.f.Uninstall(o.peti, "kaz-admin")
+		ev := o.f.Events()
+		r, err := o.svc.Webhook(off, ev[0].Name, ev[0].Signature, ev[0].Body)
+		if err != nil || r.Uninstalled == nil || r.Uninstalled.Owner != t1 {
+			t.Fatalf("%+v %v", r, err)
+		}
+		if list, _ := o.svc.Installations(ctx, t1); len(list) != 0 {
+			t.Fatalf("%+v", list)
+		}
+		// So it is without any hooks at all.
+		e = o.f.InstallationEvent("deleted", o.kazuhahub, "tang")
+		if _, err := o.svc.Webhook(ctx, e.Name, e.Signature, e.Body); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// A claim that waited for GitHub's event is completed only if its claimer may
+// still claim for that owner when the event comes (asked of the caller, and
+// refused when the caller lends no way to ask): else it is refused, shown as
+// forbidden until it expires.
+func TestAPendingClaimIsCompletedOnlyWhileTheClaimerMayStill(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		o := newOrg(t, st)
+		t1 := store.InstallOwner{TenantID: "T1"}
+		var asked []string
+		deny := connections.WithInstallHooks(ctx, connections.InstallHooks{
+			NewInstalls: func(context.Context) error { return nil },
+			Recheck: func(_ context.Context, ow store.InstallOwner, user string) error {
+				asked = append(asked, ow.TenantID+"/"+user)
+				return connections.Errorf("github", 403, "forbidden", "no longer")
+			},
+		})
+		q, binding := o.startOrg("A1", "T1", "petal-team", "kaz-admin")
+		inst := installationID(t, q)
+		ev := o.f.Events()
+		if to, _ := o.svc.CompleteAuthorization(allowAll(ctx), binding, "A1", q); !strings.Contains(to, "connection_pending=") {
+			t.Fatalf("%q", to)
+		}
+		r, err := o.svc.Webhook(deny, ev[0].Name, ev[0].Signature, ev[0].Body)
+		if err != nil || len(r.Claimed) != 0 || len(asked) != 1 || asked[0] != "T1/A1" {
+			t.Fatalf("%+v %v %v", r, err, asked)
+		}
+		if _, err := store.GetGitHubInstallation(ctx, st.Q(), inst); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("connected for a claimer who may no longer: %v", err)
+		}
+		if p, _ := o.svc.PendingClaims(ctx, t1); len(p) != 1 || p[0].Error != "forbidden" {
+			t.Fatalf("%+v", p)
+		}
+		// Without a way to ask, refused as well.
+		o.f.AddOrg("second-org", "kaz-admin")
+		q, binding = o.startOrg("A1", "T1", "second-org", "kaz-admin")
+		second := installationID(t, q)
+		ev = o.f.Events()
+		if to, _ := o.svc.CompleteAuthorization(allowAll(ctx), binding, "A1", q); !strings.Contains(to, "connection_pending=") {
+			t.Fatalf("%q", to)
+		}
+		noRecheck := connections.WithInstallHooks(ctx, connections.InstallHooks{NewInstalls: func(context.Context) error { return nil }})
+		if r, err := o.svc.Webhook(noRecheck, ev[0].Name, ev[0].Signature, ev[0].Body); err != nil || len(r.Claimed) != 0 {
+			t.Fatalf("%+v %v", r, err)
+		}
+		if _, err := store.GetGitHubInstallation(ctx, st.Q(), second); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("%v", err)
+		}
+	})
 }

@@ -2249,7 +2249,10 @@ administrator who installed it; any of its administrators manages it).
      GitHub id and the owner, kept 10 minutes like an attempt) and the browser
      goes to `return?connection_pending=<account>`; the event completes it
      when it comes, if its sender is the claimer (else the pending claim
-     shows `not_installer`). The server never polls GitHub for it. Any other
+     shows `not_installer`) and the claimer may still claim for that owner,
+     asked again then: an active account and, for an organisation,
+     `tenant.github.manage` in that tenant (else it shows `forbidden`). The
+     server never polls GitHub for it. Any other
      `setup_action` with no event is `not_installer` at once;
   5. no other person or organisation on this server has it (one statement; of
      two at once one wins): `installation_taken`, "already connected to another
@@ -2266,8 +2269,10 @@ administrator who installed it; any of its administrators manages it).
   "pending": [{"id", "account", "claimedBy", "started", "expires", "error"}]}`,
   from the database (at most 100 items and 20 pending). `pending` are the
   owner's claims waiting for GitHub's event (`error: ""`), or that failed when
-  it came (`not_installer`, `installation_taken`), until they expire: a client
-  shows them as "connecting" and reads the list again. `manageUrl` is the installation's settings
+  it came (`not_installer`, `forbidden`, `installation_taken`), until they
+  expire. A client shows them as "connecting" and polls nothing: it reads the
+  list again a few times right after GitHub sends the browser back (at 1, 2
+  and 4 seconds), when the window gets the focus, and on "Refresh". `manageUrl` is the installation's settings
   on GitHub, where its repositories are chosen and where it is uninstalled.
 - `GET …/installations/{id}/repos[?cursor=]`: one page of the repositories it
   reaches, with its own token. `GET …/installations/{id}/spaces`:
@@ -2300,8 +2305,10 @@ turns it on). It is public (no session, no token) and answers GitHub only:
   App's webhook secret) is compared in constant time **before anything of the
   body is parsed**: a missing or wrong signature is `401 unauthenticated` and
   records nothing. No App or no webhook secret kept: `409
-  provider_not_configured`. The site's own `features.githubConnect` off:
-  `403 feature_off`.
+  provider_not_configured`. While the site's own `features.githubConnect` is
+  off, a new installation's event (`created`, and so the claims it would
+  complete) is refused with `403 feature_off`; an uninstall (`deleted`) is
+  always taken: recording one is always safe.
 - `X-GitHub-Event: installation`, `action: created`: who installed it
   (`installation.id`, `installation.account`, `sender`) is recorded, the same
   again when GitHub redelivers, and the pending claims of that installation
