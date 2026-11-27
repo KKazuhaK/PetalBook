@@ -920,6 +920,7 @@ export type ErrorCode =
   | 'app_rejected'
   | 'client_rejected'
   | 'provider_in_use'
+  | 'provider_host_mismatch'
   | 'app_missing_permission'
   | 'app_not_installed'
   | 'public_url_needed'

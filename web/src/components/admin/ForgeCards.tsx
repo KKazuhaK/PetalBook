@@ -60,7 +60,7 @@ export function ForgeCards() {
         <ForgeCard key={h.id} row={h} />
       ))}
       {adding ? (
-        <AddForge onDone={() => setAdding(false)} />
+        <AddForge callback={list.data.linkCallback} onDone={() => setAdding(false)} />
       ) : (
         <div>
           <Button type="button" variant="outline" onClick={() => setAdding(true)}>
@@ -285,7 +285,9 @@ const KINDS = [
   { type: 'gitea', label: () => tf.admin.typeGitea },
 ] as const
 
-function AddForge({ onDone }: { onDone: () => void }) {
+// callback is the server's address a host's application sends people back to, {id} standing for the id ("" without a
+// public address): the server makes it from the same path as its route, so the hint cannot drift from it.
+function AddForge({ callback, onDone }: { callback: string; onDone: () => void }) {
   const create = useCreateAdminForge()
   const [type, setType] = useState<string>(KINDS[0].type)
   const [id, setId] = useState('')
@@ -389,7 +391,9 @@ function AddForge({ onDone }: { onDone: () => void }) {
       />
       <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground">
         <p>{tf.admin.callbackHelp}</p>
-        <code className="font-mono break-all select-all">{`${window.location.origin}/api/connections/${id || '<id>'}/authorization/callback`}</code>
+        <code className="font-mono break-all select-all" data-testid="forge-add-callback">
+          {callback ? callback.replace('{id}', id || '<id>') : tf.admin.noPublicUrl}
+        </code>
       </div>
       <FormMessage>{error}</FormMessage>
       <div className="flex flex-wrap gap-2">

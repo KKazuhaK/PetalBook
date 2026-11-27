@@ -538,7 +538,7 @@ func TestAnotherAccountNeverTakesAPersonsLastWayIn(t *testing.T) {
 		}
 		other := false
 		var asked []string
-		h.svc.SetSigninGuard(func(_ context.Context, user, link string) (bool, error) {
+		h.svc.SetSigninGuard(func(_ context.Context, _ store.Q, user, link string) (bool, error) {
 			asked = append(asked, user+":"+link)
 			return other, nil
 		})

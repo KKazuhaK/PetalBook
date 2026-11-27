@@ -58,6 +58,7 @@ const (
 	CodeConnectionExpired = connections.CodeConnectionExpired
 	CodeConnectionMissing = connections.CodeConnectionMissing
 	CodeInstallationGone  = connections.CodeInstallationGone
+	CodeHostMismatch      = connections.CodeHostMismatch
 )
 
 // Via values.
@@ -122,9 +123,10 @@ type Service struct {
 }
 
 // SigninGuard says whether a person may give up the sign-in of one of their
-// links (linkID): that they have another way to sign in. An error is a refusal
-// to say yes.
-type SigninGuard func(ctx context.Context, userID, linkID string) (bool, error)
+// links (linkID): that they have another way to sign in. It is asked in the
+// transaction that moves the link (q), so its answer holds for the write. An
+// error is a refusal to say yes.
+type SigninGuard func(ctx context.Context, q store.Q, userID, linkID string) (bool, error)
 
 // SetSigninGuard sets how a link that signs a person in is protected: connecting
 // repositories with another GitHub account moves the link to that account, and
@@ -343,7 +345,7 @@ func (s *Service) CallbackURL() string {
 	if s.opt.PublicURL == "" {
 		return ""
 	}
-	return s.opt.PublicURL + "/api/account/links/github/callback"
+	return s.opt.PublicURL + connections.CallbackPath(ProviderID)
 }
 
 // SigninCallbackURL is where GitHub sends people back to when they sign in with

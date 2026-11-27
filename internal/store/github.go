@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -353,6 +354,25 @@ func PutGitHubApp(ctx context.Context, q Q, a GitHubApp, now time.Time) error {
 		if err != nil {
 			return err
 		}
+		if !missing {
+			// The links of the row are keyed by GitHub's numeric user ids, which
+			// are only unique on one host: a row people signed in with on one
+			// GitHub never takes another's App, or an account there with the
+			// same id would sign in as them.
+			var have string
+			if raw, ok := m[githubBaseURLKey]; ok {
+				_ = json.Unmarshal(raw, &have)
+			}
+			if !SameGitHubHost(have, a.BaseURL) {
+				var n int
+				if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM linked_accounts WHERE provider_id = ?`, ProviderGitHub).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return &GitHubHostError{Have: githubHostOr(have), Want: a.BaseURL, Links: n}
+				}
+			}
+		}
 		m[githubAppKey] = json.RawMessage(a.App)
 		m[githubClientIDKey], _ = json.Marshal(a.ClientID)
 		m[githubBaseURLKey], _ = json.Marshal(a.BaseURL)
@@ -370,6 +390,39 @@ func PutGitHubApp(ctx context.Context, q Q, a GitHubApp, now time.Time) error {
 			string(b), ms(now), ProviderGitHub)
 		return err
 	})
+}
+
+// GitHubHostError refuses to set an App up on a GitHub row that people linked
+// on another GitHub host (Links of them): their links name accounts of that
+// host, which the App's host would read as its own.
+type GitHubHostError struct {
+	Have, Want string
+	Links      int
+}
+
+func (e *GitHubHostError) Error() string {
+	return "the GitHub provider is on " + e.Have + ", not " + e.Want
+}
+
+// githubHostOr is a stored base URL, github.com when there is none.
+func githubHostOr(base string) string {
+	if strings.TrimSpace(base) == "" {
+		return "https://github.com"
+	}
+	return base
+}
+
+// SameGitHubHost says whether two base URLs are the same GitHub (scheme and
+// host, case ignored; an empty one is github.com).
+func SameGitHubHost(a, b string) bool {
+	norm := func(s string) string {
+		u, err := url.Parse(githubHostOr(s))
+		if err != nil {
+			return s
+		}
+		return strings.ToLower(u.Scheme + "://" + u.Host)
+	}
+	return norm(a) == norm(b)
 }
 
 // CompareAndSetGitHubApp replaces the App's record by next only if it still is
@@ -411,8 +464,14 @@ func CompareAndSetGitHubApp(ctx context.Context, q Q, old, next string, now time
 
 // DeleteGitHubProvider removes the GitHub row: its links (what people signed in
 // with and what they connected), installations, shares and reminders go with it.
+// A ProviderInUseError while a space syncs through it.
 func DeleteGitHubProvider(ctx context.Context, q Q) error {
-	return deleteProviderRows(ctx, q, `id = ?`, ProviderGitHub)
+	return atomically(ctx, q, func(q Q) error {
+		if err := lockUnusedProvider(ctx, q, ProviderGitHub); err != nil {
+			return err
+		}
+		return deleteProviderRows(ctx, q, `id = ?`, ProviderGitHub)
+	})
 }
 
 // ListProviderRepoLinks returns every repository link at a provider (to revoke

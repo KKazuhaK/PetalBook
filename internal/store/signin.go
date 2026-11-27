@@ -168,6 +168,9 @@ func SetProviderStatus(ctx context.Context, q Q, id string, ok bool, at time.Tim
 // people linked to it (and what they connected there: tokens, reminders).
 func DeleteProvider(ctx context.Context, q Q, id string) error {
 	return atomically(ctx, q, func(q Q) error {
+		if err := lockUnusedProvider(ctx, q, id); err != nil {
+			return err
+		}
 		var one int
 		if err := q.QueryRow(ctx, `SELECT 1 FROM providers WHERE id = ? AND signin = 1`, id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound

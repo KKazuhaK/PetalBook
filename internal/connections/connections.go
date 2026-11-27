@@ -44,13 +44,16 @@ const (
 	CodeAppRejected      = "app_rejected"
 	CodeClientRejected   = "client_rejected"
 	CodeInUse            = "provider_in_use"
-	CodeProviderError    = "provider_error"
-	CodeInvalid          = "invalid"
-	CodeForbidden        = "forbidden"
-	CodeNotFound         = "not_found"
-	CodeRateLimited      = "rate_limited"
-	CodeUnavailable      = "unavailable"
-	CodeInternal         = "internal"
+	// CodeHostMismatch: the GitHub App is on another host than the GitHub
+	// sign-in provider people linked their accounts on.
+	CodeHostMismatch  = "provider_host_mismatch"
+	CodeProviderError = "provider_error"
+	CodeInvalid       = "invalid"
+	CodeForbidden     = "forbidden"
+	CodeNotFound      = "not_found"
+	CodeRateLimited   = "rate_limited"
+	CodeUnavailable   = "unavailable"
+	CodeInternal      = "internal"
 
 	// The codes a space's remote shows (errorCode) when its credential stops working.
 	CodeConnectionExpired = "connection_expired"
@@ -66,6 +69,18 @@ const (
 
 // The provider that is a plain Git address.
 const GitID = "git"
+
+// CallbackPrefix and CallbackSuffix make the path a platform sends a person
+// back to after they authorised a link (CallbackPath): the route, the address
+// each provider gives the platform and what the administration shows all come
+// from them.
+const (
+	CallbackPrefix = "/api/account/links/"
+	CallbackSuffix = "/callback"
+)
+
+// CallbackPath is the path a platform sends a person back to for provider id.
+func CallbackPath(id string) string { return CallbackPrefix + id + CallbackSuffix }
 
 // RepoRef names a repository in an error answer.
 type RepoRef struct {
@@ -249,6 +264,14 @@ type Cred struct {
 	InstallationID int64 // via "app"
 	UserID         string
 	RepoID         int64
+}
+
+// Revoker is a provider that can be told a link is gone with its row (a
+// sign-in was unlinked, its tokens with it): it forgets the link's cached
+// tokens and asks the platform to revoke the grant, best effort, after the row
+// is gone.
+type Revoker interface {
+	RevokeRemoved(ctx context.Context, l *store.RepoLink)
 }
 
 // Provider is the platform's side of a connection. Every method but

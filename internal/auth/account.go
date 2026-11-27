@@ -958,9 +958,10 @@ func (s *Service) SetTemporaryPassword(ctx context.Context, actor store.User, ac
 // passkey, or a link of another provider that works now. It is what the
 // last_method rule asks, for the callers that change a link without deleting it
 // (connecting repositories with another account moves the link, and its sign-in
-// with it). A link that does not sign the person in is removable.
-func (s *Service) SigninLinkRemovable(ctx context.Context, userID, linkID string) (bool, error) {
-	ids, err := store.ListLinks(ctx, s.st.Q(), userID)
+// with it). A link that does not sign the person in is removable. q is the
+// transaction of the change, so that the answer holds for it.
+func (s *Service) SigninLinkRemovable(ctx context.Context, q store.Q, userID, linkID string) (bool, error) {
+	ids, err := store.ListLinks(ctx, q, userID)
 	if err != nil {
 		return false, err
 	}
@@ -971,7 +972,7 @@ func (s *Service) SigninLinkRemovable(ctx context.Context, userID, linkID string
 	if !found {
 		return true, nil
 	}
-	ways, err := s.waysToSignIn(ctx, s.st.Q(), userID, linkID, ids)
+	ways, err := s.waysToSignIn(ctx, q, userID, linkID, ids)
 	return ways > 0, err
 }
 

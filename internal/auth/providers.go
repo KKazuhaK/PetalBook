@@ -586,6 +586,11 @@ type built struct {
 	secretSet bool
 }
 
+// reservedSlugs are the slugs of the server's own providers, with the kind
+// that alone may have each ("" for none: a plain Git address is no provider to
+// sign in with).
+var reservedSlugs = map[string]string{store.ProviderGitHub: KindGitHub, store.ProviderGit: ""}
+
 var providerMu sync.Mutex // serialises changes: the checks and the write are one step
 
 // applyInput checks input against the current provider (nil when creating) and
@@ -618,6 +623,12 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		}
 		if in.Kind == nil || !slices.Contains([]string{KindOIDC, KindSAML, KindGitHub}, *in.Kind) {
 			return nil, providerInvalid("Kind is oidc, saml or github.")
+		}
+		// The ids of the server's own providers belong to their kind: a site
+		// provider's id is its slug, and links, installations and remotes
+		// name a provider by its id.
+		if k, ok := reservedSlugs[*in.Slug]; ok && k != *in.Kind {
+			return nil, coded(409, "slug_reserved", "The slug %s is reserved for the server's own provider.", *in.Slug)
 		}
 		b.row.Slug, b.row.Kind = *in.Slug, *in.Kind
 		if in.Name == nil {

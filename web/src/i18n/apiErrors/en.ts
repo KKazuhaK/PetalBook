@@ -149,6 +149,8 @@ export const apiErrorsEn: ApiErrorTexts = {
   provider_in_use: (p) =>
     `Accounts still sign in or connect through this platform${p.accounts ? ` (${p.accounts} accounts)` : ''}. Deal with them first.`,
   provider_limit: 'The limit on platforms of this kind is reached.',
+  provider_host_mismatch:
+    'The GitHub sign-in provider is on another GitHub host, and people have linked accounts there. Delete it, or change its base URL to the App’s host, first.',
   name_taken: 'That name is already taken. Choose another.',
   push_failed: 'The content could not be pushed to the repository, so the space was not created.',
   repo_not_in_installation: 'The repository is not among those the installed app reaches. Add it on the platform.',

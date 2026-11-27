@@ -278,27 +278,32 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 		if n > 0 {
 			return fail(cbDifferent)
 		}
-		if prev.SignIn {
-			s.mu.Lock()
-			guard := s.guard
-			s.mu.Unlock()
-			if guard == nil {
-				return fail(cbError)
-			}
-			ok, err := guard(ctx, userID, prev.ID)
-			if err != nil {
-				s.log.Error("could not check the person's other ways to sign in", "error", err)
-				return fail(cbError)
-			}
-			if !ok {
-				return fail(cbLastMethod)
-			}
-		}
 	}
-	switch err := s.tok.Put(ctx, connections.Account{ProviderID: ProviderID, UserID: userID, Subject: subject, Login: acct.Login},
+	// Whether a sign-in may move with the link to the other account is asked in
+	// the write's transaction, the link locked: another request that removes
+	// the person's other ways in meanwhile cannot leave them without one.
+	s.mu.Lock()
+	guard := s.guard
+	s.mu.Unlock()
+	move := func(ctx context.Context, q store.Q, prev *store.Link) error {
+		if guard == nil {
+			return errNoGuard
+		}
+		ok, err := guard(ctx, q, userID, prev.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errLastMethod
+		}
+		return nil
+	}
+	switch err := s.tok.Put(ctx, connections.Account{ProviderID: ProviderID, UserID: userID, Subject: subject, Login: acct.Login, SigninMove: move},
 		connections.Pair{Access: tok.Access, Refresh: tok.Refresh, AccessExpires: tok.AccessExpires, RefreshExpires: tok.RefreshExpires}); {
 	case errors.Is(err, store.ErrExists):
 		return fail(cbInUse)
+	case errors.Is(err, errLastMethod):
+		return fail(cbLastMethod)
 	case err != nil:
 		s.log.Error("could not store a GitHub authorisation", "error", err)
 		return fail(cbError)
@@ -307,6 +312,13 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 	s.changed(userID)
 	return a.ret, true
 }
+
+// errLastMethod refuses to move a link that is a person's last way to sign in;
+// errNoGuard, to move a sign-in while nothing can say whether that is allowed.
+var (
+	errLastMethod = errors.New("the link is the person's last way to sign in")
+	errNoGuard    = errors.New("no guard of sign-ins is set")
+)
 
 // reason is an error as a log line may say it: never a token, since none of
 // this package's errors carries one.
@@ -364,10 +376,22 @@ func (s *Service) Disconnect(ctx context.Context, userID string) error {
 	if err != nil {
 		return err
 	}
+	// The tokens go first; GitHub is asked to revoke the grant once they are.
+	if err := s.tok.Remove(ctx, ProviderID, userID); err != nil {
+		return err
+	}
 	if st, err := s.state(ctx); err == nil && st != nil {
 		s.revoke(ctx, st, a)
 	}
-	return s.tok.Remove(ctx, ProviderID, userID)
+	return nil
+}
+
+// RevokeRemoved is told that a link went with its row (connections.Revoker).
+func (s *Service) RevokeRemoved(ctx context.Context, l *store.RepoLink) {
+	s.tok.Forget(ProviderID, l.UserID)
+	if st, err := s.state(ctx); err == nil && st != nil {
+		s.revoke(ctx, st, l)
+	}
 }
 
 // revoke asks GitHub to revoke a grant, quickly and without caring how it ends.

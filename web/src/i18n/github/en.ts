@@ -286,6 +286,8 @@ export const githubEn = {
         app_rejected: 'GitHub does not accept this key for this App ID.',
         client_rejected: 'GitHub does not accept this client id and secret for the App.',
         provider_in_use: 'Spaces still sync through the App, or users are connected. Switch or disconnect those first.',
+        provider_host_mismatch:
+          'Signing in with GitHub is set up for another GitHub host, and people have linked accounts there. Delete that sign-in provider, or change its base URL to this App’s host, first.',
         unavailable: 'GitHub could not be reached. Nothing was saved.',
         provider_not_configured: 'GitHub no longer accepts the saved key. Save the App again.',
         public_url_needed: 'The server has no public address (--public-url), so GitHub cannot send you back.',

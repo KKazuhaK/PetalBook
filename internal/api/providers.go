@@ -161,9 +161,17 @@ func (s *server) adminListProviders(c *call) {
 				Repos: r.Configured, repoRowResp: *r})
 		}
 	}
+	// Where a host's application sends people back to, for the form that adds
+	// a host (its id is not known yet): {id} stands for it.
+	callback := ""
+	if s.canRepos(c) && s.opt.PublicURL != "" {
+		callback = s.opt.PublicURL + connections.CallbackPath("{id}")
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Providers []any `json:"providers"`
-	}{items})
+		// LinkCallback is "" without a public address, or for who does not manage connections.
+		LinkCallback string `json:"linkCallback"`
+	}{items, callback})
 }
 
 // repoBody is the repository side of a provider as its administrator sees it
@@ -410,16 +418,40 @@ func (s *server) adminDeleteProvider(c *call) {
 		s.forbidden(c)
 		return
 	}
-	var signin bool
-	if s.canSignin(c) {
-		_, err := s.auth.Provider(ctx, id)
-		signin = err == nil
+	// Whether the row signs people in is read from the database whoever asks:
+	// removing such a row ends sign-ins, which only who manages sign-in may do.
+	signin := false
+	if _, err := store.GetProvider(ctx, s.opt.Store.Q(), id); err == nil {
+		signin = true
+	} else if !errors.Is(err, store.ErrNotFound) {
+		s.fail(c.w, err)
+		return
+	}
+	if signin && !s.canSignin(c) {
+		if !hasRepo {
+			s.noSuchProvider(c, id)
+			return
+		}
+		writeError(c.w, http.StatusForbidden, "forbidden", "People sign in with "+p.Descriptor().Name+": removing it takes the permission to manage sign-in (site.signin.manage).")
+		return
 	}
 	if hasRepo && p.Descriptor().Type != connections.GitID {
 		if r := s.spaces.Storage().Remotes.Require; r != nil && *r == id {
 			s.connError(c, *r, http.StatusConflict, connections.CodeInUse, "The site requires a remote on "+p.Descriptor().Name+": change remotes.require in the storage settings before removing it.")
 			return
 		}
+	}
+	// The count of spaces made before is a quick answer; the deletion counts
+	// them again in its own transaction, with the row locked.
+	inUse := func(err error) bool {
+		var iu *store.ProviderInUseError
+		if !errors.As(err, &iu) {
+			return false
+		}
+		e := connections.Errorf(id, http.StatusConflict, connections.CodeInUse, "%d space(s) sync through it: switch or disconnect those first.", iu.Spaces)
+		e.Counts = map[string]int{"spaces": iu.Spaces}
+		s.failConnection(c.w, e)
+		return true
 	}
 	switch {
 	case hasRepo && p.Descriptor().Type == "github":
@@ -440,12 +472,16 @@ func (s *server) adminDeleteProvider(c *call) {
 			// people who can sign in only with it, ends their sessions and drops
 			// the links with the row.
 			if err := s.auth.DeleteProvider(ctx, c.user().ID, s.auth.ClientAddr(c.r), id, force); err != nil {
-				s.fail(c.w, err)
+				if !inUse(err) {
+					s.fail(c.w, err)
+				}
 				return
 			}
 		} else if finish != nil {
 			if err := store.DeleteGitHubProvider(ctx, s.opt.Store.Q()); err != nil {
-				s.fail(c.w, err)
+				if !inUse(err) {
+					s.fail(c.w, err)
+				}
 				return
 			}
 		}
@@ -455,7 +491,9 @@ func (s *server) adminDeleteProvider(c *call) {
 		}
 	case signin:
 		if err := s.auth.DeleteProvider(ctx, c.user().ID, s.auth.ClientAddr(c.r), id, force); err != nil {
-			s.fail(c.w, err)
+			if !inUse(err) {
+				s.fail(c.w, err)
+			}
 			return
 		}
 	case hasRepo:
@@ -768,32 +806,41 @@ func (s *server) unlinkAccount(c *call) {
 		return
 	}
 	ctx := c.r.Context()
-	if l.SignIn {
-		removable, err := s.auth.SigninLinkRemovable(ctx, l.UserID, l.ID)
-		if err != nil {
-			s.fail(c.w, err)
-			return
-		}
-		if !removable {
-			// The one refusal, in its one wording.
-			if err := s.auth.UnlinkAccount(ctx, l.UserID, l.ID); err != nil {
+	if !l.SignIn {
+		if l.Repos {
+			if err := s.disconnectRepos(c, l); err != nil {
 				s.fail(c.w, err)
 				return
 			}
-			l.SignIn = false // another request removed their other ways meanwhile and this link went: nothing more to unlink
 		}
+		c.w.WriteHeader(http.StatusNoContent)
+		return
 	}
+	// A sign-in: whether it may go and its removal are one transaction, and its
+	// tokens go with the row. What the platform is asked to revoke is read
+	// first, and asked only once the row is gone: a refused removal keeps the
+	// tokens and the grant.
+	var held *store.RepoLink
 	if l.Repos {
-		if err := s.disconnectRepos(c, l); err != nil {
+		a, err := store.GetRepoLink(ctx, s.opt.Store.Q(), l.ProviderID, l.UserID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			s.fail(c.w, err)
 			return
 		}
+		held = a
 	}
-	if l.SignIn {
-		if err := s.auth.UnlinkAccount(ctx, l.UserID, l.ID); err != nil {
-			s.fail(c.w, err)
-			return
+	if err := s.auth.UnlinkAccount(ctx, l.UserID, l.ID); err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	if held != nil {
+		if p, ok := s.registry().Get(l.ProviderID); ok {
+			if r, ok := p.(connections.Revoker); ok {
+				r.RevokeRemoved(ctx, held)
+			}
 		}
+		s.audit(c, auth.AuditEvent{Kind: "account_disconnected", Actor: c.user().ID, User: c.user().ID,
+			Detail: map[string]any{"provider": l.ProviderID, "login": l.Login}})
 	}
 	c.w.WriteHeader(http.StatusNoContent)
 }

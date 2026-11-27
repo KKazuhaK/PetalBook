@@ -134,6 +134,14 @@ func PutRemote(ctx context.Context, q Q, r Remote) error {
 				r.Provider = ProviderGitHub
 			}
 		}
+		if r.URL != "" && r.Provider != ProviderGit {
+			// The provider's row is locked as its deletion locks it
+			// (lockUnusedProvider): a deletion that counted no space waits
+			// for this one, or this one for it.
+			if _, err := q.Exec(ctx, `UPDATE providers SET id = id WHERE id = ?`, r.Provider); err != nil {
+				return err
+			}
+		}
 		var sync int64
 		if !r.LastSync.IsZero() {
 			sync = ms(r.LastSync)

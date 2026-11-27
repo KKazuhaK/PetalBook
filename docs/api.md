@@ -960,8 +960,9 @@ person has linked at that provider is `identity_in_use`.
 `204`. Refused with `409 last_method` when it would leave the user with no way
 to sign in (no password, no other linked account, no passkey): nothing is
 changed then, the repository tokens included. `404 not_found` for one the person
-does not have. The repository tokens it holds are revoked. Linking again
-afterwards works. `DELETE /api/account/links/{id}/repos` drops only the tokens.
+does not have. Whether it may go and its removal are one step, and the
+repository tokens it holds go with it; the platform is asked to revoke the
+grant afterwards (best effort). Linking again afterwards works. `DELETE /api/account/links/{id}/repos` drops only the tokens.
 
 ### Account passkeys
 
@@ -2098,6 +2099,7 @@ Every error of a connection has `provider` (the id) next to `error` and
 | `public_url_needed` | the flow needs `--public-url` |
 | `owner_not_allowed` | the owner is not one of the caller's |
 | `provider_in_use` | the provider cannot be changed or removed while spaces or people use it |
+| `provider_host_mismatch` | the GitHub App is on another host than the GitHub sign-in provider people linked their accounts on |
 | `account_in_use` | the platform account is connected to another person (any tenant) |
 
 ### Storage
@@ -11457,7 +11459,8 @@ the provider's groups claim maps to synced groups; see "Groups from sign-in".
 
 A provider as above, with `slug`, `kind`, `name` and the kind's required
 fields; for `oidc` and `github` the secret as `clientSecret`. `201` with the
-provider. The server fetches the discovery document or the metadata before it
+provider. The ids of the server's own providers are reserved: `github` is for
+`kind: "github"` only, and `git` for none (`409 slug_reserved`). The server fetches the discovery document or the metadata before it
 answers; a provider that cannot be reached is still stored, `enabled: false`
 unless asked otherwise, with `status.ok: false`.
 
@@ -11473,7 +11476,12 @@ with the same issuer brings none of them back). Without `force=1`, refused with
 `409 provider_in_use` (and `{"accounts": n}`) when some account has no other way
 to sign in: no password, no passkey, no linked account at another provider.
 The sessions that started through the provider (`sso:<slug>`) end with it, and
-answer `401 signed_out_elsewhere` afterwards.
+answer `401 signed_out_elsewhere` afterwards. `409 provider_in_use` (with
+`{"spaces": n}`) while a space syncs through it, counted again in the deleting
+transaction. A provider people sign in with (the GitHub row once it is turned
+on for sign-in too) is removed only by who manages sign-in
+(`site.signin.manage`): an administrator who manages only connections gets
+`403 forbidden`, and nothing changes.
 
 #### `POST /api/admin/providers/{id}/check`
 
@@ -11673,7 +11681,11 @@ The same for OAuth grants (items as in `GET /api/account/grants`, with
 Site administrators. `{"providers": [{"id": "github", "type": "github", "name": "GitHub", "host": "github.com", "configured": true, "partialSync": "yes", "connections": 3, "spaces": 4}, {"id": "git", …}]}`:
 every provider the server has, with its configuration state and counts (people
 connected, spaces syncing through it). A tenant administrator gets
-`403 forbidden`.
+`403 forbidden`. `linkCallback` is where a host's application sends people back
+to, with `{id}` standing for the provider's id
+(`https://notes.example.com/api/account/links/{id}/callback`, `""` without
+`--public-url` or for who does not manage connections): the form that adds a
+host shows it before the host has an id.
 
 #### The GitHub App
 
@@ -11768,7 +11780,18 @@ A new key or secret for the same App replaces the old one and drops the
 cached tokens. Another App (`appId` different from the saved one) is refused
 with `409 provider_in_use` while any space has a `github` credential or any
 user is connected; another or no `clientId` only while any user is connected.
+A GitHub sign-in provider (the `github` row) set up for another GitHub host is
+not taken over while accounts are linked to it: their links name accounts of
+that host by GitHub's numeric ids, which an account on the App's host could
+share. `409 provider_host_mismatch` then (`message` names both hosts): delete
+that sign-in provider, or change its base URL to the App's host, first.
 `200` as `GET`.
+
+An App made before the connections moved to `/api/account/links` (its
+callback URL ends in `/api/connections/github/authorization/callback`) must have
+its callback URLs updated on GitHub: the App's `callbackUrl`
+(`/api/account/links/github/callback`) and, for signing in with it,
+`signinCallbackUrl` (`/api/auth/github/github/callback`).
 
 #### `POST /api/admin/providers/github/check`
 

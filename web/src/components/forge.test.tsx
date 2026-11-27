@@ -90,6 +90,22 @@ describe('the hosts in the administration', () => {
     expect(text()).not.toContain(tf.admin.none)
   })
 
+  it('shows the callback address the server gives for the id being typed', async () => {
+    m = await mount(adminRoutes, {
+      entries: ['/admin/storage/connections'],
+      signIn: true,
+      fixtures: { mode: 'accounts' },
+    })
+    await settle(() => button(tf.admin.add) !== undefined, 'the add button')
+    await click(button(tf.admin.add))
+    const hint = () => document.querySelector('[data-testid="forge-add-callback"]')?.textContent
+    await settle(() => hint() !== undefined, 'the hint')
+    expect(hint()).toBe('https://notes.example.test/api/account/links/<id>/callback')
+    await type(field(tf.admin.id), 'gitlab-acme')
+    // The same address the provider is given once it exists (its view's callbackUrl).
+    expect(hint()).toBe('https://notes.example.test/api/account/links/gitlab-acme/callback')
+  })
+
   it('offers the two kinds of host and sends the one chosen', async () => {
     m = await mount(adminRoutes, {
       entries: ['/admin/storage/connections'],

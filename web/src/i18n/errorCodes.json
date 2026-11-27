@@ -85,6 +85,7 @@
   "prefs_full",
   "primary_email",
   "provider_error",
+  "provider_host_mismatch",
   "provider_in_use",
   "provider_limit",
   "provider_not_configured",

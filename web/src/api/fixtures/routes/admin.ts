@@ -1186,7 +1186,10 @@ export const adminRoutes: Route[] = [
   [
     'GET',
     '/api/admin/providers',
-    (c) => ({ providers: [...A(c).providers.map((p) => ({ ...p, signin: true, repos: false })), ...repoItems(c)] }),
+    (c) => ({
+      providers: [...A(c).providers.map((p) => ({ ...p, signin: true, repos: false })), ...repoItems(c)],
+      linkCallback: 'https://notes.example.test/api/account/links/{id}/callback',
+    }),
   ],
   [
     'POST',

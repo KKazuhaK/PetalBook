@@ -421,24 +421,28 @@ export const adminApi = {
   // --- the hosts of GitLab and Gitea an administrator sets up ---
   // The one list of providers, as its repository side: GitLab and Gitea hosts, and GitHub.
   adminConnectionProviders: (signal?: AbortSignal) =>
-    request<{ providers: AdminProviderItem[] }>('/admin/providers', { signal }).then(({ providers }) => ({
-      providers: providers.flatMap((p): AdminProviderRow[] => {
-        const r = p.repo ?? (p.type === undefined ? undefined : p)
-        if (r === undefined) return []
-        return [
-          {
-            id: p.id,
-            type: p.type ?? p.kind,
-            name: p.name,
-            host: r.host ?? '',
-            configured: r.configured ?? false,
-            partialSync: r.partialSync ?? 'unknown',
-            connections: r.connections ?? 0,
-            spaces: r.spaces ?? 0,
-          },
-        ]
+    request<{ providers: AdminProviderItem[]; linkCallback?: string }>('/admin/providers', { signal }).then(
+      ({ providers, linkCallback }) => ({
+        // Where a host's application sends people back to, from the server: {id} stands for the provider's id.
+        linkCallback: linkCallback ?? '',
+        providers: providers.flatMap((p): AdminProviderRow[] => {
+          const r = p.repo ?? (p.type === undefined ? undefined : p)
+          if (r === undefined) return []
+          return [
+            {
+              id: p.id,
+              type: p.type ?? p.kind,
+              name: p.name,
+              host: r.host ?? '',
+              configured: r.configured ?? false,
+              partialSync: r.partialSync ?? 'unknown',
+              connections: r.connections ?? 0,
+              spaces: r.spaces ?? 0,
+            },
+          ]
+        }),
       }),
-    })),
+    ),
   createAdminForge: (input: CreateAdminForgeInput) =>
     request<AdminForge>('/admin/providers', { method: 'POST', body: input }),
   adminForge: (id: string, signal?: AbortSignal) => request<AdminForge>(`/admin/providers/${enc(id)}`, { signal }),

@@ -20,8 +20,8 @@ import (
 const (
 	// connCallbackPrefix and connCallbackSuffix make the path GitHub and the
 	// like send the browser back to: /api/account/links/{provider}/callback.
-	connCallbackPrefix = "/api/account/links/"
-	connCallbackSuffix = "/callback"
+	connCallbackPrefix = connections.CallbackPrefix
+	connCallbackSuffix = connections.CallbackSuffix
 	// connManifestPath is where GitHub sends the administrator's browser after
 	// the App is made.
 	connManifestPath = "/api/providers/github/manifest/callback"

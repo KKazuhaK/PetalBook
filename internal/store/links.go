@@ -102,8 +102,14 @@ func ListLinks(ctx context.Context, q Q, userID string) ([]Link, error) {
 // DeleteLink removes one of the person's links; ErrNotFound when it is not
 // theirs or does not exist.
 func DeleteLink(ctx context.Context, q Q, id, userID string) error {
-	res, err := q.Exec(ctx, `DELETE FROM linked_accounts WHERE id = ? AND user_id = ? AND signin = 1`, id, userID)
-	return oneRow(res, err)
+	return atomically(ctx, q, func(q Q) error {
+		res, err := q.Exec(ctx, `DELETE FROM linked_accounts WHERE id = ? AND user_id = ? AND signin = 1`, id, userID)
+		if err := oneRow(res, err); err != nil {
+			return err
+		}
+		// Its tokens, if it held any, went with it.
+		return settleConnected(ctx, q, userID)
+	})
 }
 
 // TouchLink records a sign-in through a link: the time, and the address the

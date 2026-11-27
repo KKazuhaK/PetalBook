@@ -263,6 +263,12 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		}
 		return nil
 	})
+	var he *store.GitHubHostError
+	if errors.As(err, &he) {
+		return nil, errf(http.StatusConflict, CodeHostMismatch,
+			"The GitHub sign-in provider is set up for %s and %d account(s) are linked to it; this App is on %s. Delete that provider, or change its base URL to %s, before setting the App up here.",
+			he.Have, he.Links, he.Want, he.Want)
+	}
 	if err != nil {
 		return nil, err
 	}
