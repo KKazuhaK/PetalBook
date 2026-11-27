@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"testing"
+	"time"
 
 	"petalbook.app/server/internal/store"
 )
@@ -272,6 +273,53 @@ func TestDeletingTheGitHubProviderAsksAboutThePeopleWhoSignInWithIt(t *testing.T
 		a.st.Q().QueryRow(context.Background(), `SELECT COUNT(*) FROM secrets WHERE name LIKE 'github%'`).Scan(&n)
 		if n != 0 {
 			t.Fatalf("%d secrets", n)
+		}
+	})
+}
+
+// One loop renews every kind of link: a GitHub link and a Gitea link that come due
+// in the same pass are both renewed by it, each handed over once.
+func TestOneLoopRenewsAGitHubAndAGiteaLinkDueInTheSamePass(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{github: true, forges: true}, func(t *testing.T, a *acc) {
+		admin := a.setup("root", pw)
+		saveGitHub(t, a, admin, nil)
+		admin.do("POST", "/api/admin/providers", fgBody("gitea", a.gt, nil)).want(t, 201, "")
+		tang := a.addUser("tang", pw, "member")
+		a.fake.AddUser("tang-gh")
+		a.gt.AddUser("tang-h")
+		ghLink(t, a, tang, "repos", "tang-gh")
+		// GitHub's refresh token lasts about half a year and Gitea's a month: the Gitea
+		// account is connected late, so that both are due at once.
+		a.clock.Advance(140 * 24 * time.Hour)
+		tang = a.newClient("") // the session ended meanwhile
+		tang.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		connectForge(t, a, tang, "gitea", a.gt, "tang-h")
+		a.clock.Advance(28 * 24 * time.Hour)
+		tang = a.newClient("")
+		tang.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		ghOld, gtOld := a.fake.RefreshTokenOf("tang-gh"), a.gt.RefreshTokenOf("tang-h")
+		ghCalls, gtCalls := a.fake.Count("POST", "/login/oauth/access_token"), a.gt.Count("POST", "/")
+		if n := a.linkTokens.RenewDue(context.Background()); n != 2 {
+			t.Fatalf("%d renewed", n)
+		}
+		if a.fake.RefreshTokenOf("tang-gh") == ghOld || a.gt.RefreshTokenOf("tang-h") == gtOld {
+			t.Fatal("a refresh token was not replaced")
+		}
+		if n := a.fake.Count("POST", "/login/oauth/access_token") - ghCalls; n != 1 {
+			t.Fatalf("GitHub was asked %d times", n)
+		}
+		if n := a.gt.Count("POST", "/") - gtCalls; n != 1 {
+			t.Fatalf("Gitea was asked %d times", n)
+		}
+		// Nobody is due again at once.
+		if n := a.linkTokens.RenewDue(context.Background()); n != 0 {
+			t.Fatalf("%d renewed twice", n)
+		}
+		for _, id := range []string{"github", "gitea"} {
+			if l := linkAt(t, tang, id); l == nil || l["state"] != "ok" || l["repos"] != true {
+				t.Fatalf("%s: %v", id, l)
+			}
 		}
 	})
 }

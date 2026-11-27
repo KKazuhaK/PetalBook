@@ -74,6 +74,8 @@ type acc struct {
 	// With accOpts.github: the fake GitHub and the server's use of it.
 	fake  *githubapptest.Fake
 	ghsvc *github.Service
+	// linkTokens is the one token service of every provider with tokens (as the server has).
+	linkTokens *connections.Tokens
 	// With accOpts.forges: a fake GitLab and a fake Gitea, and the manager of the
 	// providers an administrator sets up.
 	gl, gt *forgetest.Fake
@@ -143,11 +145,14 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	var fake *githubapptest.Fake
 	var ghsvc *github.Service
 	var reg *connections.Registry
+	var linkTokens *connections.Tokens
 	var gl, gt *forgetest.Fake
 	var fm *forge.Manager
 	var box *secret.Box
 	if o.github || o.forges {
 		box = secret.NewBoxWithKey([32]byte{4, 5, 6})
+		reg = connections.NewRegistry(connections.NewGit())
+		linkTokens = connections.NewTokens(connections.TokenOptions{Store: st, Secrets: box, Registry: reg, Now: clk.Now})
 	}
 	if o.github {
 		fake = githubapptest.New(t, clk)
@@ -155,17 +160,15 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ghsvc, err = github.New(github.Options{Store: st, Secrets: box, Client: gc, PublicURL: o.public, Now: clk.Now, SettingsTTL: time.Nanosecond}); err != nil {
+		if ghsvc, err = github.New(github.Options{Store: st, Secrets: box, Client: gc, PublicURL: o.public, Now: clk.Now, SettingsTTL: time.Nanosecond, Tokens: linkTokens}); err != nil {
 			t.Fatal(err)
 		}
-		reg = connections.NewRegistry(ghsvc, connections.NewGit())
-	} else if o.forges {
-		reg = connections.NewRegistry(connections.NewGit())
+		reg.Add(ghsvc)
 	}
 	if o.forges {
 		gl, gt = forgetest.NewGitLab(t, clk), forgetest.NewGitea(t, clk)
 		var err error
-		if fm, err = forge.NewManager(ctx, forge.Options{Store: st, Secrets: box, Registry: reg, PublicURL: o.public, Now: clk.Now, Unsafe: true}); err != nil {
+		if fm, err = forge.NewManager(ctx, forge.Options{Store: st, Secrets: box, Registry: reg, PublicURL: o.public, Now: clk.Now, Unsafe: true, Tokens: linkTokens}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -239,7 +242,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	// Registered after the manager's: cleanups run last first, so the handler's
 	// background work has ended before the spaces under it are closed.
 	t.Cleanup(h.Close)
-	return &acc{apiOpts: opts, t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc, gl: gl, gt: gt, fm: fm}
+	return &acc{apiOpts: opts, t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc, linkTokens: linkTokens, gl: gl, gt: gt, fm: fm}
 }
 
 // client is a browser: it keeps cookies and has an address.

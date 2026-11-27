@@ -131,7 +131,7 @@ type UserLink struct {
 	Admin          bool
 }
 
-const userLinkCols = linkCols + `, (access_enc <> '' OR state <> 'ok'), state, refresh_expires, is_admin`
+const userLinkCols = linkCols + `, CASE WHEN access_enc <> '' OR state <> 'ok' THEN 1 ELSE 0 END, state, refresh_expires, is_admin`
 
 func scanUserLink(sc interface{ Scan(...any) error }) (*UserLink, error) {
 	var l UserLink

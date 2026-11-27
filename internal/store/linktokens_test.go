@@ -441,3 +441,89 @@ func TestARenewalLeaseIsHeldByOneAtATimeAndEndsByItself(t *testing.T) {
 		}
 	})
 }
+
+// A person's links, whatever each is for: a sign-in, repositories, or both on one
+// link (the GitHub row's). Turning a repository link into a sign-in keeps one link,
+// and removing the provider takes its links and settles who is connected.
+func TestAPersonsLinksAreListedWhateverTheyAreForAndOneLinkCanBeBoth(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkUser(t, st, "U1", "u1", "member")
+		mkUser(t, st, "U2", "u2", "member")
+		mkForge(t, st, "gt")
+		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		mkGitHubRow(t, st, now)
+		q := st.Q()
+		// GitHub: a sign-in first, then repositories on the same link (same account).
+		if err := store.InsertLink(ctx, q, store.Link{ID: "G1", ProviderID: "github", UserID: "U1", Subject: "7", Email: "a@example.com", EmailTrusted: true, SignIn: true, Label: "u1", Created: now}); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := store.CountProviderLinks(ctx, q, "github"); err != nil || n != 0 {
+			t.Fatalf("a sign-in is a connection: %d %v", n, err)
+		}
+		if id, err := store.PutRepoLink(ctx, q, repoLink("X", "github", "U1", "7", time.Time{})); err != nil || id != "G1" {
+			t.Fatalf("%q %v", id, err)
+		}
+		// Gitea: repositories only; U2 has a sign-in at GitHub and nothing else.
+		if _, err := store.PutRepoLink(ctx, q, repoLink("T1", "gt", "U1", "9", time.Time{})); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.InsertLink(ctx, q, store.Link{ID: "G2", ProviderID: "github", UserID: "U2", Subject: "8", SignIn: true, Label: "u2", Created: now}); err != nil {
+			t.Fatal(err)
+		}
+		links, err := store.ListUserLinks(ctx, q, "U1")
+		if err != nil || len(links) != 2 {
+			t.Fatalf("%+v %v", links, err)
+		}
+		gh, gt := links[0], links[1]
+		if gh.ProviderID != "github" {
+			gh, gt = gt, gh
+		}
+		if gh.ID != "G1" || !gh.SignIn || !gh.Repos || gh.State != "ok" || gh.Email != "a@example.com" || !gh.EmailTrusted || gh.Login != "U1-login" {
+			t.Fatalf("%+v", gh)
+		}
+		if gt.ID != "T1" || gt.SignIn || !gt.Repos {
+			t.Fatalf("%+v", gt)
+		}
+		if l, err := store.GetUserLink(ctx, q, "G1", "U1"); err != nil || l.ID != "G1" {
+			t.Fatalf("%+v %v", l, err)
+		}
+		if _, err := store.GetUserLink(ctx, q, "G1", "U2"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("another person's link: %v", err)
+		}
+		if only, _ := store.ListUserLinks(ctx, q, "U2"); len(only) != 1 || only[0].Repos || !only[0].SignIn {
+			t.Fatalf("%+v", only)
+		}
+		// Only the sign-in links are the ways in.
+		if ways, _ := store.ListLinks(ctx, q, "U1"); len(ways) != 1 || ways[0].ID != "G1" {
+			t.Fatalf("%+v", ways)
+		}
+		// A link that only holds repositories becomes a sign-in on the same link.
+		if err := store.EnableLinkSignin(ctx, q, "T1", "U1", "t@example.com", false, "t", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.EnableLinkSignin(ctx, q, "T1", "U2", "x", false, "x", now); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("another person's link: %v", err)
+		}
+		if l, _ := store.GetUserLink(ctx, q, "T1", "U1"); !l.SignIn || !l.Repos || l.Email != "t@example.com" {
+			t.Fatalf("%+v", l)
+		}
+		// Removing the provider takes the links with it (the repositories' and the sign-ins'),
+		// and the person is no longer connected.
+		if n := count(t, st, `SELECT connected FROM usage WHERE kind = 'user' AND id = 'U1'`); n != 1 {
+			t.Fatalf("connected %d", n)
+		}
+		if err := store.DeleteGitHubProvider(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, st, `SELECT COUNT(*) FROM linked_accounts WHERE provider_id = 'github'`); n != 0 {
+			t.Fatalf("%d links outlived their provider", n)
+		}
+		if links, _ := store.ListUserLinks(ctx, q, "U1"); len(links) != 1 || links[0].ID != "T1" {
+			t.Fatalf("%+v", links)
+		}
+		if n := count(t, st, `SELECT connected FROM usage WHERE kind = 'user' AND id = 'U2'`); n != 0 {
+			t.Fatalf("U2 connected %d", n)
+		}
+	})
+}

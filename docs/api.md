@@ -79,10 +79,10 @@ The web app talks to the server only through this API.
     unless it matches a sign-in this browser started (its `state`, or for SAML
     its `RelayState` and the attempt's cookie). `GET /api/auth/saml/{slug}/metadata`
     is read by the identity provider and changes nothing.
-    `GET /api/connections/{provider}/authorization/callback`, the platform's
+    `GET /api/account/links/{provider}/callback`, the platform's
     redirect back after a person connects their account for repositories (not
     a sign-in), is the same kind of exception under the same rule (see
-    "Connections"). So is `GET /api/connections/github/manifest/callback`, where
+    "Connections"). So is `GET /api/providers/github/manifest/callback`, where
     GitHub sends an administrator's browser after the App is made.
 - A **space** is one tree of pages backed by one Git repository. Every page URL
   carries the space id. In single-user mode there is exactly one space, with
@@ -929,16 +929,19 @@ instead of the hold being lifted.
             "kind": "oidc", "label": "kazuha@example.com", "signin": true, "created": "2026-11-21T08:30:00Z"}]}
 ```
 
-The accounts the person linked to sign in, oldest first. `provider` is the
-provider's name, `providerId` its own id (a site provider's is its slug).
-`label` is the `email` or `preferred_username` claim (for SAML the address; for
-GitHub the login name) seen at the last sign-in, for display only. `signin` is
-whether the link may sign in (always, until repository links join this list).
+Every account the person has at a provider, oldest first, with the providers they
+may connect repositories at as `providers` (see "Connections", `GET
+/api/account/links`, for the whole answer: a link also has `login`, `repos`,
+`state`, `spaces`). `provider` is the provider's name, `providerId` its own id (a
+site provider's is its slug). `label` is the `email` or `preferred_username`
+claim (for SAML the address; for GitHub the login name) seen at the last
+sign-in, for display only. `signin` is whether the link may sign in: a link made
+by connecting repositories does not, until the person links it for sign-in.
 
 #### `POST /api/account/links/{provider}/start`
 
-`{"purpose": "signin", "return": "/settings"}` (both optional; `purpose` is the
-only one there is for now). `200` with `{"url": "…"}`: where to send the browser
+`{"purpose": "signin" | "repos", "return": "/settings"}` (both optional; `repos`
+connects repositories, see "Connections"). `200` with `{"url": "…"}`: where to send the browser
 (the provider's authorisation or SAML address); the attempt cookies are set.
 The provider's callback returns to `return` (default `/settings`), or to
 `/settings?sso_error=<code>`. `{provider}` is the provider's id (its slug, for
@@ -955,8 +958,10 @@ person has linked at that provider is `identity_in_use`.
 #### `DELETE /api/account/links/{id}`
 
 `204`. Refused with `409 last_method` when it would leave the user with no way
-to sign in (no password, no other linked account, no passkey). `404 not_found`
-for one the person does not have. Linking again afterwards works.
+to sign in (no password, no other linked account, no passkey): nothing is
+changed then, the repository tokens included. `404 not_found` for one the person
+does not have. The repository tokens it holds are revoked. Linking again
+afterwards works. `DELETE /api/account/links/{id}/repos` drops only the tokens.
 
 ### Account passkeys
 
@@ -1954,30 +1959,79 @@ generic shape replaces the GitHub-only one; there are no aliases.
   make a space left on the platform (see "Leftover repositories"): newest
   first, at most 20, `[]` when there are none and always present.
 
-### `GET /api/connections`
+### `GET /api/account/links`
 
-Any signed-in user: `{"providers": [Provider]}`, in a stable order (GitHub,
-GitLab, Gitea, then by name, `git` last). From 3.6 the list is the providers the
-caller may use: the site's while `connections.useSiteApps` is in effect for
-their tenant, and their tenant's own. The providers are the ones the server
-has, whether set up or not (`configured`), so a client can say there is nothing
-to connect to. Read from memory; one query for the caller's connections and
-leftovers.
+Any signed-in user: `{"links": [Link], "providers": [Provider]}`.
+
+- `links` is every account the caller has at a provider (consolidation 5c: one
+  list for sign-in and repositories, one link per provider and person, one
+  person per account at a provider). A link has `id`, `providerId`, `provider`
+  (its name), `slug`, `kind`, `label`, `login` (the account's name on the
+  platform), `signin` (it signs the person in), `repos` (repositories are
+  connected through it, or were and the person must authorise again), `state`
+  (`ok` or `expired`), `refreshExpires`, `spaces` (how many spaces sync through
+  it), `admin` and `created`. The GitHub link is one row for both: signing in
+  with GitHub makes it with `signin` and **no token**; "connect repositories"
+  authorises again on the same link and keeps its sign-in. Connecting with
+  another account moves the link to that account (refused with
+  `connection_error=last_method` when the link is the person's only way to sign
+  in, and with `different_account` while spaces sync through the old one).
+- `providers`, in a stable order (GitHub, GitLab, Gitea, then by name, `git`
+  last). From 3.6 the list is the providers the caller may use: the site's while
+  `connections.useSiteApps` is in effect for their tenant, and their tenant's
+  own. The providers are the ones the server has, whether set up or not
+  (`configured`), so a client can say there is nothing to connect to. Read from
+  memory; one query for the caller's connections and leftovers.
+
+`POST /api/account/links/{provider}/start` takes `{"purpose": "signin" | "repos",
+"return": "/path", "install": true}` and answers `{"url"}`: `signin` links the
+account to sign in with (sign-in kinds), `repos` connects repositories
+(GitHub, GitLab, Gitea; `install` is GitHub's). A provider that holds no
+repositories answers `400 invalid` to `repos`. An account connected for
+repositories only does not sign in (`sso_error=not_for_signin`) until the person
+links it for sign-in, which turns it on on the same link.
+
+`DELETE /api/account/links/{id}` removes the link whatever it is for: the tokens
+are revoked and the sign-in unlinked, and nothing at all is changed when that
+would leave the person no way to sign in (`409 last_method`).
+`DELETE /api/account/links/{id}/repos` drops the repository tokens and keeps a
+sign-in (a link that only held repositories goes). `{id}` is a link of the
+caller's, else `404`. `GET /api/account/links/{provider}/owners|repos` take the
+**provider's** id: a person with no link at it still lists what their tenant's
+shared installations reach.
+
+`GET /api/admin/providers` (and `POST`, `GET|PUT|PATCH|DELETE .../{id}`,
+`.../{id}/check`) is the one administration of every kind of provider
+(replacing `/api/admin/connections`): the items are the providers people sign in
+with (with their `repo` side, `{host, configured, partialSync, connections,
+spaces}`, when they also hold repositories) and the hosts that only hold
+repositories (flat, with `signin: false`, `repos`). A GitLab or Gitea host is
+made with `POST` (`kind`/`type` `gitlab` or `gitea`, `id`, `host`, `clientId`,
+`clientSecret`) and changed with `PATCH` or `PUT`; the GitHub App is saved with
+`PUT /api/admin/providers/github` (`appId`, `privateKey`, `clientId`,
+`clientSecret`), which makes the GitHub row: a sign-in provider that is off
+(`enabled: false`) and holds repositories (`repos: true`), whose client is the
+App's (changing it with `PATCH` is refused with `github_app_client`). Its GET
+answers the App's settings with the sign-in side as `provider`. The manifest,
+its callback (`GET /api/providers/github/manifest/callback`) and the
+installations stay under it. Deleting GitHub ends everyone's link (the sign-ins
+too): refused while spaces sync through it (`provider_in_use`) and, as for any
+sign-in provider, while it is somebody's only way in unless `?force=1`.
 
 ### Routes by provider
 
 | Work | Route |
 |---|---|
-| list the providers | `GET /api/connections` |
-| connect | `POST /api/connections/{provider}/authorization/start` |
-| the platform's redirect back | `GET /api/connections/{provider}/authorization/callback` |
-| disconnect | `DELETE /api/connections/{provider}/authorization` |
-| where a repository can be made | `GET /api/connections/{provider}/owners` |
-| repositories that can be connected | `GET /api/connections/{provider}/repos` |
-| dismiss a reminder | `DELETE /api/connections/{provider}/leftovers/{repoId}` |
-| the provider's configuration | `/api/admin/connections/{provider}…` (site administrators) |
+| list the providers | `GET /api/account/links` |
+| connect | `POST /api/account/links/{provider}/start` (`purpose: "repos"`) |
+| the platform's redirect back | `GET /api/account/links/{provider}/callback` |
+| disconnect | `DELETE /api/account/links/{id}/repos` |
+| where a repository can be made | `GET /api/account/links/{provider}/owners` |
+| repositories that can be connected | `GET /api/account/links/{provider}/repos` |
+| dismiss a reminder | `DELETE /api/account/leftovers/{provider}/{repoId}` |
+| the provider's configuration | `/api/admin/providers/{provider}…` (site administrators) |
 
-- `GET /api/admin/connections`: site administrators; every provider with its
+- `GET /api/admin/providers`: site administrators; every provider with its
   configuration state, `partialSync`, and counts (connections, spaces; for
   `git` there are no connections, and `spaces` counts the spaces on a plain
   address). From 3.6 a tenant administrator gets their tenant's own providers
@@ -2049,9 +2103,14 @@ Every error of a connection has `provider` (the id) next to `error` and
 ### Storage
 
 `remotes.cred_type` is `ssh`, `token` or `connection`, and `remotes.provider` is
-the provider's id (`github` for a connection, `git` for the others). The
-GitHub provider's tables keep their names (`github_authorizations`,
-`github_installations`, `github_installation_tenants`, `github_leftovers`).
+the provider's id (`github` for a connection, `git` for the others). GitHub is
+one row of `providers` (id `github`, `signin` and `repos`; the App's record is
+`config.app`, its client id `config.clientId`, its key, client secret and webhook
+secret are in `secrets`), a person's account at it one row of `linked_accounts`
+(tokens on the same row as the sign-in), its installations rows of
+`provider_installations`, the tenants each is shared with rows of
+`provider_shares`, and the reminders of empty repositories rows of
+`repo_leftovers`.
 
 ### Audit
 
@@ -2080,17 +2139,17 @@ GitHub App, which an administrator configures (see "Administration", "Connection
   and existing spaces switched to the App (`PUT …/remote`).
 
 **Tenants (3.3).** The App and its installations are the server's: only site
-administrators reach `/api/admin/connections/github…` (a tenant administrator gets
+administrators reach `/api/admin/providers/github…` (a tenant administrator gets
 `403 forbidden`, as for the other site-only routes), and an installation a site
 administrator shares is shared with the people of **every** tenant (see
-`PUT /api/admin/connections/github/installations/{id}`). A GitHub connection is its user's,
+`PUT /api/admin/providers/github/installations/{id}`). A GitHub connection is its user's,
 so it is in the user's tenant: it syncs only spaces of that tenant. One GitHub
 account links to one PetalBook user on the whole server, whatever their
 tenants; `account_in_use` says only that it is taken. A space made with a
 repository is the creator's tenant's and counts toward its quotas.
 
 Every route here is a person's, not a token's: with an API token, `/api/connections/github/…`
-and `/api/admin/connections/github…` answer `403 token_scope` (see "API tokens"), and so
+and `/api/admin/providers/github…` answer `403 token_scope` (see "API tokens"), and so
 do `POST /api/spaces` and `PUT …/remote`.
 
 | Work | Token |
@@ -2135,7 +2194,7 @@ do `POST /api/spaces` and `PUT …/remote`.
 
 ### The provider object
 
-`GET /api/connections` (see "Connections") shows GitHub as the provider
+`GET /api/account/links` (see "Connections") shows GitHub as the provider
 `github`. `app` is `null` when no App is configured; then nothing else of the
 provider works and its other endpoints answer `409 provider_not_configured`.
 `userAuthorization` is whether users can connect their GitHub account: the
@@ -2145,7 +2204,7 @@ counts the spaces that sync through it (`via: "user"` naming the caller), so a
 client can warn before a disconnect. `leftovers` are described under "Leftover
 repositories".
 
-### `POST /api/connections/github/authorization/start`
+### `POST /api/account/links/github/start`
 
 `{"return": "/s/01JD3K8Q7Z/settings", "install": true}`, with `return` treated as
 in `POST /api/auth/oidc/start`. `200` with `{"url": "…"}` and a short-lived
@@ -2167,7 +2226,7 @@ cookie that ties the attempt to this browser; the client navigates to `url`.
   `https://github.com/login/oauth/authorize?client_id=…&redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256`.
 
 `redirect_uri` is `redirect_uri` is
-`<public-url>/api/connections/github/authorization/callback`. `state` is 32 random
+`<public-url>/api/account/links/github/callback`. `state` is 32 random
 bytes; the PKCE verifier is 64 random characters and its S256 challenge is
 sent (not for `install`). Both are held in memory only, for 10 minutes, used once, bound to the
 cookie and to the signed-in user (at most 10 000 attempts at a time: the
@@ -2175,7 +2234,7 @@ oldest goes first). When reconnecting, `login=<the current login>` is sent so
 GitHub suggests the same account. `409 provider_not_configured` when
 `userAuthorization` is false.
 
-### `GET /api/connections/github/authorization/callback`
+### `GET /api/account/links/github/callback`
 
 GitHub redirects here. The server answers with a redirect (`303`), never JSON:
 to the `return` path on success, to `/settings?connection_error=<code>&provider=github` on failure.
@@ -2208,7 +2267,7 @@ GitHub account's id and login, the access token and the refresh token
 their expiry times and the `state`. Connecting the same account again replaces
 the tokens; spaces that were waiting on it are retried at once.
 
-### `DELETE /api/connections/github/authorization`
+### `DELETE /api/account/links/{id}/repos`
 
 `204`. The server asks GitHub to revoke the grant
 (`DELETE /applications/{client_id}/grant`, best effort) and deletes the tokens
@@ -2242,7 +2301,7 @@ stops working.
 - The device flow is not offered: the web app does not need it. It is left for
   the clients of phase 4.
 
-### `GET /api/connections/github/owners?cursor={cursor}&recheck=true`
+### `GET /api/account/links/github/owners?cursor={cursor}&recheck=true`
 
 The accounts the caller can create a repository in, one page at a time:
 
@@ -2262,7 +2321,7 @@ already listed. `needsInstall` is `true` on the caller's own account when the
 App is not installed there: GitHub lets a user token create repositories only
 in accounts the App is installed on, so a repository in that account is refused
 with `409 app_not_installed` until the person installs it (the web app
-offers "Install on my account": `installUrl` of `GET /api/connections`, or the
+offers "Install on my account": `installUrl` of `GET /api/account/links`, or the
 `install` start above). It is found with one call to GitHub on the first page
 (`GET /users/{login}/installation`, remembered while the App is there; the answer "not installed there" is remembered for a minute per person, so a person without the App does not cost a call or a log line at every visit). `recheck=true`, on the first page, forgets that memory for the caller first: a person who has just installed the App asks again instead of waiting the minute (the web app's "check again"). It is honoured at most once a minute per person: within the minute `recheck=true` is an ordinary call that uses the remembered answer, with no call to GitHub and no error, so looping it cannot use up the App's shared rate limit. Creating a space is never refused by the client on this flag; the server answers `409 app_not_installed`.
 `via` says which token creates the repository there. Each page is at most one call
@@ -2272,7 +2331,7 @@ the caller's own token wherever it can be, so GitHub's rules for that person
 in that organisation (who may create repositories, whether private ones are
 allowed) apply.
 
-### `GET /api/connections/github/repos?installation={id}&cursor={cursor}` or `?mine=true`
+### `GET /api/account/links/github/repos?installation={id}&cursor={cursor}` or `?mine=true`
 
 Repositories the caller can connect a space to, 30 to a page, for choosing one
 in `PUT …/remote` or `POST /api/spaces` with `create: false`. `installation`:
@@ -2295,7 +2354,7 @@ filters the page it has, and the user can type `owner/name` instead.
 
 `POST /api/spaces` with `storage.sync` and `provider: "github"` (see "Connections", "Spaces and remotes"):
 
-- `owner`: a `login` from `GET /api/connections/github/owners` (case is ignored).
+- `owner`: a `login` from `GET /api/account/links/github/owners` (case is ignored).
   `403 owner_not_allowed` for anything else.
 - `name`: 1–100 characters of `A-Z a-z 0-9 . _ -`, not `.` or `..`, not
   ending in `.git`. Anything else is `400 invalid`: the server does not let
@@ -2393,7 +2452,7 @@ remote). So that the person does not have to remember it, the server also
 records a reminder, per user, when the failure came after the repository was
 made (steps 4 to 6, the same cases that put `repo` in the answer; a crash has
 no answer and no reminder). A client shows the reminders in
-`GET /api/connections`'s `leftovers`, for instance on the account page or beside the
+`GET /api/account/links`'s `leftovers`, for instance on the account page or beside the
 list of spaces, with the repository's name and link and two actions:
 
 - **Connect it and try again**: `POST /api/spaces` with the reminder's
@@ -2401,7 +2460,7 @@ list of spaces, with the repository's name and link and two actions:
   from `fullName`. Nothing else is needed; the reminder is cleared by the
   space connecting (below). When it fails again the reminder stays, and the
   answer says why.
-- **I deleted it**: `DELETE /api/connections/github/leftovers/{repoId}`.
+- **I deleted it**: `DELETE /api/account/leftovers/github/{repoId}`.
 
 A reminder is cleared when the person dismisses it, and by itself when any
 space is connected to that repository with a `connection` credential (by
@@ -2411,12 +2470,12 @@ second failure on the same repository replaces its reminder rather than adding
 one. Reminders are the user's own: they are deleted with the user and no one
 else sees them, in any tenant.
 
-### `DELETE /api/connections/github/leftovers/{repoId}`
+### `DELETE /api/account/leftovers/github/{repoId}`
 
 `204`. Dismisses the caller's reminder of that repository (the id from
 `leftovers[].repoId`). Nothing happens on GitHub. It is `204` also when there
 is no such reminder (it was cleared meanwhile), as for `DELETE
-/api/connections/github/authorization`. `repoId` that is not a positive number is
+/api/account/links/{id}/repos`. `repoId` that is not a positive number is
 `404 not_found`.
 
 ### Switching an existing space to GitHub
@@ -5526,7 +5585,7 @@ person's, kept for the browser; what a token writes goes straight to a commit
 under no name, and a token never commits a browser draft as "API token".
 
 Everything else, a route that needs `members` or `manage` (the remote of a
-space among them), and anything under `/api/account`, `/api/connections`,
+space among them), and anything under `/api/account`, `/api/account/links`,
 `/api/users`, `/api/invites`, `/api/admin`, `/api/oauth` and the sign-in
 routes, answers `403 token_scope`: a token cannot make tokens, change members,
 settings of a space, types, templates or remotes, connect or use its owner's
@@ -6579,7 +6638,7 @@ The User object gains:
 | `/api/admin/spaces…`, `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage` | their tenant | every tenant (`?tenant=`) |
 | `GET /api/admin/audit` | their tenant's rows, without the site's kinds (security, providers, mail, tenants, site settings) | every row (`?tenant=`) |
 | `GET /api/admin/tenants/{own}`, `PATCH` of its `name`, `…/settings` of their tenant | yes | every tenant |
-| `/api/admin/security`, `/api/admin/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer, which holds machine access, tenancy, the sign-in and storage policy), `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage`, `PUT /api/admin/spaces/{space}/storage`, `POST /api/admin/spaces/{space}/evict` and a user's `remoteExempt` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/providers/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer, which holds machine access, tenancy, the sign-in and storage policy), `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage`, `PUT /api/admin/spaces/{space}/storage`, `POST /api/admin/spaces/{space}/evict` and a user's `remoteExempt` | `403 forbidden` | yes |
 
 The daily text's tenant default is a tenant setting (see "Settings by layer"),
 not `/api/admin/daily`, which stays the site's.
@@ -7131,7 +7190,7 @@ needs `site.settings.manage`, a tenant's `tenant.settings.read` in that tenant
 
 Takes `{"value": "…"}` (not empty, at most 16 KiB) and answers the list as `GET`.
 The GitHub App's secrets answer `409 conflict`: they are changed with the
-connection (`/api/admin/connections/github`), which checks them with GitHub. The
+connection (`/api/admin/providers/github`), which checks them with GitHub. The
 mail password and the captcha secret are also written by their own forms
 (`PUT /api/admin/mail` `password`, `PUT /api/admin/security`
 `captcha.secret`).
@@ -9739,14 +9798,14 @@ lines.
 The tenant's own providers (2.7b). For GitHub:
 
 - A tenant may register its **own GitHub App** (`GET/PUT/DELETE
-  …/connections/github`, the shape of 2.7b's `/api/admin/connections/github`),
+  …/connections/github`, the shape of 2.7b's `/api/admin/providers/github`),
   only on `github.com`. Its installations (`GET …/connections/github/installations`,
   `PUT …/installations/{id}` with `shared`) are shared within the tenant only.
   Needs the feature `features.ownConnections`. From 3.8 a tenant may also
   add its own GitLab and Gitea providers here (see "Connections to GitLab and
   Gitea").
 - **The site's App** stays the site's. Sharing one of its installations is per
-  tenant, as built in 2.7: `PUT /api/admin/connections/github/installations/{id}`
+  tenant, as built in 2.7: `PUT /api/admin/providers/github/installations/{id}`
   takes `{"tenants": [ids]}` (`{"shared": true}` stays `400 invalid`); 3.6 adds
   `{"tenants": "all"}` (every tenant, those made later included).
   `GET /api/admin/tenants/{tenant}/connections/github` also lists, read only, the site
@@ -9754,7 +9813,7 @@ The tenant's own providers (2.7b). For GitHub:
 - A person connects their GitHub account through their tenant's App when it has
   one, else through the site's while `connections.useSiteApps` is in effect. One
   GitHub account still links to one PetalBook user on the server (2.7). The
-  callback address stays one (`/api/connections/github/authorization/callback`);
+  callback address stays one (`/api/account/links/github/callback`);
   the state names the App.
 - `internal/githubapp` takes an App as a value (id, key, client), never a
   global; the token cache (10,000) is the server's and is keyed by (App,
@@ -10171,7 +10230,7 @@ own organisation**.
 | `POST /api/admin/spaces/{space}/view`, `/api/admin/exports…` (3.5) | their tenant's organisation spaces, with `features.adminView` | every space |
 | `GET /api/admin/audit/download` | their tenant's rows, with `features.auditDownload` | every row |
 | `POST /api/spaces/{space}/storage/move` | their tenant's spaces (and owners their own) | every space |
-| `/api/admin/security`, `/api/admin/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/providers…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
 
 The machine-access switches are the settings `features.tokens` and
 `features.mcp`: the site's layer is `/api/admin/settings`, the tenant's
@@ -10388,7 +10447,7 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
   namespace, installation, app, sealed token, prefix, state, in use), each with
   `updated_by` and `updated_at`; `site_records` key `publicMailDomains`.
   `github_apps` is the GitHub provider's table; 3.8's providers have their own.
-- Sign-in: `providers.owner` and `providers.signin`, one `linked_accounts` row per (provider, person) (unique `(provider_id, subject)` and `(provider_id, user_id)`); `github_installations` name the App
+- Sign-in: `providers.owner` and `providers.signin`, one `linked_accounts` row per (provider, person) (unique `(provider_id, subject)` and `(provider_id, user_id)`); `provider_installations` name the App
   they belong to; the sharing stays in 2.7's `github_installation_tenants`, and
   `"all"` is a flag on the installation. 2.8's
   `legacyCallback` and the `--oidc-*` import are removed.
@@ -10769,7 +10828,7 @@ false`; those routes answer `404`), and `owners` and `repos` take `q`.
 
 One OAuth application per host, configured by an administrator.
 
-- `POST /api/admin/connections` (site administrators, for the site) or
+- `POST /api/admin/providers` (site administrators, for the site) or
   `POST /api/admin/tenants/{tenant}/connections` (the tenant's administrators,
   needs `integrations.connections`):
 
@@ -10781,7 +10840,7 @@ One OAuth application per host, configured by an administrator.
   `GET`, `PATCH`, `DELETE …/connections/{provider}` as for 2.7's App. The
   secret is sealed (with the tenant's id in the purpose for a tenant's) and
   never returned (`hasSecret: true`). The answer gives `callbackUrl`
-  (`{public URL}/api/connections/{id}/authorization/callback`) and the scopes to
+  (`{public URL}/api/account/links/{id}/callback`) and the scopes to
   tick on the host.
 - Before saving, the server checks the host once: its version endpoint answers
   as a GitLab or Gitea of a supported version, and the client's credentials are
@@ -10799,7 +10858,7 @@ One OAuth application per host, configured by an administrator.
 ### Connecting a person
 
 - Authorisation code with PKCE (S256), `state` bound to the session, through
-  `POST /api/connections/{provider}/authorization/start` and the callback, as
+  `POST /api/account/links/{provider}/start` (`purpose: "repos"`) and the callback, as
   2.7.
 - Access and refresh tokens are sealed separately. Renewal: when an access
   token is within 5 minutes of expiry on use, one renewal per person at a time,
@@ -10853,9 +10912,9 @@ One OAuth application per host, configured by an administrator.
 
 What the server does where the text above leaves room, and where it differs.
 
-- **Setting up.** `POST /api/admin/connections` (`201`, with `Location`) takes
+- **Setting up.** `POST /api/admin/providers` (`201`, with `Location`) takes
   `{id, type, host, name?, clientId, clientSecret}`; `GET`, `PATCH` (and `PUT`,
-  the same) and `DELETE` `/api/admin/connections/{provider}`;
+  the same) and `DELETE` `/api/admin/providers/{provider}`;
   `POST …/{provider}/check` reads the host again. Site administrators only (a
   tenant administrator gets `403`; the tenant routes and
   `integrations.connections` come with 3.6). `host` is a name with an optional
@@ -10867,7 +10926,7 @@ What the server does where the text above leaves room, and where it differs.
   ```json
   {"id": "gitlab-acme", "type": "gitlab", "host": "gitlab.acme.example", "name": "Acme GitLab", "owner": "site",
    "configured": true, "clientId": "…", "hasSecret": true,
-   "callbackUrl": "https://notes.example.com/api/connections/gitlab-acme/authorization/callback",
+   "callbackUrl": "https://notes.example.com/api/account/links/gitlab-acme/callback",
    "scopes": ["api"], "userAuthorization": true, "version": "16.7.2", "checked": "2026-11-24T08:00:00Z",
    "partialSync": "unknown", "connections": 0, "spaces": 0, "updated": "2026-11-24T08:00:00Z"}
   ```
@@ -10913,7 +10972,7 @@ What the server does where the text above leaves room, and where it differs.
   again once; the connection becomes `expired` only when the host refuses the
   refresh token itself. GitLab is asked to revoke on disconnect (`/oauth/revoke`); Gitea has no such endpoint, and the
   tokens are deleted here either way.
-- **Owners and repositories.** `GET /api/connections/{provider}/owners?q=&cursor=`
+- **Owners and repositories.** `GET /api/account/links/{provider}/owners?q=&cursor=`
   lists the person's own namespace first (`type: "User"`, first page only), then
   groups (GitLab: those with at least Developer access, subgroups by full path)
   or organisations (Gitea: those where one of their teams may create
@@ -11609,7 +11668,7 @@ The same for OAuth grants (items as in `GET /api/account/grants`, with
 
 ### Connections
 
-#### `GET /api/admin/connections`
+#### `GET /api/admin/providers`
 
 Site administrators. `{"providers": [{"id": "github", "type": "github", "name": "GitHub", "host": "github.com", "configured": true, "partialSync": "yes", "connections": 3, "spaces": 4}, {"id": "git", …}]}`:
 every provider the server has, with its configuration state and counts (people
@@ -11636,7 +11695,7 @@ App must be installable on **any account** (public), or a person cannot install
 it on their own account: `anyAccount` below says which it is. Its callback URL
 is the `callbackUrl` below.
 
-#### `GET /api/admin/connections/github`
+#### `GET /api/admin/providers/github`
 
 ```json
 {"configured": true, "appId": "1234567", "clientId": "Iv23liAbCdEfGhIjKlMn",
@@ -11644,7 +11703,7 @@ is the `callbackUrl` below.
  "htmlUrl": "https://github.com/apps/petalbook-notes",
  "installUrl": "https://github.com/apps/petalbook-notes/installations/new",
  "privateKey": {"set": true, "fingerprint": "SHA256:…"}, "clientSecret": {"set": true},
- "callbackUrl": "https://notes.example.com/api/connections/github/authorization/callback",
+ "callbackUrl": "https://notes.example.com/api/account/links/github/callback",
  "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
  "missing": [], "gaps": [], "anyAccount": true,
  "userAuthorization": true, "checked": "2026-11-23T08:30:00Z",
@@ -11671,15 +11730,15 @@ Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
   else `true` once an installation on an account that is not the App owner's has
   been seen, else `null` (not known). A client warns on `false`.
 - Everything above is as of `checked`: it is read from GitHub when the App is
-  saved, by `POST /api/admin/connections/github/check`, and, at most once a minute, when a
+  saved, by `POST /api/admin/providers/github/check`, and, at most once a minute, when a
   token GitHub refuses (for a permission the App or an installation lacks)
   shows the stored view is old. A plain `GET` never asks GitHub.
-- `callbackUrl` is `<public-url>/api/connections/github/authorization/callback`, `""`
-  without `--public-url`. `userAuthorization` is as in `GET /api/connections`.
+- `callbackUrl` is `<public-url>/api/account/links/github/callback`, `""`
+  without `--public-url`. `userAuthorization` is as in `GET /api/account/links`.
 - `spaces` counts the spaces with a `github` credential; `authorizations` the
   users connected.
 
-#### `PUT /api/admin/connections/github`
+#### `PUT /api/admin/providers/github`
 
 ```json
 {"appId": "1234567", "privateKey": "-----BEGIN RSA PRIVATE KEY-----\n…",
@@ -11711,16 +11770,16 @@ with `409 provider_in_use` while any space has a `github` credential or any
 user is connected; another or no `clientId` only while any user is connected.
 `200` as `GET`.
 
-#### `POST /api/admin/connections/github/check`
+#### `POST /api/admin/providers/github/check`
 
 No body. Reads the App (`GET /app`) and up to five pages of its installations
 (`GET /app/installations`) from GitHub again, stores what the permissions are
 now (`permissions`, `missing`, `gaps`, `anyAccount`, `checked`, and the App's
-name and page) and answers `200` as `GET /api/admin/connections/github`. `409
+name and page) and answers `200` as `GET /api/admin/providers/github`. `409
 provider_not_configured` without an App, or when GitHub no longer accepts its key;
 `503 unavailable` when GitHub cannot be reached (nothing is changed).
 
-#### `POST /api/admin/connections/github/manifest`
+#### `POST /api/admin/providers/github/manifest`
 
 Makes the App on GitHub in one click (GitHub's App Manifest flow); entering an
 App by hand with `PUT` stays possible. `{"organization": "kazuhahub", "name":
@@ -11733,9 +11792,9 @@ unique, so the administrator may need another). `200`:
 {"url": "https://github.com/organizations/kazuhahub/settings/apps/new?state=…",
  "manifest": {"name": "PetalBook Notes", "url": "https://notes.example.com",
    "hook_attributes": {"url": "https://notes.example.com", "active": false},
-   "redirect_url": "https://notes.example.com/api/connections/github/manifest/callback",
-   "callback_urls": ["https://notes.example.com/api/connections/github/authorization/callback"],
-   "setup_url": "https://notes.example.com/api/connections/github/manifest/callback",
+   "redirect_url": "https://notes.example.com/api/providers/github/manifest/callback",
+   "callback_urls": ["https://notes.example.com/api/account/links/github/callback"],
+   "setup_url": "https://notes.example.com/api/providers/github/manifest/callback",
    "public": true, "request_oauth_on_install": true,
    "default_permissions": {"administration": "write", "contents": "write", "metadata": "read"}}}
 ```
@@ -11753,7 +11812,7 @@ any space has a `github` credential or any user is connected (an App in use is
 not replaced); `400 invalid` for a bad `organization` or `name`; `403
 forbidden` for anyone but a site administrator.
 
-#### `GET /api/connections/github/manifest/callback`
+#### `GET /api/providers/github/manifest/callback`
 
 Where GitHub sends the administrator's browser after the App is made, with
 `code` and `state`. Like the callback of a user's connection it answers a
@@ -11762,7 +11821,7 @@ administrator who started the attempt, and is a cross-site navigation by nature.
 The server trades the code (`POST /app-manifests/{code}/conversions`, which needs
 no other credential and works once) for the App's id, slug, client id, client
 secret, private key and webhook secret, then saves them as `PUT
-/api/admin/connections/github` does (checked with GitHub, secrets sealed with the server's
+/api/admin/providers/github` does (checked with GitHub, secrets sealed with the server's
 key; the webhook secret is only kept, sealed, since there is no webhook), and
 sends the browser to `/admin/storage/connections?connection_app=created`. A failure goes to
 `/admin/storage/connections?connection_app_error=<code>`: `expired` (no such attempt, used, older
@@ -11773,7 +11832,7 @@ not saved yet; see the next route). A visit with `installation_id` or `setup_act
 (the manifest names this address as the post-installation page too) goes to
 `/settings/connections`.
 
-#### `POST /api/admin/connections/github/manifest/retry`
+#### `POST /api/admin/providers/github/manifest/retry`
 
 When GitHub made the App but the server could not save it (`unavailable`: GitHub
 could not be asked to check it), the redirect is
@@ -11781,7 +11840,7 @@ could not be asked to check it), the redirect is
 exists on GitHub and its credentials are kept in the server's memory, sealed,
 for ten minutes, for that administrator only (one pending App per administrator,
 the newest). The retry takes no body, saves them as the callback would, and
-answers `200` as `GET /api/admin/connections/github`. `404 not_found` when
+answers `200` as `GET /api/admin/providers/github`. `404 not_found` when
 nothing is pending (none was made, it was used or ten minutes passed: the
 administrator then finds the App at `https://github.com/apps/<slug>` (or in the
 organisation's settings), makes a private key there and enters the details with
@@ -11789,7 +11848,7 @@ organisation's settings), makes a private key there and enters the details with
 cannot be reached (the credentials stay pending); `409 provider_in_use` as
 elsewhere. The redirect has no `pending` when nothing could be kept.
 
-#### `DELETE /api/admin/connections/github`
+#### `DELETE /api/admin/providers/github`
 
 `204`. The App's details are deleted, the users' connections with them
 (GitHub is asked to revoke each grant first, best effort), and what was shared of
@@ -11799,7 +11858,7 @@ credential (`message` says how many): switch or disconnect those first. Also
 provider (`message` says to change the requirement first), because nobody could
 meet the requirement without it.
 
-#### `GET /api/admin/connections/github/installations?cursor={cursor}`
+#### `GET /api/admin/providers/github/installations?cursor={cursor}`
 
 The App's installations, one page at a time; each page is one call to GitHub
 (`GET /app/installations`, 30 to a page) and one query of the state database.
@@ -11818,7 +11877,7 @@ tenants the installation is shared with, sorted (`[]`: none), set below. `spaces
 counts the spaces syncing through that installation. `409 provider_not_configured`
 when there is no App.
 
-#### `PUT /api/admin/connections/github/installations/{id}`
+#### `PUT /api/admin/providers/github/installations/{id}`
 
 `{"tenants": ["01J8Z3X5K2", "01J8Z3X5K3"]}`. Sharing is per tenant: the
 installation is shared with exactly these tenants, replacing what it was shared

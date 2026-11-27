@@ -818,6 +818,19 @@ tenant slugs under the 3.6 (d) domain routing.
 5b and 5c share the renew loop and `store/providers.go`, so they run in
 sequence. 5a can run alongside 4b and 4c.
 
+**5c as built.** The GitHub row is `id = 'github'` (`signin = 1`, `repos = 1`,
+`enabled = 0` until an administrator turns sign-in on); the App's record is
+`config.app` and its client id `config.clientId` (kept by `store.UpdateProvider`
+whatever the sign-in side writes), the key, client secret and webhook secret stay
+in `secrets`. Where the routes differ from 5.3: the repository callback is
+`GET /api/account/links/{provider}/callback`, GitHub's manifest callback
+`GET /api/providers/github/manifest/callback` (not under `/api/admin/`: it is a
+browser redirect), and `GET /api/account/links/{provider}/owners|repos` take the
+provider's id, not a link's, because a person with no link at GitHub still lists
+what their tenant's shared installations reach. A link that only connects
+repositories does not sign in (`not_for_signin`) until the person links it for
+sign-in on the same link.
+
 ### 5.7 Test plan
 
 - **Store, both DBs.**
