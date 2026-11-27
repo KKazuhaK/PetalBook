@@ -288,6 +288,20 @@ func (s *Service) TakesFormPost(slug string) bool {
 	return rt != nil && rt.row.Kind == KindOIDC && rt.cfg.ResponseMode == "form_post"
 }
 
+// KeepFormPost keeps what a provider posted beside its answer (Apple's user
+// field: the name, at the first sign-in only) with the attempt of the state,
+// to be read when the callback takes it. Only the name is kept; the address
+// in it is not (the ID token says which one is the person's). Nothing of it
+// goes into the address the browser is sent on to.
+func (s *Service) KeepFormPost(slug, state, user string) {
+	if !s.TakesFormPost(slug) || state == "" {
+		return
+	}
+	if name := appleUserName(user); name != "" {
+		s.pending.noteFormName(slug, state, clip(name, 100))
+	}
+}
+
 // BeginResult is where to send the browser and the cookie that ties the
 // attempt to it.
 type BeginResult struct {
@@ -603,10 +617,9 @@ func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken 
 			return fail("idp_error")
 		}
 		if c.name == "" && rt.row.Template == TemplateApple {
-			// Apple sends the name once, beside the token (the form's user).
-			if u, ok := oneParam(q, "user"); ok {
-				c.name = appleUserName(u)
-			}
+			// Apple sends the name once, beside the token (the form's user),
+			// kept with the attempt (KeepFormPost), never in an address.
+			c.name = e.formName
 		}
 	case KindGitHub:
 		var errCode string

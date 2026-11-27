@@ -212,6 +212,13 @@ func TestClassIsFixedWhenAProviderIsMade(t *testing.T) {
 		if got, _ := store.GetProvider(ctx, a.st.Q(), "two"); got.Class != "social" || got.Template != "" || got.Name != "Changed" {
 			t.Fatalf("%+v", got)
 		}
+		// A template is one of the known ones, in the database too.
+		if _, err := a.st.Q().Exec(ctx, `UPDATE providers SET template = 'evil' WHERE id = 'two'`); err == nil {
+			t.Fatal("an unknown template was stored")
+		}
+		if _, err := a.st.Q().Exec(ctx, `UPDATE providers SET template = 'google' WHERE id = 'two'`); err != nil {
+			t.Fatalf("a known template: %v", err)
+		}
 		// Nor can a row be a sign-in provider without one.
 		if _, err := a.st.Q().Exec(ctx, `UPDATE providers SET class = '' WHERE id = 'two'`); err == nil {
 			t.Fatal("a sign-in provider without a class")
@@ -238,6 +245,12 @@ func TestSlugsAreUniqueOnTheServer(t *testing.T) {
 		// Reserved slugs stay reserved.
 		admin.do("POST", "/api/admin/providers", f.providerBody("github", nil)).want(t, 409, "slug_reserved")
 		admin.do("POST", "/api/admin/providers", f.providerBody("git", nil)).want(t, 409, "slug_reserved")
+		// The templates' slugs are the site's: an organisation cannot take one
+		// before the site adds that sign-in.
+		for _, slug := range []string{"google", "apple", "microsoft", "gitlab-com"} {
+			admin.do("POST", "/api/admin/providers", f.providerBody(slug, map[string]any{"owner": acme})).want(t, 409, "slug_reserved")
+		}
+		admin.do("POST", "/api/admin/providers", f.providerBody("gitlab-com", nil)).want(t, 201, "")
 		// The database holds it too, across owners and against the hosts'
 		// rows (a GitLab's id is its slug).
 		now := a.clock.Now()
@@ -456,10 +469,17 @@ func TestSignInWithApple(t *testing.T) {
 			if !strings.HasPrefix(next, "/api/auth/oidc/apple/callback?") {
 				t.Fatal(next)
 			}
+			// What Apple posts of the person (the name, the address) stays on the
+			// server, with the attempt: the address the browser goes on to (its
+			// history, the logs) has only the code and the state.
+			if nu, _ := url.Parse(next); len(nu.Query()) != 2 || nu.Query().Get("code") == "" || nu.Query().Get("state") == "" ||
+				strings.Contains(next, "Ann") || strings.Contains(next, "Lee") || strings.Contains(next, "icloud") || strings.Contains(page.raw, "Ann") {
+				t.Fatalf("the forwarding address carries personal data: %s", next)
+			}
 			out, _ := finish(t, c, next)
 			return out, c
 		}
-		loc, c := signIn("ann", `{"name":{"firstName":"Ann","lastName":"Lee"}}`)
+		loc, c := signIn("ann", `{"name":{"firstName":"Ann","lastName":"Lee"},"email":"ann@icloud.test"}`)
 		if loc != "/" {
 			t.Fatalf("%s %v", loc, bad)
 		}

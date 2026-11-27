@@ -861,6 +861,12 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		if k, ok := reservedSlugs[*in.Slug]; ok && k != *in.Kind {
 			return nil, coded(409, "slug_reserved", "The slug %s is reserved for the server's own provider.", *in.Slug)
 		}
+		// The templates' slugs are the site's: slugs are unique on the
+		// server, so an organisation that took one first would keep the site
+		// from adding that sign-in under its usual address.
+		if _, ok := templateOf(*in.Slug); ok && b.row.Owner != store.ProviderSite {
+			return nil, coded(409, "slug_reserved", "The slug %s is reserved for the site's own sign-in.", *in.Slug)
+		}
 		b.row.Slug, b.row.Kind = *in.Slug, *in.Kind
 		if in.Name == nil {
 			return nil, providerInvalid("Name is required.")

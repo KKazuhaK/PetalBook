@@ -160,7 +160,8 @@ type verifiedToken struct {
 // complete exchanges the code and checks the ID token, its issuer against its
 // tenant included. st is the state the caller took (once) for this browser.
 func (f *tenantFlow) complete(ctx context.Context, callbackState, code string, st authoidc.State) (*verifiedToken, error) {
-	if st.Configuration != f.config || st.Value == "" || st.Nonce == "" || st.Verifier == "" ||
+	if st.Configuration != f.config || !canonicalValue(callbackState) || !canonicalValue(st.Value) ||
+		!canonicalValue(st.Nonce) || !canonicalValue(st.Verifier) ||
 		subtle.ConstantTimeCompare([]byte(callbackState), []byte(st.Value)) != 1 || code == "" || len(code) > 8192 {
 		return nil, authoidc.ErrInvalidState
 	}
@@ -212,6 +213,16 @@ func (f *tenantFlow) check(ctx context.Context, raw, nonce, accessToken string) 
 
 // errTenantIssuer: the token's issuer is not the one of the tenant it names.
 var errTenantIssuer = errors.Join(authoidc.ErrInvalidToken, errors.New("the issuer is not the token's tenant's"))
+
+// canonicalValue says whether v is a protocol value as the library makes and
+// takes them: exactly 32 bytes in unpadded base64url (43 characters).
+func canonicalValue(v string) bool {
+	if len(v) != 43 {
+		return false
+	}
+	b, err := base64.RawURLEncoding.Strict().DecodeString(v)
+	return err == nil && len(b) == 32
+}
 
 // stateValue is a state or a nonce: 32 random bytes, as the library makes them.
 func stateValue() (string, error) {

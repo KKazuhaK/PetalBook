@@ -129,6 +129,32 @@ func TestInDomainsIsExact(t *testing.T) {
 	}
 }
 
+// A configured domain that cannot be normalised matches nothing (fail closed):
+// its raw text is never compared instead.
+func TestInDomainsFailsClosedOnADomainThatDoesNotNormalise(t *testing.T) {
+	t.Parallel()
+	refuse := func(d string) (string, bool) {
+		if d == "acme.test" {
+			return "", false
+		}
+		return configuredDomainKey(d)
+	}
+	if inDomainsWith("a@acme.test", []string{"acme.test"}, refuse) {
+		t.Fatal("a domain that did not normalise matched by its raw text")
+	}
+	if !inDomainsWith("a@other.test", []string{"acme.test", "Other.Test"}, refuse) {
+		t.Fatal("the next domain was not looked at")
+	}
+	for _, bad := range []string{"acme..test", "", "acme.test\xff", ".acme.test", "xn--.test"} {
+		if _, ok := configuredDomainKey(bad); ok {
+			t.Errorf("%q normalised", bad)
+		}
+		if inDomains("a@acme.test", []string{bad}) {
+			t.Errorf("%q matched", bad)
+		}
+	}
+}
+
 // Only github.com is GitHub: an Enterprise server's verified flag is its
 // administrators' word.
 func TestIsPublicGitHub(t *testing.T) {

@@ -821,7 +821,7 @@ CREATE TABLE providers (
   slug              TEXT COLLATE "C" NOT NULL,
   kind              TEXT COLLATE "C" NOT NULL CHECK (kind IN ('oidc', 'oauth2', 'saml', 'github', 'gitlab', 'gitea')),
   class             TEXT COLLATE "C" NOT NULL DEFAULT '' CHECK (class IN ('', 'social', 'sso')),
-  template          TEXT COLLATE "C" NOT NULL DEFAULT '',
+  template          TEXT COLLATE "C" NOT NULL DEFAULT '' CHECK (template IN ('', 'google', 'microsoft', 'apple', 'gitlab-com')),
   name              TEXT COLLATE "C" NOT NULL,
   icon              TEXT COLLATE "C" NOT NULL DEFAULT '',
   signin            BIGINT NOT NULL DEFAULT 0,

@@ -9824,9 +9824,16 @@ way to sign in), and an account without a password adds one with
     `POST /api/auth/oidc/{slug}/callback` (a form, from Apple's site; only
     for a provider that asked for it, otherwise a redirect to
     `/login?sso_error=provider_unavailable`). That answers a small page of this
-    site that goes on to `GET …/callback` with the same values, so the
-    browser's `SameSite=Lax` cookies (the attempt's binding, the session for a
-    link) are sent and the callback checks the attempt as for any redirect.
+    site that goes on to `GET …/callback` with `code`, `state` (and `error`)
+    only, so the browser's `SameSite=Lax` cookies (the attempt's binding, the
+    session for a link) are sent and the callback checks the attempt as for
+    any redirect. The name in `user` is kept on the server with the attempt
+    (by its state, taken with it, once) and never put in that address; the
+    address in `user` is dropped (the ID token's is the one used).
+  - The template ids `google`, `microsoft`, `apple` and `gitlab-com` are
+    reserved slugs for the site's own providers: an organisation's provider
+    cannot take one (`409 slug_reserved`). The `template` column takes only
+    the known templates, in the database too.
   - The `oauth2` kind is reserved in the database for plain OAuth 2.0
     providers (below); it is not offered yet.
 - **Custom providers.** Besides the templates a site administrator may add any

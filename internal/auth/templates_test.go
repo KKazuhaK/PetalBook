@@ -8,10 +8,12 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	authoidc "github.com/KazuhaHub/authcore/oidc"
 	"github.com/go-jose/go-jose/v4"
 )
 
@@ -156,6 +158,65 @@ func TestTenantIssuer(t *testing.T) {
 	}
 	if tenantIssuerOK("https://x/{tenantid}/{tenantid}", "https://x/"+tid+"/"+tid, tid) {
 		t.Error("a pattern with two")
+	}
+}
+
+// The name a provider posts is kept with the attempt of its state, only for
+// that provider's attempt, only once, and goes with the attempt.
+func TestFormNameIsKeptWithTheAttempt(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
+	p := newPendingStore(func() time.Time { return now })
+	id := p.put(pendingEntry{kind: KindOIDC, slug: "apple", stateValue: "st-1"})
+	p.noteFormName("google", "st-1", "Wrong Provider")
+	p.noteFormName("apple", "st-2", "Wrong State")
+	p.noteFormName("apple", "st-1", "Ann Lee")
+	p.noteFormName("apple", "st-1", "Second Post")
+	e, res := p.take(id, "st-1")
+	if res != takeOK || e.formName != "Ann Lee" {
+		t.Fatalf("%v %+v", res, e)
+	}
+	if len(p.byState) != 0 || p.len() != 0 {
+		t.Fatalf("left behind: %v", p.byState)
+	}
+	// Nothing is kept for an attempt that is gone.
+	p.noteFormName("apple", "st-1", "Late")
+	if len(p.byState) != 0 || p.len() != 0 {
+		t.Fatal("a late post made an entry")
+	}
+}
+
+// A multi-tenant callback takes only canonical protocol values (32 random
+// bytes, base64url), as the library's flow does: anything else is refused
+// before the code is exchanged.
+func TestTenantFlowTakesOnlyCanonicalValues(t *testing.T) {
+	t.Parallel()
+	good, _ := stateValue()
+	nonce, _ := stateValue()
+	verifier, _ := stateValue()
+	f := &tenantFlow{config: "cfg"}
+	st := authoidc.State{Value: good, Nonce: nonce, Verifier: verifier, Configuration: "cfg"}
+	for name, c := range map[string]struct {
+		cb string
+		st authoidc.State
+	}{
+		"short state":    {"abc", authoidc.State{Value: "abc", Nonce: nonce, Verifier: verifier, Configuration: "cfg"}},
+		"short nonce":    {good, authoidc.State{Value: good, Nonce: "n", Verifier: verifier, Configuration: "cfg"}},
+		"short verifier": {good, authoidc.State{Value: good, Nonce: nonce, Verifier: "v", Configuration: "cfg"}},
+		"padded state":   {good + "=", authoidc.State{Value: good + "=", Nonce: nonce, Verifier: verifier, Configuration: "cfg"}},
+		"not base64url":  {strings.Repeat("!", 43), authoidc.State{Value: strings.Repeat("!", 43), Nonce: nonce, Verifier: verifier, Configuration: "cfg"}},
+		"another state":  {nonce, st},
+		"another config": {good, authoidc.State{Value: good, Nonce: nonce, Verifier: verifier, Configuration: "other"}},
+	} {
+		if _, err := f.complete(t.Context(), c.cb, "code", c.st); !errors.Is(err, authoidc.ErrInvalidState) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for i := 0; i < 20; i++ {
+		v, _ := stateValue()
+		if !canonicalValue(v) {
+			t.Fatalf("%q", v)
+		}
 	}
 }
 

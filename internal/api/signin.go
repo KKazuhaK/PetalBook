@@ -240,8 +240,16 @@ func (s *server) oidcFormPost(c *call) {
 		http.Redirect(c.w, c.r, "/login?sso_error=provider_unavailable", http.StatusSeeOther)
 		return
 	}
+	// The name Apple posts (user) stays here, with the attempt: the address
+	// the browser goes on to (its history, the logs) carries only the
+	// protocol's values.
+	if vs := c.r.PostForm["state"]; len(vs) == 1 {
+		if us := c.r.PostForm["user"]; len(us) == 1 {
+			s.auth.KeepFormPost(slug, vs[0], us[0])
+		}
+	}
 	q := url.Values{}
-	for _, k := range []string{"code", "state", "error", "user"} {
+	for _, k := range []string{"code", "state", "error"} {
 		if v, ok := c.r.PostForm[k]; ok {
 			q[k] = v
 		}

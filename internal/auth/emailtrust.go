@@ -202,6 +202,13 @@ func claimTrue(claims map[string]json.RawMessage, name string) bool {
 // compared in store.EmailKey form. A subdomain is not covered by its parent:
 // each is claimed and verified by itself.
 func inDomains(email string, domains []string) bool {
+	return inDomainsWith(email, domains, configuredDomainKey)
+}
+
+// inDomainsWith is inDomains with the normalisation of the configured
+// domains given. It fails closed: a configured domain that does not normalise
+// matches nothing, and its raw text is never compared instead.
+func inDomainsWith(email string, domains []string, norm func(string) (string, bool)) bool {
 	if len(domains) == 0 {
 		return false
 	}
@@ -211,15 +218,26 @@ func inDomains(email string, domains []string) bool {
 	}
 	d := key[strings.LastIndex(key, "@")+1:]
 	for _, a := range domains {
-		if a == "" {
+		ak, ok := norm(a)
+		if !ok {
 			continue
 		}
-		if ak, ok := store.EmailKey("x@" + a); ok {
-			a = ak[2:]
-		}
-		if d == a {
+		if d == ak {
 			return true
 		}
 	}
 	return false
+}
+
+// configuredDomainKey is a configured domain in store.EmailKey form; false
+// when it has none (empty, an empty label, not UTF-8, ...).
+func configuredDomainKey(domain string) (string, bool) {
+	if domain == "" {
+		return "", false
+	}
+	k, ok := store.EmailKey("x@" + domain)
+	if !ok || !strings.HasPrefix(k, "x@") {
+		return "", false
+	}
+	return k[2:], true
 }
