@@ -50,6 +50,7 @@ func TestNoHandlerChecksAFeatureTheTableCouldDeclare(t *testing.T) {
 		"routes.go":          "the declarations of the table",
 		"features.go":        "the words of the refusals",
 		"settings.go":        "features.registration is a setting with checks of its own on a change; the list of what the web may read",
+		"tenantoverview.go":  "the overview is not the audit's route: it shows a tenant's administrators the recent audit rows only while the tenant has features.tenantAudit",
 		"tenants.go":         "a tenant is shown with its effective registration, which is also held to mail being ready",
 		"github_installs.go": "an installation's callback is a public route: the feature is asked again there for the owner it is connected to",
 		"github_webhook.go":  "GitHub's webhook is a public route of no tenant: the site's own switch is asked there",
