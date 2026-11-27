@@ -83,11 +83,14 @@ type acc struct {
 }
 
 type accOpts struct {
-	public  string
-	oidc    *auth.OIDCConfig
-	httpc   *http.Client
-	proxies []string
-	mod     func(*auth.Config)
+	public string
+	// sso, when set, is made the site provider "sso" (OpenID Connect, named
+	// "Company SSO", on) before the server starts; ssoAutoCreate is its autoCreate.
+	sso           *fakeIDP
+	ssoAutoCreate bool
+	httpc         *http.Client
+	proxies       []string
+	mod           func(*auth.Config)
 	// maxSpaces is how many spaces one user may own (0: no limit).
 	maxSpaces int
 	// defaultQuota leaves quota.spacesPerPerson at the registry's default (3);
@@ -193,7 +196,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(testWriter{t}, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	cfg := auth.Config{Logger: log, Store: st, Spaces: mgr, PublicURL: o.public, TrustedProxies: trusted, OIDC: o.oidc, HTTPClient: o.httpc,
+	cfg := auth.Config{Logger: log, Store: st, Spaces: mgr, PublicURL: o.public, TrustedProxies: trusted, HTTPClient: o.httpc,
 		Password: fastPasswords, Now: clk.Now}
 	if o.mod != nil {
 		o.mod(&cfg)
@@ -201,6 +204,16 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	svc, err := auth.New(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if o.sso != nil {
+		var in auth.ProviderInput
+		body, _ := json.Marshal(o.sso.providerBody("sso", map[string]any{"name": "Company SSO", "enabled": true, "autoCreate": o.ssoAutoCreate}))
+		if err := json.Unmarshal(body, &in); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.CreateProvider(ctx, "", "", in); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// The mail queue is delivered (to a fake server of the test; mail stays off
 	// until a test enables it).

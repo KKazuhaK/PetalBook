@@ -1056,7 +1056,7 @@ export interface SessionInfo {
   // `passkey`: the signed-in person must register a passkey before anything else.
   hold?: 'passkey' | 'password' | null
   // Absent in single-user mode.
-  methods?: { password: boolean; oidc: { name: string } | null }
+  methods?: { password: boolean }
   // The API token the request was made with; the app's own requests have none.
   token?: { id: string; name: string; access: TokenAccess; spaces: string[] } | null
   // In a tab that views the app as a person: the view (`user` is then the person, with no permissions).
@@ -1786,7 +1786,7 @@ export interface CaptchaContextSettings {
   failures: number
 }
 export interface SecurityNotice {
-  code: 'flags_ignored' | 'secret_unreadable' | 'passkey_host_changed' | (string & {})
+  code: 'secret_unreadable' | 'passkey_host_changed' | (string & {})
   message: string
   slug?: string
   field?: string
@@ -1838,7 +1838,6 @@ export interface OidcSettings {
   clientId: string
   hasSecret: boolean
   scopes: string[]
-  legacyCallback: boolean
   redirectUrl: string
 }
 export interface SamlSettings {
@@ -1901,7 +1900,7 @@ export interface ProviderInput {
   autoCreate?: boolean
   mergeVerifiedEmail?: boolean
   groups?: Partial<GroupsMapping>
-  oidc?: Partial<Pick<OidcSettings, 'issuer' | 'clientId' | 'scopes' | 'legacyCallback'>> & { clientSecret?: string }
+  oidc?: Partial<Pick<OidcSettings, 'issuer' | 'clientId' | 'scopes'>> & { clientSecret?: string }
   saml?: Partial<
     Pick<
       SamlSettings,

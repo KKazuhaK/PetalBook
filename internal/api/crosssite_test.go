@@ -59,14 +59,14 @@ func TestOIDCCallbackIsExemptFromTheCrossSiteRules(t *testing.T) {
 		c := a.newClient("")
 		// The provider's redirect is cross-site by nature: it must get through to
 		// the handler (here no provider is configured, so the handler refuses).
-		r := c.do("GET", "/api/auth/oidc/callback?state=x&code=y", nil, "Sec-Fetch-Site", "cross-site", "Origin", "https://idp.example")
+		r := c.do("GET", "/api/auth/oidc/x/callback?state=x&code=y", nil, "Sec-Fetch-Site", "cross-site", "Origin", "https://idp.example")
 		if r.code != 303 || r.resp.Header.Get("Location") != "/login?sso_error=provider_unavailable" {
 			t.Fatalf("%d %s %s", r.code, r.resp.Header.Get("Location"), r.raw)
 		}
 		// Only that one route is exempt.
 		c.do("GET", "/api/session", nil, "Sec-Fetch-Site", "cross-site").want(t, 403, "forbidden")
-		c.do("POST", "/api/auth/oidc/callback", "{}", "Sec-Fetch-Site", "cross-site").want(t, 403, "forbidden")
-		c.do("GET", "/api/auth/oidc/callback", nil, "Origin", "https://idp.example").want(t, 303, "")
+		c.do("POST", "/api/auth/oidc/x/callback", "{}", "Sec-Fetch-Site", "cross-site").want(t, 403, "forbidden")
+		c.do("GET", "/api/auth/oidc/x/callback", nil, "Origin", "https://idp.example").want(t, 303, "")
 	})
 }
 

@@ -68,10 +68,7 @@ var (
 	mu       sync.Mutex
 	registry []Info // registry[k-1] is key k
 	byName   = map[string]Key{}
-	// aliases are the former names of renamed keys: a stored role that names
-	// a key by an old name still holds it.
-	aliases = map[string]Key{}
-	frozen  bool
+	frozen   bool
 )
 
 var namePattern = regexp.MustCompile(`^(site|tenant|space)(\.[a-z][a-zA-Z]*)+$`)
@@ -87,9 +84,6 @@ func Register(name string, scope Scope, feature, desc string) Key {
 	}
 	if _, dup := byName[name]; dup {
 		panic("authz: duplicate key " + name)
-	}
-	if _, dup := aliases[name]; dup {
-		panic("authz: " + name + " is the former name of another key")
 	}
 	if !namePattern.MatchString(name) || name[:len(scope.String())] != scope.String() {
 		panic(fmt.Sprintf("authz: key %q must begin with its scope %q", name, scope))
@@ -152,39 +146,15 @@ func (k Key) Feature() string { return k.info().Feature }
 
 func (k Key) String() string { return k.Name() }
 
-// Alias keeps a key's former name working: when a key is renamed, its old
-// name is registered here (at init, after the key), so that a stored role that
-// names it still holds the key. What is sent always names the key's current
-// name. It panics on a name that is a key's or already an alias, and on a key
-// that is not registered.
-func Alias(old string, k Key) {
-	mu.Lock()
-	defer mu.Unlock()
-	if k == 0 || int(k) > len(registry) {
-		panic("authz: alias " + old + " of a key that is not registered")
-	}
-	if _, dup := byName[old]; dup {
-		panic("authz: alias " + old + " is the name of a key")
-	}
-	if _, dup := aliases[old]; dup {
-		panic("authz: duplicate alias " + old)
-	}
-	aliases[old] = k
-}
-
-// Lookup finds a key by its name, or by a former name (see Alias).
+// Lookup finds a key by its name.
 func Lookup(name string) (Key, bool) {
 	mu.Lock()
 	defer mu.Unlock()
-	if k, ok := byName[name]; ok {
-		return k, true
-	}
-	k, ok := aliases[name]
+	k, ok := byName[name]
 	return k, ok
 }
 
-// SetOf is the set of the keys named, by their names or former names, as a
-// stored role lists them. unknown is the names that are no key (one removed
+// SetOf is the set of the keys named, as a stored role lists them. unknown is the names that are no key (one removed
 // since): they hold nothing.
 func SetOf(names []string) (s Set, unknown []string) {
 	for _, n := range names {

@@ -385,7 +385,6 @@ function suite(target: Target) {
       expect(r.json.user.permissions).not.toContain('space.read')
       if (accounts) {
         expect(r.json.methods.password).toBe(true)
-        expect(r.json.methods).toHaveProperty('oidc')
       } else {
         expect(r.json.user).toMatchObject({ id: 'local', username: 'local' })
         expect(r.json.methods).toBeUndefined()
@@ -422,7 +421,6 @@ function suite(target: Target) {
       const probes: [string, string, unknown?][] = [
         ['POST', '/api/login', { username: 'a', password: 'b' }],
         ['POST', '/api/setup', { token: 'x', username: 'ab', password: 'password1' }],
-        ['POST', '/api/auth/oidc/start', { intent: 'login' }],
         ['GET', '/api/auth/providers'],
         ['GET', '/api/captcha?ctx=login'],
         ['POST', '/api/auth/passkey/begin', {}],

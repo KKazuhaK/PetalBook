@@ -44,7 +44,7 @@ export const authRoutes: Route[] = [
         setup: a.setup,
         hold: user ? a.hold : null,
         ...(a.ended && !user ? { endedReason: a.ended } : {}),
-        ...(a.mode === 'accounts' ? { methods: { password: true, oidc: null } } : {}),
+        ...(a.mode === 'accounts' ? { methods: { password: true } } : {}),
         token: null,
       }
     },
@@ -111,7 +111,6 @@ export const authRoutes: Route[] = [
     },
   ],
   ['POST', '/api/auth/:kind/:slug/start', (c) => ({ url: `/api/auth/${c.params.kind}/${c.params.slug}/callback` })],
-  ['POST', '/api/auth/oidc/start', () => ({ url: '/api/auth/oidc/callback' })],
   [
     'GET',
     '/api/captcha',

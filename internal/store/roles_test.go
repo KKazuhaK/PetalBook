@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 	"petalbook.app/server/internal/store/storetest"
 )
@@ -113,12 +112,11 @@ func TestCustomRolesAndTheirGrants(t *testing.T) {
 	})
 }
 
-// A role lists keys that exist (by a current or former name), of its scope,
+// A role lists keys that exist, of its scope,
 // and never one only the built-in roles hold; a tenant's role is held in that
 // tenant only.
 func TestARoleHoldsOnlyKeysOfItsScope(t *testing.T) {
 	t.Parallel()
-	authz.Alias("tenant.audit.list", authz.TenantAuditRead)
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		q := st.Q()
@@ -141,11 +139,11 @@ func TestARoleHoldsOnlyKeysOfItsScope(t *testing.T) {
 				t.Errorf("%s was stored: %v", r.ID, err)
 			}
 		}
-		if err := st.InsertRole(ctx, q, role("A", store.RoleScopeTenant, store.DefaultTenantID, "tenant.audit.list")); err != nil {
+		if err := st.InsertRole(ctx, q, role("A", store.RoleScopeTenant, store.DefaultTenantID, "tenant.audit.read")); err != nil {
 			t.Fatal(err)
 		}
 		if r, _ := store.GetRole(ctx, q, "A"); !slices.Equal(r.Keys, []string{"tenant.audit.read"}) {
-			t.Fatalf("a former name is stored as the key's name: %v", r.Keys)
+			t.Fatalf("the keys stored: %v", r.Keys)
 		}
 		if err := store.UpdateRole(ctx, q, "A", "A", []string{"site.status.read"}, now); !errors.Is(err, store.ErrInvalidRole) {
 			t.Fatal(err)

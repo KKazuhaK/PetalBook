@@ -118,11 +118,10 @@ func TestAnOrganisationsProviderNeedsAVerifiedDomain(t *testing.T) {
 			o := org
 			return auth.ProviderInput{Owner: &o, Slug: &slug, Kind: &kind, Name: &name, Enabled: &on,
 				OIDC: &struct {
-					Issuer         *string   `json:"issuer"`
-					ClientID       *string   `json:"clientId"`
-					ClientSecret   *string   `json:"clientSecret"`
-					Scopes         *[]string `json:"scopes"`
-					LegacyCallback *bool     `json:"legacyCallback"`
+					Issuer       *string   `json:"issuer"`
+					ClientID     *string   `json:"clientId"`
+					ClientSecret *string   `json:"clientSecret"`
+					Scopes       *[]string `json:"scopes"`
 				}{Issuer: &issuer, ClientID: &id, ClientSecret: &secret}}
 		}
 		var ae *auth.Error

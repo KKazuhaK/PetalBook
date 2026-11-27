@@ -17,7 +17,7 @@ const (
 	pendingCapacity = 10_000
 )
 
-// pendingEntry is one sign-in between /api/auth/oidc/start and the callback.
+// pendingEntry is one sign-in between its start and the callback.
 type pendingEntry struct {
 	kind string
 	slug string

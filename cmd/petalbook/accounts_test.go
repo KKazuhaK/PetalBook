@@ -152,8 +152,6 @@ func (b *browser) do(method, path string, body any) (int, map[string]any) {
 func TestServeConfigurationIsCheckedBeforeAnythingIsCreated(t *testing.T) {
 	data := filepath.Join(tempDir(t), "data")
 	space := filepath.Join(tempDir(t), "space")
-	secret := filepath.Join(tempDir(t), "secret")
-	os.WriteFile(secret, []byte("s3cret\n"), 0o600)
 	for _, c := range []struct {
 		name string
 		args []string
@@ -164,12 +162,8 @@ func TestServeConfigurationIsCheckedBeforeAnythingIsCreated(t *testing.T) {
 		{"insecure in accounts mode", []string{"serve", "--data", data, "--insecure-no-auth"}, "--insecure-no-auth"},
 		{"state dir in accounts mode", []string{"serve", "--data", data, "--state-dir", space}, "--state-dir"},
 		{"public url in single mode", []string{"serve", "--space", space, "--public-url", "https://x.example"}, "accounts mode"},
-		{"oidc in single mode", []string{"serve", "--space", space, "--oidc-issuer", "https://idp.example"}, "accounts mode"},
+		{"the old oidc flags are gone", []string{"serve", "--data", data, "--oidc-issuer", "https://idp.example"}, "unknown flag"},
 		{"trusted proxy in single mode", []string{"serve", "--space", space, "--trusted-proxy", "10.0.0.0/8"}, "accounts mode"},
-		{"oidc without client", []string{"serve", "--data", data, "--public-url", "https://x.example", "--oidc-issuer", "https://idp.example"}, "--oidc-client-id"},
-		{"oidc without public url", []string{"serve", "--data", data, "--oidc-issuer", "https://idp.example", "--oidc-client-id", "c"}, "--public-url"},
-		{"oidc option alone", []string{"serve", "--data", data, "--public-url", "https://x.example", "--oidc-auto-create"}, "--oidc-issuer"},
-		{"oidc issuer not https", []string{"serve", "--data", data, "--public-url", "https://x.example", "--oidc-issuer", "http://idp.example", "--oidc-client-id", "c", "--listen", "127.0.0.1:0"}, "not valid"},
 		{"public url with a path", []string{"serve", "--data", data, "--public-url", "https://x.example/notes"}, "--public-url"},
 		{"public url not a url", []string{"serve", "--data", data, "--public-url", "x.example"}, "--public-url"},
 		{"bad trusted proxy", []string{"serve", "--data", data, "--trusted-proxy", "banana"}, "--trusted-proxy"},
@@ -178,7 +172,6 @@ func TestServeConfigurationIsCheckedBeforeAnythingIsCreated(t *testing.T) {
 		{"inbox in the attachments folder", []string{"serve", "--space", space, "--inbox", "assets"}, "--inbox"},
 		{"hidden inbox", []string{"serve", "--space", space, "--inbox", ".inbox"}, "--inbox"},
 		{"data path with #", []string{"serve", "--data", data + "#x"}, "'#'"},
-		{"missing secret file", []string{"serve", "--data", data, "--public-url", "https://x.example", "--oidc-issuer", "https://idp.example", "--oidc-client-id", "c", "--oidc-client-secret-file", "/nonexistent/secret"}, "--oidc-client-secret-file"},
 	} {
 		_, err := run(t, append(c.args, "--listen", "127.0.0.1:0")...)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -190,20 +183,6 @@ func TestServeConfigurationIsCheckedBeforeAnythingIsCreated(t *testing.T) {
 			t.Errorf("%s was created although the configuration was refused", p)
 		}
 	}
-	// The secret is read from the file or the environment, not both.
-	cfg := serveConfig{data: data, publicURL: "https://x.example", oidcIssuer: "https://idp.example", oidcClientID: "c", oidcClientSecretFile: secret}
-	got, err := cfg.check()
-	if err != nil || got.oidc.ClientSecret != "s3cret" || got.publicURL != "https://x.example" {
-		t.Fatalf("%+v %v", got, err)
-	}
-	cfg.oidcClientSecret = "from-env"
-	if _, err := cfg.check(); err == nil {
-		t.Fatal("two sources for the secret accepted")
-	}
-	cfg.oidcClientSecretFile = ""
-	if got, err := cfg.check(); err != nil || got.oidc.ClientSecret != "from-env" {
-		t.Fatalf("%+v %v", got, err)
-	}
 }
 
 func TestEnvironmentSuppliesTheNewFlags(t *testing.T) {
@@ -214,16 +193,6 @@ func TestEnvironmentSuppliesTheNewFlags(t *testing.T) {
 		t.Fatalf("PETALBOOK_DATA and PETALBOOK_INSECURE_NO_AUTH not applied: %v", err)
 	}
 	t.Setenv("PETALBOOK_INSECURE_NO_AUTH", "")
-	t.Setenv("PETALBOOK_OIDC_ISSUER", "https://idp.example")
-	if _, err := run(t, "serve", "--listen", "127.0.0.1:0"); err == nil || !strings.Contains(err.Error(), "--oidc-client-id") {
-		t.Fatalf("PETALBOOK_OIDC_ISSUER not applied: %v", err)
-	}
-	t.Setenv("PETALBOOK_OIDC_ISSUER", "")
-	t.Setenv("PETALBOOK_OIDC_CLIENT_SECRET", "x")
-	if _, err := run(t, "serve", "--listen", "127.0.0.1:0"); err == nil || !strings.Contains(err.Error(), "--oidc-issuer") {
-		t.Fatalf("PETALBOOK_OIDC_CLIENT_SECRET not applied: %v", err)
-	}
-	t.Setenv("PETALBOOK_OIDC_CLIENT_SECRET", "")
 	t.Setenv("PETALBOOK_DRAFT_IDLE", "banana")
 	if _, err := run(t, "serve", "--listen", "127.0.0.1:0"); err == nil || !strings.Contains(err.Error(), "PETALBOOK_DRAFT_IDLE") {
 		t.Fatalf("%v", err)
@@ -235,8 +204,7 @@ func TestServeHelpDescribesBothModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--data", "--space", "--database", "--public-url", "--trusted-proxy", "--oidc-issuer", "--oidc-client-id", "--oidc-client-secret-file",
-		"--oidc-name", "--oidc-scopes", "--oidc-auto-create", "--draft-idle", "--draft-max", "--max-spaces", "--space-idle", "--max-open-spaces", "--commit-idle", "PETALBOOK_DATABASE", "exactly one", "accounts mode", "single-user mode"} {
+	for _, want := range []string{"--data", "--space", "--database", "--public-url", "--trusted-proxy", "--draft-idle", "--draft-max", "--max-spaces", "--space-idle", "--max-open-spaces", "--commit-idle", "PETALBOOK_DATABASE", "exactly one", "accounts mode", "single-user mode"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the help does not mention %q", want)
 		}

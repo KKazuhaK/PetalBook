@@ -116,7 +116,6 @@ export function adminProbes(fx: FixtureServer): Call[] {
       clientId: 'c',
       hasSecret: true,
       scopes: ['openid'],
-      legacyCallback: false,
       redirectUrl: '',
     },
     status: { ok: true, checked: at, message: '' },

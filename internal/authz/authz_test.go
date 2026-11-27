@@ -125,28 +125,10 @@ func TestRegisteringAfterTheRolesWereBuiltPanics(t *testing.T) {
 	authz.Register("site.late", authz.ScopeSite, "", "late")
 }
 
-func TestAFormerNameStillNamesItsKey(t *testing.T) {
-	authz.Alias("tenant.people.read", authz.TenantUsersRead)
-	if k, ok := authz.Lookup("tenant.people.read"); !ok || k != authz.TenantUsersRead || k.Name() != "tenant.users.read" {
-		t.Fatal(k, ok)
-	}
+func TestSetOfReportsTheNamesItDoesNotKnow(t *testing.T) {
 	s, unknown := authz.SetOf([]string{"tenant.people.read", "tenant.gone", "site.status.read"})
-	if s != authz.Of(authz.TenantUsersRead, authz.SiteStatusRead) || !slices.Equal(unknown, []string{"tenant.gone"}) {
+	if s != authz.Of(authz.SiteStatusRead) || !slices.Equal(unknown, []string{"tenant.people.read", "tenant.gone"}) {
 		t.Fatal(s.Names(), unknown)
-	}
-	for name, f := range map[string]func(){
-		"alias of a key's name": func() { authz.Alias("tenant.users.read", authz.TenantUsersManage) },
-		"duplicate alias":       func() { authz.Alias("tenant.people.read", authz.TenantUsersManage) },
-		"unregistered key":      func() { authz.Alias("tenant.nothing", 0) },
-	} {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("%s: no panic", name)
-				}
-			}()
-			f()
-		}()
 	}
 }
 

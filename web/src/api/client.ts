@@ -71,7 +71,6 @@ import type {
   ListParams,
   Member,
   MetaResponse,
-  OidcIntent,
   Page,
   PageDraft,
   PageLinkList,
@@ -818,8 +817,6 @@ export const api = {
     slug: string,
     input: { intent: ProviderIntent; token?: string; return?: string },
   ) => request<{ url: string }>(`/auth/${enc(kind)}/${enc(slug)}/start`, { method: 'POST', body: input }),
-  oidcStart: (input: { intent: OidcIntent; token?: string; return?: string }) =>
-    request<{ url: string }>('/auth/oidc/start', { method: 'POST', body: input }),
   passkeyBegin: (username?: string) =>
     request<PasskeyCeremony>('/auth/passkey/begin', { method: 'POST', body: username ? { username } : {} }),
   passkeyFinish: async (ceremony: string, ret: string, credential: unknown) => {

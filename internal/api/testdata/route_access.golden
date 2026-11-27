@@ -82,7 +82,6 @@ GET /api/admin/tokens	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/usage	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/users/{user}/deletion	ok	ok	403 forbidden	403 token_scope
 GET /api/auth/github/{slug}/callback	ok	ok	ok	403 token_scope
-GET /api/auth/oidc/callback	ok	ok	ok	403 token_scope
 GET /api/auth/oidc/{slug}/callback	ok	ok	ok	403 token_scope
 GET /api/auth/providers	ok	ok	ok	403 token_scope
 GET /api/auth/saml/{slug}/metadata	ok	ok	ok	403 token_scope
@@ -181,7 +180,6 @@ POST /api/admin/spaces/{space}/transfer	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/spaces/{space}/view	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/tenants	403 feature_off	403 forbidden	403 forbidden	403 token_scope
 POST /api/admin/users/{id}/view-as	ok	ok	403 forbidden	403 token_scope
-POST /api/auth/oidc/start	ok	ok	ok	403 token_scope
 POST /api/auth/passkey/begin	ok	ok	ok	403 token_scope
 POST /api/auth/passkey/finish	ok	ok	ok	403 token_scope
 POST /api/auth/saml/{slug}/acs	ok	ok	ok	403 token_scope

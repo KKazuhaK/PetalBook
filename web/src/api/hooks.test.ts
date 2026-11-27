@@ -19,7 +19,7 @@ const session = (over: Partial<SessionInfo> = {}): SessionInfo => ({
   mode: 'accounts',
   user: null,
   setup: false,
-  methods: { password: true, oidc: null },
+  methods: { password: true },
   ...over,
 })
 

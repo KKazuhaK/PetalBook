@@ -90,7 +90,6 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   oidc_issuer_invalid: '登录服务的地址必须是 https。',
   saml_metadata_invalid: '登录服务的元数据不能用。',
   saml_needs_https: 'SAML 需要 https 的公开地址。',
-  legacy_callback_in_use: '另一个登录服务正在使用旧的回调地址。',
   domain_required: '租户拥有的登录提供方，需要租户先有一个已验证的域名。',
   already_linked: '你在这个提供方已经关联了一个账号。请先取消关联，再关联另一个。',
   last_method: '这是最后一种登录方式。请先设置密码或关联另一种登录方式。',

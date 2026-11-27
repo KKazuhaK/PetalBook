@@ -485,8 +485,6 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 	})
 }
 
-const oidcCallbackPath = "/api/auth/oidc/callback"
-
 // fromIdentityProvider is true for the requests an identity provider's site
 // sends the browser to, or the provider itself makes: the redirects of
 // OpenID Connect and GitHub, the form posted to a SAML ACS, and the metadata.
@@ -495,9 +493,6 @@ func fromIdentityProvider(r *http.Request) bool {
 	p := r.URL.Path
 	switch r.Method {
 	case http.MethodGet:
-		if p == oidcCallbackPath {
-			return true
-		}
 		if rest, ok := strings.CutPrefix(p, "/api/auth/"); ok {
 			parts := strings.Split(rest, "/")
 			if len(parts) == 3 && parts[1] != "" && (parts[0] == "oidc" || parts[0] == "github") && parts[2] == "callback" {

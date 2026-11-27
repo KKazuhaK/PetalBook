@@ -357,7 +357,7 @@ CREATE INDEX remotes_cred_user ON remotes(cred_user_id) WHERE cred_user_id <> ''
 -- Server-wide records as text by key (most are JSON): what is not a setting.
 -- The daily text's interfaces and providers, the captcha's site key, the
 -- storage policy's 'since', the mail sender, the
--- markers 'oidc_imported' and 'passkey_fake_key', and 'first_user', the time
+-- marker 'passkey_fake_key', and 'first_user', the time
 -- the first account was made (MarkFirstUser). Policy is in layered_settings and
 -- every secret in secrets; nothing here is a setting or a secret.
 CREATE TABLE site_records (
@@ -824,7 +824,6 @@ CREATE TABLE providers (
   jit_tenant        TEXT COLLATE "C" NOT NULL DEFAULT '',
   auto_create       BIGINT NOT NULL DEFAULT 0,
   trust_email_optin BIGINT NOT NULL DEFAULT 0,
-  legacy_callback   BIGINT NOT NULL DEFAULT 0,
   cache             TEXT COLLATE "C" NOT NULL DEFAULT '',
   status_ok         BIGINT NOT NULL DEFAULT 0,
   status_checked    BIGINT NOT NULL DEFAULT 0,

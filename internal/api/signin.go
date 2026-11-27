@@ -197,9 +197,8 @@ func (s *server) ssoStartGET(c *call) {
 	http.Redirect(c.w, c.r, res.URL, http.StatusSeeOther)
 }
 
-func (s *server) oidcSlugCallback(c *call) { s.oidcCallbackOf(c, c.r.PathValue("slug")) }
-
-func (s *server) oidcCallbackOf(c *call, slug string) {
+func (s *server) oidcSlugCallback(c *call) {
+	slug := c.r.PathValue("slug")
 	c.w.Header().Set("Cache-Control", "no-store")
 	binding, sessionTok := "", ""
 	if ck, err := c.r.Cookie(s.auth.SSOCookieName()); err == nil {

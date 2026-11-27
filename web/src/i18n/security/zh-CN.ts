@@ -95,7 +95,6 @@ export const securityZhCN = {
   },
   notices: {
     title: '需要留意',
-    flags_ignored: '命令行里的 --oidc-* 参数和库里保存的提供方不一致。以库为准，参数不再起作用，后面的版本会删掉它们。',
     secret_unreadable: '有一个保存的密钥用这台服务器的密钥打不开，请重新填写它。',
     passkey_host_changed: '公开地址的主机名变了，之前登记的 passkey 都不能用了。',
   } as Record<string, string>,
@@ -189,8 +188,6 @@ export const securityZhCN = {
       clientSecretHelp: '公开客户端可以留空（始终使用 PKCE）。',
       scopes: '范围（scope）',
       scopesHelp: '除 openid 之外的范围，用空格隔开。',
-      legacyCallback: '使用旧的回调地址',
-      legacyCallbackHelp: '2.8 之前用的回调地址，最多一个提供方可以用，这样身份提供方那边不用改。',
       redirectUrl: '在身份提供方登记的回调地址',
     },
     saml: {
@@ -253,7 +250,6 @@ export const securityZhCN = {
       exists: '这个标识已经有人用了。',
       domain_required: '租户拥有的提供方，需要租户先有一个已验证的域名。',
       provider_limit: '已经有 50 个提供方了，不能再加。',
-      legacy_callback_in_use: '另一个提供方已经在用旧的回调地址。',
       oidc_issuer_invalid: '签发方要是 https 地址。',
       saml_needs_https:
         'SAML 需要 https 的公开地址（--public-url），因为从身份提供方跨站过来的 cookie 必须是 Secure 的。',

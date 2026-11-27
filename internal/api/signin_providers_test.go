@@ -34,7 +34,7 @@ func TestProviderCRUDAndRefusals(t *testing.T) {
 		}
 		o := r.body["oidc"].(map[string]any)
 		if r.body["slug"] != "one" || r.body["enabled"] != true || r.body["icon"] != "preset:microsoft" || r.body["order"] != float64(2) || o["hasSecret"] != true ||
-			o["redirectUrl"] != testPublic+"/api/auth/oidc/one/callback" || o["legacyCallback"] != false || r.body["status"].(map[string]any)["ok"] != true ||
+			o["redirectUrl"] != testPublic+"/api/auth/oidc/one/callback" || r.body["status"].(map[string]any)["ok"] != true ||
 			r.body["people"] != float64(0) || r.body["saml"] != nil || r.body["github"] != nil {
 			t.Fatalf("%s", r.raw)
 		}
@@ -78,11 +78,6 @@ func TestProviderCRUDAndRefusals(t *testing.T) {
 		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "auto_create_needs_org")
 		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"autoCreate": true, "github": map[string]any{"baseUrl": gh.srv.URL, "clientId": "gh-client", "clientSecret": "gh-secret", "organizations": []string{"KazuhaHub"}}})).want(t, 201, "")
 		admin.do("PATCH", "/api/admin/providers/gh", map[string]any{"github": map[string]any{"organizations": []string{}}}).want(t, 400, "auto_create_needs_org")
-		// Only one provider has the legacy callback.
-		admin.do("PATCH", "/api/admin/providers/one", map[string]any{"oidc": map[string]any{"legacyCallback": true}}).want(t, 200, "")
-		r = admin.do("POST", "/api/admin/providers", other.providerBody("other", map[string]any{"oidc": map[string]any{"issuer": other.srv.URL, "clientId": idpClient, "legacyCallback": true}})).want(t, 409, "legacy_callback_in_use")
-		_ = r
-
 		// A change: only what is sent, the secret kept unless sent.
 		p := admin.do("PATCH", "/api/admin/providers/one", map[string]any{"name": "Renamed", "autoCreate": true, "mergeVerifiedEmail": true}).want(t, 200, "")
 		if p.body["name"] != "Renamed" || p.body["autoCreate"] != true || p.body["mergeVerifiedEmail"] != true || p.body["oidc"].(map[string]any)["hasSecret"] != true {
@@ -274,83 +269,6 @@ func (f *fakeIDP) signIn2(t *testing.T, c *client, slug, who string, body map[st
 	at := f.beginAt(t, c, "/api/auth/oidc/"+slug+"/start", "/api/auth/oidc/"+slug+"/callback", who, body)
 	loc, _ := finish(t, c, at.cb)
 	return loc
-}
-
-func TestFlagsBecomeTheProviderSsoWithoutLockingAnyoneOut(t *testing.T) {
-	t.Parallel()
-	f := newFakeIDP(t)
-	opts := f.opts(true)
-	eachAccounts(t, opts, func(t *testing.T, a *acc) {
-		admin := a.setup("kazuha", pw)
-		// The provider is in the database with the old callback, enabled; nothing else changed.
-		p := admin.do("GET", "/api/admin/providers/sso", nil).want(t, 200, "")
-		o := p.body["oidc"].(map[string]any)
-		if p.body["name"] != "Company SSO" || p.body["enabled"] != true || p.body["autoCreate"] != true || o["legacyCallback"] != true || o["hasSecret"] != true ||
-			o["issuer"] != f.srv.URL || o["redirectUrl"] != testPublic+"/api/auth/oidc/callback" || o["clientId"] != idpClient || strings.Contains(p.raw, idpSecret) {
-			t.Fatal(p.raw)
-		}
-		sec := admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
-		lg := sec.body["login"].(map[string]any)
-		if admin.siteValue("signin.mode") != "dual" || admin.siteValue("signin.ssoOnly") != false || lg["effectiveMode"] != "dual" || len(sec.body["notices"].([]any)) != 0 {
-			t.Fatal(sec.raw)
-		}
-		// Passwords still work, the old endpoints serve the provider, and its identities work.
-		a.newClient("").do("POST", "/api/login", good("kazuha")).want(t, 200, "")
-		c := a.newClient("")
-		if loc := f.signIn(t, c, "alice", map[string]any{}); loc != "/" || signedInAs(t, c) != "alice" {
-			t.Fatal(loc)
-		}
-		m := c.do("GET", "/api/session", nil).body["methods"].(map[string]any)
-		if m["oidc"].(map[string]any)["name"] != "Company SSO" {
-			t.Fatal(m)
-		}
-		// The new-style callback of the same provider works for attempts started the new way.
-		// Its redirect URI is still the old one, whichever way the attempt started.
-		d := a.newClient("")
-		at := f.beginAt(t, d, "/api/auth/oidc/sso/start", "/api/auth/oidc/callback", "bob", map[string]any{})
-		if loc, _ := finish(t, d, at.cb); loc != "/" {
-			t.Fatal(loc)
-		}
-
-		// A restart with other flags: the database wins, the flags only warn.
-		ctx := context.Background()
-		other := *f.config(false)
-		other.ClientID, other.Name = "another-client", "Another name"
-		svc2, err := auth.New(ctx, auth.Config{Store: a.st, Spaces: a.mgr, PublicURL: testPublic, OIDC: &other, HTTPClient: f.srv.Client(), Password: fastPasswords, Now: a.clock.Now})
-		if err != nil {
-			t.Fatal(err)
-		}
-		view, err := svc2.SecurityView(ctx)
-		if err != nil || len(view.Notices) != 1 || view.Notices[0].Code != "flags_ignored" {
-			t.Fatalf("%+v %v", view, err)
-		}
-		pv, err := svc2.Provider(ctx, "sso")
-		if err != nil || pv.Name != "Company SSO" || pv.OIDC.ClientID != idpClient {
-			t.Fatalf("the flags changed the stored provider: %+v %v", pv, err)
-		}
-		// The same flags: no notice. No flags: none either, and the provider stays.
-		same := *f.config(true)
-		svc3, err := auth.New(ctx, auth.Config{Store: a.st, Spaces: a.mgr, PublicURL: testPublic, OIDC: &same, HTTPClient: f.srv.Client(), Password: fastPasswords, Now: a.clock.Now})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if v, _ := svc3.SecurityView(ctx); len(v.Notices) != 0 {
-			t.Fatalf("%+v", v.Notices)
-		}
-		// Deleting the provider and starting again with the flags does not bring it back; the notice says so.
-		admin.do("DELETE", "/api/admin/providers/sso?force=1", nil).want(t, 204, "")
-		svc4, err := auth.New(ctx, auth.Config{Store: a.st, Spaces: a.mgr, PublicURL: testPublic, OIDC: &same, HTTPClient: f.srv.Client(), Password: fastPasswords, Now: a.clock.Now})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if v, _ := svc4.SecurityView(ctx); len(v.Notices) != 1 || v.Notices[0].Code != "flags_ignored" || len(svc4.PublicProviders()) != 0 {
-			t.Fatalf("%+v", v.Notices)
-		}
-		// The linked accounts went with it.
-		if _, err := store.FindLink(ctx, a.st.Q(), "sso", "sub-alice"); !errors.Is(err, store.ErrNotFound) {
-			t.Fatal(err)
-		}
-	})
 }
 
 // A sign-in never attaches itself to an account by its address (3.6). An
