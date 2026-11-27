@@ -574,7 +574,10 @@ function suite(target: Target) {
           expect(r.json.user.id).toBe(m.user.id)
           expect(r.json.hasPassword).toBe(true)
           expect(r.json).not.toHaveProperty('identities')
-          expect((await call(m.browser, 'GET', '/api/account/links')).json).toEqual({ links: [] })
+          // The person's links, and the providers they may connect repositories at.
+          const links = (await call(m.browser, 'GET', '/api/account/links')).json
+          expect(links.links).toEqual([])
+          expect(Array.isArray(links.providers)).toBe(true)
         })
 
         it('PATCH changes the name and the email, each optional', async () => {
@@ -2983,13 +2986,13 @@ function suite(target: Target) {
         it('are for site administrators, and a re-check needs an App', async () => {
           const m = await newMember(uniq('ghc'))
           for (const [path, body] of [
-            ['/api/admin/connections/github/check', {}],
-            ['/api/admin/connections/github/manifest', {}],
+            ['/api/admin/providers/github/check', {}],
+            ['/api/admin/providers/github/manifest', {}],
           ] as const) {
             const r = await call(m.browser, 'POST', path, body)
             expect([r.status, r.json?.error], path).toEqual([403, 'forbidden'])
           }
-          const none = await call(admin, 'POST', '/api/admin/connections/github/check', {})
+          const none = await call(admin, 'POST', '/api/admin/providers/github/check', {})
           expect([none.status, none.json?.error]).toEqual([409, 'provider_not_configured'])
         })
       })

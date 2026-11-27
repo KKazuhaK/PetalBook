@@ -184,30 +184,30 @@ function probes(fx: FixtureServer): Call[] {
     ['DELETE', P],
     ['DELETE', '/api/spaces/default/pages/NOPE'],
     // the platforms a space is stored on
-    ['GET', '/api/connections'],
-    ['POST', '/api/connections/github/authorization/start', { return: '/' }],
-    ['GET', '/api/connections/github/owners'],
-    ['GET', '/api/connections/github/repos?installation=5001'],
-    ['DELETE', '/api/connections/github/leftovers/880100000'],
-    ['DELETE', '/api/connections/github/authorization'],
-    ['GET', '/api/admin/connections'],
-    ['GET', '/api/admin/connections/github'],
-    ['PUT', '/api/admin/connections/github', { appId: '1', privateKey: 'k', clientId: 'c', clientSecret: 's' }],
-    ['POST', '/api/admin/connections/github/check', {}],
-    ['POST', '/api/admin/connections/github/manifest', { organization: 'acme' }],
-    ['POST', '/api/admin/connections/github/manifest/retry', {}],
-    ['GET', '/api/admin/connections/github/installations'],
-    ['PUT', '/api/admin/connections/github/installations/5001', { tenants: [] }],
-    ['DELETE', '/api/admin/connections/github'],
+    ['GET', '/api/account/links'],
+    ['POST', '/api/account/links/github/start', { purpose: 'repos', return: '/' }],
+    ['GET', '/api/account/links/github/owners'],
+    ['GET', '/api/account/links/github/repos?installation=5001'],
+    ['DELETE', '/api/account/leftovers/github/880100000'],
+    ['DELETE', '/api/account/links/link-github/repos'],
+    ['GET', '/api/admin/providers'],
+    ['GET', '/api/admin/providers/github'],
+    ['PUT', '/api/admin/providers/github', { appId: '1', privateKey: 'k', clientId: 'c', clientSecret: 's' }],
+    ['POST', '/api/admin/providers/github/check', {}],
+    ['POST', '/api/admin/providers/github/manifest', { organization: 'acme' }],
+    ['POST', '/api/admin/providers/github/manifest/retry', {}],
+    ['GET', '/api/admin/providers/github/installations'],
+    ['PUT', '/api/admin/providers/github/installations/5001', { tenants: [] }],
+    ['DELETE', '/api/admin/providers/github'],
     [
       'POST',
-      '/api/admin/connections',
+      '/api/admin/providers',
       { id: 'gl', type: 'gitlab', host: 'gl.example', clientId: 'c', clientSecret: 's' },
     ],
-    ['GET', '/api/admin/connections/gl'],
-    ['PATCH', '/api/admin/connections/gl', { name: 'GL' }],
-    ['POST', '/api/admin/connections/gl/check', {}],
-    ['DELETE', '/api/admin/connections/gl'],
+    ['GET', '/api/admin/providers/gl'],
+    ['PATCH', '/api/admin/providers/gl', { name: 'GL' }],
+    ['POST', '/api/admin/providers/gl/check', {}],
+    ['DELETE', '/api/admin/providers/gl'],
     // the person's own account (as the administrator, who the probes above may have signed out)
     ['POST', '/api/login', { username: 'admin', password: 'x' }],
     ['PATCH', '/api/account', { name: '新名字' }],
@@ -310,22 +310,21 @@ const UNRECORDED: Record<string, string> = {
   'PUT /api/spaces/default/remote/assets 200': 'needs a remote repository',
   'GET /api/spaces/default/remote/assets 200': 'needs a remote repository',
   'POST /api/spaces/default/remote/assets/move 200': 'needs a remote repository',
-  'GET /api/connections 200': 'needs a platform',
-  'POST /api/connections/github/authorization/start 200': 'needs a platform',
-  'GET /api/connections/github/owners 200': 'needs a platform',
-  'GET /api/connections/github/repos 200': 'needs a platform',
-  'GET /api/admin/connections 200': 'needs a platform',
-  'GET /api/admin/connections/github 200': 'needs a platform',
-  'PUT /api/admin/connections/github 200': 'needs a platform',
-  'POST /api/admin/connections/github/check 200': 'needs a platform',
-  'POST /api/admin/connections/github/manifest 200': 'needs a platform',
-  'POST /api/admin/connections/github/manifest/retry 200': 'needs a platform',
-  'GET /api/admin/connections/github/installations 200': 'needs a platform',
-  'PUT /api/admin/connections/github/installations/{} 200': 'needs a platform',
-  'POST /api/admin/connections 201': 'needs a platform',
-  'GET /api/admin/connections/gl 200': 'needs a platform',
-  'PATCH /api/admin/connections/gl 200': 'needs a platform',
-  'POST /api/admin/connections/gl/check 200': 'needs a platform',
+  'POST /api/account/links/github/start 200': 'needs a platform',
+  'GET /api/account/links/github/owners 200': 'needs a platform',
+  'GET /api/account/links/github/repos 200': 'needs a platform',
+  'GET /api/admin/providers 200': 'needs a platform',
+  'GET /api/admin/providers/github 200': 'needs a platform',
+  'PUT /api/admin/providers/github 200': 'needs a platform',
+  'POST /api/admin/providers/github/check 200': 'needs a platform',
+  'POST /api/admin/providers/github/manifest 200': 'needs a platform',
+  'POST /api/admin/providers/github/manifest/retry 200': 'needs a platform',
+  'GET /api/admin/providers/github/installations 200': 'needs a platform',
+  'PUT /api/admin/providers/github/installations/{} 200': 'needs a platform',
+  'POST /api/admin/providers 201': 'needs a platform',
+  'GET /api/admin/providers/gl 200': 'needs a platform',
+  'PATCH /api/admin/providers/gl 200': 'needs a platform',
+  'POST /api/admin/providers/gl/check 200': 'needs a platform',
 }
 
 // A probe is meant to succeed. One that answers 404 is a route that is missing or a probe that is wrong, unless it
@@ -350,6 +349,26 @@ describe('the fixtures against the recorded shapes', () => {
       }
       d.spaces[0].types.push({ name: 'memo', title: '备忘', rev: 'r', fields: [] })
       githubProvider(d, 'connected')
+      // The server lists a plain address first, as a provider that holds nothing: that is the recorded shape of an entry.
+      d.area.connections.providers.unshift({
+        id: 'git',
+        type: 'git',
+        host: '',
+        name: 'Git',
+        owner: 'site',
+        capabilities: {
+          createRepo: false,
+          installations: false,
+          connectAccount: false,
+          storageTarget: false,
+          partialSync: 'unknown',
+        },
+        configured: true,
+        app: null,
+        userAuthorization: false,
+        connection: null,
+        leftovers: [],
+      })
       leaveRepository(d, 'tang-gh/poems')
       addPerson(d, 'olive')
       addPerson(d, 'pam')
@@ -393,7 +412,11 @@ describe('the fixtures against the recorded shapes', () => {
         continue
       }
       if (key in UNRECORDED) problems.push(`${key}: is recorded now; take it off the unrecorded list`)
-      const [s, v] = pruned(shape, JSON.parse(JSON.stringify(r.body)))
+      const answer = JSON.parse(JSON.stringify(r.body))
+      // The contract server has no platform set up: of a provider's App and connection only the null is recorded.
+      if (key === 'GET /api/account/links 200')
+        for (const p of answer.providers) Object.assign(p, { app: null, connection: null })
+      const [s, v] = pruned(shape, answer)
       for (const m of misfits(v, s)) problems.push(`${key}: ${m}`)
     }
     expect(problems).toEqual([])

@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
 import { keys, useAccount, useAccountLinks, useAuthProviders, useSession } from '@/api/hooks'
-import type { AccountInfo, Link, PublicProvider } from '@/api/types'
+import type { AccountInfo, Link, Provider, PublicProvider } from '@/api/types'
 import { ProviderIcon } from '@/components/auth/ProviderIcon'
 import { ssoErrorMessage } from '@/pages/auth/LoginPage'
 import { Field, FormMessage } from '@/components/auth/Field'
@@ -203,7 +203,9 @@ function Links() {
   const [removing, setRemoving] = useState<Link | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const links = linksQuery.data?.links ?? []
+  // The methods are the links that sign the person in: one that only holds repositories is the connections' (and "link"
+  // below turns it into a sign-in on the same account).
+  const links = (linksQuery.data?.links ?? []).filter((l) => l.signin)
   // A button for each enabled provider the person has no linked account at: one per provider.
   const linked = new Set(links.map((l) => l.providerId))
   const linkable = (providers.data?.providers ?? []).filter((p) => !linked.has(p.slug))
@@ -223,7 +225,7 @@ function Links() {
     setBusy(true)
     try {
       await api.removeLink(removing.id)
-      qc.setQueryData<{ links: Link[] }>(
+      qc.setQueryData<{ links: Link[]; providers: Provider[] }>(
         keys.accountLinks,
         (prev) => prev && { ...prev, links: prev.links.filter((l) => l.id !== removing.id) },
       )

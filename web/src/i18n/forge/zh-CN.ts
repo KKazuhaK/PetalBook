@@ -18,6 +18,8 @@ export const forgeZhCN: ForgeMessages = {
       account_in_use: (name: string) => `这个 ${name} 账号已经连到这台服务器的另一个用户了。`,
       different_account: (name: string) =>
         `这里有空间在用你之前连的那个 ${name} 账号同步。请先断开它，或者把那些空间换成别的凭据。`,
+      last_method: (name: string) =>
+        `你用关联的 ${name} 账号登录，而它是你唯一的登录方式。请先设置密码或关联另一种登录方式，或者用同一个账号授权。`,
       unknown: () => '出了点问题。',
     },
     accountHelp: (name: string) => `连接到你名下的 ${name} 账号。`,

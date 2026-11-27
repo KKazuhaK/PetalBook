@@ -844,8 +844,10 @@ export const api = {
   // `current` is left out when the account has no password yet.
   changePassword: (input: { current?: string; new: string }) =>
     request<void>('/account/password', { method: 'POST', body: input }),
-  // The sign-ins the person has linked, one per provider. `provider` is the provider's id (its slug, for a site provider).
-  accountLinks: (signal?: AbortSignal) => request<{ links: Link[] }>('/account/links', { signal }),
+  // The person's accounts at providers (one per provider: a sign-in, repositories, or both), and the providers they may
+  // connect repositories at. `provider` is the provider's id (its slug, for a site provider).
+  accountLinks: (signal?: AbortSignal) =>
+    request<{ links: Link[]; providers: Provider[] }>('/account/links', { signal }),
   startLink: (provider: string, ret?: string) =>
     request<{ url: string }>(`/account/links/${enc(provider)}/start`, {
       method: 'POST',
@@ -965,23 +967,27 @@ export const api = {
       body: { name, ...(inbox === undefined ? {} : { inbox }), ...(sync === undefined ? {} : { storage: { sync } }) },
     }),
 
-  // --- connections (accounts mode; docs/api.md, "Connections") ---
-  connections: (signal?: AbortSignal) => request<{ providers: Provider[] }>('/connections', { signal }),
+  // --- repositories at a provider (accounts mode; docs/api.md, "Linked accounts") ---
+  connections: (signal?: AbortSignal) => request<{ providers: Provider[] }>('/account/links', { signal }),
   // The address to send the browser to; the platform sends it back to `return` (a path of this site).
   // `install` sends them to the App's installation page, which authorises them in the same flow; without it, to the authorisation page alone.
   connectionStart: (provider: string, ret?: string, install?: boolean) =>
-    request<{ url: string }>(`/connections/${enc(provider)}/authorization/start`, {
+    request<{ url: string }>(`/account/links/${enc(provider)}/start`, {
       method: 'POST',
-      body: { ...(ret ? { return: ret } : {}), ...(install ? { install: true } : {}) },
+      body: { purpose: 'repos', ...(ret ? { return: ret } : {}), ...(install ? { install: true } : {}) },
     }),
-  connectionDisconnect: (provider: string) =>
-    request<void>(`/connections/${enc(provider)}/authorization`, { method: 'DELETE' }),
+  // Drops the repository tokens of the person's link at the provider (a sign-in at it stays).
+  connectionDisconnect: async (provider: string) => {
+    const { links } = await api.accountLinks()
+    const link = links.find((l) => l.providerId === provider && l.repos)
+    if (link) await request<void>(`/account/links/${enc(link.id)}/repos`, { method: 'DELETE' })
+  },
   connectionDismissLeftover: (provider: string, repoId: number) =>
-    request<void>(`/connections/${enc(provider)}/leftovers/${repoId}`, { method: 'DELETE' }),
+    request<void>(`/account/leftovers/${enc(provider)}/${repoId}`, { method: 'DELETE' }),
   // recheck: the first page, after the server forgets what it remembered about this person ("the App is not installed there").
   connectionOwners: (provider: string, cursor?: string, signal?: AbortSignal, recheck = false) =>
     request<CursorPage<ConnectionOwner>>(
-      `/connections/${enc(provider)}/owners${cursor ? `?cursor=${enc(cursor)}` : recheck ? '?recheck=true' : ''}`,
+      `/account/links/${enc(provider)}/owners${cursor ? `?cursor=${enc(cursor)}` : recheck ? '?recheck=true' : ''}`,
       { signal },
     ),
   connectionRepos: (
@@ -994,7 +1000,7 @@ export const api = {
       'installation' in which ? { installation: String(which.installation) } : { mine: 'true' },
     )
     if (cursor) q.set('cursor', cursor)
-    return request<CursorPage<ConnectionRepo>>(`/connections/${enc(provider)}/repos?${q.toString()}`, { signal })
+    return request<CursorPage<ConnectionRepo>>(`/account/links/${enc(provider)}/repos?${q.toString()}`, { signal })
   },
   renameSpace: (id: string, name: string) =>
     request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: { name } }),

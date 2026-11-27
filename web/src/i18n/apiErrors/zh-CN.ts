@@ -94,6 +94,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   domain_required: '租户拥有的登录提供方，需要租户先有一个已验证的域名。',
   already_linked: '你在这个提供方已经关联了一个账号。请先取消关联，再关联另一个。',
   last_method: '这是最后一种登录方式。请先设置密码或关联另一种登录方式。',
+  github_app_client: '这个提供方的客户端就是 GitHub 应用的客户端：请在仓库提供方里改应用的设置。',
   auto_create_needs_org: '自动创建账号需要先指定组织。',
   local_admin_required: '要先有一个能用密码登录的管理员，才能这样设置。',
   sso_only_with_registration: '关闭密码登录后没人能完成注册，请先关闭开放注册。',

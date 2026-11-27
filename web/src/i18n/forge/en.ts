@@ -19,6 +19,8 @@ export const forgeEn = {
       account_in_use: (name: string) => `That ${name} account is connected to another user of this server.`,
       different_account: (name: string) =>
         `Spaces here sync through the ${name} account you connected before. Disconnect it first, or switch those spaces to another credential.`,
+      last_method: (name: string) =>
+        `You sign in with the ${name} account linked to you, and it is your only way in. Set a password or link another sign-in method first, or authorize with that same account.`,
       unknown: () => 'Something went wrong.',
     },
     accountHelp: (name: string) => `The ${name} account connected to you.`,

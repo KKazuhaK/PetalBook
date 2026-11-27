@@ -89,6 +89,8 @@ export const githubEn = {
       account_in_use: 'That GitHub account is connected to another user of this server.',
       different_account:
         'Spaces here sync through the GitHub account you connected before. Disconnect it first, or switch those spaces to another credential.',
+      last_method:
+        'You sign in with the GitHub account linked to you, and it is your only way in. Set a password or link another sign-in method first, or authorize with that same account.',
       unknown: 'Something went wrong.',
     },
     account: 'Account',
@@ -261,6 +263,7 @@ export const githubEn = {
     secretKept: 'A secret is saved. Enter one only to replace it.',
     secretHelp: 'Made on the App’s settings page, with the client id.',
     callbackHelp: 'Set this as the App’s callback URL on GitHub:',
+    signinCallbackHelp: 'And this one too, for signing in with GitHub (turn it on under Sign-in providers):',
     noPublicUrl: 'The server has no public address (--public-url).',
     needIds: 'Give the App ID and, the first time, the private key.',
     needSecret: 'The client id and the client secret go together.',

@@ -639,7 +639,28 @@
   "message": "string"
  },
  "GET /api/account/links 200": {
-  "links": []
+  "links": [],
+  "providers": [
+   {
+    "app": "null",
+    "capabilities": {
+     "connectAccount": "boolean",
+     "createRepo": "boolean",
+     "installations": "boolean",
+     "partialSync": "string",
+     "storageTarget": "boolean"
+    },
+    "configured": "boolean",
+    "connection": "null",
+    "host": "string",
+    "id": "string",
+    "leftovers": [],
+    "name": "string",
+    "owner": "string",
+    "type": "string",
+    "userAuthorization": "boolean"
+   }
+  ]
  },
  "GET /api/account/passkeys 403": {
   "error": "string",
@@ -4448,21 +4469,6 @@
   "error": "string",
   "message": "string"
  },
- "POST /api/admin/connections/github/check 403": {
-  "error": "string",
-  "message": "string",
-  "permission": "string"
- },
- "POST /api/admin/connections/github/check 409": {
-  "error": "string",
-  "message": "string",
-  "provider": "string"
- },
- "POST /api/admin/connections/github/manifest 403": {
-  "error": "string",
-  "message": "string",
-  "permission": "string"
- },
  "POST /api/admin/daily/lines/preview 200": {
   "lines": [
    {
@@ -4577,6 +4583,21 @@
   "message": "string"
  },
  "POST /api/admin/providers 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/providers/github/check 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/providers/github/check 409": {
+  "error": "string",
+  "message": "string",
+  "provider": "string"
+ },
+ "POST /api/admin/providers/github/manifest 403": {
   "error": "string",
   "message": "string",
   "permission": "string"

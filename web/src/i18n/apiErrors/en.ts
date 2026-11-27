@@ -102,6 +102,8 @@ export const apiErrorsEn: ApiErrorTexts = {
   domain_required: 'A provider owned by a tenant needs the tenant to have a verified domain first.',
   already_linked: 'You already have an account linked at this provider. Unlink it first to link another.',
   last_method: 'This is the last way to sign in. Set a password or link another sign-in method first.',
+  github_app_client:
+    "This provider's client is the GitHub App's: change it with the App's settings in the repository providers.",
   auto_create_needs_org: 'Creating accounts automatically needs an organisation to be named first.',
   local_admin_required: 'An administrator who can sign in with a password has to exist first.',
   sso_only_with_registration:

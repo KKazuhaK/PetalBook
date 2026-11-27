@@ -35,6 +35,7 @@ import {
 import type { FixtureData, SpaceData } from '../data/model.ts'
 import type { UserRec } from '../data/people.ts'
 import { add, find, newId, paged, remove, reply, rfc3339, type Ctx, type Route } from '../kit.ts'
+import { forgeCheck, forgeCreate, forgeDelete, forgeGet, forgePatch, isForge, repoItems } from './connections.ts'
 
 const now = (c: Ctx) => rfc3339(c.now())
 const A = (c: Ctx) => c.data.admin
@@ -1181,35 +1182,53 @@ export const adminRoutes: Route[] = [
       return securityBody(c)
     },
   ],
-  ['GET', '/api/admin/providers', (c) => ({ providers: A(c).providers })],
+  // The one list of providers: those people sign in with, and the hosts that only hold repositories.
+  [
+    'GET',
+    '/api/admin/providers',
+    (c) => ({ providers: [...A(c).providers.map((p) => ({ ...p, signin: true, repos: false })), ...repoItems(c)] }),
+  ],
   [
     'POST',
     '/api/admin/providers',
-    (c) => reply(201, add(A(c).providers, makeProvider(c.body, now(c), A(c).providers.length + 1))),
+    (c) =>
+      c.body.kind === 'gitlab' || c.body.kind === 'gitea' || c.body.type !== undefined
+        ? forgeCreate(c)
+        : reply(201, add(A(c).providers, makeProvider(c.body, now(c), A(c).providers.length + 1))),
+  ],
+  [
+    'GET',
+    '/api/admin/providers/:id',
+    (c) => (isForge(c, c.params.id) ? forgeGet(c) : find(A(c).providers, (p) => p.id === c.params.id, 'the provider')),
   ],
   [
     'PATCH',
     '/api/admin/providers/:id',
     (c) =>
-      changeProvider(
-        find(A(c).providers, (p) => p.id === c.params.id, 'the provider'),
-        c.body,
-        now(c),
-      ),
+      isForge(c, c.params.id)
+        ? forgePatch(c)
+        : changeProvider(
+            find(A(c).providers, (p) => p.id === c.params.id, 'the provider'),
+            c.body,
+            now(c),
+          ),
   ],
   [
     'DELETE',
     '/api/admin/providers/:id',
     (c) =>
-      remove(
-        A(c).providers,
-        find(A(c).providers, (p) => p.id === c.params.id, 'the provider'),
-      ),
+      isForge(c, c.params.id)
+        ? forgeDelete(c)
+        : remove(
+            A(c).providers,
+            find(A(c).providers, (p) => p.id === c.params.id, 'the provider'),
+          ),
   ],
   [
     'POST',
     '/api/admin/providers/:id/check',
     (c) => {
+      if (isForge(c, c.params.id)) return forgeCheck(c)
       const p = find(A(c).providers, (x) => x.id === c.params.id, 'the provider')
       p.status = { ok: true, checked: now(c), message: '' }
       return p

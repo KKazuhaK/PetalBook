@@ -27,6 +27,7 @@ import {
 } from './settingsFold'
 import type {
   AdminForge,
+  AdminProviderItem,
   AdminProviderRow,
   CreateAdminForgeInput,
   PatchAdminForgeInput,
@@ -340,7 +341,11 @@ export const adminApi = {
   // The captcha's credentials, the one thing this endpoint writes; `secret` is write-only ("" clears it).
   putSecurity: (captcha: CaptchaCredentials) =>
     request<SecurityBody>('/admin/security', { method: 'PUT', body: { captcha } }),
-  authProviders: (signal?: AbortSignal) => request<{ providers: AuthProvider[] }>('/admin/providers', { signal }),
+  // The providers people sign in with: the one list of providers, without those that only hold repositories.
+  authProviders: (signal?: AbortSignal) =>
+    request<{ providers: AuthProvider[] }>('/admin/providers', { signal }).then(({ providers }) => ({
+      providers: providers.filter((p) => p.signin === true),
+    })),
   createAuthProvider: (input: ProviderInput) =>
     request<AuthProvider>('/admin/providers', { method: 'POST', body: input }),
   patchAuthProvider: (id: string, input: ProviderInput) =>
@@ -414,37 +419,55 @@ export const adminApi = {
     }
   },
   // --- the hosts of GitLab and Gitea an administrator sets up ---
+  // The one list of providers, as its repository side: GitLab and Gitea hosts, and GitHub.
   adminConnectionProviders: (signal?: AbortSignal) =>
-    request<{ providers: AdminProviderRow[] }>('/admin/connections', { signal }),
+    request<{ providers: AdminProviderItem[] }>('/admin/providers', { signal }).then(({ providers }) => ({
+      providers: providers.flatMap((p): AdminProviderRow[] => {
+        const r = p.repo ?? (p.type === undefined ? undefined : p)
+        if (r === undefined) return []
+        return [
+          {
+            id: p.id,
+            type: p.type ?? p.kind,
+            name: p.name,
+            host: r.host ?? '',
+            configured: r.configured ?? false,
+            partialSync: r.partialSync ?? 'unknown',
+            connections: r.connections ?? 0,
+            spaces: r.spaces ?? 0,
+          },
+        ]
+      }),
+    })),
   createAdminForge: (input: CreateAdminForgeInput) =>
-    request<AdminForge>('/admin/connections', { method: 'POST', body: input }),
-  adminForge: (id: string, signal?: AbortSignal) => request<AdminForge>(`/admin/connections/${enc(id)}`, { signal }),
+    request<AdminForge>('/admin/providers', { method: 'POST', body: input }),
+  adminForge: (id: string, signal?: AbortSignal) => request<AdminForge>(`/admin/providers/${enc(id)}`, { signal }),
   patchAdminForge: (id: string, input: PatchAdminForgeInput) =>
-    request<AdminForge>(`/admin/connections/${enc(id)}`, { method: 'PATCH', body: input }),
+    request<AdminForge>(`/admin/providers/${enc(id)}`, { method: 'PATCH', body: input }),
   checkAdminForge: (id: string) =>
-    request<AdminForge>(`/admin/connections/${enc(id)}/check`, { method: 'POST', body: {} }),
-  deleteAdminForge: (id: string) => request<void>(`/admin/connections/${enc(id)}`, { method: 'DELETE' }),
+    request<AdminForge>(`/admin/providers/${enc(id)}/check`, { method: 'POST', body: {} }),
+  deleteAdminForge: (id: string) => request<void>(`/admin/providers/${enc(id)}`, { method: 'DELETE' }),
   // --- the GitHub App of the whole server ---
-  adminGitHub: (signal?: AbortSignal) => request<AdminGitHub>('/admin/connections/github', { signal }),
+  adminGitHub: (signal?: AbortSignal) => request<AdminGitHub>('/admin/providers/github', { signal }),
   putAdminGitHub: (input: PutAdminGitHubInput) =>
-    request<AdminGitHub>('/admin/connections/github', { method: 'PUT', body: input }),
-  deleteAdminGitHub: () => request<void>('/admin/connections/github', { method: 'DELETE' }),
+    request<AdminGitHub>('/admin/providers/github', { method: 'PUT', body: input }),
+  deleteAdminGitHub: () => request<void>('/admin/providers/github', { method: 'DELETE' }),
   // Reads the App and its installations from GitHub again.
-  checkAdminGitHub: () => request<AdminGitHub>('/admin/connections/github/check', { method: 'POST', body: {} }),
+  checkAdminGitHub: () => request<AdminGitHub>('/admin/providers/github/check', { method: 'POST', body: {} }),
   // The manifest and the address the browser posts it to, to make the App on GitHub in one click.
   startGitHubManifest: (input: { organization?: string; name?: string }) =>
-    request<GitHubManifestStart>('/admin/connections/github/manifest', { method: 'POST', body: input }),
+    request<GitHubManifestStart>('/admin/providers/github/manifest', { method: 'POST', body: input }),
   // Saves the App GitHub made when saving it failed at the time (the redirect said `pending=1`).
   retryGitHubManifest: () =>
-    request<AdminGitHub>('/admin/connections/github/manifest/retry', { method: 'POST', body: {} }),
+    request<AdminGitHub>('/admin/providers/github/manifest/retry', { method: 'POST', body: {} }),
   adminGitHubInstallations: (cursor?: string, signal?: AbortSignal) =>
     request<CursorPage<GitHubInstallation>>(
-      `/admin/connections/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`,
+      `/admin/providers/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`,
       { signal },
     ),
   // Shares the installation with exactly these tenants; none stops sharing.
   putAdminGitHubInstallation: (id: number, tenants: string[]) =>
-    request<GitHubInstallation>(`/admin/connections/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
+    request<GitHubInstallation>(`/admin/providers/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
   putDailyLines: (input: { lang: string } & ({ text: string; format: LinesFormat } | { lines: DailyLine[] })) =>
     request<AdminDailyBody>('/admin/daily/lines', { method: 'PUT', body: input }),
   // How a text would be split into lines, author and source; nothing is kept.
