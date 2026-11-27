@@ -31,6 +31,7 @@ import { TENANT_KEYS } from '../data/settingDefs.ts'
 import {
   changeProvider,
   makeProvider,
+  PROVIDER_TEMPLATES,
   AUDIT_CATEGORIES,
   DEFAULT_TENANT,
   type GroupRec,
@@ -1436,13 +1437,17 @@ export const adminRoutes: Route[] = [
       linkCallback: 'https://notes.example.test/api/account/links/{id}/callback',
     }),
   ],
+  ['GET', '/api/admin/provider-templates', () => ({ templates: structuredClone(PROVIDER_TEMPLATES) })],
   [
     'POST',
     '/api/admin/providers',
-    (c) =>
-      c.body.kind === 'gitlab' || c.body.kind === 'gitea' || c.body.type !== undefined
-        ? forgeCreate(c)
-        : reply(201, add(A(c).providers, makeProvider(c.body, now(c), A(c).providers.length + 1))),
+    (c) => {
+      if (c.body.kind === 'gitlab' || c.body.kind === 'gitea' || c.body.type !== undefined) return forgeCreate(c)
+      const p = makeProvider(c.body, now(c), A(c).providers.length + 1)
+      // Slugs are the server's, whoever owns the provider.
+      if (A(c).providers.some((x) => x.slug === p.slug)) throw new Refusal(409, 'exists', 'That slug is taken.')
+      return reply(201, add(A(c).providers, p))
+    },
   ],
   [
     'GET',

@@ -798,8 +798,14 @@ CREATE INDEX usage_overdue ON usage(tenant_id, id) WHERE kind = 'user' AND overd
 
 -- Every outside system a person can sign in with or connect repositories to
 -- (consolidation 5). owner is 'site' or the id of the tenant that owns the row
--- (org SSO); slug is the URL name, unique per owner; for a site row the id is
--- the slug, for a tenant's row a generated id. signin and repos say what the row
+-- (org SSO); slug is the URL name, unique on the whole server (it is in the
+-- callback addresses registered at each identity provider); for a site row the
+-- id is the slug, for a tenant's row a generated id. class is a sign-in row's
+-- 'social' or 'sso', chosen when it is made and never written again ('' for a
+-- row that only holds repositories); template is the preset a site social row
+-- was made from (google, microsoft, apple, gitlab-com; '' for none), fixed too,
+-- and the trust rules of its addresses are the template's. kind 'oauth2' (a
+-- plain OAuth 2.0 provider) is reserved. signin and repos say what the row
 -- may be used for. issuer is what an administrator typed (an OIDC iss, a SAML
 -- entity id) and only for display and discovery: no account is ever found by
 -- it, only by the row's own id (linked_accounts). config is JSON with nothing
@@ -813,7 +819,9 @@ CREATE TABLE providers (
   id                TEXT COLLATE "C" PRIMARY KEY,
   owner             TEXT COLLATE "C" NOT NULL DEFAULT 'site',
   slug              TEXT COLLATE "C" NOT NULL,
-  kind              TEXT COLLATE "C" NOT NULL CHECK (kind IN ('oidc', 'saml', 'github', 'gitlab', 'gitea', 'google', 'microsoft', 'apple')),
+  kind              TEXT COLLATE "C" NOT NULL CHECK (kind IN ('oidc', 'oauth2', 'saml', 'github', 'gitlab', 'gitea')),
+  class             TEXT COLLATE "C" NOT NULL DEFAULT '' CHECK (class IN ('', 'social', 'sso')),
+  template          TEXT COLLATE "C" NOT NULL DEFAULT '' CHECK (template IN ('', 'google', 'microsoft', 'apple', 'gitlab-com')),
   name              TEXT COLLATE "C" NOT NULL,
   icon              TEXT COLLATE "C" NOT NULL DEFAULT '',
   signin            BIGINT NOT NULL DEFAULT 0,
@@ -840,8 +848,10 @@ CREATE TABLE providers (
   updated_by        TEXT COLLATE "C" NOT NULL DEFAULT '',
   created           BIGINT NOT NULL,
   updated           BIGINT NOT NULL,
-  UNIQUE (owner, slug)
+  CHECK (signin = 0 OR class <> ''),
+  CHECK (template = '' OR (kind = 'oidc' AND class = 'social' AND owner = 'site'))
 );
+CREATE UNIQUE INDEX providers_slug ON providers(slug);
 CREATE UNIQUE INDEX providers_owner_host ON providers(owner, kind, host) WHERE host <> '';
 
 -- A person's account at a provider: one per (provider, person), and one person

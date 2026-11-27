@@ -37,9 +37,13 @@ type pendingEntry struct {
 	// browser that started it (see samlLinkCookie).
 	linkBinding string
 	ret         string
-	expires     time.Time
-	elem        *list.Element
-	id          string
+	// formName is the name a provider posted beside its answer (Apple's
+	// form_post user field, at the first sign-in only): kept here with the
+	// attempt, never put in an address, and taken with it.
+	formName string
+	expires  time.Time
+	elem     *list.Element
+	id       string
 }
 
 // pendingStore keeps the protocol state of sign-ins in progress: in memory,
@@ -48,12 +52,41 @@ type pendingEntry struct {
 type pendingStore struct {
 	mu    sync.Mutex
 	items map[string]*pendingEntry
-	order *list.List
-	now   func() time.Time
+	// byState finds an entry by its state, for what a provider posts
+	// without the browser's binding cookie (noteFormName).
+	byState map[string]string
+	order   *list.List
+	now     func() time.Time
 }
 
 func newPendingStore(now func() time.Time) *pendingStore {
-	return &pendingStore{items: map[string]*pendingEntry{}, order: list.New(), now: now}
+	return &pendingStore{items: map[string]*pendingEntry{}, byState: map[string]string{}, order: list.New(), now: now}
+}
+
+// removeLocked drops an entry; p.mu is held.
+func (p *pendingStore) removeLocked(id string) {
+	if e, ok := p.items[id]; ok {
+		if p.byState[e.stateValue] == id {
+			delete(p.byState, e.stateValue)
+		}
+		p.order.Remove(e.elem)
+		delete(p.items, id)
+	}
+}
+
+// noteFormName keeps a name posted with the answer to the attempt of the
+// state (of the provider slug), if one is under way and has none yet. It
+// changes nothing else: the callback still needs the binding cookie and the
+// state to take the attempt.
+func (p *pendingStore) noteFormName(slug, state, name string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e := p.items[p.byState[state]]
+	if e == nil || e.slug != slug || e.formName != "" || !p.now().Before(e.expires) ||
+		subtle.ConstantTimeCompare([]byte(state), []byte(e.stateValue)) != 1 {
+		return
+	}
+	e.formName = name
 }
 
 // put stores an entry and returns the random id for the browser-binding cookie.
@@ -79,20 +112,28 @@ func (p *pendingStore) putAs(id string, e pendingEntry) {
 		if old != nil && now.Before(old.expires) {
 			break
 		}
-		p.order.Remove(f)
-		delete(p.items, f.Value.(string))
+		if old == nil {
+			p.order.Remove(f)
+			continue
+		}
+		p.removeLocked(f.Value.(string))
 	}
 	for len(p.items) >= pendingCapacity {
 		f := p.order.Front()
 		if f == nil {
 			break
 		}
-		p.order.Remove(f)
-		delete(p.items, f.Value.(string))
+		if _, ok := p.items[f.Value.(string)]; !ok {
+			p.order.Remove(f)
+			continue
+		}
+		p.removeLocked(f.Value.(string))
 	}
+	p.removeLocked(id)
 	e.id, e.expires = id, now.Add(pendingTTL)
 	e.elem = p.order.PushBack(id)
 	p.items[id] = &e
+	p.byState[e.stateValue] = id
 }
 
 type takeResult int
@@ -115,15 +156,13 @@ func (p *pendingStore) take(id, state string) (*pendingEntry, takeResult) {
 		return nil, takeUnknown
 	}
 	if !p.now().Before(e.expires) {
-		p.order.Remove(e.elem)
-		delete(p.items, id)
+		p.removeLocked(id)
 		return nil, takeUnknown
 	}
 	if subtle.ConstantTimeCompare([]byte(state), []byte(e.stateValue)) != 1 {
 		return nil, takeBinding
 	}
-	p.order.Remove(e.elem)
-	delete(p.items, id)
+	p.removeLocked(id)
 	return e, takeOK
 }
 

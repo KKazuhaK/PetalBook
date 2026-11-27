@@ -203,6 +203,7 @@ var isolationRoutes = map[string]isoEntry{
 	"GET /api/auth/{kind}/{slug}/start":    {kind: isoExempt, reason: "public sign-in"},
 	"POST /api/auth/{kind}/{slug}/start":   {kind: isoExempt, reason: "public sign-in"},
 	"GET /api/auth/oidc/{slug}/callback":   {kind: isoExempt, reason: "public sign-in"},
+	"POST /api/auth/oidc/{slug}/callback":  {kind: isoExempt, reason: "public sign-in: only turns the posted answer into the callback"},
 	"GET /api/auth/github/{slug}/callback": {kind: isoExempt, reason: "public sign-in"},
 	"POST /api/auth/saml/{slug}/acs":       {kind: isoExempt, reason: "public sign-in"},
 	"GET /api/auth/saml/{slug}/metadata":   {kind: isoExempt, reason: "public"},

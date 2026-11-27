@@ -1460,6 +1460,28 @@
   "error": "string",
   "message": "string"
  },
+ "GET /api/admin/provider-templates 200": {
+  "templates": [
+   {
+    "authorizationEndpoint?": "string",
+    "class": "string",
+    "common": "boolean",
+    "icon": "string",
+    "id": "string",
+    "issuer": "string",
+    "jwksUri?": "string",
+    "kind": "string",
+    "name": "string",
+    "region": "string",
+    "responseMode?": "string",
+    "scopes": [
+     "string"
+    ],
+    "secret": "string",
+    "tokenEndpoint?": "string"
+   }
+  ]
+ },
  "GET /api/admin/providers 403": {
   "error": "string",
   "message": "string",

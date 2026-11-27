@@ -441,6 +441,17 @@ const openProviders = async (o: Scene = {}) => {
   await openAt('/admin/security/providers', o)
   await settle(() => buttonWith(tsec.providers.add) !== undefined, 'the providers page')
 }
+
+// "Add" opens the templates; a provider of one's own is the last choice.
+const openPicker = async () => {
+  await click(buttonWith(tsec.providers.add))
+  await settle(() => q('[data-slot="template-picker"]') !== null, 'the templates')
+}
+const openCustom = async () => {
+  await openPicker()
+  await click(q('[data-slot="template-picker"] [data-template="custom"]')!)
+  await settle(() => q('[data-slot="provider-form"]') !== null, 'the form')
+}
 describe('the sign-in providers', () => {
   const listed = () => [...document.querySelectorAll<HTMLElement>('[data-slot="providers"] > li')]
   const form = () => q('[data-slot="provider-form"]')!
@@ -472,11 +483,103 @@ describe('the sign-in providers', () => {
     expect(listed()[1].textContent).toContain('no route to host')
   })
 
+  it('adds a provider from a template: the common ones first, GitLab.com under "More templates", and Google needs only the client', async () => {
+    await openProviders()
+    await openPicker()
+    const picker = () => q('[data-slot="template-picker"]')!.textContent!
+    for (const name of ['Google', 'Microsoft', 'Apple', 'GitHub']) expect(picker()).toContain(name)
+    expect(picker()).not.toContain('GitLab.com')
+    await click(buttonWith(tsec.providers.moreTemplates))
+    await settle(() => picker().includes('GitLab.com'), 'more templates')
+    await click(q('[data-slot="template-picker"] [data-template="google"]')!)
+    await settle(() => q('[data-slot="template-form"]') !== null, 'the template form')
+    const tform = q('[data-slot="template-form"]')!
+    const field = (label: string) =>
+      [...tform.querySelectorAll<HTMLInputElement>('input')].find(
+        (i) => words(i.closest('div')?.querySelector('label')) === label || i.getAttribute('aria-label') === label,
+      )!
+    expect(field(tsec.providers.slug).value).toBe('google')
+    expect(field(tsec.providers.name).value).toBe('Google')
+    expect(field(tsec.providers.oidc.redirectUrl).value).toMatch(/\/api\/auth\/oidc\/google\/callback$/)
+    expect(buttonWith(tsec.providers.create)!.hasAttribute('disabled')).toBe(true)
+    await type(field(tsec.providers.oidc.clientId), 'g-client')
+    await type(field(tsec.providers.oidc.clientSecret), 'g-secret')
+    await click(buttonWith(tsec.providers.create))
+    await settle(() => listed().length === 1, 'the new provider')
+    expect(JSON.parse(calls('POST', '/api/admin/providers')[0].body!)).toEqual({
+      template: 'google',
+      slug: 'google',
+      name: 'Google',
+      clientId: 'g-client',
+      clientSecret: 'g-secret',
+    })
+    expect(listed()[0].textContent).toContain(tsec.providers.classes.social)
+    // Its issuer is the template's: shown, not editable.
+    await click(byLabel(tsec.providers.editFor('Google')))
+    await settle(() => q('[data-slot="provider-form"]') !== null, 'the edit form')
+    expect(inputIn(tsec.providers.oidc.issuer).readOnly).toBe(true)
+    expect(form().textContent).toContain(tsec.providers.fromTemplate('Google'))
+    expect(q<HTMLSelectElement>('#provider-class')!.disabled).toBe(true)
+  })
+
+  it('Sign in with Apple asks for the team id, the key id and the .p8 key, never a client secret', async () => {
+    await openProviders()
+    await openPicker()
+    await click(q('[data-slot="template-picker"] [data-template="apple"]')!)
+    await settle(() => q('[data-slot="apple-fields"]') !== null, 'the Apple fields')
+    const tform = q('[data-slot="template-form"]')!
+    expect(tform.querySelector('input[type="password"]')).toBeNull()
+    const field = (label: string) =>
+      [...tform.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')].find(
+        (i) => words(i.closest('div')?.querySelector('label')) === label,
+      )!
+    await type(field(tsec.providers.oidc.clientId), 'com.example.web')
+    await type(field(tsec.providers.apple.teamId), 'TEAM123456')
+    await type(field(tsec.providers.apple.keyId), 'KEY1234567')
+    await type(field(tsec.providers.apple.privateKey), '-----BEGIN PRIVATE KEY-----\nMIGT\n-----END PRIVATE KEY-----')
+    await click(buttonWith(tsec.providers.create))
+    await settle(() => listed().length === 1, 'the new provider')
+    expect(JSON.parse(calls('POST', '/api/admin/providers')[0].body!)).toEqual({
+      template: 'apple',
+      slug: 'apple',
+      name: 'Apple',
+      clientId: 'com.example.web',
+      apple: {
+        teamId: 'TEAM123456',
+        keyId: 'KEY1234567',
+        privateKey: '-----BEGIN PRIVATE KEY-----\nMIGT\n-----END PRIVATE KEY-----',
+      },
+    })
+    // Editing it: the key is saved and never shown; a new key id alone is sent.
+    await click(byLabel(tsec.providers.editFor('Apple')))
+    await settle(() => q('[data-slot="provider-form"]') !== null, 'the edit form')
+    expect(q('[data-slot="apple-fields"] [data-slot="secret-saved"]')!.textContent).toContain(
+      tsec.providers.apple.keySaved,
+    )
+    expect(document.body.innerHTML).not.toContain('MIGT')
+    await type(inputIn(tsec.providers.apple.keyId), 'KEY7654321')
+    await click(buttonWith(tsec.providers.save))
+    await settle(() => calls('PATCH', '/api/admin/providers/apple').length === 1, 'the change')
+    expect(JSON.parse(calls('PATCH', '/api/admin/providers/apple')[0].body!)).toEqual({
+      apple: { keyId: 'KEY7654321' },
+    })
+  })
+
+  it('a provider of one’s own chooses its class once: single sign-on by default, social for GitHub', async () => {
+    await openProviders()
+    await openCustom()
+    const cls = () => q<HTMLSelectElement>('#provider-class')!
+    expect(cls().value).toBe('sso')
+    expect(cls().disabled).toBe(false)
+    await type(q<HTMLSelectElement>('#provider-kind')!, 'github')
+    expect(cls().value).toBe('social')
+    expect(cls().disabled).toBe(true)
+  })
+
   it('creates an OpenID Connect provider with the fields of its kind, and shows the address to register and "saved · change"', async () => {
     await openProviders()
     await settle(() => text().includes(tsec.providers.empty), 'no providers yet')
-    await click(buttonWith(tsec.providers.add))
-    await settle(() => q('[data-slot="provider-form"]') !== null, 'the form')
+    await openCustom()
     await type(inputIn(tsec.providers.slug), 'acme')
     await type(inputIn(tsec.providers.name), 'Acme SSO')
     await type(inputIn(tsec.providers.oidc.issuer), 'https://login.acme.example')
@@ -510,8 +613,7 @@ describe('the sign-in providers', () => {
   it('marks the required fields with a star', async () => {
     await openProviders({ providers: [company] })
     await settle(() => listed().length === 1, 'the list')
-    await click(buttonWith(tsec.providers.add))
-    await settle(() => q('[data-slot="provider-form"]') !== null, 'the form')
+    await openCustom()
     const marked = (label: string) => labelOf(label).querySelector('[data-slot="required-mark"]') !== null
     for (const l of [
       tsec.providers.slug,
@@ -568,8 +670,7 @@ describe('the sign-in providers', () => {
     })
     await settle(() => listed().length === 1, 'the list')
     const fill = async (slug: string, issuer: string) => {
-      await click(buttonWith(tsec.providers.add))
-      await settle(() => q('[data-slot="provider-form"]') !== null, 'the form')
+      await openCustom()
       await type(inputIn(tsec.providers.slug), slug)
       await type(inputIn(tsec.providers.name), 'Other')
       await type(inputIn(tsec.providers.oidc.issuer), issuer)
@@ -589,8 +690,7 @@ describe('the sign-in providers', () => {
 
   it('a provider that cannot be reached is stored switched off, and the person is told', async () => {
     await openProviders()
-    await click(buttonWith(tsec.providers.add))
-    await settle(() => q('[data-slot="provider-form"]') !== null, 'the form')
+    await openCustom()
     await type(inputIn(tsec.providers.slug), 'dead')
     await type(inputIn(tsec.providers.name), 'Dead')
     await type(inputIn(tsec.providers.oidc.issuer), 'https://unreachable.example')

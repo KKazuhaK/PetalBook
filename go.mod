@@ -7,6 +7,7 @@ ignore ./web/node_modules
 
 require (
 	github.com/KazuhaHub/authcore v0.6.3-0.20261106114224-f3886de2dcef
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/crewjam/saml v0.5.1
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/go-jose/go-jose/v4 v4.1.9
@@ -30,7 +31,6 @@ require (
 
 require (
 	github.com/beevik/etree v1.7.0 // indirect
-	github.com/coreos/go-oidc/v3 v3.21.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect

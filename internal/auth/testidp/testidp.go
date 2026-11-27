@@ -43,6 +43,10 @@ type IdP struct {
 	Mutate func(c map[string]any)
 	// TokenStatus, if non-zero, makes the token endpoint fail with it.
 	TokenStatus int
+	// CheckSecret, if set, decides whether the client secret the token
+	// endpoint is given is good (instead of comparing it with ClientSecret):
+	// for a secret that changes, such as Apple's signed one.
+	CheckSecret func(secret string) bool
 
 	key *rsa.PrivateKey
 	kid string
@@ -187,7 +191,11 @@ func (p *IdP) token(w http.ResponseWriter, r *http.Request) {
 		id = u
 		secret, _ = url.QueryUnescape(secret)
 	}
-	if id != p.ClientID || subtle.ConstantTimeCompare([]byte(secret), []byte(p.ClientSecret)) != 1 {
+	good := subtle.ConstantTimeCompare([]byte(secret), []byte(p.ClientSecret)) == 1
+	if p.CheckSecret != nil {
+		good = p.CheckSecret(secret)
+	}
+	if id != p.ClientID || !good {
 		w.WriteHeader(http.StatusUnauthorized)
 		writeJSON(w, map[string]string{"error": "invalid_client"})
 		return

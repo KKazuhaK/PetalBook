@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -48,7 +49,7 @@ const (
 
 var (
 	slugRE      = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
-	presetIcons = []string{"google", "microsoft", "github", "gitlab", "okta", "keycloak", "authentik", "key"}
+	presetIcons = []string{"google", "microsoft", "apple", "github", "gitlab", "okta", "keycloak", "authentik", "key"}
 )
 
 // provCfg is the configuration of one provider, as JSON in the row. Only the
@@ -78,6 +79,18 @@ type provCfg struct {
 	CertificateExpires time.Time `json:"certificateExpires,omitempty"`
 	// Groups (any kind, from 3.2): the groups claim and what it maps to.
 	Groups *GroupsCfg `json:"groups,omitempty"`
+	// A provider made from a template (3.6): the addresses and the token
+	// endpoint's methods copied from it (nothing is discovered), and how the
+	// provider answers (form_post: Apple posts it).
+	AuthURL      string   `json:"authorizationEndpoint,omitempty"`
+	TokenURL     string   `json:"tokenEndpoint,omitempty"`
+	JWKSURL      string   `json:"jwksUri,omitempty"`
+	AuthMethods  []string `json:"authMethods,omitempty"`
+	ResponseMode string   `json:"responseMode,omitempty"`
+	// Apple: the team and the key its client secret is signed with (the key
+	// itself is the site's secret signin.appleKey).
+	AppleTeamID string `json:"appleTeamId,omitempty"`
+	AppleKeyID  string `json:"appleKeyId,omitempty"`
 }
 
 // SAMLAttrs name where the email, display name and username come from.
@@ -98,8 +111,17 @@ type providerRT struct {
 	idxOnce sync.Once
 	idx     map[string]string // the groups map by claim value (see groupIdx)
 
-	mu       sync.Mutex
-	oidc     *authoidc.Provider
+	// apple signs the client secret of a provider made from the Apple
+	// template (nil for any other, or while it has no key).
+	apple *appleSecret
+
+	mu   sync.Mutex
+	oidc *authoidc.Provider
+	// oidcSecret is the client secret oidc was made with: an Apple secret
+	// that is renewed makes a new one.
+	oidcSecret string
+	// tenant is the client of a multi-tenant provider (tenantflow.go).
+	tenant   *tenantFlow
 	saml     *authsaml.Provider
 	samlMeta *crewjamsaml.EntityDescriptor
 	tried    time.Time
@@ -246,6 +268,22 @@ func (s *Service) newRT(ctx context.Context, row store.ProviderRow) *providerRT 
 		}
 		return rt
 	}
+	if row.Template == TemplateApple {
+		// The key the client secret is signed with is a secret of the site.
+		v, ok, err := secrets.Of(s.st, s.rawBox()).Open(ctx, s.st.Q(), "", secrets.AppleSignInKey)
+		switch {
+		case err != nil:
+			rt.secretErr = err
+		case ok:
+			k, err := parseAppleKey(v)
+			if err != nil {
+				rt.secretErr = err
+				break
+			}
+			rt.apple = &appleSecret{key: k, teamID: rt.cfg.AppleTeamID, keyID: rt.cfg.AppleKeyID, clientID: rt.cfg.ClientID}
+		}
+		return rt
+	}
 	if row.SecretEnc != "" {
 		purpose := "provider:" + row.ID
 		if row.Kind == KindSAML {
@@ -293,10 +331,14 @@ func (s *Service) reloadProviders(ctx context.Context, rebuild ...string) error 
 type ProviderView struct {
 	// ID is the provider's own id (a site provider's is its slug); Owner is
 	// "site" or the id of the tenant that owns it.
-	ID                 string `json:"id"`
-	Owner              string `json:"owner"`
-	Slug               string `json:"slug"`
-	Kind               string `json:"kind"`
+	ID    string `json:"id"`
+	Owner string `json:"owner"`
+	Slug  string `json:"slug"`
+	Kind  string `json:"kind"`
+	// Class is social or sso, Template the preset the provider was made from
+	// ("" for none); both are fixed when it is made.
+	Class              string `json:"class"`
+	Template           string `json:"template"`
 	Name               string `json:"name"`
 	Icon               string `json:"icon"`
 	Enabled            bool   `json:"enabled"`
@@ -308,6 +350,7 @@ type ProviderView struct {
 	OIDC   *OIDCView   `json:"oidc,omitempty"`
 	SAML   *SAMLView   `json:"saml,omitempty"`
 	GitHub *GitHubView `json:"github,omitempty"`
+	Apple  *AppleView  `json:"apple,omitempty"`
 	Groups GroupsCfg   `json:"groups"`
 	// Signin is always true here (these are the providers people sign in with);
 	// Repos says the provider also holds repositories (the GitHub row once its App
@@ -335,6 +378,14 @@ type OIDCView struct {
 	HasSecret   bool     `json:"hasSecret"`
 	Scopes      []string `json:"scopes"`
 	RedirectURL string   `json:"redirectUrl"`
+}
+
+// AppleView is what Sign in with Apple's client secret is made with: the key
+// itself is never shown.
+type AppleView struct {
+	TeamID string `json:"teamId"`
+	KeyID  string `json:"keyId"`
+	HasKey bool   `json:"hasKey"`
 }
 
 // SAMLView is the SAML part of a provider.
@@ -378,7 +429,7 @@ func (s *Service) samlURLs(slug string) (entity, acs, metaPath string) {
 func (s *Service) viewOf(rt *providerRT, people int) ProviderView {
 	row := rt.row
 	ok, checked, msg := rt.status()
-	v := ProviderView{ID: row.ID, Owner: row.Owner, Slug: row.Slug, Kind: row.Kind, Name: row.Name, Icon: row.Icon, Enabled: row.Enabled, Order: row.Position,
+	v := ProviderView{ID: row.ID, Owner: row.Owner, Slug: row.Slug, Kind: row.Kind, Class: row.Class, Template: row.Template, Name: row.Name, Icon: row.Icon, Enabled: row.Enabled, Order: row.Position,
 		AutoCreate: row.AutoCreate, MergeVerifiedEmail: row.MergeVerifiedEmail, Tenant: row.TenantID, People: people, Groups: groupsView(row.Kind, rt.cfg.Groups),
 		Signin: true, Repos: row.Repos,
 		Status:  ProviderStat{OK: ok, Message: msg},
@@ -388,7 +439,10 @@ func (s *Service) viewOf(rt *providerRT, people int) ProviderView {
 	}
 	switch row.Kind {
 	case KindOIDC:
-		v.OIDC = &OIDCView{Issuer: rt.cfg.Issuer, ClientID: rt.cfg.ClientID, HasSecret: row.SecretEnc != "", Scopes: slices.Clone(rt.cfg.Scopes), RedirectURL: s.redirectURL(rt)}
+		v.OIDC = &OIDCView{Issuer: rt.cfg.Issuer, ClientID: rt.cfg.ClientID, HasSecret: row.SecretEnc != "" || rt.apple != nil, Scopes: slices.Clone(rt.cfg.Scopes), RedirectURL: s.redirectURL(rt)}
+		if row.Template == TemplateApple {
+			v.Apple = &AppleView{TeamID: rt.cfg.AppleTeamID, KeyID: rt.cfg.AppleKeyID, HasKey: rt.apple != nil}
+		}
 	case KindGitHub:
 		orgs := slices.Clone(rt.cfg.Organizations)
 		if orgs == nil {
@@ -450,23 +504,27 @@ func (s *Service) PublicProviders() []PublicProvider { return s.provs.publicList
 type ProviderInput struct {
 	// Owner is "site" (the default) or a tenant's id; it is set when the
 	// provider is made and cannot change.
-	Owner              *string `json:"owner"`
-	Slug               *string `json:"slug"`
-	Kind               *string `json:"kind"`
-	Name               *string `json:"name"`
-	Icon               *string `json:"icon"`
-	Enabled            *bool   `json:"enabled"`
-	Order              *int    `json:"order"`
-	AutoCreate         *bool   `json:"autoCreate"`
-	MergeVerifiedEmail *bool   `json:"mergeVerifiedEmail"`
-	Tenant             *string `json:"tenant"`
-	OIDC               *struct {
-		Issuer       *string   `json:"issuer"`
-		ClientID     *string   `json:"clientId"`
-		ClientSecret *string   `json:"clientSecret"`
-		Scopes       *[]string `json:"scopes"`
-	} `json:"oidc"`
-	SAML *struct {
+	Owner *string `json:"owner"`
+	Slug  *string `json:"slug"`
+	Kind  *string `json:"kind"`
+	// Template makes the provider from a preset (POST only): it fills the
+	// kind, the class, the addresses, the scopes, the name and the icon;
+	// ClientID and ClientSecret (or Apple) are the administrator's.
+	Template     *string `json:"template"`
+	Class        *string `json:"class"`
+	ClientID     *string `json:"clientId"`
+	ClientSecret *string `json:"clientSecret"`
+	// Apple is what Sign in with Apple's client secret is signed with.
+	Apple              *AppleInput `json:"apple"`
+	Name               *string     `json:"name"`
+	Icon               *string     `json:"icon"`
+	Enabled            *bool       `json:"enabled"`
+	Order              *int        `json:"order"`
+	AutoCreate         *bool       `json:"autoCreate"`
+	MergeVerifiedEmail *bool       `json:"mergeVerifiedEmail"`
+	Tenant             *string     `json:"tenant"`
+	OIDC               *OIDCInput  `json:"oidc"`
+	SAML               *struct {
 		MetadataURL       *string `json:"metadataUrl"`
 		MetadataXML       *string `json:"metadataXml"`
 		EntityID          *string `json:"entityId"`
@@ -475,13 +533,32 @@ type ProviderInput struct {
 		SignRequests      *bool   `json:"signRequests"`
 		AllowIDPInitiated *bool   `json:"allowIdpInitiated"`
 	} `json:"saml"`
-	GitHub *struct {
-		BaseURL       *string   `json:"baseUrl"`
-		ClientID      *string   `json:"clientId"`
-		ClientSecret  *string   `json:"clientSecret"`
-		Organizations *[]string `json:"organizations"`
-	} `json:"github"`
+	GitHub *GitHubInput `json:"github"`
 	Groups *groupsInput `json:"groups"`
+}
+
+// OIDCInput is the OpenID Connect part of a POST or PATCH.
+type OIDCInput struct {
+	Issuer       *string   `json:"issuer"`
+	ClientID     *string   `json:"clientId"`
+	ClientSecret *string   `json:"clientSecret"`
+	Scopes       *[]string `json:"scopes"`
+}
+
+// GitHubInput is the GitHub part of a POST or PATCH.
+type GitHubInput struct {
+	BaseURL       *string   `json:"baseUrl"`
+	ClientID      *string   `json:"clientId"`
+	ClientSecret  *string   `json:"clientSecret"`
+	Organizations *[]string `json:"organizations"`
+}
+
+// AppleInput is the team id, the key id and the key (an AuthKey_<id>.p8) that
+// Sign in with Apple's client secret is signed with.
+type AppleInput struct {
+	TeamID     *string `json:"teamId"`
+	KeyID      *string `json:"keyId"`
+	PrivateKey *string `json:"privateKey"`
 }
 
 func providerInvalid(format string, a ...any) *Error { return coded(400, "invalid", format, a...) }
@@ -566,6 +643,157 @@ type built struct {
 	// curSecret is the stored secret, used for discovery when none is given now.
 	curSecret string
 	secretSet bool
+	// appleKey is the Apple key the client secret is signed with: the one
+	// given now (appleKeyPEM is set, and is stored with the row) or the stored one.
+	appleKey    *ecdsa.PrivateKey
+	appleKeyPEM string
+}
+
+// appleSecretNow signs a client secret with what b holds (to check the
+// settings with the library); "" without a key.
+func (s *Service) appleSecretNow(b *built) string {
+	if b.appleKey == nil {
+		return ""
+	}
+	v, _, err := signAppleSecret(b.appleKey, b.cfg.AppleTeamID, b.cfg.AppleKeyID, b.cfg.ClientID, s.now())
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
+// expandTemplate turns a POST with a template into the ordinary one it
+// stands for: the template's kind, class, name and icon (the latter two unless
+// given), its slug unless one is given, and the client in the kind's block.
+func expandTemplate(in ProviderInput, tm ProviderTemplate) ProviderInput {
+	kind, cls := tm.Kind, tm.Class
+	in.Kind, in.Class = &kind, &cls
+	if in.Slug == nil {
+		v := tm.ID
+		in.Slug = &v
+	}
+	if in.Name == nil {
+		v := tm.Name
+		in.Name = &v
+	}
+	if in.Icon == nil {
+		v := tm.Icon
+		in.Icon = &v
+	}
+	if tm.Kind == KindGitHub && in.GitHub == nil {
+		base := tm.Issuer
+		in.GitHub = &GitHubInput{BaseURL: &base}
+	}
+	return in
+}
+
+// foldClient puts a top-level clientId and clientSecret (the shape of a POST
+// with a template) into the block of the provider's kind.
+func foldClient(in ProviderInput, kind string) (ProviderInput, error) {
+	if in.ClientID == nil && in.ClientSecret == nil {
+		return in, nil
+	}
+	both := func(a, b *string) (*string, error) {
+		if a != nil && b != nil && *a != *b {
+			return nil, providerInvalid("Give the client once, at the top or in the %s block.", kind)
+		}
+		if a != nil {
+			return a, nil
+		}
+		return b, nil
+	}
+	var err error
+	switch kind {
+	case KindOIDC:
+		o := OIDCInput{}
+		if in.OIDC != nil {
+			o = *in.OIDC
+		}
+		if o.ClientID, err = both(in.ClientID, o.ClientID); err != nil {
+			return in, err
+		}
+		if o.ClientSecret, err = both(in.ClientSecret, o.ClientSecret); err != nil {
+			return in, err
+		}
+		in.OIDC = &o
+	case KindGitHub:
+		g := GitHubInput{}
+		if in.GitHub != nil {
+			g = *in.GitHub
+		}
+		if g.ClientID, err = both(in.ClientID, g.ClientID); err != nil {
+			return in, err
+		}
+		if g.ClientSecret, err = both(in.ClientSecret, g.ClientSecret); err != nil {
+			return in, err
+		}
+		in.GitHub = &g
+	default:
+		return in, providerInvalid("A SAML provider has no client id or secret.")
+	}
+	in.ClientID, in.ClientSecret = nil, nil
+	return in, nil
+}
+
+// classFor is the class of a new provider: the one asked for, or its kind's
+// (GitHub is social, a configured OpenID Connect or SAML provider enterprise
+// sign-on). An organisation's own provider is its single sign-on, and GitHub
+// is never anyone's.
+func classFor(in ProviderInput, owner string) (string, error) {
+	cls := ClassSSO
+	if *in.Kind == KindGitHub {
+		cls = ClassSocial
+	}
+	if in.Class != nil {
+		cls = *in.Class
+	}
+	switch {
+	case cls != ClassSocial && cls != ClassSSO:
+		return "", providerInvalid("Class is social or sso.")
+	case owner != store.ProviderSite && cls != ClassSSO:
+		return "", providerInvalid("An organisation's own provider is its single sign-on (class sso).")
+	case *in.Kind == KindGitHub && cls != ClassSocial:
+		return "", providerInvalid("GitHub is social sign-in (class social).")
+	}
+	return cls, nil
+}
+
+// applyApple checks and takes the team id, the key id and the key of Sign in
+// with Apple; all three are needed when the provider is made. The key is
+// stored as a secret of the site (CreateProvider, UpdateProvider).
+func (s *Service) applyApple(b *built, in *AppleInput, creating bool, mark func(string)) error {
+	if in != nil {
+		if in.TeamID != nil {
+			if !appleIDRE.MatchString(strings.TrimSpace(*in.TeamID)) {
+				return providerInvalid("apple.teamId is the 10 letters and digits of the team's id.")
+			}
+			if v := strings.TrimSpace(*in.TeamID); v != b.cfg.AppleTeamID {
+				b.cfg.AppleTeamID = v
+				mark("apple.teamId")
+			}
+		}
+		if in.KeyID != nil {
+			if !appleIDRE.MatchString(strings.TrimSpace(*in.KeyID)) {
+				return providerInvalid("apple.keyId is the 10 letters and digits of the key's id.")
+			}
+			if v := strings.TrimSpace(*in.KeyID); v != b.cfg.AppleKeyID {
+				b.cfg.AppleKeyID = v
+				mark("apple.keyId")
+			}
+		}
+		if in.PrivateKey != nil {
+			k, err := parseAppleKey(*in.PrivateKey)
+			if err != nil {
+				return coded(400, "apple_key_invalid", "apple.privateKey must be the key Apple gave (an AuthKey_<key id>.p8 file: a P-256 private key in PEM).")
+			}
+			b.appleKeyPEM, b.appleKey = strings.TrimSpace(*in.PrivateKey), k
+			mark("apple.privateKey")
+		}
+	}
+	if creating && (b.cfg.AppleTeamID == "" || b.cfg.AppleKeyID == "" || b.appleKeyPEM == "") {
+		return providerInvalid("Sign in with Apple needs apple.teamId, apple.keyId and apple.privateKey.")
+	}
+	return nil
 }
 
 // reservedSlugs are the slugs of the server's own providers, with the kind
@@ -580,6 +808,26 @@ var providerMu sync.Mutex // serialises changes: the checks and the write are on
 func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderInput, rows []store.ProviderRow) (*built, error) {
 	creating := cur == nil
 	b := &built{}
+	var tmpl *ProviderTemplate
+	if creating && in.Template != nil {
+		tm, ok := templateOf(*in.Template)
+		if !ok {
+			ids := make([]string, len(providerTemplates))
+			for i, t := range providerTemplates {
+				ids[i] = t.ID
+			}
+			return nil, coded(400, "template_unknown", "Template is one of %s.", strings.Join(ids, ", "))
+		}
+		if in.Owner != nil && *in.Owner != "" && *in.Owner != store.ProviderSite {
+			return nil, providerInvalid("Templates are the site's social sign-in: an organisation's single sign-on is OpenID Connect or SAML.")
+		}
+		if in.Kind != nil && *in.Kind != tm.Kind || in.Class != nil && *in.Class != tm.Class {
+			return nil, providerInvalid("A template's kind and class are its own.")
+		}
+		tmpl, in = &tm, expandTemplate(in, tm)
+	} else if !creating && in.Template != nil && *in.Template != cur.row.Template {
+		return nil, providerInvalid("The template cannot be changed.")
+	}
 	if creating {
 		b.row = store.ProviderRow{Enabled: true, TenantID: store.DefaultTenantID, Owner: store.ProviderSite}
 		if in.Slug == nil || !slugRE.MatchString(*in.Slug) {
@@ -597,8 +845,9 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			// verified domain (see orgSignInGate).
 			b.row.Owner, b.row.TenantID, b.row.Enabled = t.ID, t.ID, false
 		}
-		// A site provider's id is its slug; a tenant's is generated, so the
-		// slug of one organisation never meets another's.
+		// A site provider's id is its slug; a tenant's is generated. Slugs
+		// are unique on the whole server: they are in the callback addresses
+		// registered at each identity provider.
 		b.row.ID = *in.Slug
 		if b.row.Owner != store.ProviderSite {
 			b.row.ID = s.newID()
@@ -612,12 +861,38 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		if k, ok := reservedSlugs[*in.Slug]; ok && k != *in.Kind {
 			return nil, coded(409, "slug_reserved", "The slug %s is reserved for the server's own provider.", *in.Slug)
 		}
+		// The templates' slugs are the site's: slugs are unique on the
+		// server, so an organisation that took one first would keep the site
+		// from adding that sign-in under its usual address.
+		if _, ok := templateOf(*in.Slug); ok && b.row.Owner != store.ProviderSite {
+			return nil, coded(409, "slug_reserved", "The slug %s is reserved for the site's own sign-in.", *in.Slug)
+		}
 		b.row.Slug, b.row.Kind = *in.Slug, *in.Kind
 		if in.Name == nil {
 			return nil, providerInvalid("Name is required.")
 		}
+		cls, err := classFor(in, b.row.Owner)
+		if err != nil {
+			return nil, err
+		}
+		b.row.Class = cls
+		if tmpl != nil && tmpl.Kind == KindOIDC {
+			// What the template fills is copied into the row: a later
+			// release's template does not change it.
+			b.row.Template = tmpl.ID
+			b.cfg.Issuer, b.cfg.AuthURL, b.cfg.TokenURL, b.cfg.JWKSURL = tmpl.Issuer, tmpl.AuthorizationEndpoint, tmpl.TokenEndpoint, tmpl.JWKSURI
+			b.cfg.AuthMethods, b.cfg.ResponseMode = slices.Clone(tmpl.authMethods), tmpl.ResponseMode
+			b.cfg.Scopes = slices.Clone(tmpl.Scopes)
+		}
 	} else {
+		if in.Class != nil && *in.Class != cur.row.Class {
+			return nil, providerInvalid("The class cannot be changed: it is chosen when the provider is made.")
+		}
 		b.row, b.cfg, b.curSecret = cur.row, cur.cfg, cur.secret
+		if cur.apple != nil {
+			b.appleKey = cur.apple.key
+		}
+		b.cfg.AuthMethods = slices.Clone(cur.cfg.AuthMethods)
 		b.cfg.Scopes = slices.Clone(cur.cfg.Scopes)
 		b.cfg.Organizations = slices.Clone(cur.cfg.Organizations)
 		if cur.cfg.Groups != nil {
@@ -633,7 +908,12 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		}
 	}
 	kind := b.row.Kind
-	if (in.OIDC != nil && kind != KindOIDC) || (in.SAML != nil && kind != KindSAML) || (in.GitHub != nil && kind != KindGitHub) {
+	in, err := foldClient(in, kind)
+	if err != nil {
+		return nil, err
+	}
+	if (in.OIDC != nil && kind != KindOIDC) || (in.SAML != nil && kind != KindSAML) || (in.GitHub != nil && kind != KindGitHub) ||
+		(in.Apple != nil && b.row.Template != TemplateApple) {
 		return nil, providerInvalid("The settings are for another kind of provider.")
 	}
 	if s.cfg.PublicURL == "" {
@@ -717,8 +997,16 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	switch kind {
 	case KindOIDC:
 		o := in.OIDC
+		fromTemplate := b.row.Template != ""
 		if o != nil {
-			if o.Issuer != nil {
+			if fromTemplate && o.Issuer != nil && *o.Issuer != b.cfg.Issuer {
+				// The addresses were copied from the template with the issuer.
+				return nil, coded(400, "template_fixed", "The issuer of a provider made from a template is the template's.")
+			}
+			if b.row.Template == TemplateApple && o.ClientSecret != nil {
+				return nil, providerInvalid("Apple's client secret is made by the server: give apple.teamId, apple.keyId and apple.privateKey.")
+			}
+			if o.Issuer != nil && !fromTemplate {
 				iss, err := httpsOnly("oidc.issuer", *o.Issuer, true)
 				if err != nil {
 					return nil, coded(400, "oidc_issuer_invalid", "oidc.issuer must be an https address.")
@@ -766,8 +1054,20 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			b.cfg.Scopes = []string{"profile", "email"}
 		}
 		b.row.Issuer = b.cfg.Issuer
-		// The settings must be ones the library accepts.
-		if _, err := authoidc.New(canceled(), authoidc.Config{IssuerURL: b.cfg.Issuer, ClientID: b.cfg.ClientID, RedirectURL: s.publicBase() + redirectPath(b.row), Scopes: b.cfg.Scopes}); errors.Is(err, authoidc.ErrInvalidConfig) {
+		if b.row.Template == TemplateApple {
+			if err := s.applyApple(b, in.Apple, creating, mark); err != nil {
+				return nil, err
+			}
+		} else if fromTemplate && creating && b.secret == "" {
+			return nil, providerInvalid("clientSecret is required.")
+		}
+		// The settings must be ones the library accepts (a multi-tenant
+		// issuer is not one string: its client is tenantflow.go's).
+		if multiTenant(b.cfg.Issuer) {
+			if !fromTemplate {
+				return nil, coded(400, "oidc_issuer_invalid", "oidc.issuer must be an https address.")
+			}
+		} else if _, err := authoidc.New(canceled(), authoidc.Config{IssuerURL: b.cfg.Issuer, ClientID: b.cfg.ClientID, RedirectURL: s.publicBase() + redirectPath(b.row), Scopes: b.cfg.Scopes}); errors.Is(err, authoidc.ErrInvalidConfig) {
 			return nil, providerInvalid("The OpenID Connect settings are not valid (issuer, client id or scopes).")
 		}
 	case KindGitHub:
@@ -948,18 +1248,24 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	if len(rows) >= maxProviders {
 		return nil, coded(409, "provider_limit", "At most %d providers.", maxProviders)
 	}
-	owner := store.ProviderSite
-	if in.Owner != nil && *in.Owner != "" {
-		owner = *in.Owner
+	// Slugs are unique on the whole server, whoever owns the provider: the
+	// answer says only that it is taken.
+	taken := func(slug string) bool {
+		return slices.ContainsFunc(rows, func(o store.ProviderRow) bool { return o.Slug == slug })
 	}
-	for _, o := range rows {
-		if in.Slug != nil && o.Slug == *in.Slug && o.Owner == owner {
-			return nil, coded(409, "exists", "That slug is taken.")
-		}
+	if in.Slug != nil && taken(*in.Slug) {
+		return nil, coded(409, "exists", "That slug is taken.")
 	}
 	b, err := s.applyInput(ctx, nil, in, rows)
 	if err != nil {
 		return nil, err
+	}
+	if taken(b.row.Slug) {
+		return nil, coded(409, "exists", "That slug is taken.")
+	}
+	if b.row.Template == TemplateApple && slices.ContainsFunc(rows, func(o store.ProviderRow) bool { return o.Template == TemplateApple }) {
+		// Its key is the site's one secret signin.appleKey.
+		return nil, coded(409, "exists", "The site has a Sign in with Apple provider already.")
 	}
 	now := s.now().UTC()
 	b.row.Created, b.row.Updated = now, now
@@ -998,7 +1304,13 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	if err := s.writeBuilt(b, true); err != nil {
 		return nil, err
 	}
-	if err := store.InsertProvider(ctx, s.st.Q(), b.row); err != nil {
+	err = s.st.Tx(ctx, func(q store.Q) error {
+		if err := store.InsertProvider(ctx, q, b.row); err != nil {
+			return err
+		}
+		return s.storeAppleKey(ctx, q, b, actorID)
+	})
+	if err != nil {
 		if store.IsUnique(err) {
 			return nil, coded(409, "exists", "That slug is taken.")
 		}
@@ -1009,6 +1321,14 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	}
 	s.AuditIn(ctx, AuditEvent{Kind: "provider_created", Actor: actorID, IP: ip, Detail: map[string]any{"slug": b.row.Slug, "kind": b.row.Kind, "name": b.row.Name}})
 	return s.Provider(ctx, b.row.ID)
+}
+
+// storeAppleKey keeps the Apple key given now, in the provider's write.
+func (s *Service) storeAppleKey(ctx context.Context, q store.Q, b *built, actorID string) error {
+	if b.appleKeyPEM == "" {
+		return nil
+	}
+	return secrets.Of(s.st, s.rawBox()).Set(ctx, q, "", secrets.AppleSignInKey, b.appleKeyPEM, actorID)
 }
 
 // UpdateProvider changes a provider; only what is sent changes.
@@ -1069,6 +1389,9 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, id string, in
 		if err := store.UpdateProvider(ctx, q, b.row); err != nil {
 			return err
 		}
+		if err := s.storeAppleKey(ctx, q, b, actorID); err != nil {
+			return err
+		}
 		var err error
 		dropped, err = s.dropUnmapped(ctx, q, id, cur.cfg.Groups, b.cfg.Groups)
 		return err
@@ -1095,7 +1418,7 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, id string, in
 }
 
 func secretChanged(in ProviderInput) bool {
-	return in.OIDC != nil && in.OIDC.ClientSecret != nil || in.GitHub != nil && in.GitHub.ClientSecret != nil
+	return in.ClientSecret != nil || in.OIDC != nil && in.OIDC.ClientSecret != nil || in.GitHub != nil && in.GitHub.ClientSecret != nil
 }
 
 // sealSecret seals the plaintext secret into the row ("" clears it).
@@ -1166,6 +1489,12 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, id string, fo
 		// The sessions that started through it end with it.
 		if err := store.EndSessionsByMethod(ctx, q, "sso:"+cur.row.Slug, store.EndElsewhere, s.now()); err != nil {
 			return err
+		}
+		if cur.row.Template == TemplateApple {
+			// Its key goes with it.
+			if err := secrets.Of(s.st, s.rawBox()).Clear(ctx, q, "", secrets.AppleSignInKey); err != nil {
+				return err
+			}
 		}
 		var err error
 		dropped, err = s.cfg.Spaces.DropProvider(ctx, q, id)
@@ -1243,6 +1572,26 @@ func (s *Service) fetchInto(ctx context.Context, b *built) *providerRT {
 	rt.statusChecked = now
 	switch b.row.Kind {
 	case KindOIDC:
+		if b.row.Template != "" {
+			// Nothing to fetch: the addresses are the template's, read by the
+			// library from the row (a multi-tenant one by tenantflow.go).
+			doc := templateDoc(b.cfg)
+			if !multiTenant(b.cfg.Issuer) {
+				secret := b.secretFor()
+				if b.row.Template == TemplateApple {
+					secret = s.appleSecretNow(b)
+				}
+				if _, _, err := s.buildOIDC(ctx, b.cfg, secret, s.publicBase()+redirectPath(b.row), doc); err != nil {
+					rt.statusMessage = oidcReason(err)
+					b.metaErr = providerInvalid("The provider's settings are not valid: %s.", oidcReason(err))
+					b.setStatus(rt)
+					return rt
+				}
+			}
+			b.row.Cache = doc
+			rt.statusOK = true
+			break
+		}
 		doc, err := s.discover(ctx, b.cfg, b.secretFor(), s.publicBase()+redirectPath(b.row))
 		if err != nil {
 			rt.statusMessage = oidcReason(err)
@@ -1474,6 +1823,10 @@ func changedValue(b *built, field string) any {
 		return b.row.AutoCreate
 	case "mergeVerifiedEmail":
 		return b.row.MergeVerifiedEmail
+	case "apple.teamId":
+		return b.cfg.AppleTeamID
+	case "apple.keyId":
+		return b.cfg.AppleKeyID
 	case "oidc.issuer":
 		return b.cfg.Issuer
 	case "oidc.clientId", "github.clientId":

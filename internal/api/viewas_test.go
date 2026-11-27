@@ -71,7 +71,7 @@ func TestEveryRouteThatIsNotViewableRefusesAView(t *testing.T) {
 			switch {
 			case r.Upload:
 				extra = append(extra, "Content-Type", "application/octet-stream")
-			case strings.HasSuffix(r.Pattern, "/acs"):
+			case r.Form:
 				extra = append(extra, "Content-Type", "application/x-www-form-urlencoded")
 			}
 			if got := root.do(r.Method, p, body, extra...); got.code != 403 || got.body["error"] != "view_as_read_only" {

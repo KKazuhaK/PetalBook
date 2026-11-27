@@ -508,9 +508,13 @@ Decided:
       and Apple: `email_verified=true`. GitHub: an address its API lists as
       verified, on github.com only (a GitHub Enterprise server needs the
       provider's trust switch: its administrators can mark any address
-      verified). Microsoft: only `xms_edov`, or an address on a verified domain;
-      never its plain `email` claim (the "nOAuth" takeover). An organisation's
-      SSO (OIDC or SAML): only addresses on its verified domains, so nothing
+      verified). Microsoft: only `xms_edov`; never its plain `email` claim, not
+      even on a domain verified here (the "nOAuth" takeover; recorded decision
+      of step d1, 2026-11-27: the safe rule, which the owner may loosen later).
+      Apple's private-relay addresses are verified but never meet another
+      account's by address. An organisation's
+      SSO (OIDC or SAML): only addresses on its verified domains, each exactly
+      (a subdomain is claimed by itself), so nothing
       until domain verification exists (a configured SAML provider is treated
       so). A configured OIDC provider: only with the administrators' opt-in (the
       provider's `mergeVerifiedEmail` switch, now "trust this provider's

@@ -1653,6 +1653,16 @@ function suite(target: Target) {
           }
         })
 
+        it('the sign-in templates are the presets the server ships, social and with their addresses', async () => {
+          const r = await call(admin, 'GET', '/api/admin/provider-templates')
+          expect(r.status).toBe(200)
+          const ids = r.json.templates.map((x: { id: string }) => x.id)
+          expect(ids).toEqual(expect.arrayContaining(['google', 'microsoft', 'apple', 'github', 'gitlab-com']))
+          for (const tm of r.json.templates) expect(tm.class).toBe('social')
+          const ms = r.json.templates.find((x: { id: string }) => x.id === 'microsoft')
+          expect(ms.issuer).toBe('https://login.microsoftonline.com/{tenantid}/v2.0')
+        })
+
         it('secrets are write-only: the lists say set or not and when, a replace or a clear answers the list, the GitHub ones are changed elsewhere, a tenant holds only what its features allow', async () => {
           const names = (r: { json: any }) => r.json.secrets.map((x: { name: string }) => x.name)
           const list = await call(admin, 'GET', '/api/admin/secrets')

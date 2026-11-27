@@ -13,6 +13,11 @@ paths = [
 ]
 
 [[allowlists]]
+description = "Made-up Apple .p8 text the sign-in templates form sends, to check that it is never shown again"
+targetRules = ["private-key"]
+paths = ['''^web/src/components/admin/security\.test\.tsx$''']
+
+[[allowlists]]
 description = "Made-up sealed value written straight into the test database"
 targetRules = ["generic-api-key"]
 paths = ['''^internal/api/signin_providers_test\.go$''']

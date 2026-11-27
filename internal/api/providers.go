@@ -27,6 +27,7 @@ import (
 var providerKeys = needsAny(authz.SiteSigninManage, authz.SiteConnectionsManage).always()
 
 var providerRoutes = []route{
+	{"GET", "/api/admin/provider-templates", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminProviderTemplates},
 	{"GET", "/api/admin/providers", providerKeys, true, false, false, (*server).adminListProviders},
 	{"POST", "/api/admin/providers", providerKeys, true, false, false, (*server).adminCreateProvider},
 	{"GET", "/api/admin/providers/{id}", providerKeys, true, false, false, (*server).adminGetProvider},
@@ -243,6 +244,14 @@ func (s *server) writeProvider(c *call, status int, id string) {
 		return
 	}
 	writeJSON(c.w, status, v)
+}
+
+// adminProviderTemplates lists the presets of social sign-in that ship with
+// the server (POST /api/admin/providers takes one as {"template": id}).
+func (s *server) adminProviderTemplates(c *call) {
+	writeJSON(c.w, http.StatusOK, struct {
+		Templates []auth.ProviderTemplate `json:"templates"`
+	}{auth.ProviderTemplates()})
 }
 
 func (s *server) adminGetProvider(c *call) {

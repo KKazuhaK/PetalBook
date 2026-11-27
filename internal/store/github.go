@@ -610,12 +610,12 @@ func PutGitHubApp(ctx context.Context, q Q, a GitHubApp, now time.Time) error {
 			return err
 		}
 		if missing {
-			_, err := q.Exec(ctx, `INSERT INTO providers(id, owner, slug, kind, name, enabled, signin, repos, config, status_ok, jit_tenant, created, updated)
-				VALUES (?, 'site', ?, 'github', 'GitHub', 0, 1, 1, ?, 1, ?, ?, ?)`,
+			_, err := q.Exec(ctx, `INSERT INTO providers(id, owner, slug, kind, class, name, enabled, signin, repos, config, status_ok, jit_tenant, created, updated)
+				VALUES (?, 'site', ?, 'github', 'social', 'GitHub', 0, 1, 1, ?, 1, ?, ?, ?)`,
 				ProviderGitHub, ProviderGitHub, string(b), DefaultTenantID, ms(now), ms(now))
 			return err
 		}
-		_, err = q.Exec(ctx, `UPDATE providers SET config = ?, secret_enc = '', signin = 1, repos = 1, updated = ?, groups_version = groups_version + 1 WHERE id = ?`,
+		_, err = q.Exec(ctx, `UPDATE providers SET config = ?, secret_enc = '', signin = 1, repos = 1, class = CASE WHEN class = '' THEN 'social' ELSE class END, updated = ?, groups_version = groups_version + 1 WHERE id = ?`,
 			string(b), ms(now), ProviderGitHub)
 		return err
 	})

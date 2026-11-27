@@ -1873,6 +1873,35 @@ export interface GithubSettings {
   // The client is the GitHub App's: it is set with the App, not here.
   app?: boolean
 }
+// Social sign-in a site offers on every sign-in page, or an organisation's single sign-on: chosen when a provider is
+// made, never changed.
+export type ProviderClass = 'social' | 'sso'
+// The presets of social sign-in that ship with the server (GET /api/admin/provider-templates).
+export type ProviderTemplateId = 'google' | 'microsoft' | 'apple' | 'github' | 'gitlab-com'
+export interface ProviderTemplate {
+  id: ProviderTemplateId
+  name: string
+  kind: ProviderKind
+  class: ProviderClass
+  icon: string
+  // The OpenID Connect issuer ({tenantid} in Microsoft's), or GitHub's base address.
+  issuer: string
+  authorizationEndpoint?: string
+  tokenEndpoint?: string
+  jwksUri?: string
+  scopes: string[]
+  responseMode?: 'form_post'
+  // What the administrator gives besides the client id: a client secret, or Apple's team id, key id and key.
+  secret: 'client' | 'apple'
+  common: boolean
+  region: string
+}
+// What Sign in with Apple's client secret is signed with: the key itself is never shown.
+export interface AppleSettings {
+  teamId: string
+  keyId: string
+  hasKey: boolean
+}
 export interface AuthProvider {
   // A site provider's id is its slug.
   id: string
@@ -1880,6 +1909,10 @@ export interface AuthProvider {
   owner: string
   slug: string
   kind: ProviderKind
+  class: ProviderClass
+  // The template it was made from ('' for none): its issuer and addresses are the template's.
+  template: ProviderTemplateId | ''
+  apple?: AppleSettings
   name: string
   icon: string
   enabled: boolean
@@ -1903,6 +1936,12 @@ export interface ProviderInput {
   slug?: string
   owner?: string
   kind?: ProviderKind
+  // A create from a template: it fills the kind, the class, the addresses, the scopes, the name and the icon.
+  template?: ProviderTemplateId
+  class?: ProviderClass
+  clientId?: string
+  clientSecret?: string
+  apple?: { teamId?: string; keyId?: string; privateKey?: string }
   name?: string
   icon?: string
   enabled?: boolean

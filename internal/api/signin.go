@@ -2,13 +2,26 @@ package api
 
 import (
 	"errors"
+	"html"
+	"io"
 	"net/http"
+	"net/url"
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 )
 
 const samlACSPattern = "/api/auth/saml/{slug}/acs"
+
+// oidcFormPostPattern is where a provider that answers with response_mode
+// form_post (Apple) posts the code.
+const oidcFormPostPattern = "/api/auth/oidc/{slug}/callback"
+
+// formRoute says whether a route ("METHOD pattern") takes a form an identity
+// provider posts, not JSON.
+func formRoute(route string) bool {
+	return route == "POST "+samlACSPattern || route == "POST "+oidcFormPostPattern
+}
 
 // heldAllowed are the routes a held session may still use, by what it waits
 // for (docs/api.md, "When a passkey is required", and the temporary password
@@ -50,6 +63,7 @@ var signinRoutes = []route{
 	{"GET", "/api/auth/{kind}/{slug}/start", public.always(), true, false, false, (*server).ssoStartGET},
 	{"POST", "/api/auth/{kind}/{slug}/start", public.always(), true, true, false, (*server).ssoStartPOST},
 	{"GET", "/api/auth/oidc/{slug}/callback", public.always(), true, false, false, (*server).oidcSlugCallback},
+	{"POST", oidcFormPostPattern, public.always(), true, false, false, (*server).oidcFormPost},
 	{"GET", "/api/auth/github/{slug}/callback", public.always(), true, false, false, (*server).oidcSlugCallback},
 	{"POST", samlACSPattern, public.always(), true, false, false, (*server).samlACS},
 	{"GET", "/api/auth/saml/{slug}/metadata", public.always(), true, false, false, (*server).samlMetadata},
@@ -209,6 +223,45 @@ func (s *server) oidcSlugCallback(c *call) {
 	}
 	out := s.auth.OIDCComplete(c.r.Context(), slug, binding, sessionTok, c.r.URL.Query(), s.auth.ClientAddr(c.r))
 	s.finishOutcome(c, out)
+}
+
+// oidcFormPost takes the answer a provider posts (response_mode=form_post:
+// Apple's) and sends the browser on to the callback with it, by a page of this
+// site. The post comes from the provider's site, so the browser sends it no
+// SameSite=Lax cookie: neither the attempt's binding nor the session (for a
+// link). The page's own navigation to the callback is same-site, so the
+// callback gets both and checks the attempt exactly as for a redirect. Only a
+// provider that asked for form_post is answered so.
+func (s *server) oidcFormPost(c *call) {
+	c.w.Header().Set("Cache-Control", "no-store")
+	slug := c.r.PathValue("slug")
+	c.r.Body = http.MaxBytesReader(c.w, c.r.Body, 64<<10)
+	if err := c.r.ParseForm(); err != nil || !s.auth.TakesFormPost(slug) {
+		http.Redirect(c.w, c.r, "/login?sso_error=provider_unavailable", http.StatusSeeOther)
+		return
+	}
+	// The name Apple posts (user) stays here, with the attempt: the address
+	// the browser goes on to (its history, the logs) carries only the
+	// protocol's values.
+	if vs := c.r.PostForm["state"]; len(vs) == 1 {
+		if us := c.r.PostForm["user"]; len(us) == 1 {
+			s.auth.KeepFormPost(slug, vs[0], us[0])
+		}
+	}
+	q := url.Values{}
+	for _, k := range []string{"code", "state", "error"} {
+		if v, ok := c.r.PostForm[k]; ok {
+			q[k] = v
+		}
+	}
+	target := "/api/auth/oidc/" + url.PathEscape(slug) + "/callback?" + q.Encode()
+	h := c.w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	esc := html.EscapeString(target)
+	c.w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(c.w, `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="refresh" content="0;url=`+esc+`"><title>Signing in</title><a href="`+esc+`">Continue</a>`)
 }
 
 func (s *server) finishOutcome(c *call, out auth.Outcome) {
