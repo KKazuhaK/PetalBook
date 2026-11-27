@@ -98,7 +98,6 @@ export const apiErrorsEn: ApiErrorTexts = {
   oidc_issuer_invalid: 'The address of the sign-in service must be https.',
   saml_metadata_invalid: "The sign-in service's metadata cannot be used.",
   saml_needs_https: 'SAML needs an https public address.',
-  legacy_callback_in_use: 'Another sign-in provider uses the legacy callback.',
   domain_required: 'A provider owned by a tenant needs the tenant to have a verified domain first.',
   already_linked: 'You already have an account linked at this provider. Unlink it first to link another.',
   last_method: 'This is the last way to sign in. Set a password or link another sign-in method first.',

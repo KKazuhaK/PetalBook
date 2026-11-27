@@ -2341,7 +2341,6 @@
  "GET /api/session 200": {
   "hold": "null|string",
   "methods?": {
-   "oidc": "null",
    "password": "boolean"
   },
   "mode": "string",
@@ -4853,10 +4852,6 @@
   "message": "string"
  },
  "POST /api/auth/oidc/company/start 404": {
-  "error": "string",
-  "message": "string"
- },
- "POST /api/auth/oidc/start 404": {
   "error": "string",
   "message": "string"
  },

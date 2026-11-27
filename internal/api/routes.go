@@ -205,8 +205,6 @@ var routeTable = []route{
 	{"POST", "/api/setup", public.always(), true, false, false, (*server).setup},
 	{"POST", "/api/login", public.always(), true, false, false, (*server).login},
 	{"POST", "/api/logout", public.always(), true, false, false, (*server).logout},
-	{"POST", "/api/auth/oidc/start", public.always(), true, true, false, (*server).oidcStart},
-	{"GET", oidcCallbackPath, public.always(), true, false, false, (*server).oidcCallback},
 	{"POST", "/api/invites/check", public.always(), true, false, false, (*server).checkInvite},
 	{"POST", "/api/invites/accept", public.always(), true, false, false, (*server).acceptInvite},
 

@@ -67,13 +67,10 @@ type Config struct {
 	Spaces *spaces.Manager
 	// PublicURL is the address people use, e.g. https://notes.example.com. Its
 	// scheme decides whether cookies are Secure. May be empty (plain http,
-	// loopback or testing) unless OIDC is configured.
+	// loopback or testing) unless a provider is configured.
 	PublicURL      string
 	TrustedProxies []netip.Prefix
-	// OIDC is the provider of the old --oidc-* flags: read once, to make the
-	// provider "sso" of the state database (see importFlags).
-	OIDC     *OIDCConfig
-	Password PasswordParams // zero: DefaultPasswordParams
+	Password       PasswordParams // zero: DefaultPasswordParams
 	// HashConcurrency is how many password hashes may run at once (default 4).
 	HashConcurrency int
 	SessionIdle     time.Duration
@@ -137,7 +134,6 @@ type Service struct {
 	capStore     *captcha.MemoryStore
 	capTok       atomic.Pointer[tokenChecker]
 	capSecretErr atomic.Bool
-	flagsIgnored atomic.Bool
 
 	// onNewUser is told whose usage rows a new account reached (its own and its
 	// tenant's people), after it is made; nil: nobody is told.
@@ -317,9 +313,6 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if err := s.reloadProviders(ctx); err != nil {
 		return nil, err
 	}
-	if err := s.importFlags(ctx); err != nil {
-		return nil, err
-	}
 	if err := s.initPasskeys(ctx); err != nil {
 		return nil, err
 	}
@@ -373,15 +366,6 @@ func (s *Service) markUsersExist() {
 	s.usersExist.Store(true)
 	s.setupToken = ""
 	s.setupMu.Unlock()
-}
-
-// LegacyOIDCName is the display name of the provider that answers the pre-2.8
-// endpoints, or "" when there is none.
-func (s *Service) LegacyOIDCName() string {
-	if rt := s.provs.legacy(); rt != nil && rt.row.Enabled {
-		return rt.row.Name
-	}
-	return ""
 }
 
 // ClientAddr is the client address used for rate limits.

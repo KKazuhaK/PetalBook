@@ -72,7 +72,7 @@ The web app talks to the server only through this API.
     scripts, are not refused by these checks.
   - The exceptions are reached from an identity provider, so the
     `Sec-Fetch-Site` and `Origin` rules do not apply to them:
-    `GET /api/auth/oidc/callback`, `GET /api/auth/oidc/{slug}/callback` and
+    `GET /api/auth/oidc/{slug}/callback` and
     `GET /api/auth/github/{slug}/callback` (a redirect), and
     `POST /api/auth/saml/{slug}/acs` (a form the identity provider posts, so it
     is `application/x-www-form-urlencoded`, not JSON). Each changes nothing
@@ -196,10 +196,8 @@ Never an error; no session needed. `Cache-Control: no-store`.
   absent for everyone else, so a cookie that never was a session learns nothing.
 - `user.permissions` (3.6): the permission keys the user holds in their own
   tenant, site keys included (see "Permission keys"); `[]` with an API token.
-- `methods` is kept for clients older than 2.8 and is absent in single-user
-  mode. `methods.oidc` is the provider that answers the pre-2.8 endpoints (see
-  "The pre-2.8 endpoints"), or `null` when there is none. The sign-in page reads
-  `GET /api/auth/providers` instead.
+- `methods` is `{"password": true}`, and absent in single-user mode. The
+  sign-in page reads `GET /api/auth/providers` for the providers.
 
 ## Signing in
 
@@ -510,7 +508,7 @@ ignore it.
 
 #### Starting: `POST /api/auth/{kind}/{slug}/start`
 
-The same as `POST /api/auth/oidc/start` before 2.8, for every kind:
+The body, for every kind:
 
 ```json
 {"intent": "login", "token": "", "return": "/s/01JD3K8Q7Z"}
@@ -599,34 +597,6 @@ Public. The service provider metadata to give the identity provider
 certificate (no encryption key is offered: encrypted assertions are refused). It is served for a provider that is not enabled yet, so it can be
 set up at the identity provider first.
 
-#### The pre-2.8 endpoints
-
-`POST /api/auth/oidc/start` and `GET /api/auth/oidc/callback` keep working,
-unchanged, for the one OpenID Connect provider marked `legacyCallback` (`404`
-when none is). That provider's redirect URI is the old one,
-`<public url>/api/auth/oidc/callback`, so what is registered at the identity
-provider does not have to change. Its failures now redirect with `sso_error=`
-like the others.
-
-The provider given with `--oidc-*` before 2.8 becomes that provider on the
-first start of 2.8:
-
-- If the command line has `--oidc-issuer` and the state database has never
-  imported one, the server stores an OpenID Connect provider with slug `sso`,
-  the name of `--oidc-name` (default "Single sign-on"), the issuer, client id,
-  scopes and `--oidc-auto-create` of the command line, the client secret sealed,
-  `legacyCallback` on, enabled. The login mode stays `dual` (what the page was
-  before) and `ssoOnly` off. It logs that it did so.
-- The provider has the id `sso` (its slug), and the accounts people link to it
-  are linked to that id.
-- From then on the state database is what counts. When `--oidc-*` is still given
-  and differs from the stored provider (or that provider was deleted), the
-  server logs a warning at start-up and the security settings show a notice
-  `flags_ignored`; the flags change nothing. They are accepted, and ignored this
-  way, until they are removed in a later version.
-- Nothing in this import can stop anyone from signing in: passwords are
-  accepted as before, and an administrator can always use their password.
-
 #### `?sso_error=` codes
 
 The codes a failed sign-in or link sends to `/login?sso_error=` or
@@ -660,9 +630,6 @@ own.
 | `saml_assertion_rejected` | any other reason the response did not validate (signature, audience, time) |
 | `internal` | something failed on the server; it is in the log |
 
-Before 2.8 the parameter was `error=`; the web app shipped with 2.8 reads
-`sso_error=`.
-
 #### Which account an identity signs in to
 
 For `intent: login`, in this order:
@@ -673,10 +640,9 @@ For `intent: login`, in this order:
    for the address it sent (see "Which sign-ins vouch for an address" in
    "Signing in by email address") and another account holds that address
    verified: `email_in_use` (the person signs in to that account and links the
-   provider from their account settings). 2.8's merge by verified address is
-   gone, and with it its audit row (`identity_linked` with `by: "email"`).
-3. With `autoCreate` on for this provider: a new member account, named as
-   before 2.8 (the `name` claim; the username from `preferred_username` or the
+   provider from their account settings).
+3. With `autoCreate` on for this provider: a new member account (the
+   `name` claim; the username from `preferred_username` or the
    part of `email` before `@`, made valid and unique; for SAML, the attributes
    the provider maps). Its `email` is the provider's address, verified (by
    `provider:<slug>`) when the sign-in vouches for it, and then taken from an
@@ -2377,7 +2343,7 @@ repositories".
 ### `POST /api/account/links/github/start`
 
 `{"return": "/s/01JD3K8Q7Z/settings", "install": true}`, with `return` treated as
-in `POST /api/auth/oidc/start`. `200` with `{"url": "…"}` and a short-lived
+in `POST /api/auth/{kind}/{slug}/start`. `200` with `{"url": "…"}` and a short-lived
 cookie that ties the attempt to this browser; the client navigates to `url`.
 
 - **`install: true`** (what "Connect GitHub" uses): `url` is the App's
@@ -6798,8 +6764,7 @@ The User object gains:
 
 - `role` keeps its meaning inside the user's tenant: `admin` or `member`.
 - `siteAdmin`: an administrator of the whole server. It needs `role: "admin"`.
-  The upgrade makes every existing administrator a site administrator, so
-  nobody loses anything. Only a site administrator can set `siteAdmin`
+  Only a site administrator can set `siteAdmin`
   (`PATCH /api/users/{id}`); the rule "at least one enabled administrator" of
   1.7 and 2.8 now counts enabled site administrators of tenants that are not
   disabled (one of a disabled tenant cannot sign in).
@@ -7893,10 +7858,6 @@ text above:
 - `POST /api/admin/spaces/{space}/size` measures with the same turn as the
   background one (bytes, pages, usage, a look at the person), so an
   administrator asking for a size also brings the quotas up to date.
-- A server upgraded from before quotas has its usage rows made by the migration
-  from the 1.7 measurements it already stored, with no page counts until each
-  space is measured once; the first pass of the sizer, a space at a time,
-  fills them.
 - Costs, measured on 20,000 people and 40,000 spaces (SQLite / PostgreSQL): the
   migration's step 0.28 s / 0.7 s; the daily recount with nothing to correct
   0.17 s / 0.19 s, correcting a thousand rows 0.20 s / 0.26 s; a person's usage
@@ -9689,9 +9650,7 @@ so:
 
 #### Sign-in: social providers and SSO
 
-Sign-in providers are of two kinds, as consumer products do it. This replaces
-2.8's single-provider leftovers: `legacyCallback` and the `--oidc-*` flags are
-removed in 3.6.
+Sign-in providers are of two kinds, as consumer products do it.
 
 - **Social sign-in** (`class: "social"`): consumer accounts (Google, GitHub,
   Microsoft personal accounts, Apple, GitLab.com and the like). **The site
@@ -10629,8 +10588,7 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
   `github_apps` is the GitHub provider's table; 3.8's providers have their own.
 - Sign-in: `providers.owner` and `providers.signin`, one `linked_accounts` row per (provider, person) (unique `(provider_id, subject)` and `(provider_id, user_id)`); `provider_installations` name the App
   they belong to; the sharing stays in 2.7's `github_installation_tenants`, and
-  `"all"` is a flag on the installation. 2.8's
-  `legacyCallback` and the `--oidc-*` import are removed.
+  `"all"` is a flag on the installation.
 - Spaces: `spaces.storage_mode`, `spaces.storage_target`, index
   `(tenant_id, storage_mode, storage_target, id)`; the per-mode counts on the
   tenant's `usage` row.
@@ -14813,8 +14771,7 @@ The User object gains:
 
 - `role` keeps its meaning inside the user's tenant: `admin` or `member`.
 - `siteAdmin`: an administrator of the whole server. It needs `role: "admin"`.
-  The upgrade makes every existing administrator a site administrator, so
-  nobody loses anything. Only a site administrator can set `siteAdmin`
+  Only a site administrator can set `siteAdmin`
   (`PATCH /api/users/{id}`); the rule "at least one enabled administrator" of
   1.7 and 2.8 now counts enabled site administrators of tenants that are not
   disabled (one of a disabled tenant cannot sign in).
@@ -15908,10 +15865,6 @@ text above:
 - `POST /api/admin/spaces/{space}/size` measures with the same turn as the
   background one (bytes, pages, usage, a look at the person), so an
   administrator asking for a size also brings the quotas up to date.
-- A server upgraded from before quotas has its usage rows made by the migration
-  from the 1.7 measurements it already stored, with no page counts until each
-  space is measured once; the first pass of the sizer, a space at a time,
-  fills them.
 - Costs, measured on 20,000 people and 40,000 spaces (SQLite / PostgreSQL): the
   migration's step 0.28 s / 0.7 s; the daily recount with nothing to correct
   0.17 s / 0.19 s, correcting a thousand rows 0.20 s / 0.26 s; a person's usage
@@ -17704,9 +17657,7 @@ so:
 
 #### Sign-in: social providers and SSO
 
-Sign-in providers are of two kinds, as consumer products do it. This replaces
-2.8's single-provider leftovers: `legacyCallback` and the `--oidc-*` flags are
-removed in 3.6.
+Sign-in providers are of two kinds, as consumer products do it.
 
 - **Social sign-in** (`class: "social"`): consumer accounts (Google, GitHub,
   Microsoft personal accounts, Apple, GitLab.com and the like). **The site
@@ -18644,8 +18595,7 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
   `github_apps` is the GitHub provider's table; 3.8's providers have their own.
 - Sign-in: `providers.owner` and `providers.signin`, one `linked_accounts` row per (provider, person) (unique `(provider_id, subject)` and `(provider_id, user_id)`); `github_installations` name the App
   they belong to; the sharing stays in 2.7's `github_installation_tenants`, and
-  `"all"` is a flag on the installation. 2.8's
-  `legacyCallback` and the `--oidc-*` import are removed.
+  `"all"` is a flag on the installation.
 - Spaces: `spaces.storage_mode`, `spaces.storage_target`, index
   `(tenant_id, storage_mode, storage_target, id)`; the per-mode counts on the
   tenant's `usage` row.
@@ -19537,7 +19487,6 @@ What the policy means now, and the captcha's keys; nothing of the policy itself:
 - `passwordAdmins` counts the enabled administrators with a password: the ones
   who can still sign in if every provider fails.
 - `notices`: things the administrators should know, each `{"code", "message"}`:
-  `flags_ignored` (the `--oidc-*` flags differ from the stored provider),
   `secret_unreadable` (a stored secret cannot be opened with this server's key,
   with `slug` or `field`), `passkey_host_changed`.
 
@@ -19579,7 +19528,7 @@ never returned: `hasSecret` says whether one is stored.
   "enabled": true, "order": 0,
   "autoCreate": false, "mergeVerifiedEmail": false,
   "oidc": {"issuer": "https://login.microsoftonline.com/<tenant>/v2.0", "clientId": "…", "hasSecret": true,
-           "scopes": ["profile", "email"], "legacyCallback": false,
+           "scopes": ["profile", "email"],
            "redirectUrl": "https://notes.example.com/api/auth/oidc/company/callback"},
   "status": {"ok": true, "checked": "2026-11-23T08:00:00Z", "message": ""},
   "people": 12,
@@ -19614,8 +19563,7 @@ never returned: `hasSecret` says whether one is stored.
 
 `oidc`: `issuer` (an `https` address), `clientId`, the secret (write-only
 `clientSecret`; may be empty for a public client: PKCE is always used),
-`scopes` besides `openid` (default `profile`, `email`), `legacyCallback` (at most
-one provider has it, see "The pre-2.8 endpoints"), and the read-only
+`scopes` besides `openid` (default `profile`, `email`), and the read-only
 `redirectUrl` to register.
 
 `saml`:
@@ -19722,7 +19670,6 @@ address.
 | `exists` | 409 | the slug is taken |
 | `domain_required` | 409 | turning on a provider owned by a tenant that has no verified domain |
 | `provider_limit` | 409 | there are 50 providers |
-| `legacy_callback_in_use` | 409 | another provider has `legacyCallback` |
 | `oidc_issuer_invalid` | 400 | the issuer is not an `https` address |
 | `saml_needs_https` | 400 | SAML without an `https` `--public-url` (the cookie that crosses from the identity provider must be `Secure`) |
 | `saml_metadata_invalid` | 400 | the metadata cannot be parsed, has no signing certificate or no redirect binding for sign-in |
@@ -20007,12 +19954,6 @@ that host by GitHub's numeric ids, which an account on the App's host could
 share. `409 provider_host_mismatch` then (`message` names both hosts): delete
 that sign-in provider, or remove its linked accounts, first.
 `200` as `GET`.
-
-An App made before the connections moved to `/api/account/links` (its
-callback URL ends in `/api/connections/github/authorization/callback`) must have
-its callback URLs updated on GitHub: the App's `callbackUrl`
-(`/api/account/links/github/callback`) and, for signing in with it,
-`signinCallbackUrl` (`/api/auth/github/github/callback`).
 
 #### `POST /api/admin/providers/github/check`
 

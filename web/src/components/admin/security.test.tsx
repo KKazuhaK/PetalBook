@@ -422,13 +422,10 @@ describe('the security page', () => {
 
   it('shows the notices the server has', async () => {
     await open({
-      notices: [
-        { code: 'flags_ignored', message: 'flags differ' },
-        { code: 'secret_unreadable', message: 'x', slug: 'company' },
-      ],
+      notices: [{ code: 'secret_unreadable', message: 'x', slug: 'company' }],
     })
     const notices = q('[data-slot="security-notices"]')!.textContent!
-    expect(notices).toContain(tsec.notices.flags_ignored)
+    expect(notices).toContain(tsec.notices.secret_unreadable)
     expect(notices).toContain('company')
   })
 

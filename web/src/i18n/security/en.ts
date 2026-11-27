@@ -116,8 +116,6 @@ export const securityEn: SecurityMessages = {
   },
   notices: {
     title: 'Worth a look',
-    flags_ignored:
-      'The --oidc-* flags on the command line differ from the stored provider. The stored one counts; the flags do nothing and will be removed in a later version.',
     secret_unreadable: 'A stored secret cannot be opened with this server’s key. Enter it again.',
     passkey_host_changed: 'The host of the public address changed, so passkeys registered before no longer work.',
   },
@@ -217,9 +215,6 @@ export const securityEn: SecurityMessages = {
       clientSecretHelp: 'May be empty for a public client (PKCE is always used).',
       scopes: 'Scopes',
       scopesHelp: 'Besides openid, separated by spaces.',
-      legacyCallback: 'Use the old callback address',
-      legacyCallbackHelp:
-        'The address used before 2.8. At most one provider may have it, so nothing has to change at the identity provider.',
       redirectUrl: 'Redirect address to register at the identity provider',
     },
     saml: {
@@ -287,7 +282,6 @@ export const securityEn: SecurityMessages = {
       exists: 'That slug is taken.',
       domain_required: 'A provider owned by a tenant needs the tenant to have a verified domain first.',
       provider_limit: 'There are 50 providers already.',
-      legacy_callback_in_use: 'Another provider already has the old callback address.',
       oidc_issuer_invalid: 'The issuer has to be an https address.',
       saml_needs_https:
         'SAML needs an https public address (--public-url): the cookie that crosses from the identity provider must be Secure.',

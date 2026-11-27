@@ -47,10 +47,6 @@ type serveConfig struct {
 	profile                                    string
 	publicURL                                  string
 	trustedProxies                             []string
-	oidcIssuer, oidcClientID, oidcName         string
-	oidcClientSecretFile, oidcClientSecret     string
-	oidcScopes                                 []string
-	oidcAutoCreate                             bool
 	commitIdle, commitMax, draftIdle, draftMax time.Duration
 	// maxSpaces is how many spaces one user may own (0: no limit); spaceIdle
 	// and maxOpenSpaces decide when spaces that are not in use are closed.
@@ -122,9 +118,7 @@ DIR/cache/<id>, and the state database (users, sessions, drafts) in
 DIR/petalbook.db unless --database says otherwise. The first run prints a
 set-up link in the log; open it to create the administrator. If nobody can
 sign in, "petalbook user add", "petalbook user passwd" and "petalbook security
-reset" work on the data directory directly. The --oidc-* flags of earlier
-versions are read once, at the first start, and become the provider "sso" of the
-state database; from then on the database counts and the flags only warn.
+reset" work on the data directory directly.
 
 Either way a space is a Git repository. Typing is kept as a draft in the state
 database; a draft becomes the file after --draft-idle without changes (or
@@ -152,7 +146,6 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 			c.noMCP = !mcpOn
 			c.hostsSet = cmd.Flags().Changed("remote-host")
 			c.remoteSet = cmd.Flags().Changed("pull-interval") || cmd.Flags().Changed("remote-host") || cmd.Flags().Changed("remote-timeout")
-			c.oidcClientSecret = os.Getenv("PETALBOOK_OIDC_CLIENT_SECRET")
 			c.logger = slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -165,14 +158,8 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.StringVar(&c.listen, "listen", "127.0.0.1:8080", "address to listen on")
 	f.StringVar(&c.database, "database", "", "state database: a SQLite file path or a postgres:// URL (default: DATA/petalbook.db, or state.db in the state directory)")
 	f.StringVar(&c.profile, "profile", "", "accounts mode: site defaults to seed on the first start, when the database is empty ("+strings.Join(settings.ProfileNames(), " or ")+"); later starts ignore the same profile and refuse a different one")
-	f.StringVar(&c.publicURL, "public-url", "", "accounts mode: the address people use, e.g. https://notes.example.com (decides whether cookies are Secure, and is accepted as the server's own origin; required with OIDC)")
+	f.StringVar(&c.publicURL, "public-url", "", "accounts mode: the address people use, e.g. https://notes.example.com (decides whether cookies are Secure, and is accepted as the server's own origin; required for providers)")
 	f.StringSliceVar(&c.trustedProxies, "trusted-proxy", nil, "address or CIDR of a reverse proxy whose X-Forwarded-For is believed when limiting sign-in attempts (repeatable, or comma-separated)")
-	f.StringVar(&c.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL (https); imported once as the provider \"sso\" of the state database, which counts from then on")
-	f.StringVar(&c.oidcClientID, "oidc-client-id", "", "OpenID Connect client id")
-	f.StringVar(&c.oidcClientSecretFile, "oidc-client-secret-file", "", "file holding the OpenID Connect client secret (or set PETALBOOK_OIDC_CLIENT_SECRET)")
-	f.StringVar(&c.oidcName, "oidc-name", "", "name of the provider on the sign-in page (default \"Single sign-on\")")
-	f.StringSliceVar(&c.oidcScopes, "oidc-scopes", nil, "scopes to ask for besides openid (default: profile, email)")
-	f.BoolVar(&c.oidcAutoCreate, "oidc-auto-create", false, "make a member account for an identity nobody has, at its first sign-in (otherwise only invited or existing accounts can sign in)")
 	f.StringVar(&c.name, "name", space.DefaultName, "single-user mode: display name; used when the space is created, otherwise space.yml decides unless this is given")
 	f.StringVar(&c.stateDir, "state-dir", "", "single-user mode: where the index and state database are kept (default: <space>/.git/petalbook-state)")
 	f.StringVar(&c.committer, "committer", space.DefaultCommitter, "Git committer of automatic commits, \"Name <email>\" (the author is the space's owner in accounts mode)")
@@ -227,7 +214,6 @@ type checked struct {
 	origins   []string
 	publicURL string // normalised, no trailing slash; "" if none
 	proxies   []netip.Prefix
-	oidc      *auth.OIDCConfig
 	accounts  bool
 }
 
@@ -298,8 +284,8 @@ func (c serveConfig) check() (*checked, error) {
 		if c.githubAPI != "" || c.githubWeb != "" {
 			return nil, errors.New("--github-api-url and --github-url are for accounts mode (--data)")
 		}
-		if c.publicURL != "" || len(c.trustedProxies) > 0 || c.oidcIssuer != "" || c.oidcClientID != "" || c.oidcClientSecretFile != "" || c.oidcClientSecret != "" || c.oidcName != "" || len(c.oidcScopes) > 0 || c.oidcAutoCreate {
-			return nil, errors.New("--public-url, --trusted-proxy and --oidc-* are for accounts mode (--data)")
+		if c.publicURL != "" || len(c.trustedProxies) > 0 {
+			return nil, errors.New("--public-url and --trusted-proxy are for accounts mode (--data)")
 		}
 		return &out, nil
 	}
@@ -310,29 +296,6 @@ func (c serveConfig) check() (*checked, error) {
 	}
 	if out.proxies, err = auth.ParseTrustedProxies(c.trustedProxies); err != nil {
 		return nil, fmt.Errorf("--trusted-proxy: %w", err)
-	}
-	if c.oidcIssuer != "" || c.oidcClientID != "" || c.oidcClientSecretFile != "" || c.oidcClientSecret != "" || c.oidcName != "" || len(c.oidcScopes) > 0 || c.oidcAutoCreate {
-		if c.oidcIssuer == "" || c.oidcClientID == "" {
-			return nil, errors.New("single sign-on needs --oidc-issuer and --oidc-client-id")
-		}
-		if out.publicURL == "" {
-			return nil, errors.New("single sign-on needs --public-url: the provider sends people back to <public-url>/api/auth/oidc/callback")
-		}
-		secret := c.oidcClientSecret
-		if c.oidcClientSecretFile != "" {
-			if secret != "" {
-				return nil, errors.New("give the client secret in --oidc-client-secret-file or PETALBOOK_OIDC_CLIENT_SECRET, not both")
-			}
-			raw, err := os.ReadFile(c.oidcClientSecretFile)
-			if err != nil {
-				return nil, fmt.Errorf("--oidc-client-secret-file: %w", err)
-			}
-			secret = strings.TrimRight(string(raw), "\r\n")
-		}
-		out.oidc = &auth.OIDCConfig{Issuer: c.oidcIssuer, ClientID: c.oidcClientID, ClientSecret: secret, Name: c.oidcName, Scopes: c.oidcScopes, AutoCreate: c.oidcAutoCreate}
-		if err := auth.ValidateOIDC(*out.oidc, out.publicURL); err != nil {
-			return nil, err
-		}
 	}
 	return &out, nil
 }
@@ -459,7 +422,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		fgs.SetHostAllowed(mgr.HostAllowed)
 		conns.OnChange(func(_, userID string) { mgr.ConnectionFixed(userID) })
 		if svc, err = auth.New(ctx, auth.Config{Store: st, Spaces: mgr, PublicURL: cfg.publicURL, TrustedProxies: cfg.proxies,
-			OIDC: cfg.oidc, HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log}); err != nil {
+			HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log}); err != nil {
 			return err
 		}
 	} else {
@@ -618,9 +581,6 @@ func withWebApp(apiHandler, app http.Handler) http.Handler {
 }
 
 func signInMethods(cfg *checked) string {
-	if cfg.oidc != nil {
-		return "password, passkeys, providers of the state database (--oidc-* is imported once: " + cfg.oidc.Issuer + ")"
-	}
 	return "password, passkeys, providers of the state database"
 }
 

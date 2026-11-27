@@ -25,38 +25,6 @@ import (
 	"petalbook.app/server/internal/store"
 )
 
-// OIDCConfig is the OpenID Connect provider of the command line (--oidc-*).
-// Since 2.8 it is only read once, to make the provider "sso" of the state
-// database (see importFlags).
-type OIDCConfig struct {
-	Issuer       string
-	ClientID     string
-	ClientSecret string
-	Name         string // shown on the sign-in page
-	Scopes       []string
-	AutoCreate   bool // an identity nobody has creates a member account
-}
-
-// ValidateOIDC checks the settings without touching the network, so a mistake
-// fails at start-up before anything is created.
-func ValidateOIDC(c OIDCConfig, publicURL string) error {
-	if c.Issuer == "" || c.ClientID == "" {
-		return errors.New("OIDC needs an issuer and a client id")
-	}
-	if publicURL == "" {
-		return errors.New("OIDC needs --public-url: the provider is told to send people back to it")
-	}
-	scopes := c.Scopes
-	if len(scopes) == 0 {
-		scopes = []string{"profile", "email"}
-	}
-	if _, err := authoidc.New(canceled(), authoidc.Config{IssuerURL: c.Issuer, ClientID: c.ClientID, ClientSecret: c.ClientSecret,
-		RedirectURL: strings.TrimRight(publicURL, "/") + legacyPath, Scopes: scopes}); errors.Is(err, authoidc.ErrInvalidConfig) {
-		return errors.New("the OIDC settings are not valid: the issuer and the public URL must be https addresses, and the client id must be set")
-	}
-	return nil
-}
-
 func canceled() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -335,15 +303,9 @@ func (s *Service) LinkBegin(ctx context.Context, providerID string, u *store.Use
 	return s.SSOBegin(ctx, rt.row.Kind, rt.row.Slug, BeginParams{Intent: "link", Return: ret, User: u}, ip)
 }
 
-// SSOBegin starts a sign-in with a provider. kind "oidc" with an empty slug
-// is the pre-2.8 endpoint: the provider with the legacy callback.
+// SSOBegin starts a sign-in with a provider.
 func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams, ip string) (*BeginResult, error) {
-	var rt *providerRT
-	if slug == "" && kind == KindOIDC {
-		rt = s.provs.legacy()
-	} else {
-		rt = s.provs.get(slug)
-	}
+	rt := s.provs.get(slug)
 	if rt == nil || rt.row.Kind != kind {
 		return nil, errf(NotFound, "Single sign-on is not configured.")
 	}
@@ -476,17 +438,12 @@ func (s *Service) ssoFail(kind, slug, intent, code, ip string, clear ...*http.Co
 }
 
 // OIDCComplete finishes a sign-in from the redirect of an OpenID Connect or
-// GitHub provider. slug "" is the pre-2.8 callback. binding is the value of
+// GitHub provider. binding is the value of
 // the browser's binding cookie; sessionToken the browser's session cookie (for
 // link). It never returns an error: every failure is a redirect to a page that
 // can explain it.
 func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken string, q url.Values, ip string) Outcome {
-	var rt *providerRT
-	if slug == "" {
-		rt = s.provs.legacy()
-	} else {
-		rt = s.provs.get(slug)
-	}
+	rt := s.provs.get(slug)
 	kind := KindOIDC
 	if rt != nil {
 		kind = rt.row.Kind

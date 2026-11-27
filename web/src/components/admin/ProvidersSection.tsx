@@ -352,7 +352,7 @@ interface F {
   order: string
   autoCreate: boolean
   mergeVerifiedEmail: boolean
-  oidc: { issuer: string; clientId: string; secret: string | null; scopes: string; legacyCallback: boolean }
+  oidc: { issuer: string; clientId: string; secret: string | null; scopes: string }
   saml: {
     metadataUrl: string
     metadataXml: string
@@ -377,7 +377,7 @@ const blank = (): F => ({
   order: '0',
   autoCreate: false,
   mergeVerifiedEmail: false,
-  oidc: { issuer: '', clientId: '', secret: null, scopes: 'profile email', legacyCallback: false },
+  oidc: { issuer: '', clientId: '', secret: null, scopes: 'profile email' },
   saml: {
     metadataUrl: '',
     metadataXml: '',
@@ -409,7 +409,6 @@ function formOf(p: AuthProvider): F {
       clientId: p.oidc.clientId,
       secret: null,
       scopes: p.oidc.scopes.join(' '),
-      legacyCallback: p.oidc.legacyCallback,
     }
   if (p.saml)
     f.saml = {
@@ -475,7 +474,6 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
     if (!b || o.clientId !== b.clientId) block.clientId = o.clientId.trim()
     if (o.secret !== null) block.clientSecret = o.secret
     if (!b || o.scopes !== b.scopes) block.scopes = words(o.scopes)
-    if (!b || o.legacyCallback !== b.legacyCallback) block.legacyCallback = o.legacyCallback
     if (Object.keys(block).length || !was) out.oidc = block
   } else if (f.kind === 'saml') {
     const s = f.saml
@@ -962,12 +960,6 @@ function OidcFields({ f, set, initial }: Sub) {
         onChange={(e) => up({ scopes: e.target.value })}
         autoComplete="off"
         spellCheck={false}
-      />
-      <Check
-        label={tp.oidc.legacyCallback}
-        help={tp.oidc.legacyCallbackHelp}
-        checked={o.legacyCallback}
-        onChange={(on) => up({ legacyCallback: on })}
       />
       {initial?.oidc && <ReadOnly label={tp.oidc.redirectUrl} value={initial.oidc.redirectUrl} />}
     </fieldset>

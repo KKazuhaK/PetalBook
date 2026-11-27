@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/auth/testidp"
 	"petalbook.app/server/internal/store"
 )
@@ -27,7 +26,7 @@ type fakeIDP struct {
 
 func newFakeIDP(t *testing.T) *fakeIDP {
 	t.Helper()
-	idp := testidp.New("", idpClient, idpSecret, testPublic+"/api/auth/oidc/callback")
+	idp := testidp.New("", idpClient, idpSecret, testPublic+"/api/auth/oidc/sso/callback")
 	srv := httptest.NewTLSServer(idp.Handler())
 	t.Cleanup(srv.Close)
 	idp.Issuer = srv.URL
@@ -40,12 +39,10 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 	return &fakeIDP{idp, srv}
 }
 
-func (f *fakeIDP) config(autoCreate bool) *auth.OIDCConfig {
-	return &auth.OIDCConfig{Issuer: f.srv.URL, ClientID: idpClient, ClientSecret: idpSecret, Name: "Company SSO", AutoCreate: autoCreate}
-}
-
+// opts is an accounts server with the site provider "sso" (named "Company SSO")
+// that this provider answers for.
 func (f *fakeIDP) opts(autoCreate bool) accOpts {
-	return accOpts{public: testPublic, oidc: f.config(autoCreate), httpc: f.srv.Client()}
+	return accOpts{public: testPublic, sso: f, ssoAutoCreate: autoCreate, httpc: f.srv.Client()}
 }
 
 // signIn runs the browser's part of a sign-in as the identity-provider user
@@ -59,7 +56,7 @@ type attempt struct {
 
 func (f *fakeIDP) begin(t *testing.T, c *client, who string, body map[string]any) attempt {
 	t.Helper()
-	return f.beginAt(t, c, "/api/auth/oidc/start", "/api/auth/oidc/callback", who, body)
+	return f.beginAt(t, c, "/api/auth/oidc/sso/start", "/api/auth/oidc/sso/callback", who, body)
 }
 
 // beginAt starts a sign-in at startPath and follows the provider's redirect back
@@ -123,10 +120,10 @@ func TestOIDCStartIsBoundToTheBrowser(t *testing.T) {
 	eachAccounts(t, f.opts(false), func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
 		c := a.newClient("")
-		r := c.do("POST", "/api/auth/oidc/start", map[string]any{"return": "/s/x"}).want(t, 200, "")
+		r := c.do("POST", "/api/auth/oidc/sso/start", map[string]any{"return": "/s/x"}).want(t, 200, "")
 		u, _ := url.Parse(r.body["url"].(string))
 		q := u.Query()
-		if q.Get("redirect_uri") != testPublic+"/api/auth/oidc/callback" || q.Get("code_challenge_method") != "S256" || q.Get("state") == "" || q.Get("nonce") == "" ||
+		if q.Get("redirect_uri") != testPublic+"/api/auth/oidc/sso/callback" || q.Get("code_challenge_method") != "S256" || q.Get("state") == "" || q.Get("nonce") == "" ||
 			q.Get("client_id") != idpClient || q.Get("response_type") != "code" || q.Get("scope") != "openid profile email" {
 			t.Fatalf("%v", q)
 		}
@@ -135,23 +132,18 @@ func TestOIDCStartIsBoundToTheBrowser(t *testing.T) {
 			t.Fatalf("%+v", ck)
 		}
 		// Everything the client cannot do.
-		c.do("POST", "/api/auth/oidc/start", map[string]any{"intent": "bogus"}).want(t, 400, "invalid")
-		c.do("POST", "/api/auth/oidc/start", map[string]any{"intent": "link"}).want(t, 401, "unauthenticated")
-		c.do("POST", "/api/auth/oidc/start", map[string]any{"token": strings.Repeat("x", 300)}).want(t, 400, "invalid")
+		c.do("POST", "/api/auth/oidc/sso/start", map[string]any{"intent": "bogus"}).want(t, 400, "invalid")
+		c.do("POST", "/api/auth/oidc/sso/start", map[string]any{"intent": "link"}).want(t, 401, "unauthenticated")
+		c.do("POST", "/api/auth/oidc/sso/start", map[string]any{"token": strings.Repeat("x", 300)}).want(t, 400, "invalid")
 		// An empty body means a plain sign-in.
-		c.do("POST", "/api/auth/oidc/start", "").want(t, 200, "")
-		// Methods advertise the provider.
-		m := c.do("GET", "/api/session", nil).body["methods"].(map[string]any)
-		if m["oidc"].(map[string]any)["name"] != "Company SSO" {
-			t.Fatal(m)
-		}
+		c.do("POST", "/api/auth/oidc/sso/start", "").want(t, 200, "")
 	})
 }
 
 func TestOIDCNotConfigured(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
-		a.newClient("").do("POST", "/api/auth/oidc/start", map[string]any{}).want(t, 404, "not_found")
+		a.newClient("").do("POST", "/api/auth/oidc/sso/start", map[string]any{}).want(t, 404, "not_found")
 	})
 }
 
@@ -161,13 +153,13 @@ func TestOIDCStartsAreRateLimited(t *testing.T) {
 	eachAccounts(t, f.opts(false), func(t *testing.T, a *acc) {
 		c := a.newClient("203.0.113.77")
 		for range 20 {
-			c.do("POST", "/api/auth/oidc/start", map[string]any{}).want(t, 200, "")
+			c.do("POST", "/api/auth/oidc/sso/start", map[string]any{}).want(t, 200, "")
 		}
-		r := c.do("POST", "/api/auth/oidc/start", map[string]any{}).want(t, 429, "rate_limited")
+		r := c.do("POST", "/api/auth/oidc/sso/start", map[string]any{}).want(t, 429, "rate_limited")
 		if r.resp.Header.Get("Retry-After") == "" {
 			t.Fatal("no Retry-After")
 		}
-		a.newClient("203.0.113.78").do("POST", "/api/auth/oidc/start", map[string]any{}).want(t, 200, "")
+		a.newClient("203.0.113.78").do("POST", "/api/auth/oidc/sso/start", map[string]any{}).want(t, 200, "")
 	})
 }
 
@@ -369,7 +361,7 @@ func TestOIDCLinkAndUnlink(t *testing.T) {
 		wen := a.addUser("wen", pw, "member")
 
 		// Linking needs a session at the start ...
-		a.newClient("").do("POST", "/api/auth/oidc/start", map[string]any{"intent": "link"}).want(t, 401, "unauthenticated")
+		a.newClient("").do("POST", "/api/auth/oidc/sso/start", map[string]any{"intent": "link"}).want(t, 401, "unauthenticated")
 		// ... and leaves it as it is.
 		at := f.begin(t, kazuha, "alice", map[string]any{"intent": "link", "return": "/settings"})
 		sessionBefore := kazuha.cookies["__Host-petalbook_session"].Value
@@ -388,7 +380,7 @@ func TestOIDCLinkAndUnlink(t *testing.T) {
 		}
 		// One account per provider: linking again (the same account or another) is
 		// refused up front, with its own code, until the first is unlinked.
-		kazuha.do("POST", "/api/auth/oidc/start", map[string]any{"intent": "link"}).want(t, 409, "already_linked")
+		kazuha.do("POST", "/api/auth/oidc/sso/start", map[string]any{"intent": "link"}).want(t, 409, "already_linked")
 		kazuha.do("POST", "/api/account/links/sso/start", map[string]any{"purpose": "signin"}).want(t, 409, "already_linked")
 		if ids := kazuha.do("GET", "/api/account/links", nil).body["links"].([]any); len(ids) != 1 {
 			t.Fatal(ids)
@@ -516,10 +508,10 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 		if loc, _ := finish(t, c, at.cb+"&code=other"); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
-		if loc, _ := finish(t, c, "/api/auth/oidc/callback"); loc != "/login?sso_error=idp_error" {
+		if loc, _ := finish(t, c, "/api/auth/oidc/sso/callback"); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
-		if loc, _ := finish(t, c, "/api/auth/oidc/callback?state="+at.state); loc != "/login?sso_error=idp_error" {
+		if loc, _ := finish(t, c, "/api/auth/oidc/sso/callback?state="+at.state); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
 		// The real one still works after all of that.
@@ -530,10 +522,10 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 		// The provider refuses: only the matching browser's attempt is ended.
 		c = a.newClient("")
 		at = f.begin(t, c, "alice", map[string]any{})
-		if loc, _ := finish(t, a.newClient(""), "/api/auth/oidc/callback?error=access_denied&state="+at.state); loc != "/login?sso_error=idp_error" {
+		if loc, _ := finish(t, a.newClient(""), "/api/auth/oidc/sso/callback?error=access_denied&state="+at.state); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
-		if loc, _ := finish(t, c, "/api/auth/oidc/callback?error=access_denied&state="+at.state); loc != "/login?sso_error=idp_error" {
+		if loc, _ := finish(t, c, "/api/auth/oidc/sso/callback?error=access_denied&state="+at.state); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
 		if loc, _ := finish(t, c, at.cb); loc != "/login?sso_error=expired" {
@@ -543,7 +535,7 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 		k := a.newClient("")
 		k.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
 		at = f.begin(t, k, "bob", map[string]any{"intent": "link"})
-		if loc, _ := finish(t, k, "/api/auth/oidc/callback?error=access_denied&state="+at.state); loc != "/settings?sso_error=idp_error" {
+		if loc, _ := finish(t, k, "/api/auth/oidc/sso/callback?error=access_denied&state="+at.state); loc != "/settings?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
 	})
@@ -610,10 +602,15 @@ func TestOIDCProviderDown(t *testing.T) {
 	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(false), func(t *testing.T, a *acc) {
+		c := a.newClient("")
+		at := f.begin(t, c, "alice", map[string]any{})
+		// The provider's discovery document is kept, so a start still works; the
+		// exchange of the code is what fails, and the answer does not leak the address.
 		f.srv.Close()
-		r := a.newClient("").do("POST", "/api/auth/oidc/start", map[string]any{}).want(t, 500, "internal")
-		if strings.Contains(r.raw, f.srv.URL) {
-			t.Fatal("the answer leaks the provider address")
+		a.newClient("").do("POST", "/api/auth/oidc/sso/start", map[string]any{}).want(t, 200, "")
+		loc, r := finish(t, c, at.cb)
+		if loc != "/login?sso_error=idp_error" || strings.Contains(r.raw, f.srv.URL) || strings.Contains(loc, f.srv.URL) {
+			t.Fatal(loc)
 		}
 	})
 }

@@ -44,7 +44,6 @@ const (
 const (
 	maxProviders  = 50
 	metadataLimit = 1 << 20
-	legacyPath    = "/api/auth/oidc/callback"
 )
 
 var (
@@ -164,17 +163,6 @@ func (p *providerSet) getID(id string) *providerRT {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.byID[id]
-}
-
-func (p *providerSet) legacy() *providerRT {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	for _, rt := range p.list {
-		if rt.row.LegacyCallback && rt.row.Kind == KindOIDC && rt.row.Owner == store.ProviderSite {
-			return rt
-		}
-	}
-	return nil
 }
 
 func (p *providerSet) anyEnabled() bool { return p.anyOn.Load() }
@@ -342,12 +330,11 @@ type ProviderStat struct {
 
 // OIDCView is the OpenID Connect part of a provider.
 type OIDCView struct {
-	Issuer         string   `json:"issuer"`
-	ClientID       string   `json:"clientId"`
-	HasSecret      bool     `json:"hasSecret"`
-	Scopes         []string `json:"scopes"`
-	LegacyCallback bool     `json:"legacyCallback"`
-	RedirectURL    string   `json:"redirectUrl"`
+	Issuer      string   `json:"issuer"`
+	ClientID    string   `json:"clientId"`
+	HasSecret   bool     `json:"hasSecret"`
+	Scopes      []string `json:"scopes"`
+	RedirectURL string   `json:"redirectUrl"`
 }
 
 // SAMLView is the SAML part of a provider.
@@ -380,10 +367,7 @@ type GitHubView struct {
 func (s *Service) publicBase() string { return strings.TrimRight(s.cfg.PublicURL, "/") }
 
 func (s *Service) redirectURL(rt *providerRT) string {
-	if rt.row.LegacyCallback && rt.row.Kind == KindOIDC {
-		return s.publicBase() + legacyPath
-	}
-	return s.publicBase() + "/api/auth/" + rt.row.Kind + "/" + rt.row.Slug + "/callback"
+	return s.publicBase() + redirectPath(rt.row)
 }
 
 func (s *Service) samlURLs(slug string) (entity, acs, metaPath string) {
@@ -404,8 +388,7 @@ func (s *Service) viewOf(rt *providerRT, people int) ProviderView {
 	}
 	switch row.Kind {
 	case KindOIDC:
-		v.OIDC = &OIDCView{Issuer: rt.cfg.Issuer, ClientID: rt.cfg.ClientID, HasSecret: row.SecretEnc != "", Scopes: slices.Clone(rt.cfg.Scopes),
-			LegacyCallback: row.LegacyCallback, RedirectURL: s.redirectURL(rt)}
+		v.OIDC = &OIDCView{Issuer: rt.cfg.Issuer, ClientID: rt.cfg.ClientID, HasSecret: row.SecretEnc != "", Scopes: slices.Clone(rt.cfg.Scopes), RedirectURL: s.redirectURL(rt)}
 	case KindGitHub:
 		orgs := slices.Clone(rt.cfg.Organizations)
 		if orgs == nil {
@@ -478,11 +461,10 @@ type ProviderInput struct {
 	MergeVerifiedEmail *bool   `json:"mergeVerifiedEmail"`
 	Tenant             *string `json:"tenant"`
 	OIDC               *struct {
-		Issuer         *string   `json:"issuer"`
-		ClientID       *string   `json:"clientId"`
-		ClientSecret   *string   `json:"clientSecret"`
-		Scopes         *[]string `json:"scopes"`
-		LegacyCallback *bool     `json:"legacyCallback"`
+		Issuer       *string   `json:"issuer"`
+		ClientID     *string   `json:"clientId"`
+		ClientSecret *string   `json:"clientSecret"`
+		Scopes       *[]string `json:"scopes"`
 	} `json:"oidc"`
 	SAML *struct {
 		MetadataURL       *string `json:"metadataUrl"`
@@ -769,12 +751,6 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 				}
 				b.cfg.Scopes = sc
 			}
-			if o.LegacyCallback != nil {
-				if *o.LegacyCallback != b.row.LegacyCallback {
-					mark("oidc.legacyCallback")
-				}
-				b.row.LegacyCallback = *o.LegacyCallback
-			}
 			if o.ClientSecret != nil && len(*o.ClientSecret) > 16*1024 {
 				return nil, providerInvalid("oidc.clientSecret is too long.")
 			}
@@ -791,7 +767,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		}
 		b.row.Issuer = b.cfg.Issuer
 		// The settings must be ones the library accepts.
-		if _, err := authoidc.New(canceled(), authoidc.Config{IssuerURL: b.cfg.Issuer, ClientID: b.cfg.ClientID, RedirectURL: s.publicBase() + legacyPath, Scopes: b.cfg.Scopes}); errors.Is(err, authoidc.ErrInvalidConfig) {
+		if _, err := authoidc.New(canceled(), authoidc.Config{IssuerURL: b.cfg.Issuer, ClientID: b.cfg.ClientID, RedirectURL: s.publicBase() + redirectPath(b.row), Scopes: b.cfg.Scopes}); errors.Is(err, authoidc.ErrInvalidConfig) {
 			return nil, providerInvalid("The OpenID Connect settings are not valid (issuer, client id or scopes).")
 		}
 	case KindGitHub:
@@ -954,16 +930,6 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	// Issuers may repeat: an account is found by the provider's own id and the
 	// subject, never by the issuer, so another provider with the same issuer
 	// string (an organisation copying it) reaches none of this one's accounts.
-	if b.row.LegacyCallback {
-		if kind != KindOIDC {
-			return nil, providerInvalid("Only an OpenID Connect provider has a legacy callback.")
-		}
-		for _, o := range rows {
-			if o.ID != b.row.ID && o.LegacyCallback && o.Owner == store.ProviderSite {
-				return nil, coded(409, "legacy_callback_in_use", "Another provider has the legacy callback.")
-			}
-		}
-	}
 	return b, nil
 }
 
@@ -1322,9 +1288,6 @@ func (s *Service) fetchInto(ctx context.Context, b *built) *providerRT {
 }
 
 func redirectPath(row store.ProviderRow) string {
-	if row.LegacyCallback && row.Kind == KindOIDC {
-		return legacyPath
-	}
 	return "/api/auth/" + row.Kind + "/" + row.Slug + "/callback"
 }
 
@@ -1517,8 +1480,6 @@ func changedValue(b *built, field string) any {
 		return b.cfg.ClientID
 	case "oidc.scopes":
 		return b.cfg.Scopes
-	case "oidc.legacyCallback":
-		return b.row.LegacyCallback
 	case "github.baseUrl":
 		return b.cfg.BaseURL
 	case "github.organizations":

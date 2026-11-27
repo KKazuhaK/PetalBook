@@ -182,8 +182,6 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/setup":                      {kind: isoExempt, reason: "public: nothing of a tenant"},
 	"POST /api/login":                      {kind: isoExempt, reason: "public: the account that signs in decides the tenant"},
 	"POST /api/logout":                     {kind: isoExempt, reason: "the caller's own session"},
-	"POST /api/auth/oidc/start":            {kind: isoExempt, reason: "public sign-in"},
-	"GET /api/auth/oidc/callback":          {kind: isoExempt, reason: "public sign-in"},
 	"POST /api/invites/check":              {kind: isoExempt, reason: "the secret token of an invite is the capability, in any tenant"},
 	"POST /api/invites/accept":             {kind: isoExempt, reason: "the secret token of an invite is the capability, in any tenant"},
 	"GET /api/auth/providers":              {kind: isoExempt, reason: "public; ?tenant= is tested apart"},

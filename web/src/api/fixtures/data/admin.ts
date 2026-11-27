@@ -235,7 +235,6 @@ export function makeProvider(input: ProviderInput & { slug: string }, at: string
       issuer: '',
       clientId: '',
       scopes: ['openid', 'email', 'profile'],
-      legacyCallback: false,
       ...rest,
       hasSecret: !!clientSecret,
       redirectUrl: `${url}/callback`,

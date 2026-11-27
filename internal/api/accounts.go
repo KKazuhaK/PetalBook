@@ -153,9 +153,6 @@ func (s *server) getSession(c *call) {
 	}
 	type methods struct {
 		Password bool `json:"password"`
-		OIDC     *struct {
-			Name string `json:"name"`
-		} `json:"oidc"`
 	}
 	out := struct {
 		Mode  string       `json:"mode"`
@@ -197,13 +194,7 @@ func (s *server) getSession(c *call) {
 			return
 		}
 		out.Setup = setup
-		m := &methods{Password: true}
-		if name := s.auth.LegacyOIDCName(); name != "" {
-			m.OIDC = &struct {
-				Name string `json:"name"`
-			}{name}
-		}
-		out.Methods = m
+		out.Methods = &methods{Password: true}
 	}
 	writeJSON(c.w, http.StatusOK, out)
 }
@@ -302,18 +293,6 @@ func (s *server) acceptInvite(c *call) {
 		return
 	}
 	writeJSON(c.w, http.StatusCreated, signInAnswer{User: user, Hold: hold})
-}
-
-// --- the pre-2.8 OpenID Connect endpoints ------------------------------------
-
-// oidcStart is POST /api/auth/oidc/start: unchanged, for the provider with the legacy callback.
-func (s *server) oidcStart(c *call) {
-	s.ssoStartJSON(c, auth.KindOIDC, "")
-}
-
-// oidcCallback is GET /api/auth/oidc/callback, for the same provider.
-func (s *server) oidcCallback(c *call) {
-	s.oidcCallbackOf(c, "")
 }
 
 // --- account -----------------------------------------------------------------
