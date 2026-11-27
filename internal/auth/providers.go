@@ -30,6 +30,7 @@ import (
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 
 	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/secrets"
 	"petalbook.app/server/internal/store"
 )
 
@@ -61,6 +62,10 @@ type provCfg struct {
 	// GitHub
 	BaseURL       string   `json:"baseUrl,omitempty"`
 	Organizations []string `json:"organizations,omitempty"`
+	// App is the GitHub App's record, when the row is the one the App is set up
+	// on (internal/github): the row's client is the App's, its secret is in
+	// secrets, and only the App's own settings change them. Kept as it is here.
+	App json.RawMessage `json:"app,omitempty"`
 	// SAML
 	MetadataURL        string    `json:"metadataUrl,omitempty"`
 	MetadataXML        string    `json:"metadataXml,omitempty"`
@@ -236,10 +241,21 @@ func (s *Service) open(purpose, enc string) (string, error) {
 
 // --- loading -----------------------------------------------------------------
 
-func (s *Service) newRT(row store.ProviderRow) *providerRT {
+func (s *Service) newRT(ctx context.Context, row store.ProviderRow) *providerRT {
 	rt := &providerRT{row: row, statusOK: row.StatusOK, statusChecked: row.StatusChecked, statusMessage: row.StatusMessage}
 	if err := json.Unmarshal([]byte(row.Config), &rt.cfg); err != nil {
 		rt.secretErr = errors.New("the stored configuration is not readable")
+		return rt
+	}
+	if row.Kind == KindGitHub && len(rt.cfg.App) > 0 {
+		// The row of the GitHub App: its client secret is a secret of the site.
+		v, ok, err := secrets.Of(s.st, s.rawBox()).Open(ctx, s.st.Q(), "", secrets.GitHubClientSecret)
+		switch {
+		case err != nil:
+			rt.secretErr = err
+		case ok:
+			rt.secret = v
+		}
 		return rt
 	}
 	if row.SecretEnc != "" {
@@ -250,6 +266,14 @@ func (s *Service) newRT(row store.ProviderRow) *providerRT {
 		rt.secret, rt.secretErr = s.open(purpose, row.SecretEnc)
 	}
 	return rt
+}
+
+// ReloadProviders reads the providers again: something outside this service
+// wrote one (the GitHub App was set up on its row).
+func (s *Service) ReloadProviders(ctx context.Context) error {
+	providerMu.Lock()
+	defer providerMu.Unlock()
+	return s.reloadProviders(ctx)
 }
 
 // reloadProviders reads the providers again and rebuilds only those that
@@ -269,7 +293,7 @@ func (s *Service) reloadProviders(ctx context.Context, rebuild ...string) error 
 			list = append(list, o)
 			continue
 		}
-		list = append(list, s.newRT(row))
+		list = append(list, s.newRT(ctx, row))
 	}
 	s.provs.set(list)
 	return nil
@@ -292,11 +316,16 @@ type ProviderView struct {
 	AutoCreate         bool   `json:"autoCreate"`
 	MergeVerifiedEmail bool   `json:"mergeVerifiedEmail"`
 	// Tenant is the tenant autoCreate puts new accounts in (an id).
-	Tenant           string       `json:"tenant"`
-	OIDC             *OIDCView    `json:"oidc,omitempty"`
-	SAML             *SAMLView    `json:"saml,omitempty"`
-	GitHub           *GitHubView  `json:"github,omitempty"`
-	Groups           GroupsCfg    `json:"groups"`
+	Tenant string      `json:"tenant"`
+	OIDC   *OIDCView   `json:"oidc,omitempty"`
+	SAML   *SAMLView   `json:"saml,omitempty"`
+	GitHub *GitHubView `json:"github,omitempty"`
+	Groups GroupsCfg   `json:"groups"`
+	// Signin is always true here (these are the providers people sign in with);
+	// Repos says the provider also holds repositories (the GitHub row once its App
+	// is set up), whose own settings are the repository side's.
+	Signin           bool         `json:"signin"`
+	Repos            bool         `json:"repos"`
 	Status           ProviderStat `json:"status"`
 	People           int          `json:"people"`
 	Created          string       `json:"created"`
@@ -344,6 +373,8 @@ type GitHubView struct {
 	HasSecret     bool     `json:"hasSecret"`
 	Organizations []string `json:"organizations"`
 	RedirectURL   string   `json:"redirectUrl"`
+	// App: the client is the GitHub App's (set with the App, not here).
+	App bool `json:"app"`
 }
 
 func (s *Service) publicBase() string { return strings.TrimRight(s.cfg.PublicURL, "/") }
@@ -365,6 +396,7 @@ func (s *Service) viewOf(rt *providerRT, people int) ProviderView {
 	ok, checked, msg := rt.status()
 	v := ProviderView{ID: row.ID, Owner: row.Owner, Slug: row.Slug, Kind: row.Kind, Name: row.Name, Icon: row.Icon, Enabled: row.Enabled, Order: row.Position,
 		AutoCreate: row.AutoCreate, MergeVerifiedEmail: row.MergeVerifiedEmail, Tenant: row.TenantID, People: people, Groups: groupsView(row.Kind, rt.cfg.Groups),
+		Signin: true, Repos: row.Repos,
 		Status:  ProviderStat{OK: ok, Message: msg},
 		Created: rfc3339(row.Created), Updated: rfc3339(row.Updated), SecretUnreadable: rt.secretErr != nil}
 	if !checked.IsZero() {
@@ -379,7 +411,8 @@ func (s *Service) viewOf(rt *providerRT, people int) ProviderView {
 		if orgs == nil {
 			orgs = []string{}
 		}
-		v.GitHub = &GitHubView{BaseURL: rt.cfg.BaseURL, ClientID: rt.cfg.ClientID, HasSecret: row.SecretEnc != "", Organizations: orgs, RedirectURL: s.redirectURL(rt)}
+		v.GitHub = &GitHubView{BaseURL: rt.cfg.BaseURL, ClientID: rt.cfg.ClientID, HasSecret: row.SecretEnc != "" || (len(rt.cfg.App) > 0 && rt.secret != ""), Organizations: orgs,
+			RedirectURL: s.redirectURL(rt), App: len(rt.cfg.App) > 0}
 	case KindSAML:
 		entity, acs, metaPath := s.samlURLs(row.Slug)
 		if rt.cfg.EntityID != "" {
@@ -752,6 +785,10 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		}
 	case KindGitHub:
 		g := in.GitHub
+		hasApp := len(b.cfg.App) > 0
+		if g != nil && hasApp && (g.BaseURL != nil || g.ClientID != nil || g.ClientSecret != nil) {
+			return nil, coded(400, "github_app_client", "This provider's client is the GitHub App's: change it with the App's settings.")
+		}
 		if g != nil {
 			if g.BaseURL != nil {
 				u, err := httpsOnly("github.baseUrl", *g.BaseURL, false)
@@ -791,11 +828,18 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		if creating && b.cfg.BaseURL == "" {
 			b.cfg.BaseURL = "https://github.com"
 		}
-		if b.cfg.ClientID == "" {
-			return nil, providerInvalid("github.clientId is required.")
-		}
-		if creating && (b.secret == "" || g == nil || g.ClientSecret == nil) {
-			return nil, providerInvalid("github.clientSecret is required.")
+		if hasApp {
+			// Signing in needs the App's client id and secret.
+			if b.row.Enabled && (cur == nil || !cur.row.Enabled) && (b.cfg.ClientID == "" || cur == nil || cur.secret == "") {
+				return nil, coded(400, "github_app_client", "The GitHub App has no client id and secret: signing in with GitHub needs them.")
+			}
+		} else {
+			if b.cfg.ClientID == "" {
+				return nil, providerInvalid("github.clientId is required.")
+			}
+			if creating && (b.secret == "" || g == nil || g.ClientSecret == nil) {
+				return nil, providerInvalid("github.clientSecret is required.")
+			}
 		}
 		b.row.Issuer = b.cfg.BaseURL
 		if b.row.AutoCreate && len(b.cfg.Organizations) == 0 {

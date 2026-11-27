@@ -1,9 +1,11 @@
-// Package github is the server's use of its one GitHub App: the App's settings,
-// the users' GitHub authorisations and their renewal, the accounts and
-// repositories a person can choose from, the creation of a repository, and the
-// token Git is given for a space. It keeps its state in the state database
-// (everything secret sealed with the server's key) and in memory (tokens, and
-// the sign-ins in progress), and reaches GitHub only through the githubapp
+// Package github is the server's use of its one GitHub App: the App's settings
+// (the config of the provider row "github"), the people's GitHub links (a link
+// of linked_accounts that also holds their repository tokens; the tokens and
+// their renewal are the token service's, internal/connections), the accounts
+// and repositories a person can choose from, the creation of a repository, and
+// the token Git is given for a space. It keeps its state in the state database
+// (everything secret sealed with the server's key) and in memory (the
+// authorisations in progress), and reaches GitHub only through the githubapp
 // client it was given.
 package github
 
@@ -85,10 +87,10 @@ type Options struct {
 	PublicURL string
 	Now       func() time.Time
 	Logger    *slog.Logger
-	// RenewEvery is how often the connections that need it are renewed
-	// (default a day), and RenewWithin how close to its end a refresh token
-	// must be for that (default 30 days).
-	RenewEvery, RenewWithin time.Duration
+	// Tokens is the token service that keeps the people's tokens and renews them
+	// (one for every kind of provider, run by the server). nil makes the
+	// service's own, which asks this service to renew.
+	Tokens *connections.Tokens
 	// SettingsTTL is how long the App's settings are kept in memory before they
 	// are read again, for servers sharing a database (default a minute).
 	SettingsTTL time.Duration
@@ -100,14 +102,11 @@ type Service struct {
 	vault *secrets.Service
 	log   *slog.Logger
 	c     *githubapp.Client
+	tok   *connections.Tokens
 
 	mu        sync.Mutex
 	cur       *appState // nil: not loaded
 	curAt     time.Time
-	tokens    map[string]cachedUser // by PetalBook user id
-	renewing  map[string]*renewal
-	gens      map[string]uint64 // see tokenGen
-	genAll    uint64
 	attempts  *attemptStore
 	manifests *attemptStore          // the attempts to make the App: apart from attempts (see manifestCapacity)
 	noApp     map[string]time.Time   // GitHub logins the App is known not to be installed for, until (guarded by mu)
@@ -115,6 +114,42 @@ type Service struct {
 	pending   map[string]*pendingApp // Apps GitHub made that could not be saved, by administrator (guarded by mu)
 	onChange  func(userID string)
 	autoAt    time.Time // when the App was last re-checked because a token was refused
+	// guard says whether a person's sign-in link may be given up (they have
+	// another way to sign in); providersChanged is told when the GitHub row
+	// was written, so the sign-in side reads it again.
+	guard            SigninGuard
+	providersChanged func(ctx context.Context)
+}
+
+// SigninGuard says whether a person may give up the sign-in of one of their
+// links (linkID): that they have another way to sign in. An error is a refusal
+// to say yes.
+type SigninGuard func(ctx context.Context, userID, linkID string) (bool, error)
+
+// SetSigninGuard sets how a link that signs a person in is protected: connecting
+// repositories with another GitHub account moves the link to that account, and
+// the sign-in with it, so it is not done to the person's last way in.
+func (s *Service) SetSigninGuard(g SigninGuard) {
+	s.mu.Lock()
+	s.guard = g
+	s.mu.Unlock()
+}
+
+// SetProvidersChanged sets what is called when the GitHub row was written (the
+// App saved, changed or removed), so that sign-in reads it again.
+func (s *Service) SetProvidersChanged(f func(ctx context.Context)) {
+	s.mu.Lock()
+	s.providersChanged = f
+	s.mu.Unlock()
+}
+
+func (s *Service) rowChanged(ctx context.Context) {
+	s.mu.Lock()
+	f := s.providersChanged
+	s.mu.Unlock()
+	if f != nil {
+		f(ctx)
+	}
 }
 
 // New returns a Service.
@@ -128,21 +163,23 @@ func New(opt Options) (*Service, error) {
 	if opt.Logger == nil {
 		opt.Logger = slog.New(slog.DiscardHandler)
 	}
-	if opt.RenewEvery <= 0 {
-		opt.RenewEvery = 24 * time.Hour
-	}
-	if opt.RenewWithin <= 0 {
-		opt.RenewWithin = 30 * 24 * time.Hour
-	}
 	if opt.SettingsTTL <= 0 {
 		opt.SettingsTTL = time.Minute
 	}
 	opt.PublicURL = strings.TrimRight(opt.PublicURL, "/")
 	opt.Client.UseLogger(opt.Logger) // what GitHub refuses is told in the server's log
-	return &Service{opt: opt, vault: secrets.Of(opt.Store, opt.Secrets), log: opt.Logger, c: opt.Client, tokens: map[string]cachedUser{}, renewing: map[string]*renewal{}, gens: map[string]uint64{},
+	s := &Service{opt: opt, vault: secrets.Of(opt.Store, opt.Secrets), log: opt.Logger, c: opt.Client, tok: opt.Tokens,
 		attempts: newAttemptStore(opt.Now, attemptCapacity), manifests: newAttemptStore(opt.Now, manifestCapacity),
-		noApp: map[string]time.Time{}, rechecked: map[string]time.Time{}, pending: map[string]*pendingApp{}}, nil
+		noApp: map[string]time.Time{}, rechecked: map[string]time.Time{}, pending: map[string]*pendingApp{}}
+	if s.tok == nil {
+		reg := connections.NewRegistry(s)
+		s.tok = connections.NewTokens(connections.TokenOptions{Store: opt.Store, Secrets: opt.Secrets, Registry: reg, Now: opt.Now, Logger: opt.Logger})
+	}
+	return s, nil
 }
+
+// Tokens is the token service the service keeps the people's tokens with.
+func (s *Service) Tokens() *connections.Tokens { return s.tok }
 
 // Client is the GitHub client; its web base is where repositories are.
 func (s *Service) Client() *githubapp.Client { return s.c }
@@ -166,9 +203,8 @@ func (s *Service) changed(userID string) {
 
 // --- the App's settings ------------------------------------------------------------
 
-const settingKey = "github_app"
-
-// appRecord is what is stored of the App in the record github_app. Its secrets
+// appRecord is what is stored of the App in the config of the provider row
+// (store.GetGitHubApp). Its secrets
 // are not in it: the private key, the client secret and the webhook secret
 // (which GitHub gives with an App made from a manifest; no webhook is used, so
 // it is only kept) are secrets of the site (internal/secrets). The fingerprint
@@ -216,7 +252,7 @@ func (s *Service) state(ctx context.Context) (*appState, error) {
 		return cur, nil
 	}
 	s.mu.Unlock()
-	raw, ok, err := store.GetSiteRecord(ctx, s.opt.Store.Q(), settingKey)
+	raw, ok, err := store.GetGitHubApp(ctx, s.opt.Store.Q())
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +343,16 @@ func (s *Service) CallbackURL() string {
 	if s.opt.PublicURL == "" {
 		return ""
 	}
-	return s.opt.PublicURL + "/api/connections/github/authorization/callback"
+	return s.opt.PublicURL + "/api/account/links/github/callback"
+}
+
+// SigninCallbackURL is where GitHub sends people back to when they sign in with
+// the App's client (the sign-in provider's own route); "" without a public URL.
+func (s *Service) SigninCallbackURL() string {
+	if s.opt.PublicURL == "" {
+		return ""
+	}
+	return s.opt.PublicURL + "/api/auth/github/" + ProviderID + "/callback"
 }
 
 // wrap turns an error of the GitHub client into the answer for the caller:

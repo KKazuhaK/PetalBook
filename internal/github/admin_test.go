@@ -1,6 +1,7 @@
 package github_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,7 +17,7 @@ import (
 func TestSaveChecksWithGitHubAndStoresSealed(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
-		if v, err := h.svc.View(ctx); err != nil || v.Configured || v.CallbackURL != publicURL+"/api/connections/github/authorization/callback" {
+		if v, err := h.svc.View(ctx); err != nil || v.Configured || v.CallbackURL != publicURL+"/api/account/links/github/callback" {
 			t.Fatalf("%+v %v", v, err)
 		}
 		v := h.configure()
@@ -24,13 +25,18 @@ func TestSaveChecksWithGitHubAndStoresSealed(t *testing.T) {
 			!strings.HasPrefix(v.Fingerprint, "SHA256:") || len(v.Missing) != 0 || v.InstallURL != "https://github.com/apps/petalbook-notes/installations/new" {
 			t.Fatalf("%+v", v)
 		}
-		// The key and the secret are in the database only sealed.
-		raw, ok, err := store.GetSiteRecord(ctx, st.Q(), "github_app")
+		// The App is the config of the provider row; the key and the secret are in
+		// the database only sealed, and not in the row.
+		raw, ok, err := store.GetGitHubApp(ctx, st.Q())
 		if err != nil || !ok {
 			t.Fatal(err)
 		}
+		row, err := store.GetProvider(ctx, st.Q(), "github")
+		if err != nil || !row.Repos || row.Enabled || row.Kind != "github" || !strings.Contains(row.Config, `"clientId":"`+h.f.ClientID+`"`) {
+			t.Fatalf("%+v %v", row, err)
+		}
 		for _, plain := range []string{h.f.ClientSecret, "BEGIN RSA PRIVATE KEY", "MIIE"} {
-			if strings.Contains(raw, plain) {
+			if strings.Contains(raw, plain) || strings.Contains(row.Config, plain) || strings.Contains(row.SecretEnc, plain) {
 				t.Fatalf("the stored settings hold %q", plain)
 			}
 		}
@@ -67,7 +73,7 @@ func TestSaveRefusesWhatGitHubRefusesAndSavesNothing(t *testing.T) {
 				t.Errorf("%s: %v (%s)", c.name, err, code(err))
 			}
 		}
-		if _, ok, _ := store.GetSiteRecord(ctx, st.Q(), "github_app"); ok {
+		if _, ok, _ := store.GetGitHubApp(ctx, st.Q()); ok {
 			t.Fatal("a refused save stored something")
 		}
 		// GitHub that cannot be reached: 503, nothing saved.
@@ -75,7 +81,7 @@ func TestSaveRefusesWhatGitHubRefusesAndSavesNothing(t *testing.T) {
 		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM()}); code(err) != "unavailable" || status(err) != 503 {
 			t.Fatalf("%v", err)
 		}
-		if _, ok, _ := store.GetSiteRecord(ctx, st.Q(), "github_app"); ok {
+		if _, ok, _ := store.GetGitHubApp(ctx, st.Q()); ok {
 			t.Fatal("an unreachable GitHub left settings")
 		}
 	})
@@ -125,8 +131,11 @@ func TestAnotherAppIsRefusedWhileInUse(t *testing.T) {
 		if err := h.svc.Delete(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if n, _ := store.CountGitHubAuthorizations(ctx, st.Q()); n != 0 {
+		if n, _ := store.CountProviderLinks(ctx, st.Q(), "github"); n != 0 {
 			t.Fatal("connections survived the App")
+		}
+		if _, err := store.GetProvider(ctx, st.Q(), "github"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("the provider row survived the App: %v", err)
 		}
 		if h.svc.Configured(ctx) {
 			t.Fatal("still configured")

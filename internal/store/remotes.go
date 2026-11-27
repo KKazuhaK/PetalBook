@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -153,8 +154,12 @@ func PutRemote(ctx context.Context, q Q, r Remote) error {
 			return err
 		}
 		// A space that follows the repository (in either role) answers every
-		// reminder of it.
-		_, err = q.Exec(ctx, `DELETE FROM github_leftovers WHERE repo_id = ?`, r.RepoID)
+		// reminder of it, at the provider it is on.
+		prov := r.Provider
+		if prov == "" {
+			prov = ProviderGitHub
+		}
+		_, err = q.Exec(ctx, `DELETE FROM repo_leftovers WHERE provider_id = ? AND repo_id = ?`, prov, strconv.FormatInt(r.RepoID, 10))
 		return err
 	}
 	if r.Role == RoleContent {

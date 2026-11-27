@@ -23,6 +23,13 @@ const (
 	LinkExpired = "expired"
 )
 
+func syncOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return ms(t)
+}
+
 // repoLinkSQL is the condition that a linked_accounts row is a repository link
 // and not only a sign-in: it holds tokens, or it had them and lost them.
 const repoLinkSQL = `(access_enc <> '' OR state <> 'ok')`

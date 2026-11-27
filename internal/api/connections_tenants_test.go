@@ -19,7 +19,7 @@ import (
 func ghTenFx(t *testing.T, a *acc) *tenFx {
 	t.Helper()
 	f := newTenFx(t, a)
-	f.root.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
+	f.root.do("PUT", "/api/admin/providers/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
 		"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
 	a.fake.AddUser("mem-b-gh")
 	a.fake.AddOrg("acme-gh", "mem-b-gh")
@@ -33,13 +33,13 @@ func TestATenantAdministratorCannotReachTheApp(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		f := ghTenFx(t, a)
 		for _, c := range []*client{f.admA, f.admB} {
-			c.do("GET", "/api/admin/connections/github", nil).want(t, 403, "forbidden")
-			c.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "1"}).want(t, 403, "forbidden")
-			c.do("DELETE", "/api/admin/connections/github", nil).want(t, 403, "forbidden")
-			c.do("GET", "/api/admin/connections/github/installations", nil).want(t, 403, "forbidden")
-			c.do("PUT", "/api/admin/connections/github/installations/1", map[string]any{"tenants": []string{}}).want(t, 403, "forbidden")
+			c.do("GET", "/api/admin/providers/github", nil).want(t, 403, "forbidden")
+			c.do("PUT", "/api/admin/providers/github", map[string]any{"appId": "1"}).want(t, 403, "forbidden")
+			c.do("DELETE", "/api/admin/providers/github", nil).want(t, 403, "forbidden")
+			c.do("GET", "/api/admin/providers/github/installations", nil).want(t, 403, "forbidden")
+			c.do("PUT", "/api/admin/providers/github/installations/1", map[string]any{"tenants": []string{}}).want(t, 403, "forbidden")
 		}
-		f.root.do("GET", "/api/admin/connections/github/installations", nil).want(t, 200, "")
+		f.root.do("GET", "/api/admin/providers/github/installations", nil).want(t, 200, "")
 	})
 }
 
@@ -114,7 +114,7 @@ func TestAGitHubAccountIsLinkedOnceAcrossTenants(t *testing.T) {
 		f := ghTenFx(t, a)
 		// A's member tries B's member's GitHub account: taken, and the answer
 		// says nothing of who has it or in which tenant.
-		start := f.memA.do("POST", "/api/connections/github/authorization/start", map[string]any{}).want(t, 200, "")
+		start := f.memA.do("POST", "/api/account/links/github/start", map[string]any{"purpose": "repos"}).want(t, 200, "")
 		back, _ := url.Parse(a.fake.Authorize(start.body["url"].(string), "mem-b-gh"))
 		r := f.memA.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site")
 		if r.code != 303 || r.resp.Header.Get("Location") != "/settings?provider=github&connection_error=account_in_use" {
@@ -140,14 +140,14 @@ func TestAnInstallationIsSharedWithChosenTenantsOnly(t *testing.T) {
 		a.fake.AddOrg("petal-team")
 		inst := a.fake.Install("petal-team", "all")
 		a.fake.AddRepo("petal-team", "docs", true)
-		path := "/api/admin/connections/github/installations/" + itoa(inst)
+		path := "/api/admin/providers/github/installations/" + itoa(inst)
 		put := f.root.do("PUT", path, map[string]any{"tenants": []string{f.tenB}}).want(t, 200, "")
 		if fmt.Sprint(put.body["tenants"]) != "["+f.tenB+"]" {
 			t.Fatalf("%s", put.raw)
 		}
 		owners := func(c *client) string {
 			var s []string
-			for _, o := range c.do("GET", "/api/connections/github/owners", nil).want(t, 200, "").body["items"].([]any) {
+			for _, o := range c.do("GET", "/api/account/links/github/owners", nil).want(t, 200, "").body["items"].([]any) {
 				s = append(s, o.(map[string]any)["login"].(string))
 			}
 			return strings.Join(s, ",")
@@ -161,13 +161,13 @@ func TestAnInstallationIsSharedWithChosenTenantsOnly(t *testing.T) {
 		// B creates in it without a connection of its own to that organisation; A's member cannot.
 		before := a.fake.Count("POST", "/orgs/petal-team/repos")
 		f.memA.do("POST", "/api/spaces", map[string]any{"name": "Docs A", "storage": ghSync(map[string]any{"owner": "petal-team", "name": "docs-a"})}).want(t, 403, "owner_not_allowed")
-		f.memA.do("GET", "/api/connections/github/repos?installation="+itoa(inst), nil).want(t, 404, "not_found")
+		f.memA.do("GET", "/api/account/links/github/repos?installation="+itoa(inst), nil).want(t, 404, "not_found")
 		if a.fake.Count("POST", "/orgs/petal-team/repos") != before {
 			t.Fatal("a repository was made for a tenant the installation is not shared with")
 		}
 		f.memB.do("POST", "/api/spaces", map[string]any{"name": "Docs B", "storage": ghSync(map[string]any{"owner": "petal-team", "name": "docs-b"})}).want(t, 201, "")
 		// The list of installations tells the administrator who has it.
-		for _, it := range f.root.do("GET", "/api/admin/connections/github/installations", nil).want(t, 200, "").body["items"].([]any) {
+		for _, it := range f.root.do("GET", "/api/admin/providers/github/installations", nil).want(t, 200, "").body["items"].([]any) {
 			m := it.(map[string]any)
 			if m["id"] == float64(inst) && fmt.Sprint(m["tenants"]) != "["+f.tenB+"]" {
 				t.Fatalf("%v", m)

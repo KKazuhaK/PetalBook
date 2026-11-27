@@ -22,23 +22,25 @@ var RequiredPermissions = map[string]string{"administration": "write", "contents
 
 // AppView is the App's settings as an administrator sees them. No secret is in it.
 type AppView struct {
-	Configured       bool
-	AppID            string
-	ClientID         string
-	Slug, Name       string
-	Owner            string
-	HTMLURL          string
-	InstallURL       string
-	KeySet           bool
-	Fingerprint      string
-	SecretSet        bool
-	CallbackURL      string
-	Permissions      map[string]string
-	Missing          []string
-	UserAuthorizaton bool
-	Checked          time.Time
-	Spaces           int
-	Authorizations   int
+	Configured  bool
+	AppID       string
+	ClientID    string
+	Slug, Name  string
+	Owner       string
+	HTMLURL     string
+	InstallURL  string
+	KeySet      bool
+	Fingerprint string
+	SecretSet   bool
+	CallbackURL string
+	// SigninCallbackURL is where GitHub sends people who sign in with the App's client.
+	SigninCallbackURL string
+	Permissions       map[string]string
+	Missing           []string
+	UserAuthorizaton  bool
+	Checked           time.Time
+	Spaces            int
+	Authorizations    int
 	// Gaps lists the installations that lack a permission, from the last check.
 	Gaps []Gap
 	// AnyAccount: the App can be installed on any account (nil: not known). A
@@ -70,7 +72,7 @@ func (s *Service) View(ctx context.Context) (*AppView, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := &AppView{CallbackURL: s.CallbackURL()}
+	v := &AppView{CallbackURL: s.CallbackURL(), SigninCallbackURL: s.SigninCallbackURL()}
 	if st == nil {
 		return v, nil
 	}
@@ -79,7 +81,7 @@ func (s *Service) View(ctx context.Context) (*AppView, error) {
 	if err != nil {
 		return nil, err
 	}
-	auths, err := store.CountGitHubAuthorizations(ctx, q)
+	auths, err := store.CountProviderLinks(ctx, q, ProviderID)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +197,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 				return nil, err
 			}
 		}
-		auths, err := store.CountGitHubAuthorizations(ctx, q)
+		auths, err := store.CountProviderLinks(ctx, q, ProviderID)
 		if err != nil {
 			return nil, err
 		}
@@ -238,9 +240,9 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		rec.AnyAccount = old.rec.AnyAccount
 	}
 	raw, _ := json.Marshal(rec)
-	// The record and its secrets are written together.
+	// The row's App and its secrets are written together.
 	err = s.opt.Store.Tx(ctx, func(q store.Q) error {
-		if err := store.SetSiteRecord(ctx, q, settingKey, string(raw), s.opt.Now()); err != nil {
+		if err := store.PutGitHubApp(ctx, q, store.GitHubApp{App: string(raw), ClientID: clientID, BaseURL: s.c.Web()}, s.opt.Now()); err != nil {
 			return err
 		}
 		if err := s.vault.Set(ctx, q, "", secrets.GitHubAppKey, string(pemBytes), req.By); err != nil {
@@ -265,7 +267,8 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		return nil, err
 	}
 	s.forget()
-	s.dropAllTokens()
+	s.tok.DropProvider(ProviderID)
+	s.rowChanged(ctx)
 	s.changed("")
 	return s.View(ctx)
 }
@@ -286,53 +289,77 @@ func (s *Service) unreachable(err error) error {
 	return errf(http.StatusServiceUnavailable, CodeUnavailable, "GitHub could not be asked right now; nothing was saved.")
 }
 
-// Delete removes the App's settings, the users' connections (GitHub is asked
-// to revoke each grant first, best effort) and the shared marks.
-func (s *Service) Delete(ctx context.Context) error {
+// PrepareDelete is the first half of removing the GitHub provider: it refuses
+// while spaces sync through the App, and takes what is needed to revoke the
+// people's grants (their tokens, opened now: the rows are about to go). The
+// caller deletes the row (Delete does; sign-in's own deletion does, which asks
+// about the people who can sign in only with it) and then calls finish, which
+// revokes the grants (best effort), drops the App's secrets and every cached
+// token. finish is nil when there is no App.
+func (s *Service) PrepareDelete(ctx context.Context) (finish func(context.Context), err error) {
 	st, err := s.state(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if st == nil {
-		return nil
+		return nil, nil
 	}
 	q := s.opt.Store.Q()
 	n, err := store.CountGitHubSpaces(ctx, q)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if n > 0 {
-		return errf(http.StatusConflict, CodeInUse, "%d space(s) sync through the App: switch or disconnect those first.", n)
+		return nil, errf(http.StatusConflict, CodeInUse, "%d space(s) sync through the App: switch or disconnect those first.", n)
 	}
-	auths, err := store.ListGitHubAuthorizations(ctx, q)
+	links, err := store.ListProviderRepoLinks(ctx, q, ProviderID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, a := range auths {
-		s.revoke(ctx, st, a)
+	var grants []string
+	for i := range links {
+		if access, err := s.tok.OpenAccess(&links[i]); err == nil && access != "" {
+			grants = append(grants, access)
+		}
 	}
-	err = s.opt.Store.Tx(ctx, func(q store.Q) error {
-		if err := store.DeleteGitHubAuthorizations(ctx, q); err != nil {
-			return err
-		}
-		if err := store.DeleteGitHubInstallations(ctx, q); err != nil {
-			return err
-		}
-		if _, err := q.Exec(ctx, `DELETE FROM site_records WHERE key = ?`, settingKey); err != nil {
-			return err
-		}
-		for _, name := range []string{secrets.GitHubAppKey, secrets.GitHubClientSecret, secrets.GitHubWebhookSecret} {
-			if err := s.vault.Clear(ctx, q, "", name); err != nil {
-				return err
+	return func(ctx context.Context) {
+		if st.rec.ClientID != "" && st.secret != "" {
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			for _, g := range grants {
+				if err := s.c.RevokeGrant(rctx, st.rec.ClientID, st.secret, g); err != nil {
+					s.log.Info("GitHub did not revoke a grant", "reason", reason(err))
+				}
 			}
+			cancel()
 		}
-		return nil
-	})
-	if err != nil {
+		err := s.opt.Store.Tx(ctx, func(q store.Q) error {
+			for _, name := range []string{secrets.GitHubAppKey, secrets.GitHubClientSecret, secrets.GitHubWebhookSecret} {
+				if err := s.vault.Clear(ctx, q, "", name); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			s.log.Error("could not remove the GitHub App's secrets", "error", err)
+		}
+		s.forget()
+		s.tok.DropProvider(ProviderID)
+		s.rowChanged(ctx)
+	}, nil
+}
+
+// Delete removes the GitHub provider: the App's settings, everyone's links (the
+// sign-ins too; GitHub is asked to revoke each grant) and the shared marks.
+func (s *Service) Delete(ctx context.Context) error {
+	finish, err := s.PrepareDelete(ctx)
+	if err != nil || finish == nil {
 		return err
 	}
-	s.forget()
-	s.dropAllTokens()
+	if err := store.DeleteGitHubProvider(ctx, s.opt.Store.Q()); err != nil {
+		return err
+	}
+	finish(ctx)
 	return nil
 }
 
@@ -554,7 +581,7 @@ func (s *Service) refresh(ctx context.Context, st *appState) error {
 		page = next
 	}
 	// Write onto what is stored now, and only if it is still this App.
-	raw, ok, err := store.GetSiteRecord(ctx, s.opt.Store.Q(), settingKey)
+	raw, ok, err := store.GetGitHubApp(ctx, s.opt.Store.Q())
 	if err != nil {
 		return err
 	}
@@ -577,9 +604,10 @@ func (s *Service) refresh(ctx context.Context, st *appState) error {
 	}
 	// Written only if the setting is still the one read above: an App saved in
 	// the meantime is newer than this check and stays.
-	if _, err := store.CompareAndSetSiteRecord(ctx, s.opt.Store.Q(), settingKey, raw, string(b), s.opt.Now()); err != nil {
+	if _, err := store.CompareAndSetGitHubApp(ctx, s.opt.Store.Q(), raw, string(b), s.opt.Now()); err != nil {
 		return err
 	}
 	s.forget()
+	s.rowChanged(ctx)
 	return nil
 }

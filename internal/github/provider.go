@@ -16,6 +16,7 @@ import (
 
 var (
 	_ connections.Provider      = (*Service)(nil)
+	_ connections.Refresher     = (*Service)(nil)
 	_ connections.Administered  = (*Service)(nil)
 	_ connections.Installable   = (*Service)(nil)
 	_ connections.ManifestMaker = (*Service)(nil)
@@ -65,6 +66,8 @@ func (s *Service) Check(ctx context.Context) error {
 type adminOff struct {
 	Configured  bool   `json:"configured"`
 	CallbackURL string `json:"callbackUrl"`
+	// SigninCallbackURL is where GitHub sends people who sign in with the App's client.
+	SigninCallbackURL string `json:"signinCallbackUrl"`
 }
 
 type adminView struct {
@@ -84,6 +87,7 @@ type adminView struct {
 		Set bool `json:"set"`
 	} `json:"clientSecret"`
 	CallbackURL       string            `json:"callbackUrl"`
+	SigninCallbackURL string            `json:"signinCallbackUrl"`
 	Permissions       map[string]string `json:"permissions"`
 	Missing           []string          `json:"missing"`
 	UserAuthorization bool              `json:"userAuthorization"`
@@ -104,10 +108,10 @@ type adminGap struct {
 
 func toAdminView(v *AppView) any {
 	if !v.Configured {
-		return adminOff{CallbackURL: v.CallbackURL}
+		return adminOff{CallbackURL: v.CallbackURL, SigninCallbackURL: v.SigninCallbackURL}
 	}
 	r := adminView{Configured: true, AppID: v.AppID, ClientID: v.ClientID, Slug: v.Slug, Name: v.Name, Owner: v.Owner,
-		HTMLURL: v.HTMLURL, InstallURL: v.InstallURL, CallbackURL: v.CallbackURL, Permissions: v.Permissions, Missing: v.Missing,
+		HTMLURL: v.HTMLURL, InstallURL: v.InstallURL, CallbackURL: v.CallbackURL, SigninCallbackURL: v.SigninCallbackURL, Permissions: v.Permissions, Missing: v.Missing,
 		UserAuthorization: v.UserAuthorizaton, Checked: v.Checked.UTC().Format("2006-01-02T15:04:05Z"), Spaces: v.Spaces, Authorizations: v.Authorizations}
 	r.AnyAccount = v.AnyAccount
 	r.Gaps = make([]adminGap, len(v.Gaps))
@@ -167,7 +171,7 @@ func (s *Service) AdminDelete(ctx context.Context) error { return s.Delete(ctx) 
 // AdminCounts is how many people are connected and spaces sync through the App.
 func (s *Service) AdminCounts(ctx context.Context) (int, int, error) {
 	q := s.opt.Store.Q()
-	auths, err := store.CountGitHubAuthorizations(ctx, q)
+	auths, err := store.CountProviderLinks(ctx, q, ProviderID)
 	if err != nil {
 		return 0, 0, err
 	}

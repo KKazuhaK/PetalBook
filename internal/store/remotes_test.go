@@ -88,7 +88,7 @@ func TestPutRemoteIsAtomic(t *testing.T) {
 		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S1", "S1", "", "", now); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := st.Q().Exec(ctx, `DROP TABLE github_leftovers`); err != nil {
+		if _, err := st.Q().Exec(ctx, `DROP TABLE repo_leftovers`); err != nil {
 			t.Fatal(err)
 		}
 		r := store.Remote{SpaceID: "S1", URL: "https://github.com/o/r.git", Branch: "main", CredType: "connection", State: store.RemoteOK, Updated: now, Via: "app", InstallationID: 1, RepoID: 7}

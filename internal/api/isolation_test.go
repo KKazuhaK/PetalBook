@@ -212,7 +212,7 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/account/emails/verify":          {kind: isoExempt, reason: "the caller's own account"},
 	"POST /api/account/emails/primary":         {kind: isoExempt, reason: "the caller's own account"},
 	"DELETE /api/account/emails/{email}":       {kind: isoExempt, reason: "the caller's own account"},
-	"GET /api/account/links":                   {kind: isoExempt, reason: "the caller's own linked accounts"},
+	"GET /api/account/links":                   {kind: isoList},
 	"POST /api/account/links/{provider}/start": {kind: isoExempt, reason: "the caller's own account; the provider is the server's"},
 	"DELETE /api/account/links/{id}":           {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
 	"GET /api/account/usage":                   {kind: isoExempt, reason: "the caller's own usage"},
@@ -231,14 +231,12 @@ var isolationRoutes = map[string]isoEntry{
 
 	// 2.7: a GitHub connection is the caller's own; the App is the server's; an installation
 	// is shared by a site administrator with chosen tenants, and only their people use it.
-	"GET /api/connections":                                   {kind: isoList},
-	"POST /api/connections/{provider}/authorization/start":   {kind: isoExempt, reason: "starts a connection of the caller's own account"},
-	"GET /api/connections/{provider}/authorization/callback": {kind: isoExempt, reason: "needs the session of the user who started it; account_in_use names nobody, in no tenant"},
-	"GET /api/connections/github/manifest/callback":          {kind: isoExempt, reason: "needs the session of the site administrator who started it; the App is the server's, not a tenant's"},
-	"DELETE /api/connections/{provider}/authorization":       {kind: isoExempt, reason: "the caller's own connection"},
-	"DELETE /api/connections/{provider}/leftovers/{repoId}":  {kind: isoExempt, reason: "the caller's own reminder, by a GitHub repository id; names no PetalBook id and touches only the caller's rows"},
-	"GET /api/connections/{provider}/owners":                 {kind: isoList},
-	"GET /api/connections/{provider}/repos":                  {kind: isoExempt, reason: "what the caller's own connection, or an installation shared with the caller's tenant, reaches on GitHub; names no PetalBook id (tested in github_tenants_test.go)"},
+	"GET /api/account/links/{provider}/callback":        {kind: isoExempt, reason: "needs the session of the user who started it; account_in_use names nobody, in no tenant"},
+	"DELETE /api/account/links/{id}/repos":              {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
+	"GET /api/account/links/{provider}/owners":          {kind: isoList},
+	"GET /api/providers/github/manifest/callback":       {kind: isoExempt, reason: "needs the session of the site administrator who started it; the App is the server's, not a tenant's"},
+	"DELETE /api/account/leftovers/{provider}/{repoId}": {kind: isoExempt, reason: "the caller's own reminder, by a GitHub repository id; names no PetalBook id and touches only the caller's rows"},
+	"GET /api/account/links/{provider}/repos":           {kind: isoExempt, reason: "what the caller's own connection, or an installation shared with the caller's tenant, reaches on GitHub; names no PetalBook id (tested in github_tenants_test.go)"},
 
 	// 3.10 part 4: the notification centre and the preferences are the caller's own. Rows are read by
 	// the caller's id and tenant, never by an id of the request (TestNotificationsAreTheCallersOwnAcrossTenants).

@@ -48,9 +48,9 @@ type Spec struct {
 // Known are the secrets that exist. A tenant's own sender is the only secret a
 // tenant holds yet; its sign-in and App secrets come with their features.
 var Known = []Spec{
-	{Name: GitHubAppKey, Site: true, ManagedBy: "/api/admin/connections/github"},
-	{Name: GitHubClientSecret, Site: true, ManagedBy: "/api/admin/connections/github"},
-	{Name: GitHubWebhookSecret, Site: true, ManagedBy: "/api/admin/connections/github"},
+	{Name: GitHubAppKey, Site: true, ManagedBy: "/api/admin/providers/github"},
+	{Name: GitHubClientSecret, Site: true, ManagedBy: "/api/admin/providers/github"},
+	{Name: GitHubWebhookSecret, Site: true, ManagedBy: "/api/admin/providers/github"},
 	{Name: MailPassword, Site: true, Tenant: true, Feature: "mail.ownSender"},
 	{Name: CaptchaSecret, Site: true},
 }

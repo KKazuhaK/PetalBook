@@ -18,7 +18,7 @@ import (
 
 // ManifestCallbackPath is where GitHub sends the browser back after the App is
 // made from a manifest.
-const ManifestCallbackPath = "/api/connections/github/manifest/callback"
+const ManifestCallbackPath = "/api/providers/github/manifest/callback"
 
 const (
 	manifestKind = "manifest"
@@ -77,7 +77,7 @@ func (s *Service) StartManifest(ctx context.Context, userID string, req connecti
 		if err != nil {
 			return nil, err
 		}
-		auths, err := store.CountGitHubAuthorizations(ctx, q)
+		auths, err := store.CountProviderLinks(ctx, q, ProviderID)
 		if err != nil {
 			return nil, err
 		}
@@ -93,7 +93,7 @@ func (s *Service) StartManifest(ctx context.Context, userID string, req connecti
 		URL:                s.opt.PublicURL,
 		HookAttributes:     githubapp.ManifestHook{URL: s.opt.PublicURL, Active: false},
 		RedirectURL:        ret,
-		CallbackURLs:       []string{s.CallbackURL()},
+		CallbackURLs:       []string{s.CallbackURL(), s.SigninCallbackURL()},
 		SetupURL:           ret,
 		Public:             true,
 		RequestOAuthOnInst: true,

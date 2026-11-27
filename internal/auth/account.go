@@ -952,3 +952,35 @@ func (s *Service) SetTemporaryPassword(ctx context.Context, actor store.User, ac
 	s.evictUser(u.ID, "")
 	return nil
 }
+
+// SigninLinkRemovable says whether the person could still sign in some other
+// way if the sign-in of one of their links (linkID) were gone: a password, a
+// passkey, or a link of another provider that works now. It is what the
+// last_method rule asks, for the callers that change a link without deleting it
+// (connecting repositories with another account moves the link, and its sign-in
+// with it). A link that does not sign the person in is removable.
+func (s *Service) SigninLinkRemovable(ctx context.Context, userID, linkID string) (bool, error) {
+	ids, err := store.ListLinks(ctx, s.st.Q(), userID)
+	if err != nil {
+		return false, err
+	}
+	found := false
+	for _, l := range ids {
+		found = found || l.ID == linkID
+	}
+	if !found {
+		return true, nil
+	}
+	ways, err := s.waysToSignIn(ctx, s.st.Q(), userID, linkID, ids)
+	return ways > 0, err
+}
+
+// ProviderInfo names a sign-in provider by its id, from memory: false when it is
+// not one (a GitLab or Gitea host, which only holds repositories).
+func (s *Service) ProviderInfo(id string) (name, slug, kind string, ok bool) {
+	rt := s.provs.getID(id)
+	if rt == nil {
+		return "", "", "", false
+	}
+	return rt.row.Name, rt.row.Slug, rt.row.Kind, true
+}

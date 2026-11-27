@@ -17,15 +17,15 @@ import (
 
 // connected is the user's connection when it is usable, with its token; nil
 // when there is none or it has expired.
-func (s *Service) connected(ctx context.Context, userID string) (*store.GitHubAuthorization, string, error) {
-	row, err := store.GetGitHubAuthorization(ctx, s.opt.Store.Q(), userID)
+func (s *Service) connected(ctx context.Context, userID string) (*store.RepoLink, string, error) {
+	row, err := store.GetRepoLink(ctx, s.opt.Store.Q(), ProviderID, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, "", nil
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	if row.State != store.GitHubOK {
+	if row.State != store.LinkOK {
 		return row, "", nil
 	}
 	tok, err := s.UserToken(ctx, userID)
@@ -42,7 +42,7 @@ func (s *Service) connected(ctx context.Context, userID string) (*store.GitHubAu
 // a token GitHub no longer accepts ends the connection.
 func (s *Service) userFailed(ctx context.Context, userID string, err error) error {
 	if githubapp.IsStatus(err, http.StatusUnauthorized) && !limited(err) {
-		if row, gerr := store.GetGitHubAuthorization(ctx, s.opt.Store.Q(), userID); gerr == nil {
+		if row, gerr := store.GetRepoLink(ctx, s.opt.Store.Q(), ProviderID, userID); gerr == nil {
 			s.expire(ctx, row)
 		}
 		return notConnected()
@@ -212,7 +212,7 @@ func (s *Service) RecheckPerson(ctx context.Context, userID string) {
 	}
 	s.rechecked[userID] = now.Add(recheckEvery)
 	s.mu.Unlock()
-	if row, err := store.GetGitHubAuthorization(ctx, s.opt.Store.Q(), userID); err == nil && row != nil {
+	if row, err := store.GetRepoLink(ctx, s.opt.Store.Q(), ProviderID, userID); err == nil && row != nil {
 		s.forgetNoApp(row.Login)
 	}
 }

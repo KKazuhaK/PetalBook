@@ -1,9 +1,7 @@
 package api
 
 import (
-	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -11,23 +9,22 @@ import (
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/connections"
-	"petalbook.app/server/internal/store"
 )
 
-// The connection endpoints (docs/api.md, "Connections", "The GitHub provider"
-// and "Administration", "Connections"). Accounts mode only. They are generic:
-// a {provider} of the path is looked up in the registry, and what only some
-// types of provider have (an administrator's App, installations, the App made
-// in one click) is found by asking the provider for it.
+// The repository side of the providers (docs/api.md, "Linked accounts" and
+// "Providers"). Accounts mode only. They are generic: a {provider} of the path
+// is looked up in the registry, and what only some types of provider have (an
+// administrator's App, installations, the App made in one click) is found by
+// asking the provider for it. The routes are in providers.go.
 
 const (
-	// connCallbackSuffix ends the path GitHub and the like send the browser back
-	// to: /api/connections/{provider}/authorization/callback.
-	connCallbackPrefix = "/api/connections/"
-	connCallbackSuffix = "/authorization/callback"
+	// connCallbackPrefix and connCallbackSuffix make the path GitHub and the
+	// like send the browser back to: /api/account/links/{provider}/callback.
+	connCallbackPrefix = "/api/account/links/"
+	connCallbackSuffix = "/callback"
 	// connManifestPath is where GitHub sends the administrator's browser after
 	// the App is made.
-	connManifestPath = "/api/connections/github/manifest/callback"
+	connManifestPath = "/api/providers/github/manifest/callback"
 	// The cookie of connecting an account is per provider; the manifest flow has
 	// a cookie of its own: it ties the return to the administrator's browser.
 	connCookieBase         = "petalbook_conn_"
@@ -152,45 +149,6 @@ func toProvider(d connections.Descriptor, in *connections.Info) providerResp {
 	return p
 }
 
-func (s *server) listConnections(c *call) {
-	list := s.registry().ListFor(c.tenant())
-	out := make([]providerResp, 0, len(list))
-	for _, p := range list {
-		in, err := p.Info(c.r.Context(), c.user().ID)
-		if err != nil {
-			s.fail(c.w, err)
-			return
-		}
-		out = append(out, toProvider(p.Descriptor(), in))
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Providers []providerResp `json:"providers"`
-	}{out})
-}
-
-func (s *server) connectStart(c *call) {
-	p, ok := s.provider(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		Return  string `json:"return"`
-		Install bool   `json:"install"`
-	}
-	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
-		return
-	}
-	st, err := p.StartConnect(c.r.Context(), c.user().ID, connections.StartRequest{Return: req.Return, Install: req.Install})
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	http.SetCookie(c.w, s.auth.FlowCookie(connCookieBase+p.Descriptor().ID, st.Binding, connAttemptTTL))
-	writeJSON(c.w, http.StatusOK, struct {
-		URL string `json:"url"`
-	}{st.URL})
-}
-
 // connectCallback is where the platform sends the browser back to. It answers
 // with a redirect, never JSON, and is a cross-site navigation by nature (see
 // wrap): it changes nothing unless the attempt's state matches this browser's
@@ -226,27 +184,6 @@ func (s *server) connectCallback(c *call) {
 		}
 	}
 	http.Redirect(c.w, c.r, to, http.StatusSeeOther)
-}
-
-func (s *server) connectDisconnect(c *call) {
-	p, ok := s.provider(c)
-	if !ok {
-		return
-	}
-	ctx := c.r.Context()
-	login := ""
-	if in, err := p.Info(ctx, c.user().ID); err == nil && in.Connection != nil {
-		login = in.Connection.Login
-	}
-	if err := p.Disconnect(ctx, c.user().ID); err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	if login != "" {
-		s.audit(c, auth.AuditEvent{Kind: "account_disconnected", Actor: c.user().ID, User: c.user().ID,
-			Detail: map[string]any{"provider": p.Descriptor().ID, "login": login}})
-	}
-	c.w.WriteHeader(http.StatusNoContent)
 }
 
 // connectDismissLeftover forgets the caller's reminder of an empty repository.
@@ -371,120 +308,6 @@ func (s *server) connectRepos(c *call) {
 
 // --- administration -------------------------------------------------------------------
 
-// adminProvider is the {provider} of the path, as one an administrator sets up.
-func (s *server) adminProvider(c *call) (connections.Provider, connections.Administered, bool) {
-	p, ok := s.provider(c)
-	if !ok {
-		return nil, nil, false
-	}
-	a, ok := p.(connections.Administered)
-	if !ok {
-		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "This provider has no settings.")
-		return nil, nil, false
-	}
-	return p, a, true
-}
-
-func (s *server) adminListConnections(c *call) {
-	type adminProviderResp struct {
-		ID          string `json:"id"`
-		Type        string `json:"type"`
-		Name        string `json:"name"`
-		Host        string `json:"host"`
-		Configured  bool   `json:"configured"`
-		PartialSync string `json:"partialSync"`
-		Connections int    `json:"connections"`
-		Spaces      int    `json:"spaces"`
-	}
-	list := s.registry().List()
-	out := make([]adminProviderResp, 0, len(list))
-	for _, p := range list {
-		d := p.Descriptor()
-		in, err := p.Info(c.r.Context(), c.user().ID)
-		if err != nil {
-			s.fail(c.w, err)
-			return
-		}
-		r := adminProviderResp{ID: d.ID, Type: d.Type, Name: d.Name, Host: d.Host, Configured: in.Configured, PartialSync: d.Capabilities.PartialSync}
-		if a, ok := p.(connections.Administered); ok {
-			if r.Connections, r.Spaces, err = a.AdminCounts(c.r.Context()); err != nil {
-				s.fail(c.w, err)
-				return
-			}
-		}
-		if d.Type == connections.GitID {
-			// Nobody connects to a plain address; the spaces on one are counted.
-			if r.Spaces, err = store.CountGitSpaces(c.r.Context(), s.opt.Store.Q()); err != nil {
-				s.fail(c.w, err)
-				return
-			}
-		}
-		out = append(out, r)
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Providers []adminProviderResp `json:"providers"`
-	}{out})
-}
-
-func (s *server) adminGetConnection(c *call) {
-	_, a, ok := s.adminProvider(c)
-	if !ok {
-		return
-	}
-	v, err := a.AdminView(c.r.Context())
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, v)
-}
-
-func (s *server) adminPutConnection(c *call) {
-	p, a, ok := s.adminProvider(c)
-	if !ok {
-		return
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(c.w, c.r.Body, authBodyLimit))
-	if err != nil {
-		s.connError(c, p.Descriptor().ID, http.StatusBadRequest, connections.CodeInvalid, "The body could not be read.")
-		return
-	}
-	v, err := a.AdminSave(connections.WithActor(c.r.Context(), c.user().ID), body)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	s.providerChanged(c, p, "saved")
-	// Spaces that were waiting for the provider are fetched again at once.
-	s.spaces.ConnectionFixed("")
-	writeJSON(c.w, http.StatusOK, v)
-}
-
-// adminCreateConnection sets up a provider at a host (GitLab, Gitea): an OAuth
-// application per host. The host is checked against the storage settings' allowed
-// hosts, and asked (public address, version, the client's credentials) before
-// anything is kept.
-func (s *server) adminCreateConnection(c *call) {
-	cr := s.registry().Creator()
-	if cr == nil {
-		s.connError(c, "", http.StatusNotFound, connections.CodeNotFound, "This server makes no providers.")
-		return
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(c.w, c.r.Body, authBodyLimit))
-	if err != nil {
-		s.connError(c, "", http.StatusBadRequest, connections.CodeInvalid, "The body could not be read.")
-		return
-	}
-	p, v, err := cr.CreateProvider(c.r.Context(), c.user().ID, body)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	s.providerChanged(c, p, "created")
-	c.w.Header().Set("Location", "/api/admin/connections/"+url.PathEscape(p.Descriptor().ID))
-	writeJSON(c.w, http.StatusCreated, v)
-}
-
 // providerChanged records that a provider was configured, changed or removed;
 // the secrets are not in the row. It is the server's own event, not a tenant's.
 func (s *server) providerChanged(c *call, p connections.Provider, change string) {
@@ -493,41 +316,21 @@ func (s *server) providerChanged(c *call, p connections.Provider, change string)
 		Detail: map[string]any{"provider": d.ID, "type": d.Type, "change": change, "secrets": "changed"}})
 }
 
-// adminCheckConnection reads the provider's configuration from the platform
-// again and answers what the settings view now says.
-func (s *server) adminCheckConnection(c *call) {
-	_, a, ok := s.adminProvider(c)
+// adminRepoProvider is the {id} of an administration path, as a provider that
+// holds repositories (the registry's): a sign-in provider that is not one is not
+// found here.
+func (s *server) adminRepoProvider(c *call) (connections.Provider, bool) {
+	id := c.r.PathValue("id")
+	p, ok := s.registry().Get(id)
 	if !ok {
-		return
+		s.connError(c, id, http.StatusNotFound, connections.CodeNotFound, "No such provider.")
+		return nil, false
 	}
-	v, err := a.AdminCheck(c.r.Context())
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, v)
-}
-
-func (s *server) adminDeleteConnection(c *call) {
-	p, a, ok := s.adminProvider(c)
-	if !ok {
-		return
-	}
-	// A provider the site requires cannot go: nobody could meet the requirement.
-	if r := s.spaces.Storage().Remotes.Require; r != nil && *r == p.Descriptor().ID {
-		s.connError(c, *r, http.StatusConflict, connections.CodeInUse, "The site requires a remote on "+p.Descriptor().Name+": change remotes.require in the storage settings before removing it.")
-		return
-	}
-	if err := a.AdminDelete(c.r.Context()); err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	s.providerChanged(c, p, "removed")
-	c.w.WriteHeader(http.StatusNoContent)
+	return p, true
 }
 
 func (s *server) manifestMaker(c *call) (connections.Provider, connections.ManifestMaker, bool) {
-	p, ok := s.provider(c)
+	p, ok := s.adminRepoProvider(c)
 	if !ok {
 		return nil, nil, false
 	}
@@ -537,33 +340,6 @@ func (s *server) manifestMaker(c *call) (connections.Provider, connections.Manif
 		return nil, nil, false
 	}
 	return p, m, true
-}
-
-// adminConnectionManifest starts making the App on the platform in one click:
-// the answer is the manifest and the address the browser posts it to.
-func (s *server) adminConnectionManifest(c *call) {
-	_, m, ok := s.manifestMaker(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		Organization string `json:"organization"`
-		Name         string `json:"name"`
-	}
-	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
-		return
-	}
-	start, err := m.StartManifest(c.r.Context(), c.user().ID, connections.ManifestRequest{Organization: req.Organization, Name: req.Name})
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	c.w.Header().Set("Cache-Control", "no-store")
-	http.SetCookie(c.w, s.auth.FlowCookie(connManifestCookieBase, start.Binding, connAttemptTTL))
-	writeJSON(c.w, http.StatusOK, struct {
-		URL      string `json:"url"`
-		Manifest any    `json:"manifest"`
-	}{start.URL, start.Manifest})
 }
 
 // connectManifestCallback is where GitHub sends the administrator's browser
@@ -597,25 +373,8 @@ func (s *server) connectManifestCallback(c *call) {
 	http.Redirect(c.w, c.r, to, http.StatusSeeOther)
 }
 
-// adminConnectionManifestRetry saves the App GitHub made when the server could
-// not save it then.
-func (s *server) adminConnectionManifestRetry(c *call) {
-	p, m, ok := s.manifestMaker(c)
-	if !ok {
-		return
-	}
-	v, err := m.RetryManifest(c.r.Context(), c.user().ID)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	s.providerChanged(c, p, "saved")
-	s.spaces.ConnectionFixed("")
-	writeJSON(c.w, http.StatusOK, v)
-}
-
 func (s *server) installable(c *call) (connections.Installable, bool) {
-	p, ok := s.provider(c)
+	p, ok := s.adminRepoProvider(c)
 	if !ok {
 		return nil, false
 	}
@@ -625,48 +384,4 @@ func (s *server) installable(c *call) (connections.Installable, bool) {
 		return nil, false
 	}
 	return in, true
-}
-
-func (s *server) adminConnectionInstallations(c *call) {
-	in, ok := s.installable(c)
-	if !ok {
-		return
-	}
-	items, next, err := in.InstallationsView(c.r.Context(), c.r.URL.Query().Get("cursor"))
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Items any    `json:"items"`
-		Next  string `json:"next"`
-	}{items, next})
-}
-
-func (s *server) adminPutConnectionInstallation(c *call) {
-	in, ok := s.installable(c)
-	if !ok {
-		return
-	}
-	id, err := strconv.ParseInt(c.r.PathValue("id"), 10, 64)
-	if err != nil || id <= 0 {
-		s.connError(c, c.r.PathValue("provider"), http.StatusNotFound, connections.CodeNotFound, "No such installation.")
-		return
-	}
-	var req struct {
-		Tenants *[]string `json:"tenants"`
-	}
-	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
-		return
-	}
-	if req.Tenants == nil {
-		s.connError(c, c.r.PathValue("provider"), http.StatusBadRequest, connections.CodeInvalid, "Give tenants: the ids of the tenants to share with (none: []).")
-		return
-	}
-	it, err := in.SetInstallationTenants(c.r.Context(), id, *req.Tenants)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, it)
 }

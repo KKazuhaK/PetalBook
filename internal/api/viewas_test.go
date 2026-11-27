@@ -21,7 +21,7 @@ const viewAsHeader = "PetalBook-View-As"
 // preferences, connections, sync or MCP.
 func TestViewableRoutesAreReadsOutsideThePersonsOwnAreas(t *testing.T) {
 	t.Parallel()
-	forbidden := []string{"/api/admin", "/api/users", "/api/account", "/api/notifications", "/api/prefs", "/api/connections", "/api/sync", "/mcp", "/api/oauth", "/api/invites"}
+	forbidden := []string{"/api/admin", "/api/users", "/api/account", "/api/notifications", "/api/prefs", "/api/account/links", "/api/sync", "/mcp", "/api/oauth", "/api/invites"}
 	n := 0
 	for _, r := range api.Routes() {
 		if !r.Viewable {
@@ -164,7 +164,7 @@ func TestViewAsAPersonReadsTheirOrganisationsSpacesOnly(t *testing.T) {
 		// Nothing else: no write, nothing of the person's own.
 		f.admA.do("PUT", spacePath(f.spaceA)+"/pages/"+f.page, map[string]any{"baseRev": f.rev, "meta": map[string]any{"title": "x"}, "body": "x"}, as...).want(t, 403, "view_as_read_only")
 		f.admA.do("PUT", spacePath(f.spaceA)+"/pages/"+f.page+"/draft", map[string]any{"baseRev": f.rev, "meta": map[string]any{"title": "x"}, "body": "x"}, as...).want(t, 403, "view_as_read_only")
-		for _, p := range []string{"/api/account", "/api/account/tokens", "/api/notifications", "/api/prefs", "/api/connections", "/api/users/" + f.userA + "/sessions", spacePath(f.spaceA) + "/favorites"} {
+		for _, p := range []string{"/api/account", "/api/account/tokens", "/api/notifications", "/api/prefs", "/api/account/links", "/api/users/" + f.userA + "/sessions", spacePath(f.spaceA) + "/favorites"} {
 			f.admA.do("GET", p, nil, as...).want(t, 403, "view_as_read_only")
 		}
 		f.admA.do("POST", "/api/account/password", map[string]any{"current": pw, "password": "another one 1"}, as...).want(t, 403, "view_as_read_only")

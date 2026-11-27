@@ -674,15 +674,15 @@ func TestRequiringAProviderThatIsNotSetUpIsRefusedAndASetUpOneCannotBeRemovedWhi
 		if admin.siteValue("storage.remotes.require") != "" {
 			t.Fatal("a provider that is not set up was required")
 		}
-		admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
+		admin.do("PUT", "/api/admin/providers/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
 			"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
 		admin.do("PUT", "/api/admin/settings/storage.remotes.require", map[string]any{"value": "github"}).want(t, 200, "")
-		d := admin.do("DELETE", "/api/admin/connections/github", nil).want(t, 409, "provider_in_use")
+		d := admin.do("DELETE", "/api/admin/providers/github", nil).want(t, 409, "provider_in_use")
 		if d.body["provider"] != "github" || !strings.Contains(d.body["message"].(string), "remotes.require") {
 			t.Fatal(d.raw)
 		}
 		admin.do("PUT", "/api/admin/settings/storage.remotes.require", map[string]any{"value": ""}).want(t, 200, "")
-		admin.do("DELETE", "/api/admin/connections/github", nil).want(t, 204, "")
+		admin.do("DELETE", "/api/admin/providers/github", nil).want(t, 204, "")
 	})
 }
 

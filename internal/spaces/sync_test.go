@@ -1144,9 +1144,9 @@ func TestAFailureAfterTheRepositoryWasMadeLeavesAReminder(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
-		leftovers := func() []store.GitHubLeftover {
+		leftovers := func() []store.RepoLeftover {
 			t.Helper()
-			l, err := store.ListGitHubLeftovers(ctx, st.Q(), e.user.ID)
+			l, err := store.ListRepoLeftovers(ctx, st.Q(), store.ProviderGitHub, e.user.ID)
 			if err != nil {
 				t.Fatal(err)
 			}

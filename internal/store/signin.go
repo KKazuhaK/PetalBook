@@ -43,20 +43,28 @@ type ProviderRow struct {
 	GroupsVersion int64
 	// TenantID is where autoCreate puts new accounts (jit_tenant).
 	TenantID string
+	// Repos: the provider also holds repositories (the GitHub row once its App is
+	// set up). Read-only here: the GitHub App's own writes set it.
+	Repos bool
 }
+
+// providerRead is what a read of a provider selects: the columns that are
+// written with it, and repos.
+const providerRead = providerCols + `, repos`
 
 const providerCols = `id, owner, slug, kind, name, icon, enabled, position, auto_create, trust_email_optin, legacy_callback, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated, groups_version, jit_tenant`
 
 func scanProvider(sc interface{ Scan(...any) error }) (*ProviderRow, error) {
 	var p ProviderRow
-	var en, pos, ac, mv, lc, ok, chk, cr, up int64
-	if err := sc.Scan(&p.ID, &p.Owner, &p.Slug, &p.Kind, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &lc, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion, &p.TenantID); err != nil {
+	var en, pos, ac, mv, lc, ok, chk, cr, up, repos int64
+	if err := sc.Scan(&p.ID, &p.Owner, &p.Slug, &p.Kind, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &lc, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion, &p.TenantID, &repos); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	p.Enabled, p.Position, p.AutoCreate, p.MergeVerifiedEmail, p.LegacyCallback, p.StatusOK = en != 0, int(pos), ac != 0, mv != 0, lc != 0, ok != 0
+	p.Repos = repos != 0
 	p.StatusChecked, p.Created, p.Updated = fromMS(chk), fromMS(cr), fromMS(up)
 	if chk == 0 {
 		p.StatusChecked = time.Time{}
@@ -67,7 +75,7 @@ func scanProvider(sc interface{ Scan(...any) error }) (*ProviderRow, error) {
 // ListProviders returns every sign-in provider (of every owner) in the
 // administrators' order.
 func ListProviders(ctx context.Context, q Q) ([]ProviderRow, error) {
-	rows, err := q.Query(ctx, `SELECT `+providerCols+` FROM providers WHERE signin = 1 ORDER BY position, name, id`)
+	rows, err := q.Query(ctx, `SELECT `+providerRead+` FROM providers WHERE signin = 1 ORDER BY position, name, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +93,7 @@ func ListProviders(ctx context.Context, q Q) ([]ProviderRow, error) {
 
 // GetProvider returns one sign-in provider by its id or ErrNotFound.
 func GetProvider(ctx context.Context, q Q, id string) (*ProviderRow, error) {
-	return scanProvider(q.QueryRow(ctx, `SELECT `+providerCols+` FROM providers WHERE id = ? AND signin = 1`, id))
+	return scanProvider(q.QueryRow(ctx, `SELECT `+providerRead+` FROM providers WHERE id = ? AND signin = 1`, id))
 }
 
 // InsertProvider adds a sign-in provider; a taken id, or a slug taken by the
@@ -102,13 +110,35 @@ func InsertProvider(ctx context.Context, q Q, p ProviderRow) error {
 }
 
 // UpdateProvider replaces everything but the id, the owner, the slug, the kind
-// and the creation time, and bumps the groups version.
+// and the creation time, and bumps the groups version. What the GitHub App
+// owns in a config (its record and its client id: see PutGitHubApp) is kept as
+// it is stored now, not as the caller read it: the one who sets the App up is
+// the only one who changes them.
 func UpdateProvider(ctx context.Context, q Q, p ProviderRow) error {
-	res, err := q.Exec(ctx, `UPDATE providers SET name = ?, icon = ?, enabled = ?, position = ?, auto_create = ?, trust_email_optin = ?, legacy_callback = ?, issuer = ?,
-		config = ?, secret_enc = ?, cache = ?, status_ok = ?, status_checked = ?, status_message = ?, updated = ?, jit_tenant = ?, groups_version = groups_version + 1 WHERE id = ? AND signin = 1`,
-		p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), b2i(p.LegacyCallback), p.Issuer,
-		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Updated), tenantOrDefault(p.TenantID), p.ID)
-	return oneRow(res, err)
+	return atomically(ctx, q, func(q Q) error {
+		if p.Kind == "github" {
+			if _, err := q.Exec(ctx, `UPDATE providers SET id = id WHERE id = ?`, p.ID); err != nil {
+				return err
+			}
+			var cur string
+			if err := q.QueryRow(ctx, `SELECT config FROM providers WHERE id = ?`, p.ID).Scan(&cur); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrNotFound
+				}
+				return err
+			}
+			merged, err := keepAppConfig(cur, p.Config)
+			if err != nil {
+				return err
+			}
+			p.Config = merged
+		}
+		res, err := q.Exec(ctx, `UPDATE providers SET name = ?, icon = ?, enabled = ?, position = ?, auto_create = ?, trust_email_optin = ?, legacy_callback = ?, issuer = ?,
+			config = ?, secret_enc = ?, cache = ?, status_ok = ?, status_checked = ?, status_message = ?, updated = ?, jit_tenant = ?, groups_version = groups_version + 1 WHERE id = ? AND signin = 1`,
+			p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), b2i(p.LegacyCallback), p.Issuer,
+			p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Updated), tenantOrDefault(p.TenantID), p.ID)
+		return oneRow(res, err)
+	})
 }
 
 // LockProviderGroups locks a provider's row for the rest of the transaction if
@@ -135,10 +165,17 @@ func SetProviderStatus(ctx context.Context, q Q, id string, ok bool, at time.Tim
 }
 
 // DeleteProvider removes a sign-in provider and, by cascade, the accounts its
-// people linked to it.
+// people linked to it (and what they connected there: tokens, reminders).
 func DeleteProvider(ctx context.Context, q Q, id string) error {
-	res, err := q.Exec(ctx, `DELETE FROM providers WHERE id = ? AND signin = 1`, id)
-	return oneRow(res, err)
+	return atomically(ctx, q, func(q Q) error {
+		var one int
+		if err := q.QueryRow(ctx, `SELECT 1 FROM providers WHERE id = ? AND signin = 1`, id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		return deleteProviderRows(ctx, q, `id = ? AND signin = 1`, id)
+	})
 }
 
 // ProviderPeople counts the accounts linked to each provider (by provider id).

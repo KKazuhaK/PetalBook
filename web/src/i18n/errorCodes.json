@@ -33,6 +33,7 @@
   "feature_off",
   "file_too_large",
   "forbidden",
+  "github_app_client",
   "group_in_use",
   "group_limit",
   "group_not_found",

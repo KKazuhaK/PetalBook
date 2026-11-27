@@ -3,13 +3,14 @@ package github_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/url"
-	"petalbook.app/server/internal/githubapp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"petalbook.app/server/internal/githubapp"
 
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/github"
@@ -35,7 +36,7 @@ func TestConnectingAnAccount(t *testing.T) {
 		}
 		u, _ := url.Parse(authURL)
 		q := u.Query()
-		if q.Get("client_id") != h.f.ClientID || q.Get("redirect_uri") != publicURL+"/api/connections/github/authorization/callback" ||
+		if q.Get("client_id") != h.f.ClientID || q.Get("redirect_uri") != publicURL+"/api/account/links/github/callback" ||
 			q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || len(q.Get("state")) < 40 || q.Get("login") != "" {
 			t.Fatalf("%s", authURL)
 		}
@@ -67,14 +68,14 @@ func TestConnectingAnAccount(t *testing.T) {
 			t.Fatalf("%+v %v", c, err)
 		}
 		// Both tokens are in the database only sealed, and not in the log.
-		row, _ := store.GetGitHubAuthorization(ctx, st.Q(), "U1")
+		row, _ := store.GetRepoLink(ctx, st.Q(), "github", "U1")
 		for _, plain := range []string{h.f.AccessTokenOf("kazuha-gh"), h.f.RefreshTokenOf("kazuha-gh")} {
 			if plain == "" || strings.Contains(row.AccessEnc+row.RefreshEnc, plain) {
 				t.Fatalf("a token is stored in the clear: %q", plain)
 			}
 		}
 		// A sealed token does not open for another user.
-		if _, err := h.box.Open("U2", "github-access", row.AccessEnc); err == nil {
+		if _, err := h.box.Open(connections.Key("github", "U2"), "access", row.AccessEnc); err == nil {
 			t.Fatal("a token opened for another user")
 		}
 		h.mustNotLeak()
@@ -207,7 +208,7 @@ func TestDisconnectRevokesAndDeletes(t *testing.T) {
 		if err := h.svc.Disconnect(ctx, "U1"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.GetGitHubAuthorization(ctx, st.Q(), "U1"); !errors.Is(err, store.ErrNotFound) {
+		if _, err := store.GetRepoLink(ctx, st.Q(), "github", "U1"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("%v", err)
 		}
 		// Disconnecting twice is fine.
@@ -238,12 +239,12 @@ func TestTokenIsRenewedBeforeItEndsAndTheNewPairIsStoredFirst(t *testing.T) {
 			t.Fatalf("%q %v", fresh, err)
 		}
 		// What was stored is the pair GitHub holds now: the old refresh token is dead.
-		row, _ := store.GetGitHubAuthorization(ctx, st.Q(), "U1")
-		access, err := h.box.Open("U1", "github-access", row.AccessEnc)
+		row, _ := store.GetRepoLink(ctx, st.Q(), "github", "U1")
+		access, err := h.box.Open(connections.Key("github", "U1"), "access", row.AccessEnc)
 		if err != nil || string(access) != fresh {
 			t.Fatalf("the stored access token is not the one in use: %v", err)
 		}
-		refresh, err := h.box.Open("U1", "github-refresh", row.RefreshEnc)
+		refresh, err := h.box.Open(connections.Key("github", "U1"), "refresh", row.RefreshEnc)
 		if err != nil || string(refresh) != h.f.RefreshTokenOf("gh-a") || string(refresh) == refreshBefore {
 			t.Fatalf("the stored refresh token is not GitHub's current one: %v", err)
 		}
@@ -299,7 +300,7 @@ func TestARefusedRefreshTokenExpiresTheConnection(t *testing.T) {
 		if _, err := h.svc.UserToken(ctx, "U1"); !errors.Is(err, github.ErrAuthorizationExpired) {
 			t.Fatalf("%v", err)
 		}
-		row, _ := store.GetGitHubAuthorization(ctx, st.Q(), "U1")
+		row, _ := store.GetRepoLink(ctx, st.Q(), "github", "U1")
 		if row.State != "expired" || row.AccessEnc != "" || row.RefreshEnc != "" {
 			t.Fatalf("%+v", row)
 		}
@@ -334,7 +335,7 @@ func TestUnreachableGitHubChangesNothing(t *testing.T) {
 		if !errors.As(err, &he) || he.Code != "rate_limited" || he.RetryAfter < 59*time.Second {
 			t.Fatalf("%v", err)
 		}
-		if row, _ := store.GetGitHubAuthorization(ctx, st.Q(), "U1"); row.State != "ok" || row.Version != 1 {
+		if row, _ := store.GetRepoLink(ctx, st.Q(), "github", "U1"); row.State != "ok" || row.Version != 1 {
 			t.Fatalf("%+v", row)
 		}
 		h.clk.Advance(2 * time.Minute)
@@ -348,7 +349,7 @@ func TestUnreachableGitHubChangesNothing(t *testing.T) {
 		if _, err := h.svc.UserToken(ctx, "U1"); err == nil {
 			t.Fatal("a broken reply was accepted")
 		}
-		if row, _ := store.GetGitHubAuthorization(ctx, st.Q(), "U1"); row.State != "ok" {
+		if row, _ := store.GetRepoLink(ctx, st.Q(), "github", "U1"); row.State != "ok" {
 			t.Fatalf("%+v", row)
 		}
 	})
@@ -365,30 +366,30 @@ func TestDailyRenewalKeepsLongClosedConnections(t *testing.T) {
 		}
 		// Nothing is due while the refresh tokens have months left, and no request is made for it.
 		before := h.f.Count("POST", "/login/oauth/access_token")
-		if n := h.svc.RenewDue(ctx); n != 0 || h.f.Count("POST", "/login/oauth/access_token") != before {
+		if n := h.svc.Tokens().RenewDue(ctx); n != 0 || h.f.Count("POST", "/login/oauth/access_token") != before {
 			t.Fatalf("%d renewed early", n)
 		}
-		// Five months on, the refresh tokens end within 30 days.
-		h.clk.Advance(155 * 24 * time.Hour)
+		// Five and a half months on, the refresh tokens are in the last tenth of their life.
+		h.clk.Advance(165 * 24 * time.Hour)
 		oldRefresh := h.f.RefreshTokenOf("gh1")
 		h.f.ExpireRefresh("gh3") // one of them was revoked meanwhile
-		if n := h.svc.RenewDue(ctx); n != 2 {
+		if n := h.svc.Tokens().RenewDue(ctx); n != 2 {
 			t.Fatalf("%d renewed", n)
 		}
 		if h.f.RefreshTokenOf("gh1") == oldRefresh || h.f.RefreshTokenOf("gh1") == "" {
 			t.Fatal("no new refresh token")
 		}
-		row1, _ := store.GetGitHubAuthorization(ctx, st.Q(), "U1")
+		row1, _ := store.GetRepoLink(ctx, st.Q(), "github", "U1")
 		if row1.State != "ok" || !row1.RefreshExpires.After(h.clk.Now().Add(170*24*time.Hour)) {
 			t.Fatalf("%+v", row1)
 		}
-		row3, _ := store.GetGitHubAuthorization(ctx, st.Q(), "U3")
+		row3, _ := store.GetRepoLink(ctx, st.Q(), "github", "U3")
 		if row3.State != "expired" {
 			t.Fatalf("%+v", row3)
 		}
 		// Run again at once: nobody is due now.
 		before = h.f.Count("POST", "/login/oauth/access_token")
-		if n := h.svc.RenewDue(ctx); n != 0 || h.f.Count("POST", "/login/oauth/access_token") != before {
+		if n := h.svc.Tokens().RenewDue(ctx); n != 0 || h.f.Count("POST", "/login/oauth/access_token") != before {
 			t.Fatalf("%d renewed twice", n)
 		}
 		h.mustNotLeak()
@@ -408,108 +409,194 @@ func TestAnAppThatDoesNotExpireTokensGivesNoRefreshToken(t *testing.T) {
 		if err != nil || tok == "" || h.f.Count("POST", "/login/oauth/access_token") != 1 {
 			t.Fatalf("%q %v", tok, err)
 		}
-		if n := h.svc.RenewDue(ctx); n != 0 {
+		if n := h.svc.Tokens().RenewDue(ctx); n != 0 {
 			t.Fatal(n)
 		}
 	})
 }
 
-func TestTheDailyJobRuns(t *testing.T) {
+// The shared loop renews what is due, on the schedule the pair was stored with.
+func TestTheSharedLoopRenewsAConnectionWhenItsTimeComes(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
 		h.configure()
 		h.user("U1", "a")
 		h.f.AddUser("gh-a")
 		h.connect("U1", "gh-a")
-		h.clk.Advance(160 * 24 * time.Hour)
+		h.clk.Advance(165 * 24 * time.Hour)
 		old := h.f.RefreshTokenOf("gh-a")
 		c, _ := githubapp.New(githubapp.Config{API: h.f.URL, Web: h.f.URL, Now: h.clk.Now})
-		svc, err := github.New(github.Options{Store: st, Secrets: h.box, Client: c, PublicURL: publicURL, Now: h.clk.Now, RenewEvery: 20 * time.Millisecond, SettingsTTL: time.Nanosecond})
+		svc, err := github.New(github.Options{Store: st, Secrets: h.box, Client: c, PublicURL: publicURL, Now: h.clk.Now, SettingsTTL: time.Nanosecond})
 		if err != nil {
 			t.Fatal(err)
 		}
 		runCtx, stop := context.WithCancel(ctx)
 		done := make(chan struct{})
-		go func() { svc.RunRenew(runCtx); close(done) }()
+		go func() { svc.Tokens().Run(runCtx); close(done) }()
 		defer func() { stop(); <-done }()
 		for i := 0; i < 200 && h.f.RefreshTokenOf("gh-a") == old; i++ {
 			time.Sleep(20 * time.Millisecond)
 		}
 		if h.f.RefreshTokenOf("gh-a") == old {
-			t.Fatal("the job did not renew the connection")
+			t.Fatal("the loop did not renew the connection")
 		}
 	})
 }
 
-// A renewal that read the connection before a disconnect or a reconnect must
-// not leave the old access token in the cache afterwards.
-func TestARenewalDoesNotCacheATokenFromBeforeADisconnectOrReconnect(t *testing.T) {
+// GitHub ends a refresh token that is used twice: two servers on one database
+// (a standby) that find the connection due at once hand it over once.
+func TestTwoProcessesRenewAConnectionOnce(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
 		h.configure()
 		h.user("U1", "a")
 		h.f.AddUser("gh-a")
 		h.connect("U1", "gh-a")
-		t.Cleanup(func() { github.SetRenewReadHook(nil) })
-
-		// Disconnect between the read and the cache.
-		once := sync.Once{}
-		github.SetRenewReadHook(func(string) {
-			once.Do(func() {
-				if err := h.svc.Disconnect(ctx, "U1"); err != nil {
-					t.Error(err)
-				}
-			})
-		})
-		h.svc.UserToken(ctx, "U1")
-		github.SetRenewReadHook(nil)
-		if tok, err := h.svc.UserToken(ctx, "U1"); !errors.Is(err, github.ErrNoAuthorization) {
-			t.Fatalf("after a disconnect: %q %v", tok, err)
+		c, _ := githubapp.New(githubapp.Config{API: h.f.URL, Web: h.f.URL, Now: h.clk.Now})
+		other, err := github.New(github.Options{Store: st, Secrets: h.box, Client: c, PublicURL: publicURL, Now: h.clk.Now, SettingsTTL: time.Nanosecond})
+		if err != nil {
+			t.Fatal(err)
 		}
-
-		// Reconnect between the read and the cache.
-		h.connect("U1", "gh-a")
-		h.clk.Advance(time.Second)
-		once = sync.Once{}
-		github.SetRenewReadHook(func(string) {
-			once.Do(func() {
-				h.svc.Disconnect(ctx, "U1")
-				h.connect("U1", "gh-a")
-			})
-		})
-		h.svc.UserToken(ctx, "U1")
-		github.SetRenewReadHook(nil)
-		if tok, err := h.svc.UserToken(ctx, "U1"); err != nil || tok != h.f.AccessTokenOf("gh-a") {
-			t.Fatalf("after a reconnect: %v, the cache kept an old token", err)
+		h.clk.Advance(9 * time.Hour)
+		before := h.f.Count("POST", "/login/oauth/access_token")
+		var wg sync.WaitGroup
+		for _, svc := range []*github.Service{h.svc, other, h.svc, other} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				svc.UserToken(ctx, "U1") // one may be told to try again: the other holds the lease
+			}()
+		}
+		wg.Wait()
+		if n := h.f.Count("POST", "/login/oauth/access_token") - before; n != 1 {
+			t.Fatalf("%d renewals: a refresh token was handed to GitHub more than once", n)
+		}
+		if row, _ := store.GetRepoLink(ctx, st.Q(), "github", "U1"); row.State != "ok" || row.Version != 2 {
+			t.Fatalf("%+v", row)
+		}
+		if tok, err := other.UserToken(ctx, "U1"); err != nil || tok != h.f.AccessTokenOf("gh-a") {
+			t.Fatalf("%q %v", tok, err)
 		}
 	})
 }
 
-// Connections that are due but keep failing (still in good standing) must not
-// keep the daily job from the ones after them, however many there are.
-func TestDailyRenewalIsNotStarvedByFailingConnections(t *testing.T) {
+// Signing in with GitHub makes a link that holds no token; connecting
+// repositories later goes on the same link, which keeps its sign-in.
+func TestConnectingRepositoriesReauthorisesTheSigninLink(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
 		h.configure()
-		h.user("U-good", "good")
-		h.f.AddUser("gh-good")
-		h.connect("U-good", "gh-good")
-		h.clk.Advance(155 * 24 * time.Hour)
+		h.user("U1", "a")
+		id := h.f.AddUser("gh-a").ID
 		now := h.clk.Now()
-		// 120 connections that end sooner, with tokens this server cannot open.
-		for i := 0; i < 120; i++ {
-			id := fmt.Sprintf("U-bad-%03d", i)
-			h.user(id, fmt.Sprintf("bad%03d", i))
-			err := store.PutGitHubAuthorization(ctx, st.Q(), store.GitHubAuthorization{UserID: id, GitHubID: int64(90000 + i), Login: id,
-				AccessEnc: "not-sealed", RefreshEnc: "not-sealed", AccessExpires: now.Add(-time.Hour), RefreshExpires: now.Add(time.Duration(i) * time.Minute),
-				State: store.GitHubOK, Connected: now, Updated: now})
-			if err != nil {
-				t.Fatal(err)
-			}
+		if err := store.InsertLink(ctx, st.Q(), store.Link{ID: "L1", ProviderID: "github", UserID: "U1", Subject: strconv.FormatInt(id, 10), Login: "gh-a",
+			Email: "a@example.com", EmailTrusted: true, SignIn: true, Label: "gh-a", Created: now}); err != nil {
+			t.Fatal(err)
 		}
-		old := h.f.RefreshTokenOf("gh-good")
-		if n := h.svc.RenewDue(ctx); n != 1 || h.f.RefreshTokenOf("gh-good") == old {
-			t.Fatalf("%d renewed; the good connection was not reached", n)
+		if _, err := store.GetRepoLink(ctx, st.Q(), "github", "U1"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("a sign-in is a connection: %v", err)
 		}
+		if c, _ := h.svc.Connection(ctx, "U1"); c != nil {
+			t.Fatalf("%+v", c)
+		}
+		if _, err := h.svc.UserToken(ctx, "U1"); !errors.Is(err, github.ErrNoAuthorization) {
+			t.Fatalf("a sign-in gave a token: %v", err)
+		}
+		h.connect("U1", "gh-a")
+		links, err := store.ListUserLinks(ctx, st.Q(), "U1")
+		if err != nil || len(links) != 1 || links[0].ID != "L1" || !links[0].SignIn || !links[0].Repos || links[0].Email != "a@example.com" || !links[0].EmailTrusted {
+			t.Fatalf("%+v %v", links, err)
+		}
+		// Dropping the repositories keeps the sign-in, without tokens.
+		if err := h.svc.Disconnect(ctx, "U1"); err != nil {
+			t.Fatal(err)
+		}
+		links, _ = store.ListUserLinks(ctx, st.Q(), "U1")
+		if len(links) != 1 || !links[0].SignIn || links[0].Repos {
+			t.Fatalf("%+v", links)
+		}
+		if _, err := h.svc.UserToken(ctx, "U1"); !errors.Is(err, github.ErrNoAuthorization) {
+			t.Fatalf("%v", err)
+		}
+	})
+}
+
+// Authorising with another GitHub account moves the link, and a sign-in it gives
+// goes with the old account: that is refused when it is the person's only way
+// in, and allowed (the sign-in is dropped) when they have another.
+func TestAnotherAccountNeverTakesAPersonsLastWayIn(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		h := newHarness(t, st)
+		h.configure()
+		h.user("U1", "a")
+		ida := h.f.AddUser("gh-a").ID
+		h.f.AddUser("gh-b")
+		now := h.clk.Now()
+		if err := store.InsertLink(ctx, st.Q(), store.Link{ID: "L1", ProviderID: "github", UserID: "U1", Subject: strconv.FormatInt(ida, 10), Login: "gh-a",
+			Email: "a@example.com", SignIn: true, Label: "gh-a", Created: now}); err != nil {
+			t.Fatal(err)
+		}
+		other := false
+		var asked []string
+		h.svc.SetSigninGuard(func(_ context.Context, user, link string) (bool, error) {
+			asked = append(asked, user+":"+link)
+			return other, nil
+		})
+		authURL, binding, _ := h.svc.StartAuthorization(ctx, "U1", "/")
+		back, _ := url.Parse(h.f.Authorize(authURL, "gh-b"))
+		if to, clear := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query()); to != "/settings?provider=github&connection_error=last_method" || !clear {
+			t.Fatalf("%q %v", to, clear)
+		}
+		if len(asked) != 1 || asked[0] != "U1:L1" {
+			t.Fatalf("%v", asked)
+		}
+		links, _ := store.ListUserLinks(ctx, st.Q(), "U1")
+		if len(links) != 1 || links[0].Login != "gh-a" || !links[0].SignIn || links[0].Repos {
+			t.Fatalf("a refused connection changed the link: %+v", links)
+		}
+		// The same account is the same link: nothing is asked.
+		asked = nil
+		h.connect("U1", "gh-a")
+		if len(asked) != 0 {
+			t.Fatalf("%v", asked)
+		}
+		// With another way in, the link moves to the new account and loses the sign-in.
+		other = true
+		if err := h.svc.Disconnect(ctx, "U1"); err != nil {
+			t.Fatal(err)
+		}
+		h.connect("U1", "gh-b")
+		links, _ = store.ListUserLinks(ctx, st.Q(), "U1")
+		if len(links) != 1 || links[0].Login != "gh-b" || links[0].SignIn || !links[0].Repos || links[0].Email != "" {
+			t.Fatalf("%+v", links)
+		}
+	})
+}
+
+// A client secret that was rotated at GitHub and saved here is the one renewals
+// use at once: the cached App is dropped, and the connections stay.
+func TestRotatingTheClientSecretKeepsConnectionsRenewing(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		h := newHarness(t, st)
+		h.configure()
+		h.user("U1", "a")
+		h.f.AddUser("gh-a")
+		h.connect("U1", "gh-a")
+		h.f.ClientSecret = "rotated-secret"
+		h.clk.Advance(9 * time.Hour)
+		if _, err := h.svc.UserToken(ctx, "U1"); code(err) != "provider_not_configured" {
+			t.Fatalf("a renewal with the old secret: %v", err)
+		}
+		if row, _ := store.GetRepoLink(ctx, st.Q(), "github", "U1"); row.State != "ok" {
+			t.Fatalf("a refused client expired the person's link: %+v", row)
+		}
+		id := h.f.ClientID
+		if _, err := h.svc.Save(ctx, github.SaveRequest{ClientID: &id, ClientSecret: "rotated-secret"}); err != nil {
+			t.Fatal(err)
+		}
+		if tok, err := h.svc.UserToken(ctx, "U1"); err != nil || tok != h.f.AccessTokenOf("gh-a") {
+			t.Fatalf("%q %v", tok, err)
+		}
+		h.mustNotLeak("rotated-secret")
 	})
 }
