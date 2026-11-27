@@ -69,12 +69,26 @@ func TestPrefsLiveInTheOwnPersonalSpaceInOneQuietCommit(t *testing.T) {
 		if !strings.Contains(body, "pageSize: 36") || !strings.Contains(body, "pb.onboarding: done") {
 			t.Fatalf("%s", body)
 		}
-		if err := sp.Flush(); err != nil {
-			t.Fatal(err)
+		// The file is on disk while the change that wrote it is still running;
+		// Flush commits only what a finished change recorded, so it is asked
+		// until the commit is there.
+		var out []byte
+		for deadline := time.Now().Add(10 * time.Second); ; {
+			if err := sp.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			out, err = exec.Command("git", "-C", filepath.Join(a.dir, "spaces", pid), "log", "--format=%s%n%an", "--", ".petalbook/prefs.yml").Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(out) > 0 || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
-		out, err := exec.Command("git", "-C", filepath.Join(a.dir, "spaces", pid), "log", "--format=%s%n%an", "--", ".petalbook/prefs.yml").Output()
-		if err != nil || strings.TrimSpace(string(out)) != "Update prefs.yml\nkazuha" {
-			t.Fatalf("the commits of the file: %q %v", out, err)
+		if strings.TrimSpace(string(out)) != "Update prefs.yml\nkazuha" {
+			t.Fatalf("the commits of the file: %q", out)
 		}
 		// A value of null takes the key away; the committed file follows.
 		setPrefsAPI(t, u, map[string]any{"pb.onboarding": nil}).want(t, 200, "")
