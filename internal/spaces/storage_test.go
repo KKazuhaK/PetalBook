@@ -919,6 +919,67 @@ func TestTheRequirementOfARemoteAndItsGracePeriod(t *testing.T) {
 	})
 }
 
+// A space that loses its GitHub remote has its grace period again from that
+// moment, in its notice (and so its deadline everywhere it is shown) and in
+// whether it is read only; a remote of the right kind again ends it.
+func TestASpaceThatLostItsGitHubRemoteHasItsGraceAgain(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		in, h := f.space("Notes")
+		defer h.Release()
+		setRequire(t, f.m, "any", "all", 30)
+		now := f.clk.Now()
+		if err := store.PutGitHubApp(ctx, st.Q(), store.GitHubApp{App: `{"appId":"1","fingerprint":"f"}`, ClientID: "Iv1.x", BaseURL: "https://github.com"}, now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.ClaimGitHubInstallation(ctx, st.Q(), store.GitHubInstallation{ID: 5, Account: "me", AccountType: "User", OwnerUser: f.user.ID, Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutRemote(ctx, st.Q(), store.Remote{SpaceID: in.ID, URL: "https://github.com/me/notes.git", Branch: "main", State: "ok", Updated: now,
+			CredType: "connection", Provider: "github", Via: "app", InstallationID: 5, RepoID: 1, CredUserID: f.user.ID}); err != nil {
+			t.Fatal(err)
+		}
+		f.m.PolicyChanged()
+		f.clk.Advance(90 * 24 * time.Hour) // far past what the requirement gave it
+		if n, err := f.m.Notice(ctx, in.ID); err != nil || n != nil {
+			t.Fatalf("with its remote: %+v %v", n, err)
+		}
+		lostAt := f.clk.Now()
+		ids, err := store.DisconnectGitHubInstallation(ctx, st.Q(), 5, store.InstallOwner{UserID: f.user.ID}, "lost", lostAt)
+		if err != nil || len(ids) != 1 {
+			t.Fatalf("%v %v", ids, err)
+		}
+		f.m.AccessLost(ids)
+		n, err := f.m.Notice(ctx, in.ID)
+		if err != nil || n == nil || n.Overdue || !n.Deadline.Equal(lostAt.Add(30*24*time.Hour).Truncate(time.Millisecond)) {
+			t.Fatalf("just after the loss: %+v %v", n, err)
+		}
+		if err := f.m.CheckWritable(in.ID); err != nil {
+			t.Fatalf("read only at once: %v", err)
+		}
+		if l, _ := f.m.List(ctx, f.user.ID); len(l) != 1 || l[0].RemoteNotice == nil || l[0].RemoteNotice.Overdue {
+			t.Fatalf("the list: %+v", l)
+		}
+		// At the deadline itself it is still in grace, as the lists say.
+		f.clk.Advance(30 * 24 * time.Hour)
+		if n, _ := f.m.Notice(ctx, in.ID); n == nil || n.Overdue {
+			t.Fatalf("at the deadline: %+v", n)
+		}
+		if err := f.m.CheckWritable(in.ID); err != nil {
+			t.Fatalf("read only at the deadline: %v", err)
+		}
+		f.clk.Advance(time.Millisecond)
+		if n, _ := f.m.Notice(ctx, in.ID); n == nil || !n.Overdue {
+			t.Fatalf("after the grace: %+v", n)
+		}
+		var re *RequiredError
+		if err := f.m.CheckWritable(in.ID); !errors.As(err, &re) {
+			t.Fatalf("after the grace: %v", err)
+		}
+	})
+}
+
 func TestARequirementOfGitHubRefusesAnyOtherCredentialAndTightening(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {

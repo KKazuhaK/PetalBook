@@ -200,6 +200,7 @@ func checkPlans(t *testing.T, st *store.Store, q store.Q, now time.Time, tenants
 			spaceCase{"exempt", site, store.SpaceFilter{Exempt: true, Limit: 50}, false},
 			spaceCase{"deadline overdue", tenantScope, store.SpaceFilter{Deadline: "overdue", Policy: &pol, Limit: 50}, false},
 			spaceCase{"deadline grace", site, store.SpaceFilter{Deadline: "grace", Policy: &pol, Limit: 50}, false},
+			spaceCase{"deadline grace, tenant", tenantScope, store.SpaceFilter{Deadline: "grace", Policy: &pol, Limit: 50}, false},
 			spaceCase{"idleDays", tenantScope, store.SpaceFilter{IdleBefore: now.Add(-48 * time.Hour), Sort: "lastUsed", Limit: 50}, true},
 			spaceCase{"owner", tenantScope, store.SpaceFilter{Owner: "U0000004", Limit: 50}, false},
 			spaceCase{"by id", tenantScope, store.SpaceFilter{ID: "S0000004", Limit: 1}, false},
@@ -217,6 +218,23 @@ func checkPlans(t *testing.T, st *store.Store, q store.Q, now time.Time, tenants
 			}
 			if testing.Verbose() {
 				t.Logf("%s:\n%s", c.name, strings.Join(pq.plans, "\n--\n"))
+			}
+		}
+		// In a tenant, each range of the deadline lists is searched within the
+		// tenant too, not across every tenant's spaces.
+		pq.plans = nil
+		if _, _, err := store.ListAllSpaces(ctx, pq, tenantScope, store.SpaceFilter{Deadline: "grace", Policy: &pol, Limit: 50}); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range pq.plans {
+			// The tenant is the index's own (spaces_lost_t), or the filter of the
+			// lines under the search of the small index (PostgreSQL may pick either).
+			lines := strings.Split(p, "\n")
+			for i, l := range lines {
+				if strings.Contains(l, "spaces_lost") && !strings.Contains(l, "spaces_lost_t") &&
+					!strings.Contains(strings.Join(lines[i:min(i+3, len(lines))], "\n"), "tenant_id") {
+					bad = append(bad, "deadline grace, tenant: the spaces that lost a remote are not searched within the tenant\n"+p)
+				}
 			}
 		}
 		type peopleCase struct {

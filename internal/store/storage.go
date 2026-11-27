@@ -161,26 +161,43 @@ func (p RemotePolicy) Active() bool { return p.Require != "" }
 
 // PolicyBase is when the grace period of a space made at created begins: its
 // creation when it was made under the requirement, else Since when the
-// requirement is for every space; ok is false for a space it does not cover
-// (made before a requirement of new spaces only).
-func (p RemotePolicy) PolicyBase(created time.Time) (time.Time, bool) {
-	if !created.Before(p.Since) {
-		return created, true
+// requirement is for every space; and when the space lost its GitHub remote
+// (lostAt, zero when it did not), if that is later. ok is false for a space
+// the requirement does not cover (made before a requirement of new spaces only).
+func (p RemotePolicy) PolicyBase(created, lostAt time.Time) (time.Time, bool) {
+	base, ok := time.Time{}, true
+	switch {
+	case !created.Before(p.Since):
+		base = created
+	case p.All:
+		base = p.Since
+	default:
+		return time.Time{}, false
 	}
-	if p.All {
-		return p.Since, true
+	if lostAt.After(base) {
+		base = lostAt
 	}
-	return time.Time{}, false
+	return base, ok
 }
 
 // Deadline is the end of the space's grace period; ok is false when the
 // requirement does not cover the space.
-func (p RemotePolicy) Deadline(created time.Time) (time.Time, bool) {
-	base, ok := p.PolicyBase(created)
+func (p RemotePolicy) Deadline(created, lostAt time.Time) (time.Time, bool) {
+	base, ok := p.PolicyBase(created, lostAt)
 	if !ok {
 		return time.Time{}, false
 	}
 	return base.Add(p.Grace), true
+}
+
+// deadlineSQL is the deadline expression of a space s as SQL, with the
+// arguments of its placeholders: the later of its start (see PolicyBase) and
+// remote_lost_at, plus the grace period; NULL for a space that is not covered.
+func deadlineSQL(p RemotePolicy) (string, []any) {
+	since, all := ms(p.Since), b2i(p.All)
+	return `(CASE WHEN s.created >= CAST(? AS BIGINT) THEN (CASE WHEN s.remote_lost_at > s.created THEN s.remote_lost_at ELSE s.created END)
+		WHEN CAST(? AS BIGINT) <> 0 THEN (CASE WHEN s.remote_lost_at > CAST(? AS BIGINT) THEN s.remote_lost_at ELSE CAST(? AS BIGINT) END) END + CAST(? AS BIGINT))`,
+		[]any{since, all, since, since, p.Grace.Milliseconds()}
 }
 
 // lacksRemote is the SQL that says a space s does not follow a remote of the
@@ -200,10 +217,10 @@ func lacksRemote(p RemotePolicy) (string, []any) {
 func policyConds(p RemotePolicy) (asked string, askedArgs []any, deadline string, dlArgs []any) {
 	lacks, askedArgs := lacksRemote(p)
 	exempt := `s.exempt = 0 AND NOT EXISTS (SELECT 1 FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0)`
-	// The deadline: creation (or Since for an older space under scope "all")
-	// plus the grace period; NULL for a space that is not covered.
-	deadline = `(CASE WHEN s.created >= CAST(? AS BIGINT) THEN s.created WHEN CAST(? AS BIGINT) <> 0 THEN CAST(? AS BIGINT) END + CAST(? AS BIGINT))`
-	dlArgs = []any{ms(p.Since), b2i(p.All), ms(p.Since), p.Grace.Milliseconds()}
+	// The deadline: creation (or Since for an older space under scope "all", or
+	// the loss of its remote, if later) plus the grace period; NULL for a space
+	// that is not covered.
+	deadline, dlArgs = deadlineSQL(p)
 	return lacks + ` AND ` + exempt, askedArgs, deadline, dlArgs
 }
 
@@ -309,6 +326,7 @@ func CloneBytesOfRemoteSpaces(ctx context.Context, q Q) (int64, error) {
 // PolicyFacts is what the requirement of a remote looks at in one space.
 type PolicyFacts struct {
 	Created     time.Time
+	RemoteLost  time.Time // when its GitHub remote was lost; zero if not
 	Personal    bool
 	Exempt      bool   // the space is exempt
 	OwnerExempt bool   // an owner is exempt
@@ -319,17 +337,20 @@ type PolicyFacts struct {
 // GetPolicyFacts reads them: one query on the space's primary key.
 func GetPolicyFacts(ctx context.Context, q Q, id string) (PolicyFacts, error) {
 	var f PolicyFacts
-	var created, exempt, ownerExempt int64
+	var created, exempt, ownerExempt, lost int64
 	var personal sql.NullString
-	err := q.QueryRow(ctx, `SELECT s.created, s.personal_of, s.exempt,
+	err := q.QueryRow(ctx, `SELECT s.created, s.remote_lost_at, s.personal_of, s.exempt,
 		(SELECT COUNT(*) FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0),
 		COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND `+usableRemote+`), ''),
 		COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND `+usableRemote+`), '')
-		FROM spaces s WHERE s.id = ?`, id).Scan(&created, &personal, &exempt, &ownerExempt, &f.CredType, &f.Provider)
+		FROM spaces s WHERE s.id = ?`, id).Scan(&created, &lost, &personal, &exempt, &ownerExempt, &f.CredType, &f.Provider)
 	if errors.Is(err, sql.ErrNoRows) {
 		return f, ErrNotFound
 	}
 	f.Created, f.Personal, f.Exempt, f.OwnerExempt = fromMS(created), personal.Valid, exempt != 0, ownerExempt != 0
+	if lost > 0 {
+		f.RemoteLost = fromMS(lost)
+	}
 	return f, err
 }
 

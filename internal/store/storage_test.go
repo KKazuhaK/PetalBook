@@ -71,7 +71,7 @@ func TestStoragePolicyQueries(t *testing.T) {
 		if g, o, _, _ = mustCounts(t, q, newOnly); g != 1 || o != 0 {
 			t.Fatalf("scope new: grace %d overdue %d", g, o)
 		}
-		if d, ok := newOnly.Deadline(t0); ok {
+		if d, ok := newOnly.Deadline(t0, time.Time{}); ok {
 			t.Fatalf("an old space has a deadline under scope new: %v", d)
 		}
 		// No requirement, nothing is counted.

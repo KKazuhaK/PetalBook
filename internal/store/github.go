@@ -321,6 +321,24 @@ func DisconnectGitHubInstallation(ctx context.Context, q Q, id int64, o InstallO
 				AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = spaces.id AND r.role = 'content' AND `+onInstallation+`)`, append(sargs, id)...); err != nil {
 				return err
 			}
+			// Their grace period under the storage requirement starts again now:
+			// time to get a new repository (a space whose remote is only an
+			// attachment repository has not lost its content remote). Only
+			// when the remote synced well since the last loss, or there was
+			// none: connecting and disconnecting again without a successful
+			// sync does not give more time. The value is never cleared on a
+			// reconnect (a space with a usable remote is not asked for one,
+			// and the first loss comes back if it is disconnected again); a
+			// later loss after a good sync replaces it.
+			largs := []any{ms(now)}
+			for _, sid := range rest[:n] {
+				largs = append(largs, sid)
+			}
+			if _, err := q.Exec(ctx, `UPDATE spaces SET remote_lost_at = ? WHERE id IN (?`+marks+`)
+				AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = spaces.id AND r.role = 'content' AND `+onInstallation+`
+					AND (spaces.remote_lost_at = 0 OR r.last_sync > spaces.remote_lost_at))`, append(largs, id)...); err != nil {
+				return err
+			}
 			rest = rest[n:]
 		}
 		return nil

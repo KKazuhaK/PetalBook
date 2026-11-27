@@ -475,11 +475,11 @@ func (m *Manager) Notice(ctx context.Context, id string) (*RemoteNotice, error) 
 	if f.Exempt || f.OwnerExempt || acceptable(p.Require, f.CredType, f.Provider) {
 		return nil, nil
 	}
-	dl, ok := p.Deadline(f.Created)
+	dl, ok := p.Deadline(f.Created, f.RemoteLost)
 	if !ok {
 		return nil, nil
 	}
-	return &RemoteNotice{Required: p.Require, Deadline: dl, Overdue: !p.Now.Before(dl)}, nil
+	return &RemoteNotice{Required: p.Require, Deadline: dl, Overdue: p.Now.After(dl)}, nil
 }
 
 // CheckWritable refuses a change to the files of a space that is past its
@@ -555,7 +555,7 @@ func (m *Manager) CheckRemoval(ctx context.Context, id string) error {
 	if f.Exempt || f.OwnerExempt {
 		return nil
 	}
-	if _, ok := p.Deadline(f.Created); !ok {
+	if _, ok := p.Deadline(f.Created, f.RemoteLost); !ok {
 		return nil // not covered by a requirement of new spaces only
 	}
 	return &RequiredError{Require: p.Require, Msg: "This server requires the space to follow a remote repository; it cannot be removed."}
@@ -578,7 +578,7 @@ func (m *Manager) CheckCredential(ctx context.Context, id, cred, provider string
 	if f.Exempt || f.OwnerExempt {
 		return nil
 	}
-	if _, ok := p.Deadline(f.Created); !ok {
+	if _, ok := p.Deadline(f.Created, f.RemoteLost); !ok {
 		return nil // not covered by a requirement of new spaces only
 	}
 	return &RequiredError{Require: p.Require, Msg: "This server requires a remote repository " + m.describeRequire(p.Require) + "; use a connection to " + m.providerName(p.Require) + "."}
@@ -680,9 +680,9 @@ func (m *Manager) NoticeOfRow(r store.AdminSpace) *RemoteNotice {
 	if !p.Active() || r.Storage.Exempt || r.OwnerExempt || acceptable(p.Require, r.CredType, r.Provider) {
 		return nil
 	}
-	dl, ok := p.Deadline(r.Created)
+	dl, ok := p.Deadline(r.Created, r.RemoteLostAt)
 	if !ok {
 		return nil
 	}
-	return &RemoteNotice{Required: p.Require, Deadline: dl, Overdue: !p.Now.Before(dl)}
+	return &RemoteNotice{Required: p.Require, Deadline: dl, Overdue: p.Now.After(dl)}
 }
