@@ -10673,7 +10673,8 @@ with `{"join": "off" | "auto" | "request"}`, `tenant.domains.manage`,
   `{"action": "domain_join_off", "tenant", "domain"}` gives the token, sent as
   `{"join": "off", "confirm": "c_…"}` or `DELETE …/domains/{domain}?confirm=c_…`.
   `auto` from `request` keeps them waiting. The domain lapsing, or a site
-  administrator moving it to another tenant, cancels them without asking.
+  administrator moving it to another tenant, cancels them without asking, and
+  turns its join `off` (the new holder turns it on itself).
   Each cancelled request is audited (`join_cancelled`, with `reason`:
   `join_off`, `removed`, `lapsed` or `moved`).
 - Turning `features.domains` off for a tenant counts its waiting requests in
@@ -10701,11 +10702,15 @@ Following the link (`POST /api/register/confirm`) asks the domain's mode again:
   username (registration answers `409 exists` for it) for **30 days**; then it
   expires and the username is free. One address has one waiting request per
   tenant (`409 join_pending`), and makes at most **3 requests a day**, in all
-  tenants (`429 rate_limited` with `Retry-After`). The tenant's enabled
+  tenants, counted without a `+tag` of the address (`bob+x@` is `bob@`;
+  `429 rate_limited` with `Retry-After`). A tenant holds at most 1,000 waiting
+  requests (`429 join_limit` for the next one). The tenant's enabled
   administrators get a `join_requested` notification; `join_requested` is
   audited.
-- the mode `off` now: as a registration of the tenant, which answers
-  `403 registration_closed` unless the tenant's registration is open.
+- the mode `off` now: as a registration of the tenant, with all of its rules:
+  `403 registration_closed` unless the tenant's registration is open, and
+  `400 email_domain_not_allowed` when the address is not on its
+  `registration.domains`.
 
 ```json
 {"state": "pending", "tenant": {"slug": "acme", "name": "Acme"}, "username": "bob",
@@ -10726,8 +10731,9 @@ token, which stays the request's capability):
   request: `200` with the JoinStatus, the username is free again;
   `409 join_decided` when it is not waiting. Audited as `join_withdrawn`.
 
-**The tenant's administrators** (`tenant.users.manage`, `features.domains`;
-`404 not_found` for another tenant, as for one that does not exist):
+**The tenant's administrators** (`tenant.users.manage`, and `features.domains` of the tenant in the path, for
+a site administrator outside its scope too; `404 not_found` for another tenant,
+as for one that does not exist):
 
 - `GET /api/admin/tenants/{tenant}/join-requests?state=pending|all&cursor=&limit=`
   (1 to 200, 50 by default): `{"items": [JoinRequest], "next": cursor | null}`,
@@ -10738,7 +10744,8 @@ token, which stays the request's capability):
   with the approval; the person is mailed a link to sign in, and the new account
   gets a `join_approved` notification. `200` with the JoinRequest (`user` is the
   account). `409 join_decided` when it is not waiting (decided, withdrawn,
-  cancelled or expired); `409 sso_required` while the tenant requires its
+  cancelled or expired); `409 tenant_disabled` while the tenant is disabled;
+  `409 sso_required` while the tenant requires its
   single sign-on (no password account is made: deny it, and the person signs in
   through the SSO); `409 exists` or `409 email_taken` when the username or the
   address was taken meanwhile. Audited as `join_approved`.
@@ -10756,6 +10763,12 @@ token, which stays the request's capability):
 A request that is no longer waiting keeps no password hash, and is deleted 30
 days after it ended (the daily sweep, which also writes the expired ones
 `expired`).
+
+Known item (left as it is in 3.6 d5): the hold of the username ends at the
+moment the request expires, while its row still reads `pending` (with its
+password hash) until the daily sweep writes it `expired`; in that window the
+username can be registered again, and the request can no longer be approved
+(`409 join_decided`).
 
 **(d) Joining through the tenant's SSO.** A tenant's SSO provider with
 `autoCreate` makes the account in its tenant at first sign-in (as 2.8 and
@@ -11201,6 +11214,8 @@ exist, a `before` that is not a time, or a `dry_run` that is not a boolean.
 | `domain_exists`, `domain_verified` | 409 | claiming a domain the tenant has claimed already; asking a new code for a verified claim |
 | `domain_managed` | 409 | creating an organisation with an address of a domain with `restrictOrgs`; with `organization` (`slug`, `name`) |
 | `join_pending` | 409 | following a registration link that would ask to join an organisation where the address already has a request waiting |
+| `join_limit` | 429 | a tenant holds 1,000 requests to join waiting already |
+| `tenant_disabled` | 409 | approving a request to join a disabled tenant |
 | `join_decided` | 409 | approving, denying or withdrawing a request to join that is no longer waiting (decided, withdrawn, cancelled or expired) |
 | `email_taken` | 409 | setting an address another account holds, verified or not (also a deleted account until its purge) |
 | `email_not_ascii` | 400 | an address with characters outside ASCII while `users.emailNonAscii` is off; also asking to verify such a stored address then |

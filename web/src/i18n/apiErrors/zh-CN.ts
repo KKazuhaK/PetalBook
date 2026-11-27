@@ -105,6 +105,8 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   domain_managed: '这个邮箱域名的地址由一个组织管理。请让它把你加进去，而不是另建一个组织。',
   join_pending: '你已经申请加入这个组织了。请等它答复，或先撤回那份申请。',
   join_decided: '这份申请已不在等待中：已处理、已撤回、已取消，或已过期。',
+  join_limit: '这个组织等待中的加入申请太多了，请稍后再试。',
+  tenant_disabled: '这个组织已停用，现在不能加入。',
   already_linked: '你在这个提供方已经关联了一个账号。请先取消关联，再关联另一个。',
   last_method: '这是最后一种登录方式。请先设置密码或关联另一种登录方式。',
   github_app_client: '这个提供方的客户端就是 GitHub 应用的客户端：请在仓库提供方里改应用的设置。',

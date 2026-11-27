@@ -591,6 +591,11 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, lang, ip string) (
 		return nil, err
 	} else if !rules.Open {
 		return nil, closedErr()
+	} else if reg.JoinDomain != "" && len(rules.Domains) > 0 && !domainAllowed(reg.Email, rules.Domains) {
+		// A registration taken by its domain's join (which skipped the tenant's
+		// domain list) whose join is off now: the tenant's registration, with
+		// every rule of it.
+		return nil, coded(400, "email_domain_not_allowed", "Registration is open to some email domains only.")
 	}
 	st := s.sec(ctx)
 	if s.ssoOnlyInEffect(st) {

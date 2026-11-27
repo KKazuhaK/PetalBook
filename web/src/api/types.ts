@@ -985,6 +985,8 @@ export type ErrorCode =
   // Joining by email domain at sign-up (3.6 d5).
   | 'join_pending'
   | 'join_decided'
+  | 'join_limit'
+  | 'tenant_disabled'
   | 'confirm_required'
   | 'provider_in_use'
   | 'group_not_found'

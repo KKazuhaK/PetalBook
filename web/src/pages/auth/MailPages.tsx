@@ -424,11 +424,13 @@ export function RegisterConfirmPage() {
                     ? tm.confirm.orgLimit
                     : code === 'join_pending'
                       ? tm.confirm.joinPending
-                      : code === 'sso_required' && err instanceof ApiError
+                      : (code === 'join_limit' || code === 'email_domain_not_allowed') && err instanceof ApiError
                         ? err.message
-                        : code === 'rate_limited' && err instanceof ApiError
-                          ? rateText(err)
-                          : tm.confirm.failed,
+                        : code === 'sso_required' && err instanceof ApiError
+                          ? err.message
+                          : code === 'rate_limited' && err instanceof ApiError
+                            ? rateText(err)
+                            : tm.confirm.failed,
         })
       },
     )

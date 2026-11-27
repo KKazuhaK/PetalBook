@@ -117,6 +117,8 @@ export const apiErrorsEn: ApiErrorTexts = {
   join_pending:
     'You have asked to join this organization already. Wait for its answer, or withdraw that request first.',
   join_decided: 'This request is no longer waiting: it was decided, withdrawn or cancelled, or it expired.',
+  join_limit: 'This organization has too many requests to join waiting. Try again later.',
+  tenant_disabled: 'This organization is disabled: nobody joins it now.',
   already_linked: 'You already have an account linked at this provider. Unlink it first to link another.',
   last_method: 'This is the last way to sign in. Set a password or link another sign-in method first.',
   github_app_client:

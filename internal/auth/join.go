@@ -25,9 +25,33 @@ const (
 	// JoinRequestTTL is how long a request waits for an administrator.
 	JoinRequestTTL = 30 * 24 * time.Hour
 	// JoinRequestsPerDay is how many requests one address may make in a day,
-	// in every tenant together.
+	// in every tenant together; the address is counted without a +tag.
 	JoinRequestsPerDay = 3
+	// MaxPendingJoins is the most requests a tenant holds waiting.
+	MaxPendingJoins = 1000
 )
+
+// untagged is an address key without the +tag of its local part
+// ("bob+x@acme.example" is bob@acme.example): one person's mailbox.
+func untagged(key string) string {
+	at := strings.LastIndexByte(key, '@')
+	if at < 0 {
+		return key
+	}
+	local, domain := key[:at], key[at:]
+	if i := strings.IndexByte(local, '+'); i > 0 {
+		local = local[:i]
+	}
+	return local + domain
+}
+
+func errJoinLimit() *Error {
+	return coded(429, "join_limit", "This organization has too many requests to join waiting: try again later.")
+}
+
+func errTenantDisabled() *Error {
+	return coded(409, "tenant_disabled", "This organization is disabled: nobody joins it now.")
+}
 
 // joinOf is how the domain of an address joins a tenant (Config.JoinDomain):
 // ok false when it does not.
@@ -106,7 +130,7 @@ func (s *Service) requestJoin(ctx context.Context, reg *store.Registration, lang
 	if !ok {
 		return nil, errBadLink()
 	}
-	cost := ratelimit.Cost{Key: "join:" + key, Limit: JoinRequestsPerDay}
+	cost := ratelimit.Cost{Key: "join:" + untagged(key), Limit: JoinRequestsPerDay}
 	if wait, ok := s.joinCaps.Allows(cost); !ok {
 		return nil, retryAfter(wait)
 	}
@@ -114,6 +138,11 @@ func (s *Service) requestJoin(ctx context.Context, reg *store.Registration, lang
 	r := store.JoinRequest{ID: s.newID(), TenantID: reg.TenantID, Username: reg.Username, Name: reg.Name, Email: reg.Email, EmailKey: key,
 		Domain: reg.JoinDomain, PasswordHash: reg.PasswordHash, Terms: reg.Terms, Lang: lang, TokenHash: reg.TokenHash, State: store.JoinPending,
 		Created: now, Expires: now.Add(JoinRequestTTL)}
+	if n, err := store.CountPendingJoins(ctx, s.st.Q(), reg.TenantID, now); err != nil {
+		return nil, err
+	} else if n >= MaxPendingJoins {
+		return nil, errJoinLimit()
+	}
 	err := s.st.Tx(ctx, func(q store.Q) error {
 		if ok, err := store.DeleteRegistration(ctx, q, reg.ID); err != nil {
 			return err
@@ -232,6 +261,9 @@ func (s *Service) ApproveJoinRequest(ctx context.Context, actor store.User, tena
 	r, err := s.pendingJoin(ctx, tenant, id)
 	if err != nil {
 		return r, nil, err
+	}
+	if s.st.TenantDisabled(tenant) {
+		return r, nil, errTenantDisabled()
 	}
 	if s.ssoOnlyInEffect(s.sec(ctx)) {
 		return r, nil, errLocalRefused()

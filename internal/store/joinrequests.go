@@ -185,23 +185,42 @@ func WithdrawJoinRequest(ctx context.Context, q Q, tokenHash string, now time.Ti
 	return n > 0, err
 }
 
-// CancelJoinRequests cancels the pending requests of a tenant's domain (it was
-// removed, it lapsed, it moved to another tenant, or its join mode was turned
-// off), and returns them as they were.
+// CancelJoinRequests cancels the pending requests of a tenant's domain that
+// have not expired (it was removed, it lapsed, it moved to another tenant, or
+// its join mode was turned off), and returns exactly those it cancelled, as
+// they were: each is cancelled by its id, only while it is still pending.
 func CancelJoinRequests(ctx context.Context, q Q, tenantID, domain string, now time.Time) ([]JoinRequest, error) {
 	var out []JoinRequest
 	err := atomically(ctx, q, func(q Q) error {
-		var err error
-		out, err = queryJoins(ctx, q, `SELECT `+joinCols+` FROM join_requests WHERE tenant_id = ? AND domain = ? AND state = 'pending' AND expires > ?`,
+		read, err := queryJoins(ctx, q, `SELECT `+joinCols+` FROM join_requests WHERE tenant_id = ? AND domain = ? AND state = 'pending' AND expires > ?`,
 			tenantID, domain, ms(now))
-		if err != nil || len(out) == 0 {
+		if err != nil {
 			return err
 		}
-		_, err = q.Exec(ctx, `UPDATE join_requests SET state = 'cancelled', decided_at = ?, password_hash = ''
-			WHERE tenant_id = ? AND domain = ? AND state = 'pending'`, ms(now), tenantID, domain)
-		return err
+		out = out[:0]
+		for _, r := range read {
+			res, err := q.Exec(ctx, `UPDATE join_requests SET state = 'cancelled', decided_at = ?, password_hash = ''
+				WHERE id = ? AND state = 'pending'`, ms(now), r.ID)
+			if err != nil {
+				return err
+			}
+			if n, err := res.RowsAffected(); err != nil {
+				return err
+			} else if n == 1 {
+				out = append(out, r)
+			}
+		}
+		return nil
 	})
 	return out, err
+}
+
+// CountPendingJoins is how many requests a tenant holds waiting that have not
+// expired (join_requests_list).
+func CountPendingJoins(ctx context.Context, q Q, tenantID string, now time.Time) (int, error) {
+	var n int
+	err := q.QueryRow(ctx, `SELECT COUNT(*) FROM join_requests WHERE tenant_id = ? AND state = 'pending' AND expires > ?`, tenantID, ms(now)).Scan(&n)
+	return n, err
 }
 
 // PendingJoinIDs are the ids of a tenant's domain's pending requests that have
