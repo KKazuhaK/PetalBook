@@ -269,8 +269,9 @@ memory, without a database query.
 - From 3.6 d3, with `?tenant={slug}` the providers are what that tenant's
   people may use: the site's social providers its `signin.social` allows, the
   site's SSO offered to it (`tenants`), and its own that can sign in now. With
-  none of them the mode is `local_only`. Without `?tenant` they are the site's
-  enabled providers, as before; a tenant's own are never listed there.
+  none of them the mode is still the site's, as the server enforces it (an
+  `sso_redirect` site keeps `local: false`). Without `?tenant` they are the
+  site's enabled providers, as before; a tenant's own are never listed there.
 
 Whether password sign-in is refused (`ssoOnly`) is never in this answer, nor
 anything about a particular account: neither may help someone choose which
@@ -9810,7 +9811,10 @@ tenant's, or the site's, is `404 not_found`):
   the tenant's own, in order;
 - `POST …/providers`: the body of `POST /api/admin/providers` for `kind`
   `oidc` or `saml`; `owner` is the tenant (left out, or the same id; another is
-  `400 invalid`). A template, `kind` `github`, `class` `social`,
+  `400 invalid`). Its `slug` starts with the tenant's own slug and a hyphen
+  (`acme-okta`; `400 invalid` otherwise, also through `POST /api/admin/providers`
+  with an `owner`), so plain names stay the site's to take and no tenant takes
+  another's. A template, `kind` `github`, `class` `social`,
   `mergeVerifiedEmail: true`, a `tenant` (jit) other than its own and
   `tenants` are `400 invalid`. It starts off until the tenant has a verified
   domain (`409 domain_required` when asked on). `201` with the Provider;
@@ -9844,7 +9848,9 @@ being unique on the server):
 - `autoCreate` makes accounts in the provider's tenant only (its `tenant` is
   its owner), as members;
 - `groups.map` names the tenant's own groups only (another's is
-  `404 group_not_found`, as one that does not exist);
+  `404 group_not_found`, as one that does not exist), and a sign-in never syncs
+  anyone into a group that holds a role of the site (the "no site key" check is
+  asked again after the sync);
 - `groups.allow` (any OIDC or SAML provider, the site's too): when not empty,
   only people whose groups claim (`groups.claim`) names one of these values
   sign in, at every sign-in, whether or not the groups are synced; a missing
@@ -9856,6 +9862,8 @@ class `sso` is `"all"` (the default) or a list of tenant ids (at most 1000;
 `400 invalid` on a social provider, which `signin.social` prunes instead). With
 a list, only the people of those tenants sign in or link through it, and
 `autoCreate` makes no account in a tenant not on it (`sso_error=not_allowed`).
+A site administrator signs in through the site's own SSO whatever its list
+says: the list cannot lock them out.
 
 **`signin.social`** (site and tenant, a list: the slugs of the site's social
 providers the tenant's people may use, or `["*"]` for every one, the default).

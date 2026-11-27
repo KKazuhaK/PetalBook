@@ -406,7 +406,8 @@ func TestSigninSocialRefusesWhatTheTenantDoesNotAllow(t *testing.T) {
 			t.Fatal(loc)
 		}
 		pub := a.newClient("").do("GET", "/api/auth/providers?tenant=beta", nil).want(t, 200, "")
-		if len(pub.body["providers"].([]any)) != 0 || pub.body["loginMode"] != "local_only" {
+		// None for C; the mode is still the site's, as the server enforces it.
+		if len(pub.body["providers"].([]any)) != 0 || pub.body["loginMode"] != "dual" {
 			t.Fatal(pub.raw)
 		}
 		// A site lock for C (a rule) puts it back, whatever C says.

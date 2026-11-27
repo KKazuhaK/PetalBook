@@ -25,6 +25,9 @@ func TestPublic(t *testing.T) {
 		"198.18.0.1": false, "240.0.0.1": false, "2001:db8::1": false,
 		"::ffff:127.0.0.1": false, "::ffff:10.0.0.1": false, "::ffff:169.254.169.254": false, "::ffff:8.8.8.8": true,
 		"64:ff9b::7f00:1": false, "2002:7f00:1::": false, "172.32.0.1": true,
+		// Local NAT64 (64:ff9b:1::/48) and Teredo (2001::/32) reach private addresses through a relay.
+		"64:ff9b:1::a00:1": false, "64:ff9b:1:ffff::1": false, "2001::1": false, "2001:0:4136:e378:8000:63bf:3fff:fdd2": false,
+		"2001:4860:4860::8888": true,
 	} {
 		if got := Public(netip.MustParseAddr(ip)); got != want {
 			t.Errorf("%s: %v, want %v", ip, got, want)

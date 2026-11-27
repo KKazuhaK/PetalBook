@@ -204,6 +204,11 @@ func (s *Service) mayUse(ctx context.Context, rt *providerRT, u store.User) erro
 		}
 		return nil
 	}
+	// A site administrator always signs in through the site's own SSO,
+	// whatever its list of tenants says: the list cannot lock them out.
+	if rt.row.Class == ClassSSO && u.IsSiteAdmin() {
+		return nil
+	}
 	if !s.tenantMayUse(ctx, rt, u.TenantID) {
 		return notAllowed(&u)
 	}

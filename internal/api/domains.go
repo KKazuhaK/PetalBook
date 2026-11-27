@@ -316,14 +316,16 @@ func (s *server) adminPatchDomain(c *call) {
 	}
 	var r store.DomainRow
 	var err error
-	if setRestrict {
-		if r, err = s.domains.SetRestrict(c.r.Context(), t, c.r.PathValue("domain"), restrict); err != nil {
+	// The routing is checked first (a provider needs a verified domain), so a
+	// PATCH it refuses changes nothing.
+	if setProvider {
+		if r, err = s.domains.SetProvider(c.r.Context(), t, c.r.PathValue("domain"), pid); err != nil {
 			s.failDomain(c, err)
 			return
 		}
 	}
-	if setProvider {
-		if r, err = s.domains.SetProvider(c.r.Context(), t, c.r.PathValue("domain"), pid); err != nil {
+	if setRestrict {
+		if r, err = s.domains.SetRestrict(c.r.Context(), t, c.r.PathValue("domain"), restrict); err != nil {
 			s.failDomain(c, err)
 			return
 		}

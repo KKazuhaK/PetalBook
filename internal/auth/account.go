@@ -874,14 +874,12 @@ func (s *Service) PublicInfo(ctx context.Context) PublicInfo {
 }
 
 // PublicInfoFor is PublicInfo for the sign-in page of one tenant: the
-// providers its people may use (PublicProvidersFor), and local_only when it
-// has none. The mode itself is the site's (signin.mode stays site-only).
+// providers its people may use (PublicProvidersFor). The mode is the site's,
+// as the server enforces it (signin.mode stays site-only), even when the
+// tenant's list is empty: a looser hint than what is enforced would mislead.
 func (s *Service) PublicInfoFor(ctx context.Context, tenant string) PublicInfo {
 	st := s.sec(ctx)
-	info := PublicInfo{Providers: s.PublicProvidersFor(ctx, tenant), Mode: st.Login.Mode}
-	if len(info.Providers) == 0 {
-		info.Mode = ModeLocalOnly
-	}
+	info := PublicInfo{Providers: s.PublicProvidersFor(ctx, tenant), Mode: s.effectiveMode(st)}
 	info.Local, info.SSO = info.Mode != ModeSSORedirect, info.Mode != ModeLocalOnly
 	info.Passkey = s.passkeysOn(st)
 	return info

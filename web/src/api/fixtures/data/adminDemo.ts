@@ -168,7 +168,7 @@ export function seedAdminDemo(d: FixtureData) {
   d.admin.providers.push(
     makeProvider(
       {
-        slug: 'acme-entra',
+        slug: 'default-entra',
         kind: 'oidc',
         owner: DEFAULT_TENANT,
         name: 'Acme Entra ID（员工账号）',

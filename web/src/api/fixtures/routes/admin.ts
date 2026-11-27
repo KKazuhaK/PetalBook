@@ -1599,6 +1599,10 @@ export const adminRoutes: Route[] = [
       const b = c.body as ProviderInputLike
       if (b.template !== undefined || (b.kind !== 'oidc' && b.kind !== 'saml'))
         throw new Refusal(400, 'invalid', "An organisation's single sign-on is OpenID Connect or SAML.")
+      // Its slug starts with its tenant's and a hyphen (acme-okta).
+      const t = A(c).tenants.find((x) => x.id === c.params.id)
+      if (t && !(b.slug ?? '').startsWith(`${t.slug}-`))
+        throw new Refusal(400, 'invalid', "An organisation's provider slug starts with its own slug and a hyphen.")
       needDomain(c, b.enabled)
       if (A(c).providers.some((x) => x.slug === b.slug)) throw new Refusal(409, 'exists', 'That slug is taken.')
       const p = makeProvider(

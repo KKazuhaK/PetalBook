@@ -88,6 +88,9 @@ describe("an organisation's own single sign-on", () => {
     expect(kinds).toEqual(['oidc', 'saml'])
     expect(form.querySelector('#provider-class')!.closest('.hidden')).not.toBeNull()
     expect(form.textContent).not.toContain(tp.mergeVerifiedEmail)
+    // Its slug starts with the organisation's own, and the hint says so.
+    expect(form.textContent).toContain(tp.org.slugHelp)
+    expect(form.textContent).not.toContain(tp.slugHelp)
     expect(form.querySelector('[data-slot="org-trust"]')!.textContent).toBe(tp.org.trust)
     const field = (label: string) =>
       [...form.querySelectorAll('label')].find((l) => l.textContent?.startsWith(label))!.control as HTMLInputElement

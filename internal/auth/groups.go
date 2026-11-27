@@ -352,6 +352,24 @@ func (s *Service) syncGroups(ctx context.Context, rt *providerRT, userID, userna
 			}
 		}
 	}
+	// A tenant's provider passed its "no site key" check (mayUse) before
+	// this sync: it never puts the person in a group that holds a role of
+	// the site, which would hand one out behind that check.
+	if rt.row.Owner != store.ProviderSite && len(want) > 0 && s.st.CustomRoles() {
+		ids := make([]string, len(want))
+		for i, m := range want {
+			ids[i] = m.GroupID
+		}
+		site, err := store.GroupsHoldingSiteRoles(ctx, s.st.Q(), ids)
+		if err != nil {
+			s.log.Error("could not sync the groups of a sign-in", "provider", slug, "user", userID, "error", err)
+			return
+		}
+		if len(site) > 0 {
+			want = slices.DeleteFunc(want, func(m store.SyncedMembership) bool { return site[m.GroupID] })
+			s.log.Warn("a tenant's provider maps to a group that holds a role of the site: not synced", "provider", slug, "user", userID)
+		}
+	}
 	res, err := s.cfg.Spaces.SyncProviderGroups(ctx, userID, rt.row.ID, rt.row.GroupsVersion, want)
 	if err != nil {
 		s.log.Error("could not sync the groups of a sign-in", "provider", slug, "user", userID, "error", err)

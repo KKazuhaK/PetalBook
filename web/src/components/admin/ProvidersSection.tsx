@@ -712,7 +712,7 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
           <Field
             label={tp.slug}
             requiredMark
-            help={tp.slugHelp}
+            help={org ? tp.org.slugHelp : tp.slugHelp}
             value={f.slug}
             onChange={(e) => set({ slug: e.target.value })}
             autoComplete="off"

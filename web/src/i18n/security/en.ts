@@ -149,6 +149,8 @@ export const securityEn: SecurityMessages = {
       needDomain: 'Verify an email domain below first: a provider can be turned on only then.',
       trust:
         "Only addresses on the organization's verified domains are trusted (each exactly: a subdomain is verified by itself).",
+      slugHelp:
+        "Starts with the organization's own slug and a hyphen, such as acme-okta; then lower-case letters, digits and hyphens, 32 characters at most. It is in the callback addresses and cannot change.",
       domains: (list: string) => `Domains routed here: ${list}`,
     },
     empty: 'No providers yet.',

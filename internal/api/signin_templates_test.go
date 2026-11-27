@@ -239,16 +239,16 @@ func TestSlugsAreUniqueOnTheServer(t *testing.T) {
 		beta := admin.do("POST", "/api/admin/tenants", map[string]any{"slug": "beta", "name": "Beta"}).want(t, 201, "").body["id"].(string)
 		admin.do("POST", "/api/admin/providers", f.providerBody("site", nil)).want(t, 201, "")
 		admin.do("POST", "/api/admin/providers", f.providerBody("site", map[string]any{"owner": acme})).want(t, 409, "exists")
-		admin.do("POST", "/api/admin/providers", f.providerBody("idp", map[string]any{"owner": acme})).want(t, 201, "")
-		admin.do("POST", "/api/admin/providers", f.providerBody("idp", map[string]any{"owner": beta})).want(t, 409, "exists")
-		admin.do("POST", "/api/admin/providers", f.providerBody("idp", nil)).want(t, 409, "exists")
+		admin.do("POST", "/api/admin/providers", f.providerBody("acme-idp", map[string]any{"owner": acme})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("acme-idp", map[string]any{"owner": beta})).want(t, 409, "exists")
+		admin.do("POST", "/api/admin/providers", f.providerBody("acme-idp", nil)).want(t, 409, "exists")
 		// Reserved slugs stay reserved.
 		admin.do("POST", "/api/admin/providers", f.providerBody("github", nil)).want(t, 409, "slug_reserved")
 		admin.do("POST", "/api/admin/providers", f.providerBody("git", nil)).want(t, 409, "slug_reserved")
 		// The templates' slugs are the site's: an organisation cannot take one
-		// before the site adds that sign-in.
+		// before the site adds that sign-in (its slugs start with its own).
 		for _, slug := range []string{"google", "apple", "microsoft", "gitlab-com"} {
-			admin.do("POST", "/api/admin/providers", f.providerBody(slug, map[string]any{"owner": acme})).want(t, 409, "slug_reserved")
+			admin.do("POST", "/api/admin/providers", f.providerBody(slug, map[string]any{"owner": acme})).want(t, 400, "invalid")
 		}
 		admin.do("POST", "/api/admin/providers", f.providerBody("gitlab-com", nil)).want(t, 201, "")
 		// The database holds it too, across owners and against the hosts'

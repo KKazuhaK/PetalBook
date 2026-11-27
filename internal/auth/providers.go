@@ -998,6 +998,12 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			// starts off: it can be turned on only once the tenant has a
 			// verified domain (see orgSignInGate).
 			b.row.Owner, b.row.TenantID, b.row.Enabled = t.ID, t.ID, false
+			// Its slug starts with its tenant's and "-" (acme-okta): plain
+			// names (sso, okta) stay the site's to take, and no tenant
+			// squats another's.
+			if !strings.HasPrefix(*in.Slug, t.Slug+"-") || len(*in.Slug) == len(t.Slug)+1 {
+				return nil, providerInvalid("An organisation's provider slug starts with its own slug and a hyphen: %s-….", t.Slug)
+			}
 		}
 		// A site provider's id is its slug; a tenant's is generated. Slugs
 		// are unique on the whole server: they are in the callback addresses

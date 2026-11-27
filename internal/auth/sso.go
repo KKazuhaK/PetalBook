@@ -986,6 +986,18 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 		return out // the session stays as it is
 	case "login", "invite":
 		s.syncGroups(ctx, rt, user.ID, user.Username, ip, c.groups)
+		// What the sync changed is asked again before a session starts: a
+		// tenant's provider never signs in an account that holds a site key.
+		if rt.row.Owner != store.ProviderSite {
+			if err := s.mayUse(ctx, rt, *user); err != nil {
+				var se *ssoError
+				if errors.As(err, &se) && se.user != nil {
+					return s.ssoFailFor(kind, slug, e.intent, se.code, ip, se.user, clear...)
+				}
+				s.log.Error("sign-in failed", "error", err)
+				return s.ssoFail(kind, slug, e.intent, "internal", ip, clear...)
+			}
+		}
 	}
 	tok, err := s.issueSession(ctx, user.ID, false, "sso:"+slug)
 	if err != nil {

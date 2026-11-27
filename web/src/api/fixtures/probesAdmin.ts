@@ -143,7 +143,7 @@ export function adminProbes(fx: FixtureServer): Call[] {
     ...d.admin.providers[d.admin.providers.length - 1],
     id: '01SSPROBE1',
     owner: '01TNTWO001',
-    slug: 'two-sso',
+    slug: 'team-sso',
     name: 'Two SSO',
     tenant: '01TNTWO001',
     tenants: null,
@@ -319,7 +319,7 @@ export function adminProbes(fx: FixtureServer): Call[] {
     [
       'POST',
       `${T}/providers`,
-      { slug: 'two-new', kind: 'oidc', name: 'New', oidc: { issuer: 'https://idp.example', clientId: 'c' } },
+      { slug: 'team-new', kind: 'oidc', name: 'New', oidc: { issuer: 'https://idp.example', clientId: 'c' } },
     ],
     ['GET', `${T}/providers/01SSPROBE1`],
     ['PATCH', `${T}/providers/01SSPROBE1`, { name: 'Two' }],
