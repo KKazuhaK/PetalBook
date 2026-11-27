@@ -946,7 +946,7 @@ func TestASpaceThatLostItsGitHubRemoteHasItsGraceAgain(t *testing.T) {
 			t.Fatalf("with its remote: %+v %v", n, err)
 		}
 		lostAt := f.clk.Now()
-		ids, err := store.DisconnectGitHubInstallation(ctx, st.Q(), 5, store.InstallOwner{UserID: f.user.ID}, "lost", lostAt)
+		ids, err := store.DisconnectGitHubInstallation(ctx, st.Q(), 5, store.InstallOwner{UserID: f.user.ID}, "lost", "any", lostAt)
 		if err != nil || len(ids) != 1 {
 			t.Fatalf("%v %v", ids, err)
 		}

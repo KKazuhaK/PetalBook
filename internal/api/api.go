@@ -251,16 +251,24 @@ func New(opt Options) *Handler {
 	// The spaces that synced with a person's tokens lose access when the tokens
 	// go (a disconnection, an expiry): they show it at once. (The token services
 	// keep the registry they were made with.)
-	if opt.Connections != nil && opt.Spaces != nil {
+	wireLoss := func() {
+		if opt.Connections == nil || opt.Spaces == nil {
+			return
+		}
 		opt.Connections.OnAccessLost(opt.Spaces.AccessLost)
+		opt.Connections.SetRequire(func() string {
+			if r := opt.Spaces.Storage().Remotes.Require; r != nil {
+				return *r
+			}
+			return ""
+		})
 	}
+	wireLoss()
 	if _, ok := opt.Connections.Get(connections.GitID); !ok {
 		ps := opt.Connections.List()
 		opt.Connections = connections.NewRegistry(append(ps, connections.NewGit())...)
 	}
-	if opt.Spaces != nil {
-		opt.Connections.OnAccessLost(opt.Spaces.AccessLost)
-	}
+	wireLoss()
 	// The GitHub row is both a sign-in provider and where repositories are
 	// connected: sign-in reads it again when the App changes, and connecting
 	// repositories with another account never takes a person's last way in.

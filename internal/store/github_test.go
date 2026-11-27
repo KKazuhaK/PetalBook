@@ -235,7 +235,7 @@ func TestAGitHubInstallationHasOneOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Only the owner disconnects it.
-		if _, err := store.DisconnectGitHubInstallation(ctx, q, 2, b, "gone", now); !errors.Is(err, store.ErrNotFound) {
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 2, b, "gone", "any", now); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal(err)
 		}
 		// It goes with its owner: a deleted tenant, a deleted person.
@@ -305,7 +305,7 @@ func TestDisconnectingAnInstallationLosesItsSpacesAccess(t *testing.T) {
 		if err != nil || g != 1 || o != 0 {
 			t.Fatalf("grace %d overdue %d %v", g, o, err)
 		}
-		ids, err := store.DisconnectGitHubInstallation(ctx, q, 5, t1, "lost", now)
+		ids, err := store.DisconnectGitHubInstallation(ctx, q, 5, t1, "lost", "any", now)
 		if err != nil || len(ids) != 2 {
 			t.Fatalf("%v %v", ids, err)
 		}
@@ -322,7 +322,7 @@ func TestDisconnectingAnInstallationLosesItsSpacesAccess(t *testing.T) {
 		if err != nil || f.CredType != "" {
 			t.Fatalf("%+v %v", f, err)
 		}
-		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, t1, "lost", now); !errors.Is(err, store.ErrNotFound) {
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, t1, "lost", "any", now); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal(err)
 		}
 		// Connected again by its owner: the spaces have it again.
@@ -331,7 +331,7 @@ func TestDisconnectingAnInstallationLosesItsSpacesAccess(t *testing.T) {
 			t.Fatalf("%d spaces in their grace period, want 1", g)
 		}
 		// Claimed by another tenant: not the space's owner's, still lost.
-		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, t1, "lost", now); err != nil {
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, t1, "lost", "any", now); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.CreateTenant(ctx, store.Tenant{ID: "T2", Slug: "t2", Name: "T2", Created: now}); err != nil {
@@ -450,7 +450,7 @@ func TestAReclaimedInstallationShowsOnlyTheNewOwnersSpaces(t *testing.T) {
 			CredType: "connection", Provider: "github", Via: "app", InstallationID: 5, RepoID: 1}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, a, "lost by A", now); err != nil {
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, a, "lost by A", "any", now); err != nil {
 			t.Fatal(err)
 		}
 		claim(b)
@@ -462,7 +462,7 @@ func TestAReclaimedInstallationShowsOnlyTheNewOwnersSpaces(t *testing.T) {
 		if err != nil || counts[5] != 0 {
 			t.Fatalf("B counts %v %v", counts, err)
 		}
-		ids, err := store.DisconnectGitHubInstallation(ctx, q, 5, b, "lost by B", now)
+		ids, err := store.DisconnectGitHubInstallation(ctx, q, 5, b, "lost by B", "any", now)
 		if err != nil || len(ids) != 0 {
 			t.Fatalf("B's disconnect reached %v %v", ids, err)
 		}
@@ -498,7 +498,7 @@ func TestDisconnectingMarksASpaceOnlyWhenItsOwnRepositoryWasOnIt(t *testing.T) {
 			CredType: "connection", Provider: "github", Via: "app", InstallationID: 5, RepoID: 9}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, store.InstallOwner{TenantID: "T1"}, "lost", now); err != nil {
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, store.InstallOwner{TenantID: "T1"}, "lost", "any", now); err != nil {
 			t.Fatal(err)
 		}
 		if n := count(t, st, `SELECT COUNT(*) FROM spaces WHERE id = 'SX' AND remote_state = 'error'`); n != 0 {

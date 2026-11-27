@@ -58,6 +58,7 @@ import { Input } from '@/components/ui/input'
 import { checkFolderPath } from '@/lib/folders'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import { spaceUrls } from '@/lib/urls'
+import { settingsPath } from '@/components/settings/sections'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/github'
 
@@ -363,6 +364,12 @@ function ErrorNotice({ remote }: { remote: Remote }) {
           <Button type="button" size="sm" onClick={() => void reconnect()} disabled={busy}>
             {busy ? <Spinner /> : <RefreshCw aria-hidden="true" />}
             {tg.sync.reconnect}
+          </Button>
+        )}
+        {code === 'access_lost' && mine && (
+          <Button size="sm" render={<Link to={settingsPath('connections')} />}>
+            <RefreshCw aria-hidden="true" />
+            {tg.sync.accountLinks}
           </Button>
         )}
         {code === 'installation_gone' && github.data?.app && (

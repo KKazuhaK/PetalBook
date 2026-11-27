@@ -721,6 +721,17 @@ func (s *server) accountLinkStart(c *call) {
 	}
 }
 
+// requirement is the site's requirement of a remote now ("" when none).
+func (s *server) requirement() string {
+	if s.opt.Spaces == nil {
+		return ""
+	}
+	if r := s.opt.Spaces.Storage().Remotes.Require; r != nil {
+		return *r
+	}
+	return ""
+}
+
 // accessLost tells the spaces manager that these spaces lost the access their
 // remote synced with (what a provider known to the registry does itself).
 func (s *server) accessLost(ids []string) {
@@ -739,7 +750,7 @@ func (s *server) disconnectRepos(c *call, l *store.UserLink) error {
 			return err
 		}
 	} else {
-		ids, err := store.DeleteRepoLink(ctx, s.opt.Store.Q(), l.ProviderID, l.UserID, s.now())
+		ids, err := store.DeleteRepoLink(ctx, s.opt.Store.Q(), l.ProviderID, l.UserID, s.requirement(), s.now())
 		if err != nil {
 			return err
 		}

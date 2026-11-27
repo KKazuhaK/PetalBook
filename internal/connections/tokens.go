@@ -248,7 +248,7 @@ func (t *Tokens) Put(ctx context.Context, a Account, p Pair) error {
 // database and the cache, and nothing renews them. The remotes that synced with
 // them lose access, in the same transaction.
 func (t *Tokens) Remove(ctx context.Context, providerID, userID string) error {
-	ids, err := store.DeleteRepoLink(ctx, t.opt.Store.Q(), providerID, userID, t.opt.Now())
+	ids, err := store.DeleteRepoLink(ctx, t.opt.Store.Q(), providerID, userID, t.Require(), t.opt.Now())
 	if err != nil {
 		return err
 	}
@@ -256,6 +256,13 @@ func (t *Tokens) Remove(ctx context.Context, providerID, userID string) error {
 	t.opt.Registry.AccessLost(ids) // the spaces that synced with the tokens show it at once
 	return nil
 }
+
+// Require is the site's requirement of a remote now (see Registry.SetRequire).
+func (t *Tokens) Require() string { return t.opt.Registry.Require() }
+
+// AccessLost tells the spaces manager that these spaces lost the access their
+// remote synced with (see Registry.OnAccessLost).
+func (t *Tokens) AccessLost(spaceIDs []string) { t.opt.Registry.AccessLost(spaceIDs) }
 
 // Forget drops what the cache holds of a person's link at a provider (the link
 // was removed with its row elsewhere: a sign-in unlinked with its tokens).
@@ -556,8 +563,9 @@ func (t *Tokens) expire(ctx context.Context, l *store.RepoLink) expireResult {
 	now := t.opt.Now()
 	ended := false
 	var lost []string
+	require := t.Require() // read before the transaction
 	err := store.Atomically(ctx, t.opt.Store.Q(), func(q store.Q) error {
-		ok, ids, err := store.ExpireLink(ctx, q, l.ID, l.Version, now)
+		ok, ids, err := store.ExpireLink(ctx, q, l.ID, l.Version, require, now)
 		if err != nil || !ok {
 			return err
 		}

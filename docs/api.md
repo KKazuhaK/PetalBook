@@ -2267,7 +2267,11 @@ administrator who installed it; any of its administrators manages it).
   `deleted`) and when a person disconnects their own installation. A space
   that is connected again and disconnected again without a successful sync in
   between keeps its first loss time (no endless grace by toggling); a loss after
-  a successful sync starts a grace of its own. Connecting the same
+  a successful sync starts a grace of its own. A loss starts a grace only
+  when the requirement accepts the lost remote (`require` is `any` or the
+  remote's provider): under `require: "gitlab"`, losing a GitHub remote
+  leaves a space that was overdue overdue, so a remote that does not count
+  cannot be used to restart the grace. Connecting the same
   installation again by the same owner restores the spaces; for an organisation that needs the App uninstalled on GitHub
   and installed again from here, since who installed it proved one claim (the
   record is used up when the claim succeeds). The spaces listed, counted and marked are the owner's only: a
@@ -2282,9 +2286,9 @@ administrator who installed it; any of its administrators manages it).
   remote of theirs that synced with them at that provider shows
   `state: "error"` and `errorCode: "access_lost"` (the rows and the notes stay),
   and under a storage requirement the space counts as having no remote and is
-  in the grace again from that moment, by the rule above (never cleared when
-  they connect again; kept when there was no successful sync since the last
-  loss). Spaces that sync through an installation, and other people's remotes,
+  in the grace again from that moment, by the rule above (only for a remote the
+  requirement accepts; never cleared when they connect again; kept when there
+  was no successful sync since the last loss). Spaces that sync through an installation, and other people's remotes,
   are not affected. The person connecting again restores the remotes with the
   next sync (open spaces fetch at once).
 - Another owner's installation is as good as not there: `404 not_found`.

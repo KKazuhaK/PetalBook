@@ -180,7 +180,7 @@ func ReplaceLinkTokens(ctx context.Context, q Q, id string, from int64, accessEn
 // true. In the same write the remotes that sync with the tokens lose access
 // (LoseUserRemotes); the spaces it names are for the caller to tell the
 // spaces manager once the transaction has committed.
-func ExpireLink(ctx context.Context, q Q, id string, from int64, now time.Time) (bool, []string, error) {
+func ExpireLink(ctx context.Context, q Q, id string, from int64, require string, now time.Time) (bool, []string, error) {
 	var ok bool
 	var ids []string
 	err := atomically(ctx, q, func(q Q) error {
@@ -195,7 +195,7 @@ func ExpireLink(ctx context.Context, q Q, id string, from int64, now time.Time) 
 			return err
 		}
 		ok = true
-		ids, err = LoseUserRemotes(ctx, q, provider, user, now)
+		ids, err = LoseUserRemotes(ctx, q, provider, user, require, now)
 		return err
 	})
 	return ok && err == nil, ids, err
@@ -209,7 +209,7 @@ func ExpireLink(ctx context.Context, q Q, id string, from int64, now time.Time) 
 // told, in the same transaction, and the remotes that synced with their tokens
 // lose access with them (LoseUserRemotes). It returns how many it ended and
 // the spaces whose remotes lost access.
-func ExpireProviderLinks(ctx context.Context, q Q, providerID, name string, now time.Time) (int64, []string, error) {
+func ExpireProviderLinks(ctx context.Context, q Q, providerID, name, require string, now time.Time) (int64, []string, error) {
 	var n int64
 	var spaces []string
 	err := atomically(ctx, q, func(q Q) error {
@@ -238,7 +238,7 @@ func ExpireProviderLinks(ctx context.Context, q Q, providerID, name string, now 
 				map[string]string{"provider": providerID, "name": name, "login": e.login}, now); err != nil {
 				return err
 			}
-			ids, err := LoseUserRemotes(ctx, q, providerID, e.user, now)
+			ids, err := LoseUserRemotes(ctx, q, providerID, e.user, require, now)
 			if err != nil {
 				return err
 			}
@@ -277,7 +277,7 @@ func ReleaseLinkRenewal(ctx context.Context, q Q, id string, until time.Time) er
 // tokens, the remotes that sync with them lose access in the same transaction
 // (LoseUserRemotes); it returns the spaces they are in, for the caller to tell
 // the spaces manager.
-func DeleteRepoLink(ctx context.Context, q Q, providerID, userID string, now time.Time) ([]string, error) {
+func DeleteRepoLink(ctx context.Context, q Q, providerID, userID, require string, now time.Time) ([]string, error) {
 	var ids []string
 	err := atomically(ctx, q, func(q Q) error {
 		had, err := holdsTokensOf(ctx, q, `provider_id = ? AND user_id = ?`, providerID, userID)
@@ -292,7 +292,7 @@ func DeleteRepoLink(ctx context.Context, q Q, providerID, userID string, now tim
 			return err
 		}
 		if len(had) > 0 {
-			if ids, err = LoseUserRemotes(ctx, q, providerID, userID, now); err != nil {
+			if ids, err = LoseUserRemotes(ctx, q, providerID, userID, require, now); err != nil {
 				return err
 			}
 		}
@@ -324,7 +324,7 @@ func holdsTokensOf(ctx context.Context, q Q, cond string, args ...any) ([]string
 // being deleted; the rows would go with the person by cascade, this settles
 // the count of connected people first). The remotes that synced with their
 // tokens lose access, as in DeleteRepoLink; it returns the spaces they are in.
-func DeleteUserRepoLinks(ctx context.Context, q Q, userID string, now time.Time) ([]string, error) {
+func DeleteUserRepoLinks(ctx context.Context, q Q, userID, require string, now time.Time) ([]string, error) {
 	var ids []string
 	err := atomically(ctx, q, func(q Q) error {
 		had, err := holdsTokensOf(ctx, q, `user_id = ?`, userID)
@@ -339,7 +339,7 @@ func DeleteUserRepoLinks(ctx context.Context, q Q, userID string, now time.Time)
 			return err
 		}
 		for _, p := range had {
-			more, err := LoseUserRemotes(ctx, q, p, userID, now)
+			more, err := LoseUserRemotes(ctx, q, p, userID, require, now)
 			if err != nil {
 				return err
 			}

@@ -230,6 +230,14 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 	return nil
 }
 
+// requirementOf is the site's requirement of a remote now.
+func (s *Service) requirement() string {
+	if r := s.cfg.Spaces.Storage().Remotes.Require; r != nil {
+		return *r
+	}
+	return ""
+}
+
 // UnlinkAccount removes one of the user's linked accounts unless that would
 // leave no way to sign in (last_method).
 func (s *Service) UnlinkAccount(ctx context.Context, userID, linkID string) error {
@@ -242,6 +250,7 @@ func (s *Service) unlinkAccount(ctx context.Context, userID, linkID, actor, by, 
 	s.credMu.Lock()
 	defer s.credMu.Unlock()
 	var lost []string
+	require := s.requirement() // read before the transaction
 	err := s.st.Tx(ctx, func(q store.Q) error {
 		ids, err := store.ListLinks(ctx, q, userID)
 		if err != nil {
@@ -275,7 +284,7 @@ func (s *Service) unlinkAccount(ctx context.Context, userID, linkID, actor, by, 
 		}
 		// The tokens it held go with it: the remotes that synced with them lose
 		// access in this transaction.
-		lost, err = store.DeleteLink(ctx, q, linkID, userID, s.now())
+		lost, err = store.DeleteLink(ctx, q, linkID, userID, require, s.now())
 		return err
 	})
 	if err == nil {

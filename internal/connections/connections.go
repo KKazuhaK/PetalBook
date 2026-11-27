@@ -400,6 +400,7 @@ type Registry struct {
 	creator Creator
 	changed func(provider, userID string)
 	lost    func(spaceIDs []string)
+	require func() string
 }
 
 // NewRegistry returns a registry of the providers. Ids must be distinct.
@@ -563,6 +564,29 @@ func (r *Registry) OnAccessLost(f func(spaceIDs []string)) {
 	r.mu.Lock()
 	r.lost = f
 	r.mu.Unlock()
+}
+
+// SetRequire registers where the site's storage requirement of a remote is read
+// from ("", "any" or a provider's id): a loss of access starts a new grace only
+// for a remote the requirement accepts.
+func (r *Registry) SetRequire(f func() string) {
+	r.mu.Lock()
+	r.require = f
+	r.mu.Unlock()
+}
+
+// Require is the site's requirement of a remote now ("" when none is set).
+func (r *Registry) Require() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.RLock()
+	f := r.require
+	r.mu.RUnlock()
+	if f == nil {
+		return ""
+	}
+	return f()
 }
 
 // AccessLost tells what OnAccessLost registered (nothing, on a nil registry or

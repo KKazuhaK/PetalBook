@@ -55,21 +55,21 @@ func TestASpaceThatLostItsPersonsTokensHasItsGraceAgain(t *testing.T) {
 		lose   func(t *testing.T, st *store.Store, link store.RepoLink, now time.Time) []string
 	}{
 		{"disconnect", false, func(t *testing.T, st *store.Store, l store.RepoLink, now time.Time) []string {
-			ids, err := store.DeleteRepoLink(ctx, st.Q(), l.ProviderID, l.UserID, now)
+			ids, err := store.DeleteRepoLink(ctx, st.Q(), l.ProviderID, l.UserID, "any", now)
 			if err != nil {
 				t.Fatal(err)
 			}
 			return ids
 		}},
 		{"unlink, by the person or an administrator", true, func(t *testing.T, st *store.Store, l store.RepoLink, now time.Time) []string {
-			ids, err := store.DeleteLink(ctx, st.Q(), l.ID, l.UserID, now)
+			ids, err := store.DeleteLink(ctx, st.Q(), l.ID, l.UserID, "any", now)
 			if err != nil {
 				t.Fatal(err)
 			}
 			return ids
 		}},
 		{"the person is deleted", false, func(t *testing.T, st *store.Store, l store.RepoLink, now time.Time) []string {
-			ids, err := store.DeleteUserRepoLinks(ctx, st.Q(), l.UserID, now)
+			ids, err := store.DeleteUserRepoLinks(ctx, st.Q(), l.UserID, "any", now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,7 +80,7 @@ func TestASpaceThatLostItsPersonsTokensHasItsGraceAgain(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ok, ids, err := store.ExpireLink(ctx, st.Q(), got.ID, got.Version, now)
+			ok, ids, err := store.ExpireLink(ctx, st.Q(), got.ID, got.Version, "any", now)
 			if err != nil || !ok {
 				t.Fatalf("%v %v", ok, err)
 			}
@@ -191,7 +191,7 @@ func TestAPersonConnectingAgainRestoresTheirSpaces(t *testing.T) {
 		f.m.PolicyChanged()
 		f.clk.Advance(90 * 24 * time.Hour)
 		lostAt := f.clk.Now()
-		ids, err := store.DeleteRepoLink(ctx, st.Q(), ulProvider, f.user.ID, lostAt)
+		ids, err := store.DeleteRepoLink(ctx, st.Q(), ulProvider, f.user.ID, "any", lostAt)
 		if err != nil || len(ids) != 1 {
 			t.Fatalf("%v %v", ids, err)
 		}
@@ -222,7 +222,7 @@ func TestAPersonConnectingAgainRestoresTheirSpaces(t *testing.T) {
 		}
 		f.clk.Advance(24 * time.Hour)
 		again := f.clk.Now()
-		if _, err := store.DeleteRepoLink(ctx, st.Q(), ulProvider, f.user.ID, again); err != nil {
+		if _, err := store.DeleteRepoLink(ctx, st.Q(), ulProvider, f.user.ID, "any", again); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.Q().QueryRow(ctx, `SELECT remote_lost_at FROM spaces WHERE id = ?`, in.ID).Scan(&lost); err != nil || lost != again.UnixMilli() {
@@ -264,7 +264,7 @@ func TestARemoteThroughAnInstallationIsNotAffectedByTheTokensGoing(t *testing.T)
 		if _, err := store.PutRepoLink(ctx, st.Q(), store.RepoLink{ID: "LG", ProviderID: store.ProviderGitHub, UserID: f.user.ID, Subject: "g1", Login: "me", AccessEnc: "a", State: store.LinkOK, Connected: now, Updated: now}); err != nil {
 			t.Fatal(err)
 		}
-		ids, err := store.DeleteRepoLink(ctx, st.Q(), store.ProviderGitHub, f.user.ID, f.clk.Now())
+		ids, err := store.DeleteRepoLink(ctx, st.Q(), store.ProviderGitHub, f.user.ID, "any", f.clk.Now())
 		if err != nil || len(ids) != 0 {
 			t.Fatalf("%v %v", ids, err)
 		}

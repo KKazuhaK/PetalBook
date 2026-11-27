@@ -103,7 +103,7 @@ func ListLinks(ctx context.Context, q Q, userID string) ([]Link, error) {
 // theirs or does not exist. Its tokens, if it held any, go with it, and the
 // remotes that synced with them lose access (LoseUserRemotes); it returns the
 // spaces they are in, for the caller to tell the spaces manager.
-func DeleteLink(ctx context.Context, q Q, id, userID string, now time.Time) ([]string, error) {
+func DeleteLink(ctx context.Context, q Q, id, userID, require string, now time.Time) ([]string, error) {
 	var ids []string
 	err := atomically(ctx, q, func(q Q) error {
 		had, err := holdsTokensOf(ctx, q, `id = ? AND user_id = ? AND signin = 1`, id, userID)
@@ -115,7 +115,7 @@ func DeleteLink(ctx context.Context, q Q, id, userID string, now time.Time) ([]s
 			return err
 		}
 		for _, p := range had {
-			if ids, err = LoseUserRemotes(ctx, q, p, userID, now); err != nil {
+			if ids, err = LoseUserRemotes(ctx, q, p, userID, require, now); err != nil {
 				return err
 			}
 		}
