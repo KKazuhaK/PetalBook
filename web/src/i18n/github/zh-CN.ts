@@ -233,7 +233,7 @@ export const githubZhCN: GitHubMessages = {
     disconnectBody:
       '它仍装在 GitHub 上（要卸载请到 GitHub 上操作）。下面这些空间会失去 GitHub 访问：笔记都会保留，但会停止同步，直到重新连接 GitHub，或者把它们连到别的仓库。之后要重新连接组织的安装，请先在 GitHub 上卸载 App，再从这里重新安装。',
     disconnectGrace:
-      '如果这台服务器要求每个空间都同步到仓库，它们会被当作没有仓库：期限（从空间创建或这项要求开始时算起，取较晚的那个）已经过了的空间会立刻变成只读；其余的保留剩下的期限。',
+      '如果这台服务器要求每个空间都同步到仓库，它们会被当作没有仓库，每个空间都从你断开的这一刻起获得惯常的期限来选择新的仓库，即使它原来的期限已经用完。',
     disconnectSpaces: (n: number) => `${n} 个空间通过它同步：`,
     disconnectMore: (n: number) => `还有 ${n} 个`,
     disconnectNone: '没有空间通过它同步。',

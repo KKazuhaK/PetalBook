@@ -2258,12 +2258,15 @@ administrator who installed it; any of its administrators manages it).
   and `errorCode: "access_lost"` at once, and a later sync fails the same way.
   Under a storage requirement of a remote, such a space counts as having none
   and is in the requirement's grace like any space without one (`InGrace`, then
-  `Overdue`; exemptions of spaces and people as always); no other grace period
-  applies: the grace counts from the space's creation or from when the requirement
-  began, whichever is later, so a space whose grace
-  has already run out is `Overdue` (read only) at once, and the others keep what
-  is left of theirs. Connecting the same installation again by the same owner
-  restores them; for an organisation that needs the App uninstalled on GitHub
+  `Overdue`; exemptions of spaces and people as always). The grace starts again
+  from the disconnect: its deadline is the disconnect plus `graceDays` (the
+  space's `remote.deadline` shows it), even for a space that was past its
+  deadline before, so that it has time to get a new repository; the later of
+  its creation, the requirement's `since` and the disconnect counts. The same
+  holds when GitHub reports the installation uninstalled (the webhook's
+  `deleted`) and when a person disconnects their own installation. It is
+  cleared when the space has a remote it can use again (a new repository, or
+  the same installation connected again by the same owner, which restores them); for an organisation that needs the App uninstalled on GitHub
   and installed again from here, since who installed it proved one claim (the
   record is used up when the claim succeeds). The spaces listed, counted and marked are the owner's only: a
   space of an earlier owner that still names the installation is not.
@@ -2852,7 +2855,8 @@ Exempt users' spaces and exempt spaces (below) are left out.
   meets the requirement (connect the provider, then a private repository
   `petalbook-<username>` in their account).
 - **Existing spaces**, with `scope: "all"`: a space that does not meet the
-  requirement gets the deadline `since + graceDays`. Until then nothing
+  requirement gets the deadline `since + graceDays` (a space that lost its
+  GitHub remote, below, the later of that and the loss plus `graceDays`). Until then nothing
   changes but the notice: `storage.remote` in the space
   (`{"required": "github", "deadline": "…", "overdue": false}`), shown to every
   member, with the way to connect offered to those with `manage`.

@@ -263,25 +263,45 @@ func deadlineCond(p RemotePolicy, which string) (string, []any) {
 	exempt := `s.exempt = 0 AND NOT EXISTS (SELECT 1 FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0)`
 	since, now, grace := ms(p.Since), ms(p.Now), p.Grace.Milliseconds()
 	// A space made since the requirement began is due at created + grace; an
-	// older one (when the requirement is for every space) at since + grace.
+	// older one (when the requirement is for every space) at since + grace; and
+	// one that lost its GitHub remote at the later of that and the loss + grace
+	// (remote_lost_at; the partial index spaces_lost holds only those, and the
+	// literal "<> 0" is what lets the planner use it).
 	var parts []string
 	var pargs []any
 	if which == "overdue" {
+		// Past the deadline: past the one from the start, and past the loss's.
 		parts, pargs = append(parts, `(s.created >= ? AND s.created < ?)`), append(pargs, since, now-grace)
 		if p.All && since+grace < now {
 			parts, pargs = append(parts, `s.created < ?`), append(pargs, since)
 		}
-	} else {
-		from := now - grace
-		if since > from {
-			from = since
-		}
-		parts, pargs = append(parts, `s.created >= ?`), append(pargs, from)
-		if p.All && since+grace >= now {
-			parts, pargs = append(parts, `s.created < ?`), append(pargs, since)
-		}
+		return lacks + ` AND ` + exempt + ` AND (` + strings.Join(parts, " OR ") + `) AND s.remote_lost_at < ?`, append(append(args, pargs...), now-grace)
 	}
-	return lacks + ` AND ` + exempt + ` AND (` + strings.Join(parts, " OR ") + `)`, append(args, pargs...)
+	from := now - grace
+	if since > from {
+		from = since
+	}
+	parts, pargs = append(parts, `s.created >= ?`), append(pargs, from)
+	if p.All && since+grace >= now {
+		parts, pargs = append(parts, `s.created < ?`), append(pargs, since)
+	}
+	// Still in grace through the loss: covered by the requirement, and lost
+	// since now - grace.
+	cover, cargs := `s.created >= ?`, []any{since}
+	if p.All {
+		cover, cargs = `1 = 1`, nil
+	}
+	parts, pargs = append(parts, `(s.remote_lost_at <> 0 AND s.remote_lost_at >= ? AND `+cover+`)`), append(append(pargs, now-grace), cargs...)
+	// Each term is a range of one index (created; spaces_lost, which holds only
+	// the spaces that lost a remote, and whose literal "<> 0" lets the planner
+	// use it). An OR of them in the one WHERE makes SQLite walk the whole created
+	// index, so the terms are put to the database as one set of ids, the union
+	// of the ranges, and the spaces are looked up in it by their key.
+	sub := make([]string, len(parts))
+	for k, part := range parts {
+		sub[k] = `SELECT d.id FROM spaces d WHERE ` + strings.ReplaceAll(part, "s.", "d.")
+	}
+	return lacks + ` AND ` + exempt + ` AND s.id IN (` + strings.Join(sub, " UNION ALL ") + `)`, append(args, pargs...)
 }
 
 // ListAllSpaces returns one page of the spaces in the scope: the first owner and
@@ -428,9 +448,9 @@ func sortMissing(sort string, r AdminSpace) bool {
 func queryAdminSpaces(ctx context.Context, q Q, where, orderBy string, args []any) (out []AdminSpace, err error) {
 	rows, err := q.Query(ctx, `SELECT p.id, p.name, p.personal_of, p.inbox, p.created, p.disabled, p.size_bytes,
 			(SELECT sm.size_at FROM space_measure sm WHERE sm.space_id = p.id), p.members, p.tenant_id, u.id, u.username, u.name,
-			p.last_used, p.cache_state, p.pinned, p.exempt, p.index_bytes, p.cred_type, p.provider, p.owner_exempt, p.has_assets, p.location, p.remote_state, p.name_key
+			p.last_used, p.cache_state, p.pinned, p.exempt, p.index_bytes, p.cred_type, p.provider, p.owner_exempt, p.has_assets, p.location, p.remote_state, p.name_key, p.remote_lost_at
 		FROM (SELECT s.id, s.name, s.name_key, s.personal_of, s.inbox, s.created, s.disabled, s.size_bytes, s.tenant_id,
-			s.last_used, s.cache_state, s.pinned, s.exempt, s.index_bytes, s.location, s.remote_state,
+			s.last_used, s.cache_state, s.pinned, s.exempt, s.index_bytes, s.location, s.remote_state, s.remote_lost_at,
 			COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND `+usableRemote+`), '') AS cred_type,
 			COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND `+usableRemote+`), '') AS provider,
 			(SELECT COUNT(*) FROM remotes ar WHERE ar.space_id = s.id AND ar.role = 'assets' AND ar.url <> '') AS has_assets,
@@ -449,9 +469,9 @@ func queryAdminSpaces(ctx context.Context, q Q, where, orderBy string, args []an
 		var personal, ownerID, ownerUser, ownerName sql.NullString
 		var created, disabled int64
 		var size, sizeAt sql.NullInt64
-		var used, pinned, exempt, ownerExempt, hasAssets int64
+		var used, pinned, exempt, ownerExempt, hasAssets, lost int64
 		if err := rows.Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created, &disabled, &size, &sizeAt, &s.Members, &s.TenantID, &ownerID, &ownerUser, &ownerName,
-			&used, &s.Storage.Cache, &pinned, &exempt, &s.Storage.IndexBytes, &s.CredType, &s.Provider, &ownerExempt, &hasAssets, &s.Location, &s.RemoteState, &s.NameKey); err != nil {
+			&used, &s.Storage.Cache, &pinned, &exempt, &s.Storage.IndexBytes, &s.CredType, &s.Provider, &ownerExempt, &hasAssets, &s.Location, &s.RemoteState, &s.NameKey, &lost); err != nil {
 			return nil, err
 		}
 		if used > 0 {
@@ -459,6 +479,9 @@ func queryAdminSpaces(ctx context.Context, q Q, where, orderBy string, args []an
 		}
 		s.Storage.Pinned, s.Storage.Exempt, s.OwnerExempt = pinned != 0, exempt != 0, ownerExempt != 0
 		s.Storage.AssetsRepo = hasAssets != 0
+		if lost > 0 {
+			s.RemoteLostAt = fromMS(lost)
+		}
 		s.Personal, s.Created, s.Disabled = personal.Valid, fromMS(created), disabled != 0
 		// A space whose first measurement failed has a size_at (it was put at the
 		// back of the queue, see SkipSpaceSize) but no size: it is reported as
@@ -726,8 +749,7 @@ func (s *Store) SettleDeadlines(ctx context.Context, p RemotePolicy) (changed in
 			lacks, largs = `s.remote_via <> ?`, []any{p.Require}
 		}
 		exempt := `s.exempt = 0 AND NOT EXISTS (SELECT 1 FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0)`
-		dl := `(CASE WHEN s.created >= CAST(? AS BIGINT) THEN s.created WHEN CAST(? AS BIGINT) <> 0 THEN CAST(? AS BIGINT) END + CAST(? AS BIGINT))`
-		dargs := []any{ms(p.Since), b2i(p.All), ms(p.Since), p.Grace.Milliseconds()}
+		dl, dargs := deadlineSQL(p)
 		// The two counts of each person and, with usage_user '', of each tenant.
 		query := `SELECT s.usage_user, s.tenant_id,
 			COALESCE(SUM(CASE WHEN ` + dl + ` >= CAST(? AS BIGINT) THEN 1 ELSE 0 END), 0),
