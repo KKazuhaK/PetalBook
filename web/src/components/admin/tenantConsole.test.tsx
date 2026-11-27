@@ -2,11 +2,12 @@
 import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
+import type { FixtureData } from '@/api/fixtures/data/model'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tc } from '@/i18n/console'
 import { tt } from '@/i18n/tenants'
 import { click, installDomShims, locationText, mount, settle, type FxMounted } from '@/testing/harness'
-import { addTenant, tenancyOn } from '@/testing/adminScene'
+import { addPerson, addTenant, ownRule, tenancyOn } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
 // A tenant's page for the site (/admin/tenants/<id>/<tab>) and the console in its scope (/admin/t/<id>/...): the scope
@@ -32,7 +33,8 @@ const routes = (
 )
 
 let tenant = ''
-async function open(path: (id: string) => string) {
+let person = ''
+async function open(path: (id: string) => string, scene?: (d: FixtureData, tenantId: string) => void) {
   await m?.unmount()
   m = await mount(routes, {
     signIn: true,
@@ -43,6 +45,8 @@ async function open(path: (id: string) => string) {
         tenancyOn(d)
         d.features['features.auditDownload'] = true
         tenant = addTenant(d, 'acme', 'Acme').id
+        person = addPerson(d, 'bob').id
+        scene?.(d, tenant)
       },
     },
     entries: () => [path(tenant)],
@@ -171,6 +175,25 @@ describe("the console in a tenant's scope", () => {
     await settle(() => sidebarLinks().length > 0, 'the sidebar')
     expect(document.querySelector('[data-slot="scope-banner"]')).toBeNull()
     expect(sidebarLinks()).toContain(tc.sections.tenants)
+  })
+
+  it("decides the audit log from the scoped tenant's features, not the administrator's own tenant's", async () => {
+    const off = (d: FixtureData, id: string) =>
+      ownRule(d, id, 'features.tenantAudit', { value: false, lower: { mode: 'lock' }, siteLocked: true })
+    const personTabs = () =>
+      [...document.querySelectorAll(`nav[aria-label="${tc.person.tabsLabel}"] a`)].map((a) => a.textContent?.trim())
+    // The site withholds it from this tenant: neither the section nor a person's audit tab is there in its scope.
+    await open((id) => `/admin/t/${id}/users/all`, off)
+    await settle(() => sidebarLinks().includes(tc.sections.users), 'the sidebar')
+    await settle(() => !sidebarLinks().includes(tc.sections.audit), 'no audit section in the scope')
+    await open(() => `/admin/t/${tenant}/user/${person}`, off)
+    await settle(() => personTabs().length > 0, 'the person tabs')
+    expect(personTabs()).not.toContain(tc.person.tabs.audit)
+    // The tenant has it: both are there. The whole site's console has them whatever a tenant has.
+    await open(() => `/admin/t/${tenant}/user/${person}`)
+    await settle(() => personTabs().includes(tc.person.tabs.audit), 'the audit tab')
+    await open(() => '/admin/users/all', off)
+    await settle(() => sidebarLinks().includes(tc.sections.audit), 'the site has the audit section')
   })
 
   it('does not open a site page inside a tenant scope', async () => {

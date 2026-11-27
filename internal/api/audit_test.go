@@ -36,7 +36,7 @@ func TestAuditFiltersCategoriesAndVisibility(t *testing.T) {
 		a.auth.Audit(auth.AuditEvent{Kind: "space_deleted", Actor: rootID, Tenant: f.tenB})
 
 		b := auditCounts(t, f.admB, "")
-		if b["tenant_changed"] != 1 || b["tenant_created"] != 1 || b["setting_changed"] != 1 || b["provider_created"] != 0 {
+		if b["tenant_changed"] != 1 || b["tenant_created"] != 1 || b["setting_changed"] != 2 || b["provider_created"] != 0 {
 			t.Fatalf("tenant B's administrator sees %v", b)
 		}
 		if all := auditCounts(t, f.root, ""); all["provider_created"] != 1 {
@@ -59,7 +59,7 @@ func TestAuditFiltersCategoriesAndVisibility(t *testing.T) {
 		}
 		// The fixture's own administration records its capacity too (the site
 		// administrator's setting and new tenant; B's administrator's invites).
-		if got := auditCounts(t, f.root, "&capacity=site_admin"); got["setting_changed"] != 3 || got["tenant_created"] != 1 || got["invites_batch"] != 0 || got["tenant_changed"] != 0 {
+		if got := auditCounts(t, f.root, "&capacity=site_admin"); got["setting_changed"] != 4 || got["tenant_created"] != 1 || got["invites_batch"] != 0 || got["tenant_changed"] != 0 {
 			t.Fatalf("capacity: %v", got)
 		}
 		for _, it := range f.root.do("GET", "/api/admin/audit?limit=200&capacity=tenant_admin", nil).want(t, 200, "").body["items"].([]any) {

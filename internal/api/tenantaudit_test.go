@@ -19,6 +19,20 @@ func auditTenant(t *testing.T, a *acc, root *client, slug string) (string, *clie
 	return r.body["id"].(string), c
 }
 
+// stampRows are the setting_changed rows of a tenant about features.tenantAudit, as the site reads them.
+func stampRows(t *testing.T, a *acc, root *client, tenant string) []map[string]any {
+	t.Helper()
+	a.auth.FlushAudit(ctxBG)
+	var out []map[string]any
+	for _, it := range root.do("GET", "/api/admin/audit?kind=setting_changed&limit=200&tenant="+tenant, nil).want(t, 200, "").body["items"].([]any) {
+		row := it.(map[string]any)
+		if d, _ := row["detail"].(map[string]any); d["key"] == "features.tenantAudit" {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 // tenantAuditOn is the tenant's own view of the switch: what its feature map
 // says, and whether the audit routes answer.
 func tenantAuditOn(t *testing.T, c *client) bool {
@@ -40,6 +54,11 @@ func TestANewTenantGetsTheSitesAuditDefaultAndNothingChangesLater(t *testing.T) 
 		}
 		// Off: the administrator of a new tenant has none, and no tab.
 		idA, admA := auditTenant(t, a, root, "alpha")
+		// The rule made with the tenant is in the audit log, as a site administrator's change of that tenant.
+		if rows := stampRows(t, a, root, idA); len(rows) != 1 || rows[0]["capacity"] != "site_admin" || rows[0]["actor"] == nil ||
+			rows[0]["detail"].(map[string]any)["layer"] != "tenant" || rows[0]["detail"].(map[string]any)["source"] != "manual" {
+			t.Fatalf("the audit rows of the stamped rule: %v", rows)
+		}
 		admA.do("GET", "/api/admin/audit", nil).want(t, 403, "feature_off")
 		admA.do("GET", "/api/admin/audit/kinds", nil).want(t, 403, "feature_off")
 		if tenantAuditOn(t, admA) {
@@ -134,6 +153,10 @@ func TestAnOrganisationAPersonRegistersGetsTheAuditDefaultToo(t *testing.T) {
 		anon.do("POST", "/api/register/confirm", map[string]any{"token": srv.Wait(1)[0].Token(t)}).want(t, 201, "")
 		if tenantAuditOn(t, anon) {
 			t.Fatal("an organisation made while the default was off has the audit")
+		}
+		id := root.do("GET", "/api/admin/tenants?origin=self", nil).want(t, 200, "").body["items"].([]any)[0].(map[string]any)["id"].(string)
+		if rows := stampRows(t, a, root, id); len(rows) != 1 || rows[0]["capacity"] != nil && rows[0]["capacity"] != "" {
+			t.Fatalf("the audit rows of the stamped rule: %v", rows)
 		}
 		root.putSetting("tenants.newAuditDefault", true).want(t, 200, "")
 		other := a.newClient("")

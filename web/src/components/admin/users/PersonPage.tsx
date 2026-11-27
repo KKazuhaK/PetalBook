@@ -25,7 +25,7 @@ import { PersonSecurity } from './PersonSecurity'
 import { PersonSessions } from './PersonSessions'
 import { PersonSpaces } from './PersonSpaces'
 import { PersonUsage } from './PersonUsage'
-import { useFeature } from '@/lib/features'
+import { useConsoleFeature } from '../useConsoleFeature'
 import { useUserChange } from './useUserChange'
 import { ViewAsDialog } from './ViewAsDialog'
 
@@ -43,9 +43,9 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
   const session = useSession()
   const me = session.data?.user
   const site = useAcrossSite()
-  // The log is a tenant administrator's only while the site gives it (features.tenantAudit).
-  const auditFeature = useFeature('features.tenantAudit')
-  const auditOff = auditFeature === false && !site
+  // The log is the console's tenant's only while the site gives it (features.tenantAudit); the whole site's console
+  // always has it.
+  const auditOff = useConsoleFeature('features.tenantAudit') === false && !site
   const row = useUserRow(id)
   const { change, busy, error, messageRef } = useUserChange()
   const [deleting, setDeleting] = useState(false)

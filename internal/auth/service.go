@@ -767,7 +767,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return err
 				}
 				var err error
-				if stamped, err = s.settings.Load().StampNewTenant(ctx, q, nt.Made.ID, cand.ID); err != nil {
+				if stamped, err = s.settings.Load().StampNewTenant(ctx, q, nt.Made.ID, cand.ID, ""); err != nil {
 					return err
 				}
 				if planID != "" {

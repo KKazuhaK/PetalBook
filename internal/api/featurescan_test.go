@@ -37,6 +37,11 @@ func TestEveryRouteDeclaresItsFeatureOrIsAlwaysOn(t *testing.T) {
 			t.Errorf("%s names %s, which is not a feature (a boolean setting named features.*)", name, r.Feature)
 		case r.Feature != "" && r.Public:
 			t.Errorf("%s is public and names a feature: no tenant is known to check it for", name)
+		case r.AlsoFeature != "" && (!isFeature[r.AlsoFeature] || r.AlsoFeature == r.Feature):
+			t.Errorf("%s adds %s as a second feature, which is not a feature of its own (a boolean setting named features.*)", name, r.AlsoFeature)
+		}
+		if r.Pattern == "/api/admin/audit/download" && r.AlsoFeature != settings.FeatureAuditDownload {
+			t.Errorf("%s needs the audit and its download: the second feature is %q", name, r.AlsoFeature)
 		}
 	}
 }
