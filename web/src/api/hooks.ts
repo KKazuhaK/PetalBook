@@ -378,9 +378,20 @@ export function useAuthProviders(enabled = true) {
 
 // What changes when someone signs in or out: nothing cached may carry over to
 // another person.
+// startOver empties the cache for a new person, all but the session itself: the page is watching that entry, and
+// a new one would have nobody watching it until something else happened to draw the page again (on a busy machine,
+// nothing did: the page stayed as it was before the sign-in). Reads still on the way for the person before are
+// stopped first, so none lands after.
+function startOver(qc: QueryClient) {
+  const others = { predicate: (q: { queryKey: readonly unknown[] }) => q.queryKey[0] !== keys.session[0] }
+  void qc.cancelQueries(others)
+  qc.removeQueries(others)
+  qc.getMutationCache().clear()
+}
+
 export function applySession(qc: QueryClient, user: User | null) {
   const prev = qc.getQueryData<SessionInfo>(keys.session)
-  qc.clear()
+  startOver(qc)
   qc.setQueryData<SessionInfo>(keys.session, { ...(prev ?? { mode: 'accounts' as const }), user, setup: false })
 }
 
@@ -391,7 +402,7 @@ export function applySession(qc: QueryClient, user: User | null) {
 export function applySignIn(qc: QueryClient, answer: SignInAnswer) {
   clearPendingMethod()
   const prev = qc.getQueryData<SessionInfo>(keys.session)
-  qc.clear()
+  startOver(qc)
   // Why an earlier session ended is not this one's: a later sign-out must not show it again.
   const { endedReason: _ended, ...kept } = prev ?? { mode: 'accounts' as const }
   void _ended
