@@ -3,12 +3,23 @@ import { KeyRound, LogIn } from 'lucide-react'
 // The icons an administrator can choose for a provider: `preset:<name>`. They are drawn here, never loaded
 // from an address, so the sign-in page asks no other site for anything. Each is a simple mark in the
 // provider's colour, not its logo.
-export const ICON_PRESETS = ['google', 'microsoft', 'github', 'gitlab', 'okta', 'keycloak', 'authentik', 'key'] as const
+export const ICON_PRESETS = [
+  'google',
+  'microsoft',
+  'apple',
+  'github',
+  'gitlab',
+  'okta',
+  'keycloak',
+  'authentik',
+  'key',
+] as const
 export type IconPreset = (typeof ICON_PRESETS)[number]
 
 const MARKS: Record<Exclude<IconPreset, 'key'>, { letter: string; color: string }> = {
   google: { letter: 'G', color: '#4285f4' },
   microsoft: { letter: 'M', color: '#00a4ef' },
+  apple: { letter: 'A', color: '#111111' },
   github: { letter: 'GH', color: '#24292f' },
   gitlab: { letter: 'GL', color: '#fc6d26' },
   okta: { letter: 'O', color: '#007dc1' },

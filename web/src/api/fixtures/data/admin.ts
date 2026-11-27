@@ -12,6 +12,7 @@ import type {
   AuditItem,
   AuthProvider,
   ProviderInput,
+  ProviderTemplate,
   SecurityNotice,
   ExportRec,
   Job,
@@ -134,10 +135,14 @@ export function createAdminData(now: number, admin: { id: string; username: stri
     groups: [],
     secrets: {
       site: Object.fromEntries(
-        ['github.appKey', 'github.clientSecret', 'github.webhookSecret', 'mail.password', 'captcha.secret'].map((n) => [
-          n,
-          { name: n, set: false },
-        ]),
+        [
+          'github.appKey',
+          'github.clientSecret',
+          'github.webhookSecret',
+          'mail.password',
+          'captcha.secret',
+          'signin.appleKey',
+        ].map((n) => [n, { name: n, set: false }]),
       ),
       tenants: {},
     },
@@ -215,9 +220,105 @@ export function createAdminData(now: number, admin: { id: string; username: stri
 
 const SITE = 'https://notes.example.com'
 
+// The presets the server ships (internal/auth/templates.go), as GET /api/admin/provider-templates lists them.
+export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
+  {
+    id: 'google',
+    name: 'Google',
+    kind: 'oidc',
+    class: 'social',
+    icon: 'preset:google',
+    issuer: 'https://accounts.google.com',
+    authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenEndpoint: 'https://oauth2.googleapis.com/token',
+    jwksUri: 'https://www.googleapis.com/oauth2/v3/certs',
+    scopes: ['openid', 'email', 'profile'],
+    secret: 'client',
+    common: true,
+    region: 'global',
+  },
+  {
+    id: 'microsoft',
+    name: 'Microsoft',
+    kind: 'oidc',
+    class: 'social',
+    icon: 'preset:microsoft',
+    issuer: 'https://login.microsoftonline.com/{tenantid}/v2.0',
+    authorizationEndpoint: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+    tokenEndpoint: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+    jwksUri: 'https://login.microsoftonline.com/common/discovery/v2.0/keys',
+    scopes: ['openid', 'email', 'profile'],
+    secret: 'client',
+    common: true,
+    region: 'global',
+  },
+  {
+    id: 'apple',
+    name: 'Apple',
+    kind: 'oidc',
+    class: 'social',
+    icon: 'preset:apple',
+    issuer: 'https://appleid.apple.com',
+    authorizationEndpoint: 'https://appleid.apple.com/auth/authorize',
+    tokenEndpoint: 'https://appleid.apple.com/auth/token',
+    jwksUri: 'https://appleid.apple.com/auth/keys',
+    scopes: ['openid', 'email', 'name'],
+    responseMode: 'form_post',
+    secret: 'apple',
+    common: true,
+    region: 'global',
+  },
+  {
+    id: 'github',
+    name: 'GitHub',
+    kind: 'github',
+    class: 'social',
+    icon: 'preset:github',
+    issuer: 'https://github.com',
+    scopes: ['read:user', 'user:email'],
+    secret: 'client',
+    common: true,
+    region: 'global',
+  },
+  {
+    id: 'gitlab-com',
+    name: 'GitLab.com',
+    kind: 'oidc',
+    class: 'social',
+    icon: 'preset:gitlab',
+    issuer: 'https://gitlab.com',
+    authorizationEndpoint: 'https://gitlab.com/oauth/authorize',
+    tokenEndpoint: 'https://gitlab.com/oauth/token',
+    jwksUri: 'https://gitlab.com/oauth/discovery/keys',
+    scopes: ['openid', 'email', 'profile'],
+    secret: 'client',
+    common: false,
+    region: 'global',
+  },
+]
+
+// A create from a template as the create it stands for, as the server makes it.
+function fromTemplate(input: ProviderInput & { slug?: string }): ProviderInput & { slug: string } {
+  const tm = PROVIDER_TEMPLATES.find((x) => x.id === input.template)
+  if (!tm) return { ...input, slug: input.slug ?? '' }
+  const { clientId, clientSecret, ...rest } = input
+  const out: ProviderInput & { slug: string } = {
+    ...rest,
+    slug: input.slug ?? tm.id,
+    kind: tm.kind,
+    class: 'social',
+    name: input.name ?? tm.name,
+    icon: input.icon ?? tm.icon,
+  }
+  if (tm.kind === 'github') out.github = { baseUrl: tm.issuer, clientId, clientSecret, ...input.github }
+  else out.oidc = { issuer: tm.issuer, scopes: tm.scopes, clientId, clientSecret, ...input.oidc }
+  return out
+}
+
 // A sign-in provider as the console lists it, made from what a person typed: the secrets only as "set", and the
 // addresses the identity provider needs worked out from the slug.
-export function makeProvider(input: ProviderInput & { slug: string }, at: string, order: number): AuthProvider {
+export function makeProvider(given: ProviderInput & { slug?: string }, at: string, order: number): AuthProvider {
+  const input = fromTemplate(given)
   const kind = input.kind ?? 'oidc'
   const url = `${SITE}/api/auth/${kind}/${input.slug}`
   const p: AuthProvider = {
@@ -225,6 +326,8 @@ export function makeProvider(input: ProviderInput & { slug: string }, at: string
     owner: input.owner ?? 'site',
     slug: input.slug,
     kind,
+    class: input.class ?? (kind === 'github' ? 'social' : 'sso'),
+    template: given.template && kind === 'oidc' ? given.template : '',
     name: input.name ?? input.slug,
     icon: input.icon ?? '',
     enabled: input.enabled ?? true,
@@ -244,9 +347,15 @@ export function makeProvider(input: ProviderInput & { slug: string }, at: string
       clientId: '',
       scopes: ['openid', 'email', 'profile'],
       ...rest,
-      hasSecret: !!clientSecret,
+      hasSecret: !!clientSecret || !!input.apple?.privateKey,
       redirectUrl: `${url}/callback`,
     }
+    if (given.template === 'apple')
+      p.apple = {
+        teamId: input.apple?.teamId ?? '',
+        keyId: input.apple?.keyId ?? '',
+        hasKey: !!input.apple?.privateKey,
+      }
   }
   if (kind === 'github') {
     const { clientSecret, ...rest } = input.github ?? {}
@@ -281,10 +390,27 @@ export function makeProvider(input: ProviderInput & { slug: string }, at: string
 
 // A change to a provider: the fields sent, a secret kept as "set".
 export function changeProvider(p: AuthProvider, input: ProviderInput, at: string): AuthProvider {
-  const { oidc, saml, github, groups, kind: _kind, slug: _slug, ...top } = input
-  void _kind
-  void _slug
+  const {
+    oidc,
+    saml,
+    github,
+    groups,
+    apple,
+    kind: _kind,
+    slug: _slug,
+    class: _class,
+    template: _template,
+    clientId: _clientId,
+    clientSecret: _clientSecret,
+    ...top
+  } = input
+  void [_kind, _slug, _class, _template, _clientId, _clientSecret]
   Object.assign(p, top, { updated: at })
+  if (apple && p.apple) {
+    if (apple.teamId !== undefined) p.apple.teamId = apple.teamId
+    if (apple.keyId !== undefined) p.apple.keyId = apple.keyId
+    if (apple.privateKey) p.apple.hasKey = true
+  }
   if (groups) p.groups = { ...p.groups, ...groups }
   if (oidc && p.oidc) {
     const { clientSecret, ...rest } = oidc
