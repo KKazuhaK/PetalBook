@@ -2,8 +2,8 @@ package auth
 
 import (
 	"bytes"
-	"crypto/ecdsa"
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -331,10 +331,10 @@ func (s *Service) reloadProviders(ctx context.Context, rebuild ...string) error 
 type ProviderView struct {
 	// ID is the provider's own id (a site provider's is its slug); Owner is
 	// "site" or the id of the tenant that owns it.
-	ID                 string `json:"id"`
-	Owner              string `json:"owner"`
-	Slug               string `json:"slug"`
-	Kind               string `json:"kind"`
+	ID    string `json:"id"`
+	Owner string `json:"owner"`
+	Slug  string `json:"slug"`
+	Kind  string `json:"kind"`
 	// Class is social or sso, Template the preset the provider was made from
 	// ("" for none); both are fixed when it is made.
 	Class              string `json:"class"`
@@ -504,9 +504,9 @@ func (s *Service) PublicProviders() []PublicProvider { return s.provs.publicList
 type ProviderInput struct {
 	// Owner is "site" (the default) or a tenant's id; it is set when the
 	// provider is made and cannot change.
-	Owner              *string `json:"owner"`
-	Slug               *string `json:"slug"`
-	Kind               *string `json:"kind"`
+	Owner *string `json:"owner"`
+	Slug  *string `json:"slug"`
+	Kind  *string `json:"kind"`
 	// Template makes the provider from a preset (POST only): it fills the
 	// kind, the class, the addresses, the scopes, the name and the icon;
 	// ClientID and ClientSecret (or Apple) are the administrator's.
@@ -515,15 +515,15 @@ type ProviderInput struct {
 	ClientID     *string `json:"clientId"`
 	ClientSecret *string `json:"clientSecret"`
 	// Apple is what Sign in with Apple's client secret is signed with.
-	Apple *AppleInput `json:"apple"`
-	Name               *string `json:"name"`
-	Icon               *string `json:"icon"`
-	Enabled            *bool   `json:"enabled"`
-	Order              *int    `json:"order"`
-	AutoCreate         *bool   `json:"autoCreate"`
-	MergeVerifiedEmail *bool   `json:"mergeVerifiedEmail"`
-	Tenant             *string `json:"tenant"`
-	OIDC               *OIDCInput `json:"oidc"`
+	Apple              *AppleInput `json:"apple"`
+	Name               *string     `json:"name"`
+	Icon               *string     `json:"icon"`
+	Enabled            *bool       `json:"enabled"`
+	Order              *int        `json:"order"`
+	AutoCreate         *bool       `json:"autoCreate"`
+	MergeVerifiedEmail *bool       `json:"mergeVerifiedEmail"`
+	Tenant             *string     `json:"tenant"`
+	OIDC               *OIDCInput  `json:"oidc"`
 	SAML               *struct {
 		MetadataURL       *string `json:"metadataUrl"`
 		MetadataXML       *string `json:"metadataXml"`

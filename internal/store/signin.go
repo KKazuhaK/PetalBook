@@ -27,9 +27,9 @@ type ProviderRow struct {
 	// from ("" for none): both are written when the row is made and never
 	// again (UpdateProvider leaves them).
 	Class, Template string
-	Enabled                bool
-	Position               int
-	AutoCreate             bool
+	Enabled         bool
+	Position        int
+	AutoCreate      bool
 	// MergeVerifiedEmail is trust_email_optin: the administrator's word that
 	// the addresses this (site-owned, custom) provider gives are verified.
 	MergeVerifiedEmail bool
