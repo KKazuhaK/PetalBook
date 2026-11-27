@@ -235,6 +235,8 @@ describe("the console's scope selector", () => {
       await settle(() => adminCalls().some((r) => r.scope === `tenant:${ids.acme}`), "Acme's people, in its scope")
       expect(bar()!.textContent).toBe('Acme')
       expect(trigger()).toBeNull()
+      // They are in their console, not a site administrator acting in a tenant's: no bar that leads to the site's page.
+      expect(document.querySelector('[data-slot="scope-banner"]')).toBeNull()
       // Their own tenant and any other is not theirs to act in: the address goes to Acme.
       await open(
         (id) => `/admin/t/${id.beta}/users/all`,

@@ -66,7 +66,8 @@ export default function AdminRoute() {
 function Console({ scope, segments }: { scope: string | null; segments: string[] }) {
   const [first, second, third] = segments
   const { path } = useAdminPaths()
-  const site = acrossSite(useSession().data?.user) && scope === null
+  const actsAsSite = acrossSite(useSession().data?.user)
+  const site = actsAsSite && scope === null
   const tenant = useTenant(scope)
   const ownTenant = useSession().data?.user?.tenant
   const ownTenantName = ownTenant?.name
@@ -102,7 +103,8 @@ function Console({ scope, segments }: { scope: string | null; segments: string[]
     <AdminLayout
       sections={sections}
       active={section.key}
-      banner={scope !== null ? <ScopeBanner tenantId={scope} name={tenant.data?.name} /> : undefined}
+      // A site administrator acting as a tenant's says so, and leads out to its page; a tenant's own administrator is in their console, not acting.
+      banner={scope !== null && actsAsSite ? <ScopeBanner tenantId={scope} name={tenant.data?.name} /> : undefined}
     >
       {person ? (
         <PersonPage id={second} tab={third} />
