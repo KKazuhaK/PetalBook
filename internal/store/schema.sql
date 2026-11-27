@@ -905,6 +905,46 @@ CREATE TABLE provider_installations (
 CREATE INDEX provider_installations_user ON provider_installations(owner_user) WHERE owner_user IS NOT NULL;
 CREATE INDEX provider_installations_tenant ON provider_installations(owner_tenant) WHERE owner_tenant IS NOT NULL;
 
+-- Who installed each installation of the GitHub App, as GitHub's signed
+-- installation webhook (action created) said: sender_id is the GitHub user who
+-- installed it (on an organisation, an owner: only they install, or approve a
+-- member's request). An organisation's installation is claimed only by that
+-- user. Written again, the same, when GitHub redelivers; deleted with the
+-- installation (action deleted).
+CREATE TABLE github_installers (
+  installation_id BIGINT PRIMARY KEY,
+  account_id      BIGINT NOT NULL,
+  account         TEXT COLLATE "C" NOT NULL,
+  account_type    TEXT COLLATE "C" NOT NULL,
+  sender_id       BIGINT NOT NULL,
+  sender          TEXT COLLATE "C" NOT NULL,
+  created         BIGINT NOT NULL
+);
+
+-- An organisation's claim of an installation made on the setup callback before
+-- GitHub's webhook said who installed it: the webhook completes it when its
+-- sender is the claimer's GitHub user (claimer_gh). state is '' while it
+-- waits, 'claiming' while one request completes it, else the code it failed
+-- with (shown until it expires). One per installation and claimer.
+CREATE TABLE github_pending_claims (
+  installation_id BIGINT NOT NULL,
+  user_id         TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  owner_user      TEXT COLLATE "C" REFERENCES users(id) ON DELETE CASCADE,
+  owner_tenant    TEXT COLLATE "C" REFERENCES tenants(id) ON DELETE CASCADE,
+  claimer_gh      BIGINT NOT NULL,
+  account_id      BIGINT NOT NULL,
+  account         TEXT COLLATE "C" NOT NULL,
+  account_type    TEXT COLLATE "C" NOT NULL,
+  state           TEXT COLLATE "C" NOT NULL DEFAULT '',
+  created         BIGINT NOT NULL,
+  expires         BIGINT NOT NULL,
+  PRIMARY KEY (installation_id, user_id),
+  CHECK ((owner_user IS NULL AND owner_tenant IS NOT NULL) OR (owner_user IS NOT NULL AND owner_tenant IS NULL))
+);
+CREATE INDEX github_pending_claims_tenant ON github_pending_claims(owner_tenant) WHERE owner_tenant IS NOT NULL;
+CREATE INDEX github_pending_claims_user ON github_pending_claims(owner_user) WHERE owner_user IS NOT NULL;
+CREATE INDEX github_pending_claims_expires ON github_pending_claims(expires);
+
 -- A site provider shared with a tenant (reserved for org sign-in, 3.6 d): a
 -- tenant reaches only what is shared with it. GitHub installations are never
 -- shared; each has its own owner (provider_installations).

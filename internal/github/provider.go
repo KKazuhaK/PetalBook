@@ -68,6 +68,8 @@ type adminOff struct {
 	CallbackURL string `json:"callbackUrl"`
 	// SigninCallbackURL is where GitHub sends people who sign in with the App's client.
 	SigninCallbackURL string `json:"signinCallbackUrl"`
+	// WebhookURL is where GitHub sends the App's events ("" without a public URL).
+	WebhookURL string `json:"webhookUrl"`
 }
 
 type adminView struct {
@@ -86,6 +88,13 @@ type adminView struct {
 	ClientSecret struct {
 		Set bool `json:"set"`
 	} `json:"clientSecret"`
+	// WebhookSecret: whether the secret GitHub signs the App's events with is
+	// kept; without it no event is believed, and an organisation's
+	// installation cannot be connected.
+	WebhookSecret struct {
+		Set bool `json:"set"`
+	} `json:"webhookSecret"`
+	WebhookURL        string            `json:"webhookUrl"`
 	CallbackURL       string            `json:"callbackUrl"`
 	SigninCallbackURL string            `json:"signinCallbackUrl"`
 	Permissions       map[string]string `json:"permissions"`
@@ -108,7 +117,7 @@ type adminGap struct {
 
 func toAdminView(v *AppView) any {
 	if !v.Configured {
-		return adminOff{CallbackURL: v.CallbackURL, SigninCallbackURL: v.SigninCallbackURL}
+		return adminOff{CallbackURL: v.CallbackURL, SigninCallbackURL: v.SigninCallbackURL, WebhookURL: v.WebhookURL}
 	}
 	r := adminView{Configured: true, AppID: v.AppID, ClientID: v.ClientID, Slug: v.Slug, Name: v.Name, Owner: v.Owner,
 		HTMLURL: v.HTMLURL, InstallURL: v.InstallURL, CallbackURL: v.CallbackURL, SigninCallbackURL: v.SigninCallbackURL, Permissions: v.Permissions, Missing: v.Missing,
@@ -120,6 +129,7 @@ func toAdminView(v *AppView) any {
 	}
 	r.PrivateKey.Set, r.PrivateKey.Fingerprint = v.KeySet, v.Fingerprint
 	r.ClientSecret.Set = v.SecretSet
+	r.WebhookSecret.Set, r.WebhookURL = v.HookSet, v.WebhookURL
 	if r.Missing == nil {
 		r.Missing = []string{}
 	}
@@ -138,18 +148,20 @@ func (s *Service) AdminView(ctx context.Context) (any, error) {
 	return toAdminView(v), nil
 }
 
-// AdminSave saves the App entered by hand: {appId, privateKey, clientId, clientSecret}.
+// AdminSave saves the App entered by hand: {appId, privateKey, clientId, clientSecret, webhookSecret}.
 func (s *Service) AdminSave(ctx context.Context, body []byte) (any, error) {
 	var req struct {
 		AppID        string  `json:"appId"`
 		PrivateKey   string  `json:"privateKey"`
 		ClientID     *string `json:"clientId"`
 		ClientSecret string  `json:"clientSecret"`
+		// WebhookSecret is the App's webhook secret, as set on GitHub; empty keeps the one kept.
+		WebhookSecret string `json:"webhookSecret"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, errf(http.StatusBadRequest, CodeInvalid, "The body is not what this takes: %s.", err.Error())
 	}
-	v, err := s.Save(ctx, SaveRequest{AppID: req.AppID, PrivateKey: req.PrivateKey, ClientID: req.ClientID, ClientSecret: req.ClientSecret})
+	v, err := s.Save(ctx, SaveRequest{AppID: req.AppID, PrivateKey: req.PrivateKey, ClientID: req.ClientID, ClientSecret: req.ClientSecret, WebhookSecret: req.WebhookSecret})
 	if err != nil {
 		return nil, err
 	}

@@ -245,6 +245,7 @@ var isolationRoutes = map[string]isoEntry{
 	"DELETE /api/account/links/{id}/repos":              {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
 	"GET /api/account/links/{provider}/owners":          {kind: isoList},
 	"GET /api/providers/github/manifest/callback":       {kind: isoExempt, reason: "needs the session of the site administrator who started it; the App is the server's, not a tenant's"},
+	"POST /api/github/webhook":                          {kind: isoExempt, reason: "GitHub's signed events, no session; it answers nothing of any tenant, and completes only claims a person made in their own scope"},
 	"DELETE /api/account/leftovers/{provider}/{repoId}": {kind: isoExempt, reason: "the caller's own reminder, by a GitHub repository id; names no PetalBook id and touches only the caller's rows"},
 	"GET /api/account/links/{provider}/repos":           {kind: isoExempt, reason: "what the caller's own connection, or an installation shared with the caller's tenant, reaches on GitHub; names no PetalBook id (tested in github_tenants_test.go)"},
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
-import { githubApp, githubInstallations, githubProvider } from '@/api/fixtures/data/connections'
+import { githubApp, githubInstallations, githubPendingClaims, githubProvider } from '@/api/fixtures/data/connections'
 import { tc } from '@/i18n/console'
 import { tg } from '@/i18n/github'
 import { AdminGate } from '@/components/admin/AdminGate'
@@ -197,5 +197,23 @@ describe("an organisation's GitHub installations, in its console", () => {
   it('shows what GitHub sent back when it was not connected', async () => {
     await openOrg((id) => `/admin/t/${id}/storage/github?connection_error=installation_taken`)
     await settle(() => text().includes(tg.installs.returned.installation_taken), 'the explanation')
+  })
+
+  it('says only the person who installed it on GitHub connects it', async () => {
+    await openOrg((id) => `/admin/t/${id}/storage/github?connection_error=not_installer`)
+    await settle(() => text().includes(tg.installs.returned.not_installer), 'the explanation')
+  })
+
+  it('shows a claim waiting for GitHub as connecting, and one GitHub refused with why', async () => {
+    await openOrg((id) => `/admin/t/${id}/storage/github?connection_pending=acme-labs`, githubPendingClaims)
+    const pending = (id: number) => document.querySelector<HTMLElement>(`[data-pending="${id}"]`)
+    await settle(() => pending(5003) !== null, 'the waiting claim')
+    expect(pending(5003)!.textContent).toContain('acme-labs')
+    expect(pending(5003)!.textContent).toContain(tg.installs.pending)
+    expect(pending(5003)!.querySelector('[role="status"]')).not.toBeNull()
+    expect(pending(5004)!.textContent).toContain(tg.installs.pendingFailed)
+    expect(pending(5004)!.textContent).toContain(tg.installs.returned.not_installer)
+    // The connected ones are listed below as before.
+    expect(row(5001)).not.toBeNull()
   })
 })

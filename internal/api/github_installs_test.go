@@ -13,7 +13,16 @@ import (
 func installGitHub(t *testing.T, a *acc, c *client, path string, body map[string]any, login, on string) string {
 	t.Helper()
 	r := c.do("POST", path, body).want(t, 200, "")
+	before := a.fake.InstallationOn(on)
 	back, _ := url.Parse(a.fake.InstallAppOn(r.body["url"].(string), login, on, "https://notes.example.test/api/account/links/github/callback", true))
+	events := a.fake.Events()
+	if before != 0 {
+		// Installed before (the test's setup): by login, GitHub says.
+		events = append(events, a.fake.InstallationEvent("created", before, login))
+	}
+	for _, e := range events {
+		deliverGitHub(t, a, e).want(t, 204, "")
+	}
 	cb := c.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site")
 	if cb.code != 303 {
 		t.Fatalf("the callback answered %d %s", cb.code, cb.raw)
@@ -98,7 +107,7 @@ func TestATenantAdministratorInstallsTheAppForTheOrganisation(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		f := ghTenFx(t, a)
 		a.fake.AddUser("adm-b-gh")
-		a.fake.MakeAdmin("acme-gh", "adm-b-gh")
+		a.fake.AddMember("acme-gh", "adm-b-gh")
 		// A member who is not the tenant's administrator may not.
 		f.memB.do("POST", "/api/admin/github/install", map[string]any{"account": "acme-gh"}).want(t, 403, "forbidden")
 		f.memB.do("GET", "/api/admin/github/installations", nil).want(t, 403, "forbidden")
@@ -161,16 +170,15 @@ func TestASecondOwnerCannotClaimAnInstallation(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		f := ghTenFx(t, a)
 		a.fake.AddUser("adm-b-gh")
-		a.fake.MakeAdmin("acme-gh", "adm-b-gh")
+		a.fake.AddMember("acme-gh", "adm-b-gh")
 		installGitHub(t, a, f.admB, "/api/admin/github/install", map[string]any{"account": "acme-gh"}, "adm-b-gh", "acme-gh")
 		// The site's own administrator in tenant C's scope is the next to try.
 		c := f.root.do("POST", "/api/admin/tenants", map[string]any{"slug": "third", "name": "Third", "admin": map[string]any{"username": "adm-c"}}).want(t, 201, "")
 		inv := c.body["invite"].(map[string]any)
 		admC := a.newClient("")
 		admC.do("POST", "/api/invites/accept", map[string]any{"token": inv["token"], "username": "adm-c", "name": "Admin C", "password": pw}).want(t, 201, "")
-		a.fake.AddUser("adm-c-gh")
-		a.fake.MakeAdmin("acme-gh", "adm-c-gh")
-		to := installGitHub(t, a, admC, "/api/admin/github/install", map[string]any{"account": "acme-gh"}, "adm-c-gh", "acme-gh")
+		// Even with the GitHub user who installed it.
+		to := installGitHub(t, a, admC, "/api/admin/github/install", map[string]any{"account": "acme-gh"}, "adm-b-gh", "acme-gh")
 		if to != "/admin/storage/github?connection_error=installation_taken" {
 			t.Fatalf("%q", to)
 		}

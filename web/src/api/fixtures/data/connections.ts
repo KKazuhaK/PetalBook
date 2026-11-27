@@ -79,6 +79,8 @@ export function githubApp(d: Scene) {
     owner: 'kazuhahub',
     privateKey: { set: true, fingerprint: 'SHA256:fixtureFingerprint0123456789abcdefghijklmnopq' },
     clientSecret: { set: true },
+    webhookSecret: { set: true },
+    webhookUrl: 'https://notes.example.test/api/github/webhook',
     callbackUrl: 'https://notes.example.test/api/account/links/github/callback',
     signinCallbackUrl: 'https://notes.example.test/api/auth/github/github/callback',
     permissions: { administration: 'write', contents: 'write', metadata: 'read' },
@@ -233,4 +235,20 @@ export function githubInstallations(d: Scene) {
   }
   c.repos['github:5101'] = [repo(880101, 'tang-gh/poems'), repo(880102, 'tang-gh/reading', false)]
   c.repos['github:5001'] = [repo(880103, 'kazuhahub/handbook')]
+}
+
+// The organisation's claims still in GitHub's hands: one waiting for GitHub's event ("acme-labs"), and one the event
+// refused because someone else installed the App there ("old-team").
+export function githubPendingClaims(d: Scene) {
+  d.area.connections.pendingClaims = [
+    { id: 5003, account: 'acme-labs', claimedBy: 'admin-id', started: SETTLED, expires: SETTLED, error: '' },
+    {
+      id: 5004,
+      account: 'old-team',
+      claimedBy: 'admin-id',
+      started: SETTLED,
+      expires: SETTLED,
+      error: 'not_installer',
+    },
+  ]
 }

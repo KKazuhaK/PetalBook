@@ -89,7 +89,7 @@ func TestSaveRefusesWhatGitHubRefusesAndSavesNothing(t *testing.T) {
 func TestMissingPermissionsAreOnlyAWarning(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
-		h.f.AppPerms = map[string]string{"members": "read", "contents": "read", "metadata": "read"}
+		h.f.AppPerms = map[string]string{"contents": "read", "metadata": "read"}
 		v, err := h.svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM()})
 		if err != nil {
 			t.Fatal(err)
@@ -186,13 +186,13 @@ func appReads(h *harness) int {
 func TestRecheckReadsThePermissionsAgain(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
-		h.f.AppPerms = map[string]string{"members": "read", "contents": "write", "metadata": "read"}
+		h.f.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
 		v, err := h.svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM()})
 		if err != nil || strings.Join(v.Missing, ",") != "administration" {
 			t.Fatalf("%+v %v", v, err)
 		}
 		// The owner gives the App the permission on GitHub: the stored view is old until it is checked again.
-		h.f.AppPerms = map[string]string{"members": "read", "administration": "write", "contents": "write", "metadata": "read"}
+		h.f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
 		if v, _ = h.svc.View(ctx); strings.Join(v.Missing, ",") != "administration" {
 			t.Fatalf("a view read GitHub: %+v", v)
 		}
@@ -208,7 +208,7 @@ func TestRecheckReadsThePermissionsAgain(t *testing.T) {
 		h.f.AddOrg("kazuhahub")
 		inst := h.f.Install("kazuhahub", "all")
 		h.f.SetInstall(inst, func(i *githubapptest.Install) {
-			i.Perms = map[string]string{"members": "read", "contents": "read", "metadata": "read"}
+			i.Perms = map[string]string{"contents": "read", "metadata": "read"}
 		})
 		v, err = h.svc.Recheck(ctx)
 		if err != nil || len(v.Missing) != 0 || len(v.Gaps) != 1 || v.Gaps[0].ID != inst || v.Gaps[0].Account != "kazuhahub" ||
@@ -246,7 +246,7 @@ func TestAPermissionRefusalRechecksTheAppByItself(t *testing.T) {
 		w.asOrg("kazuhahub")
 		w.spaceIn("T1", "S1", "", store.Remote{Via: "app", InstallationID: w.kazuhahub, RepoID: repo.ID})
 		rem, _ := store.GetRemote(ctx, st.Q(), "S1", store.RoleContent)
-		w.f.AppPerms = map[string]string{"members": "read", "administration": "write", "metadata": "read"}
+		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
 		if v, _ := w.svc.View(ctx); len(v.Missing) != 0 {
 			t.Fatalf("%+v", v)
 		}
@@ -266,9 +266,9 @@ func TestAPermissionRefusalRechecksTheAppByItself(t *testing.T) {
 			t.Fatalf("%d reads of the App for six refusals", n)
 		}
 		w.clk.Advance(61 * time.Second)
-		w.f.AppPerms = map[string]string{"members": "read", "administration": "write", "contents": "write", "metadata": "read"}
+		w.f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
 		w.f.SetInstall(w.kazuhahub, func(i *githubapptest.Install) {
-			i.Perms = map[string]string{"members": "read", "administration": "write", "metadata": "read"}
+			i.Perms = map[string]string{"administration": "write", "metadata": "read"}
 		})
 		w.svc.GitToken(ctx, rem, false)
 		if v, _ = w.svc.View(ctx); len(v.Missing) != 0 || appReads(w.harness) != before+2 || len(v.Gaps) != 1 {

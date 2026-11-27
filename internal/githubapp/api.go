@@ -290,7 +290,7 @@ type Manifest struct {
 	DefaultPermissions map[string]string `json:"default_permissions"`
 }
 
-// ManifestHook is the manifest's webhook: none.
+// ManifestHook is the manifest's webhook: where GitHub sends its events.
 type ManifestHook struct {
 	URL    string `json:"url"`
 	Active bool   `json:"active"`
@@ -304,30 +304,4 @@ func (c *Client) ManifestURL(org, state string) string {
 		base = c.web + "/organizations/" + org + "/settings/apps/new"
 	}
 	return base + "?state=" + url.QueryEscape(state)
-}
-
-// OrgMembership is a user's membership of an organisation: state is "active"
-// or "pending", role "admin" (an owner) or "member".
-type OrgMembership struct {
-	State string `json:"state"`
-	Role  string `json:"role"`
-}
-
-// githubOrgOwner is GitHub's role name for an organisation's owner: a role on
-// GitHub, not one of this server's (those are asked through authz).
-const githubOrgOwner = "admin"
-
-// ActiveOwner reports whether the membership is an accepted one as an owner.
-func (m *OrgMembership) ActiveOwner() bool {
-	return m.State == "active" && m.Role == githubOrgOwner
-}
-
-// UserOrgMembership reads the token's user's membership of an organisation
-// (GET /user/memberships/orgs/{org}); a 404 when they are not a member.
-func (c *Client) UserOrgMembership(ctx context.Context, token, org string) (*OrgMembership, error) {
-	var out OrgMembership
-	if _, err := c.bearer(ctx, token, http.MethodGet, "/user/memberships/orgs/"+url.PathEscape(org), nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
 }

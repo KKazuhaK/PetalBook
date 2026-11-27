@@ -165,6 +165,7 @@ function AppSettings({ app }: { app: AdminGitHub }) {
   const [key, setKey] = useState('')
   const [clientId, setClientId] = useState(app.configured ? app.clientId : '')
   const [secret, setSecret] = useState('')
+  const [hookSecret, setHookSecret] = useState('')
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -186,9 +187,11 @@ function AppSettings({ app }: { app: AdminGitHub }) {
         // An empty client id removes the client id and secret; leaving the field as it was changes nothing.
         clientId: clientId.trim(),
         ...(secret ? { clientSecret: secret } : {}),
+        ...(hookSecret ? { webhookSecret: hookSecret } : {}),
       })
       setKey('')
       setSecret('')
+      setHookSecret('')
       toast.success(tg.admin.saved)
     } catch (err) {
       setError(explain(err))
@@ -314,7 +317,23 @@ function AppSettings({ app }: { app: AdminGitHub }) {
           autoComplete="new-password"
           className="w-full min-w-0"
         />
+        <Field
+          label={tg.admin.webhookSecret}
+          help={app.configured && app.webhookSecret.set ? tg.admin.webhookSecretKept : tg.admin.webhookSecretHelp}
+          type="password"
+          value={hookSecret}
+          onChange={(e) => setHookSecret(e.target.value)}
+          placeholder={app.configured && app.webhookSecret.set ? '••••••••' : ''}
+          autoComplete="new-password"
+          className="w-full min-w-0"
+        />
         <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground">
+          {app.webhookUrl !== undefined && (
+            <>
+              <p>{tg.admin.webhookHelp}</p>
+              <code className="font-mono break-all select-all">{app.webhookUrl || tg.admin.noPublicUrl}</code>
+            </>
+          )}
           <p>{tg.admin.callbackHelp}</p>
           <code className="font-mono break-all select-all">{app.callbackUrl || tg.admin.noPublicUrl}</code>
           {app.signinCallbackUrl && (

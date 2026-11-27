@@ -67,9 +67,10 @@ const (
 	// CodeInstallationTaken: the installation is connected to another owner on
 	// this server (a person or an organisation).
 	CodeInstallationTaken = "installation_taken"
-	// CodeNotOrgAdmin: the person is not an active owner of the GitHub
-	// organisation they asked to connect an installation of.
-	CodeNotOrgAdmin = "not_org_admin"
+	// CodeNotInstaller: the person is not the GitHub user who installed the
+	// organisation's installation (as GitHub's signed webhook said), or no
+	// webhook said who did.
+	CodeNotInstaller = "not_installer"
 )
 
 // SpaceScope is whose a space is, for the credentials it may sync with: a

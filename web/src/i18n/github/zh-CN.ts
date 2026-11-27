@@ -89,6 +89,7 @@ export const githubZhCN: GitHubMessages = {
       installation_not_yours: 'GitHub 没有把这个安装列在你的 GitHub 账号下，所以没有连接。请从这里重新安装。',
       wrong_account: 'App 装到了一个组织上，而不是你自己的账号。组织的安装要由你在这台服务器上所属组织的管理员来连接。',
       installation_taken: '这个安装已经连接到这台服务器上的另一个组织或个人了。',
+      not_installer: 'GitHub 没有表明 App 是你装在那里的。需要由在 GitHub 上安装它的人来连接。',
       forbidden: '你不能连接 GitHub：它对你是关闭的。',
       not_connected: 'GitHub 没有在同一步里给你授权。请先点「已经安装过？只授权」，再重新安装。',
       unknown: '出了点问题。',
@@ -212,6 +213,10 @@ export const githubZhCN: GitHubMessages = {
     ownerPerson: '你的',
     ownerOrg: '组织的',
     connectedAt: (when: string) => `${when}连接`,
+    pending: '正在连接……',
+    pendingFailed: '未连接',
+    pendingHelp: (until: string) =>
+      `正在等 GitHub 确认是谁安装的。通常只要几秒钟，列表会自己更新；如果到 ${until} 还没有结果，请重新安装。`,
     spaces: (n: number) => `${n} 个空间通过它同步`,
     manage: '到 GitHub 管理',
     repos: '仓库',
@@ -246,10 +251,8 @@ export const githubZhCN: GitHubMessages = {
       installation_not_yours: 'GitHub 没有把这个安装列在你的 GitHub 账号下，所以没有连接。请从这里重新安装。',
       wrong_account: 'App 装到了另一个账号上，不是这里要的那个，所以没有连接。',
       installation_taken: '这个安装已经连接到这台服务器上的另一个组织或个人了。',
-      app_missing_permission:
-        '本站的 GitHub App 缺少用来确认你是组织所有者的 Members 权限。需要站点管理员在 GitHub 上给 App 加上、在安装里接受，然后再安装一次。',
-      not_org_admin:
-        '只有 GitHub 组织的所有者才能连接它的安装。GitHub 显示你的账号在那里是成员而不是所有者；请让所有者从这里安装。',
+      not_installer:
+        'GitHub 没有表明 App 是你装到那个组织上的，所以没有连接。需要由在那里安装它的人（组织的所有者）用自己的 GitHub 账号从这里连接。',
       not_connected: 'GitHub 没有在同一步里给你授权。请先连接你的 GitHub 账号，再重新安装。',
       unknown: '出了点问题。',
     },
@@ -260,7 +263,7 @@ export const githubZhCN: GitHubMessages = {
     loadFailed: '没能读到 GitHub App',
     title: 'GitHub App',
     intro:
-      '整台服务器共用一个 GitHub App。最省事的是用下面的按钮，由它替你在 GitHub 上建好。也可以自己在 GitHub 上建（设置里的 Developer settings）：要能装到任意账号、勾上「Request user authorization (OAuth) during installation」，权限要有 Contents（读写）、Metadata（读）、Administration（读写）以及组织权限 Members（读），再把它的信息填在这里。之前建的 App 若还没有 Members 权限，要先在 GitHub 上加上并在每个安装里接受，组织才能连接自己的安装。密钥和 secret 加密保存，之后不会再显示。',
+      '整台服务器共用一个 GitHub App。最省事的是用下面的按钮，由它替你在 GitHub 上建好。也可以自己在 GitHub 上建（设置里的 Developer settings）：要能装到任意账号、勾上「Request user authorization (OAuth) during installation」，权限要有 Contents（读写）、Metadata（读）、Administration（读写），并启用 webhook（地址见下方，设一个 secret），再把它的信息填在这里。密钥和各个 secret 加密保存，之后不会再显示。',
     openApp: '在 GitHub 上打开',
     fingerprint: '密钥指纹',
     permissions: '权限',
@@ -321,6 +324,10 @@ export const githubZhCN: GitHubMessages = {
     secretKept: '已经保存了一个 secret。只有要替换它时才输入。',
     secretHelp: '在 App 的设置页上与 client id 一起生成。',
     callbackHelp: '把它填到 GitHub 上 App 的回调地址（Callback URL）：',
+    webhookSecret: 'Webhook secret',
+    webhookSecretKept: '已经保存了一个 webhook secret。只有要替换它时才输入。',
+    webhookSecretHelp: 'GitHub 上 App 的 webhook 的 secret。GitHub 用它给事件签名；没有它，组织就无法连接自己的安装。',
+    webhookHelp: '把它填到 GitHub 上 App 的 Webhook URL（并启用 webhook）：',
     signinCallbackHelp: '还要加上这一个，用于“用 GitHub 登录”（在“登录提供方”里开启）：',
     noPublicUrl: '服务器没有公开地址（--public-url）。',
     needIds: '请填 App ID，第一次还要填私钥。',

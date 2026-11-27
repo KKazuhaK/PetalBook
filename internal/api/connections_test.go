@@ -32,7 +32,7 @@ func ghSetup(t *testing.T, a *acc) (admin, member *client) {
 	t.Helper()
 	admin = a.setup("root", pw)
 	admin.do("PUT", "/api/admin/providers/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
-		"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
+		"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret, "webhookSecret": a.fake.WebhookSecret}).want(t, 200, "")
 	member = a.addUser("tang", pw, "member")
 	a.fake.AddUser("tang-gh")
 	a.fake.AddOrg("kazuhahub", "tang-gh")
@@ -304,12 +304,12 @@ func TestCreatingASpaceFailsCleanly(t *testing.T) {
 		// permission: its own code, naming the permission, and the repository
 		// that was made is named too.
 		installGitHub(t, a, member, "/api/account/github/install", map[string]any{}, "tang-gh", "tang-gh")
-		a.fake.AppPerms = map[string]string{"members": "read", "administration": "write", "metadata": "read"}
+		a.fake.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
 		mp := member.do("POST", "/api/spaces", body("tang-gh", "noperm", true)).want(t, 403, "app_missing_permission")
 		if m, _ := mp.body["missing"].([]any); len(m) != 1 || m[0] != "contents" || mp.body["repo"] == nil {
 			t.Fatalf("%s", mp.raw)
 		}
-		a.fake.AppPerms = map[string]string{"members": "read", "administration": "write", "contents": "write", "metadata": "read"}
+		a.fake.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
 		member.do("DELETE", fmt.Sprintf("/api/account/leftovers/github/%v", mp.body["repo"].(map[string]any)["id"]), nil).want(t, 204, "")
 		// A first push that never works: 502 naming the empty repository, no space.
 		a.fake.HiddenGit = 100
@@ -589,17 +589,17 @@ func TestTheAdministratorsCheckTheAppAgain(t *testing.T) {
 		member := a.addUser("tang", pw, "member")
 		member.do("POST", "/api/admin/providers/github/check", nil).want(t, 403, "forbidden")
 		admin.do("POST", "/api/admin/providers/github/check", nil).want(t, 409, "provider_not_configured")
-		a.fake.AppPerms = map[string]string{"members": "read", "contents": "write", "metadata": "read"}
+		a.fake.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
 		saved := admin.do("PUT", "/api/admin/providers/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM()}).want(t, 200, "")
 		if m := saved.body["missing"].([]any); len(m) != 1 || m[0] != "administration" {
 			t.Fatalf("%s", saved.raw)
 		}
 		// The permission is given on GitHub; an installation has not accepted it.
-		a.fake.AppPerms = map[string]string{"members": "read", "administration": "write", "contents": "write", "metadata": "read"}
+		a.fake.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
 		a.fake.AddOrg("kazuhahub")
 		inst := a.fake.Install("kazuhahub", "all")
 		a.fake.SetInstall(inst, func(i *githubapptest.Install) {
-			i.Perms = map[string]string{"members": "read", "contents": "write", "metadata": "read"}
+			i.Perms = map[string]string{"contents": "write", "metadata": "read"}
 		})
 		if r := admin.do("GET", "/api/admin/providers/github", nil).want(t, 200, ""); len(r.body["missing"].([]any)) != 1 {
 			t.Fatalf("a GET asked GitHub: %s", r.raw)
@@ -696,7 +696,7 @@ func TestMakingTheAppFromAManifestThroughTheAPI(t *testing.T) {
 		m := r.body["manifest"].(map[string]any)
 		if !strings.Contains(postURL, "/organizations/kazuhahub/settings/apps/new?state=") || m["name"] != "Team notes" || m["public"] != true ||
 			m["request_oauth_on_install"] != true || m["redirect_url"] != "https://notes.example.test/api/providers/github/manifest/callback" ||
-			m["hook_attributes"].(map[string]any)["active"] != false {
+			m["hook_attributes"].(map[string]any)["active"] != true || m["hook_attributes"].(map[string]any)["url"] != "https://notes.example.test/api/github/webhook" || m["default_permissions"].(map[string]any)["members"] != nil {
 			t.Fatalf("%s", r.raw)
 		}
 		manifest, _ := json.Marshal(m)

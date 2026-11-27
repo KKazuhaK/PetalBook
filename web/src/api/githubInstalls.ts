@@ -6,7 +6,7 @@ import { enc, request } from './client'
 import type {
   ConnectionRepo,
   CursorPage,
-  GitHubInstallation,
+  GitHubInstallationList,
   GitHubInstallationsOf,
   GitHubInstallationSpaces,
 } from './types'
@@ -22,7 +22,7 @@ export const githubInstallsApi = {
       body: { return: ret, ...(account ? { account } : {}) },
     }),
   list: (of: GitHubInstallationsOf, signal?: AbortSignal) =>
-    request<{ items: GitHubInstallation[] }>(`${base(of)}/installations`, { signal }),
+    request<GitHubInstallationList>(`${base(of)}/installations`, { signal }),
   spaces: (of: GitHubInstallationsOf, id: number, signal?: AbortSignal) =>
     request<GitHubInstallationSpaces>(`${base(of)}/installations/${id}/spaces`, { signal }),
   repos: (of: GitHubInstallationsOf, id: number, cursor?: string, signal?: AbortSignal) =>
@@ -36,12 +36,17 @@ export const githubInstallsApi = {
 
 export const githubInstallsKey = (of: GitHubInstallationsOf) => ['github', 'installations', of] as const
 
+// While a claim waits for GitHub's event the list is read again every few seconds (the server never asks GitHub:
+// the event comes to it); a claim waits ten minutes at most.
+export const PENDING_POLL_MS = 5_000
+
 export function useGitHubInstallations(of: GitHubInstallationsOf, enabled = true) {
   return useQuery({
     queryKey: githubInstallsKey(of),
     queryFn: ({ signal }) => githubInstallsApi.list(of, signal),
     enabled,
     staleTime: 15_000,
+    refetchInterval: (q) => (q.state.data?.pending.some((p) => p.error === '') ? PENDING_POLL_MS : false),
   })
 }
 

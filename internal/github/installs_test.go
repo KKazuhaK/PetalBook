@@ -30,8 +30,7 @@ func newOrg(t *testing.T, st *store.Store) *org {
 	w.tenantUser("T1", "A2", "admin2")
 	w.tenantUser("T1", "M1", "member1")
 	w.f.AddUser("kaz-admin")
-	w.f.AddOrg("petal-team")
-	w.f.MakeAdmin("petal-team", "kaz-admin")
+	w.f.AddOrg("petal-team", "kaz-admin")
 	w.f.AddRepo("petal-team", "docs", true)
 	return &org{world: w}
 }
@@ -254,10 +253,9 @@ func TestASecondOwnerOrAnotherAccountIsRefused(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		o := newOrg(t, st)
 		o.peti = o.installOrg("A1", "T1", "petal-team", "kaz-admin")
+		// Even its installer's claim for another organisation here.
 		o.tenantUser("T2", "B1", "b-admin")
-		o.f.AddUser("b-gh")
-		o.f.MakeAdmin("petal-team", "b-gh")
-		if to := o.installFor("B1", store.InstallOwner{TenantID: "T2"}, "petal-team", "b-gh", "petal-team", true); !strings.Contains(to, "connection_error=installation_taken") {
+		if to := o.installFor("B1", store.InstallOwner{TenantID: "T2"}, "petal-team", "kaz-admin", "petal-team", true); !strings.Contains(to, "connection_error=installation_taken") {
 			t.Fatalf("%q", to)
 		}
 		if in, _ := store.GetGitHubInstallation(ctx, st.Q(), o.peti); in.OwnerTenant != "T1" {
@@ -311,6 +309,7 @@ func TestTheCallerDecidesWhoMayInstall(t *testing.T) {
 			t.Fatal(err)
 		}
 		back, _ := url.Parse(o.f.InstallAppOn(u, "kaz-admin", "petal-team", o.svc.CallbackURL(), true))
+		o.deliver()
 		if to, _ := o.svc.CompleteAuthorization(deny, binding, "A1", back.Query()); to != "/admin/github?connection_error=forbidden" {
 			t.Fatalf("%q", to)
 		}
@@ -400,60 +399,8 @@ func (w *world) asOrg(orgs ...string) map[string]int64 {
 	}
 	out := map[string]int64{}
 	for _, login := range orgs {
-		w.f.MakeAdmin(login, "kaz-admin")
+		w.f.AddMember(login, "kaz-admin")
 		out[login] = w.installOrg("A1", "T1", login, "kaz-admin")
 	}
 	return out
-}
-
-// GitHub lists an organisation's installation for any member who reaches one of
-// its repositories: that is no proof of being the organisation's owner. A claim
-// for an organisation also needs the claimer's own membership there to be an
-// active owner's (GET /user/memberships/orgs/{org}); an owner's claim works.
-func TestAnOrgMemberWhoIsNotItsAdminCannotClaimTheOrgsInstallation(t *testing.T) {
-	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		o := newOrg(t, st)
-		o.f.AddUser("plain-member")
-		o.f.SetAccount("petal-team", func(a *githubapptest.Account) { a.Members["plain-member"] = true })
-		inst := o.f.Install("petal-team", "all")
-		t1 := store.InstallOwner{TenantID: "T1"}
-		for _, authorize := range []bool{true, false} {
-			if !authorize {
-				o.connect("A2", "plain-member") // no code: the claimer's own link is asked
-			}
-			to := o.installFor("A2", t1, "petal-team", "plain-member", "petal-team", authorize)
-			if to != "/back?connection_error=not_org_admin" {
-				t.Fatalf("authorize=%v: %q", authorize, to)
-			}
-			if _, err := store.GetGitHubInstallation(ctx, st.Q(), inst); !errors.Is(err, store.ErrNotFound) {
-				t.Fatalf("a member who is not the organisation's owner claimed it: %v", err)
-			}
-		}
-		// The organisation's owner may.
-		o.f.MakeAdmin("petal-team", "kaz-admin")
-		if id := o.installOrg("A1", "T1", "petal-team", "kaz-admin"); id != inst {
-			t.Fatalf("%d", id)
-		}
-	})
-}
-
-// An App made before it asked for the organisation's Members permission cannot
-// read an owner's membership: the claim is refused as the App's missing
-// permission (an administrator's fix), not as the person not being an owner.
-func TestAnAppWithoutMembersPermissionIsToldApartFromANonOwner(t *testing.T) {
-	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		o := newOrg(t, st)
-		o.f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
-		to := o.installFor("A1", store.InstallOwner{TenantID: "T1"}, "petal-team", "kaz-admin", "petal-team", true)
-		if to != "/back?connection_error=app_missing_permission" {
-			t.Fatalf("%q", to)
-		}
-		if list, _ := o.svc.Installations(ctx, store.InstallOwner{TenantID: "T1"}); len(list) != 0 {
-			t.Fatalf("%+v", list)
-		}
-		// The administration sees which permission is missing.
-		if v, _ := o.svc.View(ctx); strings.Join(v.Missing, ",") != "members" {
-			t.Fatalf("%+v", v.Missing)
-		}
-	})
 }

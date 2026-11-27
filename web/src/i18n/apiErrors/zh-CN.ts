@@ -152,7 +152,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   connection_missing: '这个连接已经不存在了。',
   installation_gone: '应用已从该账号上卸载。',
   installation_taken: '这个 GitHub 安装已经连接到这台服务器上的另一个组织或个人了。',
-  not_org_admin: '只有 GitHub 组织的所有者才能连接它的安装。',
+  not_installer: '只有在 GitHub 组织上安装了 App 的人才能连接它的安装。',
 
   // The daily text.
   bad_language: '这不是有效的语言标记。',

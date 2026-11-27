@@ -21,6 +21,7 @@ import type {
   Remote,
   AdminGitHub,
   GitHubInstallation,
+  GitHubPendingClaim,
 } from '../../types.ts'
 
 export interface AccountData {
@@ -65,6 +66,8 @@ export interface ConnectionsData {
   forges: AdminForge[]
   github: Extract<AdminGitHub, { configured: true }> | null
   installations: GitHubInstallation[]
+  // The claims of the organisation's installations that wait for GitHub's event (the person's never do).
+  pendingClaims: GitHubPendingClaim[]
   // The spaces that sync through each installation, by its id.
   installationSpaces: Record<number, { id: string; name: string }[]>
   // What GitHub says of the App the next time the server asks (a re-check): these fields replace the stored ones.
@@ -102,6 +105,7 @@ export function createArea(): AreaData {
       forges: [],
       github: null,
       installations: [],
+      pendingClaims: [],
       installationSpaces: {},
       githubSide: null,
     },

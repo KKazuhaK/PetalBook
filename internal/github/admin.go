@@ -17,7 +17,7 @@ import (
 )
 
 // RequiredPermissions are what the App needs, and the level of each.
-var RequiredPermissions = map[string]string{"administration": "write", "contents": "write", "metadata": "read", "members": "read"}
+var RequiredPermissions = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
 
 // AppView is the App's settings as an administrator sees them. No secret is in it.
 type AppView struct {
@@ -31,6 +31,9 @@ type AppView struct {
 	KeySet      bool
 	Fingerprint string
 	SecretSet   bool
+	// HookSet: the webhook secret is kept; WebhookURL is where GitHub sends the events.
+	HookSet     bool
+	WebhookURL  string
 	CallbackURL string
 	// SigninCallbackURL is where GitHub sends people who sign in with the App's client.
 	SigninCallbackURL string
@@ -56,7 +59,7 @@ type Gap struct {
 
 func missingPermissions(have map[string]string) []string {
 	out := []string{}
-	for _, k := range []string{"administration", "contents", "members", "metadata"} {
+	for _, k := range []string{"administration", "contents", "metadata"} {
 		want, got := RequiredPermissions[k], have[k]
 		if got == "" || (want == "write" && got != "write") {
 			out = append(out, k)
@@ -71,7 +74,7 @@ func (s *Service) View(ctx context.Context) (*AppView, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := &AppView{CallbackURL: s.CallbackURL(), SigninCallbackURL: s.SigninCallbackURL()}
+	v := &AppView{CallbackURL: s.CallbackURL(), SigninCallbackURL: s.SigninCallbackURL(), WebhookURL: s.WebhookURL()}
 	if st == nil {
 		return v, nil
 	}
@@ -87,7 +90,7 @@ func (s *Service) View(ctx context.Context) (*AppView, error) {
 	r := st.rec
 	v.Configured, v.AppID, v.ClientID, v.Slug, v.Name, v.Owner, v.HTMLURL = true, r.AppID, r.ClientID, r.Slug, r.Name, r.Owner, r.HTMLURL
 	v.InstallURL = installURL(r.HTMLURL)
-	v.KeySet, v.Fingerprint, v.SecretSet = true, r.Fingerprint, st.secret != ""
+	v.KeySet, v.Fingerprint, v.SecretSet, v.HookSet = true, r.Fingerprint, st.secret != "", st.hook != ""
 	v.Permissions, v.Missing = r.Permissions, missingPermissions(r.Permissions)
 	v.UserAuthorizaton = st.userAuth(s.opt.PublicURL)
 	v.Checked, v.Spaces, v.Authorizations = r.Checked, spaces, auths

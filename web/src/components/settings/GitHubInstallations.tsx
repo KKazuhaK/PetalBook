@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
-import { ExternalLink, Lock, Plus, Unlink } from 'lucide-react'
+import { CircleAlert, ExternalLink, Lock, Plus, Unlink } from 'lucide-react'
 import { useMutation } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
@@ -12,7 +12,7 @@ import {
   useGitHubInstallations,
   useGitHubInstallationSpaces,
 } from '@/api/githubInstalls'
-import type { GitHubInstallation, GitHubInstallationsOf } from '@/api/types'
+import type { GitHubInstallation, GitHubInstallationsOf, GitHubPendingClaim } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import {
@@ -120,17 +120,19 @@ function Install({ of, returnTo }: { of: GitHubInstallationsOf; returnTo: string
 }
 
 // `?connection_error=` on the organisation's console, from an installation that was not connected: shown once, then
-// taken out of the address. (The person's own come back to their settings, which say it there.)
+// taken out of the address. (The person's own come back to their settings, which say it there.) `?connection_pending=`
+// says the claim waits for GitHub: the list below shows it as connecting, so it is only taken out.
 function Returned() {
   const [params, setParams] = useSearchParams()
   const [code] = useState(() => params.get('connection_error') ?? '')
   const ref = useRef<HTMLParagraphElement>(null)
   useEffect(() => {
-    if (params.has('connection_error'))
+    if (params.has('connection_error') || params.has('connection_pending'))
       setParams(
         (p) => {
           const next = new URLSearchParams(p)
           next.delete('connection_error')
+          next.delete('connection_pending')
           return next
         },
         { replace: true },
@@ -150,13 +152,45 @@ function List({ of }: { of: GitHubInstallationsOf }) {
   if (list.isPending) return <PageFallback />
   if (list.isError)
     return <ErrorState message={t.fmt.labelled(c.loadFailed, list.error.message)} onRetry={() => void list.refetch()} />
-  if (list.data.items.length === 0) return <p className="text-sm text-muted-foreground">{c.none}</p>
+  const pending = list.data.pending.filter((p) => !list.data.items.some((i) => i.id === p.id))
+  if (list.data.items.length === 0 && pending.length === 0)
+    return <p className="text-sm text-muted-foreground">{c.none}</p>
   return (
     <ul className="grid grid-cols-1 gap-3">
+      {pending.map((p) => (
+        <PendingRow key={`pending-${p.id}`} claim={p} />
+      ))}
       {list.data.items.map((i) => (
         <Row key={i.id} of={of} item={i} />
       ))}
     </ul>
+  )
+}
+
+// A claim that waits for GitHub's signed event to say who installed the installation ("connecting"; the list is read
+// again until it is connected or the claim expires), or that failed when the event came.
+function PendingRow({ claim: p }: { claim: GitHubPendingClaim }) {
+  const c = tg.installs
+  const r = c.returned as Record<string, string>
+  const failed = p.error !== ''
+  return (
+    <li className="min-w-0 rounded-md border border-dashed p-3" data-pending={p.id}>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="min-w-0 font-medium break-all">{p.account}</span>
+        <Badge variant={failed ? 'destructive' : 'outline'}>{failed ? c.pendingFailed : c.pending}</Badge>
+      </div>
+      {failed ? (
+        <p className="mt-1 flex items-start gap-1.5 text-xs break-words text-destructive">
+          <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          {Object.hasOwn(r, p.error) ? r[p.error] : r.unknown}
+        </p>
+      ) : (
+        <p className="mt-1 flex items-start gap-1.5 text-xs break-words text-muted-foreground" role="status">
+          <Spinner className="mt-0.5 size-3.5 shrink-0" />
+          {c.pendingHelp(absoluteTime(p.expires))}
+        </p>
+      )}
+    </li>
   )
 }
 
