@@ -165,7 +165,7 @@ export const githubZhCN: GitHubMessages = {
       access_lost: {
         title: '这个空间失去了 GitHub 访问',
         body: () =>
-          '它同步所用的 GitHub 安装已经不再连接到它在这里的所有者（被断开了），或者那不是空间所有者自己的安装。笔记都保留着。请重新连接 GitHub，或者把空间连到别的仓库。',
+          '它同步所用的 GitHub 安装已经不再连接到它在这里的所有者（被断开了），或者那不是空间所有者自己的安装，或者它所用的 GitHub 账号被那位用户断开了。笔记都保留着。请重新连接 GitHub，或者把空间连到别的仓库。',
       },
       provider_not_configured: {
         title: '服务器的 GitHub App 不能用了',

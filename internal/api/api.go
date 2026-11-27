@@ -248,9 +248,18 @@ func New(opt Options) *Handler {
 	if opt.DailyFetch == nil {
 		opt.DailyFetch = dailyfetch.New(NewDailyBacking(opt.Store))
 	}
+	// The spaces that synced with a person's tokens lose access when the tokens
+	// go (a disconnection, an expiry): they show it at once. (The token services
+	// keep the registry they were made with.)
+	if opt.Connections != nil && opt.Spaces != nil {
+		opt.Connections.OnAccessLost(opt.Spaces.AccessLost)
+	}
 	if _, ok := opt.Connections.Get(connections.GitID); !ok {
 		ps := opt.Connections.List()
 		opt.Connections = connections.NewRegistry(append(ps, connections.NewGit())...)
+	}
+	if opt.Spaces != nil {
+		opt.Connections.OnAccessLost(opt.Spaces.AccessLost)
 	}
 	// The GitHub row is both a sign-in provider and where repositories are
 	// connected: sign-in reads it again when the App changes, and connecting

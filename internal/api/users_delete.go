@@ -405,8 +405,10 @@ func (s *server) revokeUserAccess(ctx context.Context, id string) {
 	}
 	// A connection to a provider that is not up (or one that could not be
 	// ended) goes with the person all the same.
-	if err := store.DeleteUserRepoLinks(ctx, s.opt.Store.Q(), id); err != nil {
+	if ids, err := store.DeleteUserRepoLinks(ctx, s.opt.Store.Q(), id, s.now()); err != nil {
 		s.log.Warn("could not remove the connections of a deleted person", "user", id, "error", err)
+	} else {
+		s.accessLost(ids)
 	}
 }
 

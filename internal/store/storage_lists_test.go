@@ -227,7 +227,7 @@ func TestDormantFollowsUseConnectionsAndRemotes(t *testing.T) {
 		wantCounters(t, st, store.UsageUser, "Ub", counters{connected: 1})
 		wantCounters(t, st, store.UsageTenant, tenB, counters{spaces: 1, connected: 1})
 		consistent(t, st)
-		if err := store.DeleteRepoLink(ctx, q, store.ProviderGitHub, "Ub"); err != nil {
+		if _, err := store.DeleteRepoLink(ctx, q, store.ProviderGitHub, "Ub", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		wantCounters(t, st, store.UsageUser, "Ub", counters{dormant: 1})
@@ -248,7 +248,7 @@ func TestDormantFollowsUseConnectionsAndRemotes(t *testing.T) {
 		wantCounters(t, st, store.UsageUser, "Ub", counters{connected: 1})
 		wantCounters(t, st, store.UsageTenant, tenB, counters{spaces: 1, connected: 1})
 		consistent(t, st)
-		if err := store.DeleteRepoLink(ctx, q, "gl", "Ub"); err != nil {
+		if _, err := store.DeleteRepoLink(ctx, q, "gl", "Ub", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		wantCounters(t, st, store.UsageUser, "Ub", counters{dormant: 1})
@@ -1086,7 +1086,7 @@ func TestCountersStayWhereTheRecountPutsThemUnderMixedChanges(t *testing.T) {
 					if err := ghConnect(st, u, int64(1000+len(u)*7+int(u[len(u)-1])), now); err != nil {
 						t.Fatal(err)
 					}
-				} else if err := store.DeleteRepoLink(ctx, q, store.ProviderGitHub, u); err != nil {
+				} else if _, err := store.DeleteRepoLink(ctx, q, store.ProviderGitHub, u, time.Now()); err != nil {
 					t.Fatal(err)
 				}
 			case op == 13 && len(spaces) > 4:
@@ -1199,7 +1199,10 @@ func TestConnectedHoldsWhenADisconnectRacesAConnect(t *testing.T) {
 		}()
 		<-settled
 		disconnectDone := make(chan error, 1)
-		go func() { disconnectDone <- store.DeleteRepoLink(ctx, st.Q(), store.ProviderGitHub, "Ub") }()
+		go func() {
+			_, err := store.DeleteRepoLink(ctx, st.Q(), store.ProviderGitHub, "Ub", time.Now())
+			disconnectDone <- err
+		}()
 		select {
 		case err := <-disconnectDone: // it did not wait for the connect (the fault)
 			close(release)

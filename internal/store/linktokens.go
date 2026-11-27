@@ -177,15 +177,28 @@ func ReplaceLinkTokens(ctx context.Context, q Q, id string, from int64, accessEn
 // ExpireLink marks a link as needing the person to authorise again and drops
 // its tokens, only if it is still at version from. It reports whether it did:
 // of any number of callers that give up on one link at once, exactly one gets
-// true.
-func ExpireLink(ctx context.Context, q Q, id string, from int64, now time.Time) (bool, error) {
-	res, err := q.Exec(ctx, `UPDATE linked_accounts SET state = 'expired', access_enc = '', refresh_enc = '',
-		access_expires = 0, refresh_expires = 0, renew_at = 0, version = version + 1, updated = ? WHERE id = ? AND version = ? AND state = 'ok'`, ms(now), id, from)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	return n == 1, err
+// true. In the same write the remotes that sync with the tokens lose access
+// (LoseUserRemotes); the spaces it names are for the caller to tell the
+// spaces manager once the transaction has committed.
+func ExpireLink(ctx context.Context, q Q, id string, from int64, now time.Time) (bool, []string, error) {
+	var ok bool
+	var ids []string
+	err := atomically(ctx, q, func(q Q) error {
+		var provider, user string
+		err := q.QueryRow(ctx, `UPDATE linked_accounts SET state = 'expired', access_enc = '', refresh_enc = '',
+			access_expires = 0, refresh_expires = 0, renew_at = 0, version = version + 1, updated = ? WHERE id = ? AND version = ? AND state = 'ok'
+			RETURNING provider_id, user_id`, ms(now), id, from).Scan(&provider, &user)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		ok = true
+		ids, err = LoseUserRemotes(ctx, q, provider, user, now)
+		return err
+	})
+	return ok && err == nil, ids, err
 }
 
 // ExpireProviderLinks ends every repository link at a provider that is in good
@@ -193,9 +206,12 @@ func ExpireLink(ctx context.Context, q Q, id string, from int64, now time.Time) 
 // old one's tokens are not to be used), and tells each person whose link it
 // ended that they must authorise again (a NotifyLinkReauth, as ExpireLink's
 // callers do; name is the provider's name). Only the rows the write moved are
-// told, in the same transaction. It returns how many it ended.
-func ExpireProviderLinks(ctx context.Context, q Q, providerID, name string, now time.Time) (int64, error) {
+// told, in the same transaction, and the remotes that synced with their tokens
+// lose access with them (LoseUserRemotes). It returns how many it ended and
+// the spaces whose remotes lost access.
+func ExpireProviderLinks(ctx context.Context, q Q, providerID, name string, now time.Time) (int64, []string, error) {
 	var n int64
+	var spaces []string
 	err := atomically(ctx, q, func(q Q) error {
 		rows, err := q.Query(ctx, `UPDATE linked_accounts SET state = 'expired', access_enc = '', refresh_enc = '',
 			access_expires = 0, refresh_expires = 0, renew_at = 0, renewing_until = 0, version = version + 1, updated = ?
@@ -222,11 +238,16 @@ func ExpireProviderLinks(ctx context.Context, q Q, providerID, name string, now 
 				map[string]string{"provider": providerID, "name": name, "login": e.login}, now); err != nil {
 				return err
 			}
+			ids, err := LoseUserRemotes(ctx, q, providerID, e.user, now)
+			if err != nil {
+				return err
+			}
+			spaces = append(spaces, ids...)
 		}
 		n = int64(len(all))
 		return nil
 	})
-	return n, err
+	return n, spaces, err
 }
 
 // ClaimLinkRenewal takes the lease of renewing a link, until until: only if the
@@ -252,9 +273,17 @@ func ReleaseLinkRenewal(ctx context.Context, q Q, id string, until time.Time) er
 }
 
 // DeleteRepoLink removes a person's repository link at a provider; a link that
-// also signs the person in keeps that and loses its tokens.
-func DeleteRepoLink(ctx context.Context, q Q, providerID, userID string) error {
-	return atomically(ctx, q, func(q Q) error {
+// also signs the person in keeps that and loses its tokens. When it held
+// tokens, the remotes that sync with them lose access in the same transaction
+// (LoseUserRemotes); it returns the spaces they are in, for the caller to tell
+// the spaces manager.
+func DeleteRepoLink(ctx context.Context, q Q, providerID, userID string, now time.Time) ([]string, error) {
+	var ids []string
+	err := atomically(ctx, q, func(q Q) error {
+		had, err := holdsTokensOf(ctx, q, `provider_id = ? AND user_id = ?`, providerID, userID)
+		if err != nil {
+			return err
+		}
 		if _, err := q.Exec(ctx, `DELETE FROM linked_accounts WHERE provider_id = ? AND user_id = ? AND signin = 0`, providerID, userID); err != nil {
 			return err
 		}
@@ -262,15 +291,46 @@ func DeleteRepoLink(ctx context.Context, q Q, providerID, userID string) error {
 			state = 'ok', version = version + 1 WHERE provider_id = ? AND user_id = ? AND signin = 1`, providerID, userID); err != nil {
 			return err
 		}
+		if len(had) > 0 {
+			if ids, err = LoseUserRemotes(ctx, q, providerID, userID, now); err != nil {
+				return err
+			}
+		}
 		return settleConnected(ctx, q, userID)
 	})
+	return ids, err
+}
+
+// holdsTokensOf lists the providers of the links that hold tokens under a
+// condition on linked_accounts.
+func holdsTokensOf(ctx context.Context, q Q, cond string, args ...any) ([]string, error) {
+	rows, err := q.Query(ctx, `SELECT provider_id FROM linked_accounts WHERE access_enc <> '' AND `+cond+` ORDER BY provider_id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // DeleteUserRepoLinks removes every repository link a person has (they are
 // being deleted; the rows would go with the person by cascade, this settles
-// the count of connected people first).
-func DeleteUserRepoLinks(ctx context.Context, q Q, userID string) error {
-	return atomically(ctx, q, func(q Q) error {
+// the count of connected people first). The remotes that synced with their
+// tokens lose access, as in DeleteRepoLink; it returns the spaces they are in.
+func DeleteUserRepoLinks(ctx context.Context, q Q, userID string, now time.Time) ([]string, error) {
+	var ids []string
+	err := atomically(ctx, q, func(q Q) error {
+		had, err := holdsTokensOf(ctx, q, `user_id = ?`, userID)
+		if err != nil {
+			return err
+		}
 		if _, err := q.Exec(ctx, `DELETE FROM linked_accounts WHERE user_id = ? AND signin = 0`, userID); err != nil {
 			return err
 		}
@@ -278,8 +338,16 @@ func DeleteUserRepoLinks(ctx context.Context, q Q, userID string) error {
 			state = 'ok', version = version + 1 WHERE user_id = ? AND signin = 1`, userID); err != nil {
 			return err
 		}
+		for _, p := range had {
+			more, err := LoseUserRemotes(ctx, q, p, userID, now)
+			if err != nil {
+				return err
+			}
+			ids = append(ids, more...)
+		}
 		return settleConnected(ctx, q, userID)
 	})
+	return ids, err
 }
 
 // deleteProviderRows deletes providers by a condition, their links with them

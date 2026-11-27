@@ -245,12 +245,15 @@ func (t *Tokens) Put(ctx context.Context, a Account, p Pair) error {
 }
 
 // Remove deletes a person's link at a provider; the tokens are gone from the
-// database and the cache, and nothing renews them.
+// database and the cache, and nothing renews them. The remotes that synced with
+// them lose access, in the same transaction.
 func (t *Tokens) Remove(ctx context.Context, providerID, userID string) error {
-	if err := store.DeleteRepoLink(ctx, t.opt.Store.Q(), providerID, userID); err != nil {
+	ids, err := store.DeleteRepoLink(ctx, t.opt.Store.Q(), providerID, userID, t.opt.Now())
+	if err != nil {
 		return err
 	}
 	t.bump(providerID, userID)
+	t.opt.Registry.AccessLost(ids) // the spaces that synced with the tokens show it at once
 	return nil
 }
 
@@ -552,12 +555,13 @@ const (
 func (t *Tokens) expire(ctx context.Context, l *store.RepoLink) expireResult {
 	now := t.opt.Now()
 	ended := false
+	var lost []string
 	err := store.Atomically(ctx, t.opt.Store.Q(), func(q store.Q) error {
-		ok, err := store.ExpireLink(ctx, q, l.ID, l.Version, now)
+		ok, ids, err := store.ExpireLink(ctx, q, l.ID, l.Version, now)
 		if err != nil || !ok {
 			return err
 		}
-		ended = true
+		ended, lost = true, ids
 		name := l.ProviderID
 		if p, found := t.opt.Registry.Get(l.ProviderID); found {
 			name = p.Descriptor().Name
@@ -566,6 +570,9 @@ func (t *Tokens) expire(ctx context.Context, l *store.RepoLink) expireResult {
 			map[string]string{"provider": l.ProviderID, "name": name, "login": l.Login}, now)
 	})
 	t.dropToken(l.ProviderID, l.UserID)
+	if err == nil {
+		t.opt.Registry.AccessLost(lost)
+	}
 	switch {
 	case err != nil:
 		t.log.Error("could not mark an authorisation expired", "provider", l.ProviderID, "user", l.UserID, "error", err)

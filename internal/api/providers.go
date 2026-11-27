@@ -721,6 +721,14 @@ func (s *server) accountLinkStart(c *call) {
 	}
 }
 
+// accessLost tells the spaces manager that these spaces lost the access their
+// remote synced with (what a provider known to the registry does itself).
+func (s *server) accessLost(ids []string) {
+	if s.opt.Spaces != nil && len(ids) > 0 {
+		s.opt.Spaces.AccessLost(ids)
+	}
+}
+
 // disconnectRepos drops the person's repository tokens at the link's provider
 // (the host is asked to revoke them, best effort) and audits it. A link that
 // only held repositories is gone with them; one that signs them in stays.
@@ -730,8 +738,12 @@ func (s *server) disconnectRepos(c *call, l *store.UserLink) error {
 		if err := p.Disconnect(ctx, l.UserID); err != nil {
 			return err
 		}
-	} else if err := store.DeleteRepoLink(ctx, s.opt.Store.Q(), l.ProviderID, l.UserID); err != nil {
-		return err
+	} else {
+		ids, err := store.DeleteRepoLink(ctx, s.opt.Store.Q(), l.ProviderID, l.UserID, s.now())
+		if err != nil {
+			return err
+		}
+		s.accessLost(ids)
 	}
 	s.audit(c, auth.AuditEvent{Kind: "account_disconnected", Actor: c.user().ID, User: c.user().ID,
 		Detail: map[string]any{"provider": l.ProviderID, "login": l.Login}})

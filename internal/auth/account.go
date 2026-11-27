@@ -241,7 +241,8 @@ func (s *Service) UnlinkAccount(ctx context.Context, userID, linkID string) erro
 func (s *Service) unlinkAccount(ctx context.Context, userID, linkID, actor, by, ip string) error {
 	s.credMu.Lock()
 	defer s.credMu.Unlock()
-	return s.st.Tx(ctx, func(q store.Q) error {
+	var lost []string
+	err := s.st.Tx(ctx, func(q store.Q) error {
 		ids, err := store.ListLinks(ctx, q, userID)
 		if err != nil {
 			return err
@@ -272,8 +273,15 @@ func (s *Service) unlinkAccount(ctx context.Context, userID, linkID, actor, by, 
 				defer s.AuditIn(ctx, AuditEvent{Kind: "identity_unlinked", Actor: actor, User: userID, IP: ip, Detail: map[string]any{"provider": slug, "by": by}})
 			}
 		}
-		return store.DeleteLink(ctx, q, linkID, userID)
+		// The tokens it held go with it: the remotes that synced with them lose
+		// access in this transaction.
+		lost, err = store.DeleteLink(ctx, q, linkID, userID, s.now())
+		return err
 	})
+	if err == nil {
+		s.cfg.Spaces.AccessLost(lost) // the spaces show it at once
+	}
+	return err
 }
 
 // UserPatch is a change an administrator makes to another account.

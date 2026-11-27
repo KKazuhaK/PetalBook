@@ -178,7 +178,7 @@ export const githubEn = {
       access_lost: {
         title: 'This space lost GitHub access',
         body: () =>
-          'The GitHub installation it synced through is no longer connected to its owner here (it was disconnected), or it is not the space owner’s own. The notes are kept. Connect GitHub again, or connect the space to another repository.',
+          'The GitHub installation it synced through is no longer connected to its owner here (it was disconnected), or it is not the space owner’s own, or the person whose GitHub account it synced with disconnected it. The notes are kept. Connect GitHub again, or connect the space to another repository.',
       },
       provider_not_configured: {
         title: 'The server’s GitHub App does not work',

@@ -346,9 +346,11 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 	if otherApp {
 		// Tokens of another application are not this one's to use: everyone
 		// connects again. (A new secret of the same application keeps them.)
-		if _, err := store.ExpireProviderLinks(ctx, p.m.opt.Store.Q(), p.id, row.Name, p.m.opt.Now()); err != nil {
+		_, lost, err := store.ExpireProviderLinks(ctx, p.m.opt.Store.Q(), p.id, row.Name, p.m.opt.Now())
+		if err != nil {
 			return nil, err
 		}
+		defer p.m.opt.Registry.AccessLost(lost)
 	}
 	if err := store.UpdateConnProviderRow(ctx, p.m.opt.Store.Q(), row); err != nil {
 		return nil, err

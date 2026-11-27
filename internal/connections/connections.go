@@ -399,6 +399,7 @@ type Registry struct {
 	list    []Provider
 	creator Creator
 	changed func(provider, userID string)
+	lost    func(spaceIDs []string)
 }
 
 // NewRegistry returns a registry of the providers. Ids must be distinct.
@@ -553,6 +554,28 @@ func (r *Registry) OnChange(f func(provider, userID string)) {
 	for _, p := range r.List() {
 		id := p.Descriptor().ID
 		p.OnChange(func(userID string) { f(id, userID) })
+	}
+}
+
+// OnAccessLost registers what is told the spaces that lost access because the
+// person whose tokens they synced with lost them (disconnected, expired).
+func (r *Registry) OnAccessLost(f func(spaceIDs []string)) {
+	r.mu.Lock()
+	r.lost = f
+	r.mu.Unlock()
+}
+
+// AccessLost tells what OnAccessLost registered (nothing, on a nil registry or
+// with no spaces).
+func (r *Registry) AccessLost(spaceIDs []string) {
+	if r == nil || len(spaceIDs) == 0 {
+		return
+	}
+	r.mu.RLock()
+	f := r.lost
+	r.mu.RUnlock()
+	if f != nil {
+		f(spaceIDs)
 	}
 }
 

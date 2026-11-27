@@ -163,7 +163,7 @@ func TestASignInLinkIsNotAConnectionAndKeepsItsSignInWhenTheTokensGo(t *testing.
 		if id, err := store.PutRepoLink(ctx, st.Q(), l); err != nil || id != "S1" {
 			t.Fatalf("%q %v", id, err)
 		}
-		if err := store.DeleteRepoLink(ctx, st.Q(), "gt", "U1"); err != nil {
+		if _, err := store.DeleteRepoLink(ctx, st.Q(), "gt", "U1", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		if got, err := store.FindLink(ctx, st.Q(), "gt", "1"); err != nil || !got.SignIn {
@@ -212,10 +212,10 @@ func TestTheRenewalIndexServesTheDueLinksInOrderAndTheNextOne(t *testing.T) {
 		}
 		// A link that needs the person is not renewed; it leaves the index.
 		l, _ := store.GetRepoLink(ctx, st.Q(), "gt", "U2")
-		if ok, err := store.ExpireLink(ctx, st.Q(), l.ID, l.Version, base); err != nil || !ok {
+		if ok, _, err := store.ExpireLink(ctx, st.Q(), l.ID, l.Version, base); err != nil || !ok {
 			t.Fatalf("%v %v", ok, err)
 		}
-		if ok, _ := store.ExpireLink(ctx, st.Q(), l.ID, l.Version, base); ok {
+		if ok, _, _ := store.ExpireLink(ctx, st.Q(), l.ID, l.Version, base); ok {
 			t.Fatal("a link was ended twice: two callers would both tell the person")
 		}
 		got, _ = store.DueLinkRenewals(ctx, st.Q(), base.Add(3*time.Hour), store.DueLinkCursor{}, 10)
@@ -313,7 +313,7 @@ func TestConnectingAnotherAccountDropsTheSignInOfTheOldOne(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 		// Unlinking it now removes the row: there is no sign-in to keep.
-		if err := store.DeleteRepoLink(ctx, st.Q(), "gt", "U1"); err != nil {
+		if _, err := store.DeleteRepoLink(ctx, st.Q(), "gt", "U1", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.FindUserLink(ctx, st.Q(), "gt", "U1"); !errors.Is(err, store.ErrNotFound) {
@@ -339,7 +339,7 @@ func TestReplacingAnApplicationTellsEachPersonWhoseLinkEndedOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 		l3, _ := store.GetRepoLink(ctx, st.Q(), "gt", "U3")
-		if ok, err := store.ExpireLink(ctx, st.Q(), l3.ID, l3.Version, time.Now()); err != nil || !ok {
+		if ok, _, err := store.ExpireLink(ctx, st.Q(), l3.ID, l3.Version, time.Now()); err != nil || !ok {
 			t.Fatalf("%v %v", ok, err)
 		}
 		notes := func(u string) []store.Notification {
@@ -350,7 +350,7 @@ func TestReplacingAnApplicationTellsEachPersonWhoseLinkEndedOnce(t *testing.T) {
 			}
 			return rows
 		}
-		n, err := store.ExpireProviderLinks(ctx, st.Q(), "gt", "Our Gitea", time.Now())
+		n, _, err := store.ExpireProviderLinks(ctx, st.Q(), "gt", "Our Gitea", time.Now())
 		if err != nil || n != 2 {
 			t.Fatalf("%d %v", n, err)
 		}
@@ -365,7 +365,7 @@ func TestReplacingAnApplicationTellsEachPersonWhoseLinkEndedOnce(t *testing.T) {
 			t.Fatalf("%+v %+v", notes("U3"), notes("U4"))
 		}
 		// Again: nothing is in good standing, nobody is told twice.
-		if n, err := store.ExpireProviderLinks(ctx, st.Q(), "gt", "Our Gitea", time.Now()); err != nil || n != 0 || len(notes("U1")) != 1 {
+		if n, _, err := store.ExpireProviderLinks(ctx, st.Q(), "gt", "Our Gitea", time.Now()); err != nil || n != 0 || len(notes("U1")) != 1 {
 			t.Fatalf("%d %v", n, err)
 		}
 	})

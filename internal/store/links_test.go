@@ -69,10 +69,10 @@ func TestALinkIsUniquePerProviderAndPersonAndPerSubject(t *testing.T) {
 			t.Fatalf("the same account for another person: %v", err)
 		}
 		// Unlink, then link another: allowed.
-		if err := store.DeleteLink(ctx, st.Q(), "L1", "U2"); !errors.Is(err, store.ErrNotFound) {
+		if _, err := store.DeleteLink(ctx, st.Q(), "L1", "U2", time.Now()); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("another person's link: %v", err)
 		}
-		if err := store.DeleteLink(ctx, st.Q(), "L1", "U1"); err != nil {
+		if _, err := store.DeleteLink(ctx, st.Q(), "L1", "U1", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.InsertLink(ctx, st.Q(), store.Link{ID: "L2", ProviderID: "p", UserID: "U1", Subject: "s2", SignIn: true, Created: now}); err != nil {
