@@ -2,6 +2,7 @@ package settings
 
 import (
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -145,6 +146,14 @@ const (
 	// now"; each tenant has its own hour and each domain its own minute too).
 	DomainsChecksPerMinute = "domains.checksPerMinute"
 
+	// SigninSocial is which of the site's social sign-in providers the people
+	// of a tenant may use (3.6 d3): their slugs, or ["*"] for every one. Site
+	// and tenant: the site's value is the default, and its lower rule (or a
+	// lock in a rule for one tenant) says whether a tenant prunes it. It is
+	// read after a sign-in has found its account: an identity of a provider
+	// the account's tenant does not allow is refused (sso_error=not_allowed).
+	SigninSocial = "signin.social"
+
 	// The sign-in policy, the same for every tenant: the sign-in page comes
 	// before any tenant is known.
 	SigninMode           = "signin.mode" // dual, sso_first, sso_redirect or local_only
@@ -268,6 +277,9 @@ func baseDefinitions() []*Def {
 		{Key: DomainsChecksPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(60), Min: 1, Max: 100000, Lower: Lower{Mode: Allow},
 			ServerWide: "the server's own resolver asks DNS for every tenant"},
 
+		// The social providers a tenant's people may use.
+		{Key: SigninSocial, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{"*"}, Lower: Lower{Mode: Allow}, Check: checkSocial},
+
 		// The sign-in policy.
 		{Key: SigninMode, Kind: Choice, Layers: []Layer{Site}, Default: "dual", Choices: []string{"dual", "sso_first", "sso_redirect", "local_only"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		{Key: SigninSSOOnly, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
@@ -368,6 +380,33 @@ func checkHTTPS(v any) (any, error) {
 	}
 	return s, nil
 }
+
+// checkSocial is a list of provider slugs, or ["*"] (every provider): "*"
+// with anything else is "*" alone.
+func checkSocial(v any) (any, error) {
+	in := v.([]string)
+	if len(in) > 50 {
+		return nil, bad("at most 50 providers")
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, p := range in {
+		p = strings.TrimSpace(p)
+		if p == "*" {
+			return []string{"*"}, nil
+		}
+		if !socialSlugRE.MatchString(p) {
+			return nil, bad("%q is not the slug of a provider", p)
+		}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+var socialSlugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
 func checkDomains(v any) (any, error) {
 	in := v.([]string)

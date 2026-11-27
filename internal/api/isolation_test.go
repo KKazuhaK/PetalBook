@@ -33,8 +33,8 @@ type tenFx struct {
 	userB, spaceB, groupB, inviteB, tokenB, grantB string
 	userA, spaceA, groupA, inviteA                 string
 	secretB                                        string
-	// domainB is a domain B claimed.
-	domainB string
+	// domainB is a domain B claimed; providerB a sign-in provider of B's own.
+	domainB, providerB string
 
 	// syncedB is a synced group of B that a provider of B maps (addMappedB).
 	syncedB string
@@ -119,6 +119,16 @@ func newTenFx(t *testing.T, a *acc) *tenFx {
 	f.jobB = f.admB.do("POST", "/api/admin/bulk", map[string]any{"confirm": tok}).want(t, 202, "").body["job"].(map[string]any)["id"].(string)
 	// An email domain B claimed (3.6 d2).
 	f.domainB = f.admB.do("POST", "/api/admin/tenants/"+f.tenB+"/domains", map[string]any{"domain": "acme-b.example"}).want(t, 201, "").body["domain"].(string)
+	// A sign-in provider of B's own (3.6 d3), stored as its administrators'
+	// POST stores one (made here without reaching an identity provider).
+	f.providerB = "PROVIDERB1"
+	if err := store.InsertProvider(ctx, a.st.Q(), store.ProviderRow{ID: f.providerB, Owner: f.tenB, TenantID: f.tenB, Slug: "acme-b-sso", Kind: "oidc", Class: "sso",
+		Name: "Acme B SSO", Config: `{"issuer":"https://idp.acme-b.example"}`, Created: now, Updated: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.auth.ReloadProviders(ctx); err != nil {
+		t.Fatal(err)
+	}
 	a.auth.FlushAudit(ctx)
 	return f
 }
@@ -130,7 +140,7 @@ func (f *tenFx) groupAdd(t *testing.T, c *client, g string, ids ...string) {
 
 // bIDs are everything of tenant B that must never show in an answer to A.
 func (f *tenFx) bIDs() []string {
-	l := []string{f.tenB, f.userB, f.spaceB, f.groupB, f.inviteB, f.tokenB, f.grantB, "adm-b", "mem-b", "Space B", "Group B", "Acme", f.secretB, f.itemB, f.exportB, f.jobB, "Space B2", "acme-b.example"}
+	l := []string{f.tenB, f.userB, f.spaceB, f.groupB, f.inviteB, f.tokenB, f.grantB, "adm-b", "mem-b", "Space B", "Group B", "Acme", f.secretB, f.itemB, f.exportB, f.jobB, "Space B2", "acme-b.example", f.providerB, "acme-b-sso", "Acme B SSO"}
 	if f.syncedB != "" {
 		l = append(l, f.syncedB, "Synced B")
 	}
@@ -365,6 +375,27 @@ var isolationRoutes = map[string]isoEntry{
 		body: func(f *tenFx, id string) any { return map[string]any{"restrictOrgs": true} }},
 	"DELETE /api/admin/tenants/{tenant}/domains/{domain}": {kind: isoParam, ids: func(f *tenFx) map[string]string {
 		return map[string]string{"tenant": f.tenB, "domain": f.domainB}
+	}},
+	"GET /api/admin/tenants/{tenant}/providers": {kind: isoParam},
+	"POST /api/admin/tenants/{tenant}/providers": {kind: isoParam, body: func(f *tenFx, id string) any {
+		return map[string]any{"slug": "evil-sso", "kind": "oidc", "name": "Evil"}
+	}},
+	"GET /api/admin/tenants/{tenant}/providers/{id}": {kind: isoParam, ids: func(f *tenFx) map[string]string {
+		return map[string]string{"tenant": f.tenB, "id": f.providerB}
+	}},
+	"PATCH /api/admin/tenants/{tenant}/providers/{id}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"tenant": f.tenB, "id": f.providerB} },
+		body: func(f *tenFx, id string) any { return map[string]any{"name": "taken over"} }},
+	"DELETE /api/admin/tenants/{tenant}/providers/{id}": {kind: isoParam, ids: func(f *tenFx) map[string]string {
+		return map[string]string{"tenant": f.tenB, "id": f.providerB}
+	}},
+	"POST /api/admin/tenants/{tenant}/providers/{id}/check": {kind: isoParam, ids: func(f *tenFx) map[string]string {
+		return map[string]string{"tenant": f.tenB, "id": f.providerB}
+	}},
+	"POST /api/admin/tenants/{tenant}/providers/{id}/test": {kind: isoParam, ids: func(f *tenFx) map[string]string {
+		return map[string]string{"tenant": f.tenB, "id": f.providerB}
+	}},
+	"GET /api/admin/tenants/{tenant}/providers/{id}/test": {kind: isoParam, ids: func(f *tenFx) map[string]string {
+		return map[string]string{"tenant": f.tenB, "id": f.providerB}
 	}},
 	"GET /api/admin/tenants/{tenant}/secrets":           {kind: isoParam},
 	"PUT /api/admin/tenants/{tenant}/secrets/{name}":    {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"tenant": f.tenB, "name": "mail.password"} }, body: func(f *tenFx, id string) any { return map[string]any{"value": "evil"} }},

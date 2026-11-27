@@ -371,6 +371,11 @@ func deleteProviderRows(ctx context.Context, q Q, where string, arg string) erro
 		if err := rows.Err(); err != nil {
 			return err
 		}
+		// A domain routed to the provider routes nowhere once it is gone
+		// (tenant_domains.provider_id has no foreign key: "" is none).
+		if _, err := q.Exec(ctx, `UPDATE tenant_domains SET provider_id = '' WHERE provider_id IN (SELECT id FROM providers WHERE `+where+`)`, arg); err != nil {
+			return err
+		}
 		if _, err := q.Exec(ctx, `DELETE FROM providers WHERE `+where, arg); err != nil {
 			return err
 		}

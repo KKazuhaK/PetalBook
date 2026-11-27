@@ -126,7 +126,7 @@ func TestAPlanRestrictsAndAChangeOfPlanClearsTheManualRules(t *testing.T) {
 		f.root.do("POST", "/api/admin/plans", map[string]any{"slug": "team", "name": "Team", "rules": map[string]any{
 			"quota.people": map[string]any{"value": 50, "lower": map[string]any{"mode": "restrict", "max": 10}}}}).want(t, 400, "setting_above_max")
 		r := f.root.do("POST", "/api/admin/plans", map[string]any{"slug": "team", "name": "Team", "description": "Small teams", "rules": map[string]any{
-			"quota.people": map[string]any{"lower": map[string]any{"mode": "restrict", "max": 10}}, "features.ownSso": map[string]any{"value": false, "lower": map[string]any{"mode": "lock"}}}}).want(t, 201, "")
+			"quota.people": map[string]any{"lower": map[string]any{"mode": "restrict", "max": 10}}, "features.managedAccounts": map[string]any{"value": false, "lower": map[string]any{"mode": "lock"}}}}).want(t, 201, "")
 		if r.body["slug"] != "team" || r.body["tenants"] != float64(0) || len(r.body["rules"].(map[string]any)) != 2 {
 			t.Fatal(r.raw)
 		}
@@ -153,7 +153,7 @@ func TestAPlanRestrictsAndAChangeOfPlanClearsTheManualRules(t *testing.T) {
 		if e := settingOf(t, s, "quota.bytes"); e["effective"] != nil {
 			t.Fatalf("the dated rule is cleared too: %v", e)
 		}
-		if ruleOf(t, s, "features.ownSso", "plan")["inEffect"] != true {
+		if ruleOf(t, s, "features.managedAccounts", "plan")["inEffect"] != true {
 			t.Fatal("the plan's lock is in effect")
 		}
 		// A tenant cannot set its own total, nor can a manual rule hold more than its own max.
@@ -162,7 +162,7 @@ func TestAPlanRestrictsAndAChangeOfPlanClearsTheManualRules(t *testing.T) {
 
 		// A change of the plan reaches the tenants on it, and a plan in use stays.
 		r = f.root.do("PATCH", "/api/admin/plans/team", map[string]any{"rules": map[string]any{
-			"quota.people": map[string]any{"lower": map[string]any{"mode": "restrict", "max": 20}}, "features.ownSso": nil}}).want(t, 200, "")
+			"quota.people": map[string]any{"lower": map[string]any{"mode": "restrict", "max": 20}}, "features.managedAccounts": nil}}).want(t, 200, "")
 		if got := strs(r.body["affected"]); len(got) != 1 || got[0] != f.tenB || r.body["tenants"] != float64(1) {
 			t.Fatal(r.raw)
 		}

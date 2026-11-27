@@ -21,8 +21,9 @@ var updateCodes = flag.Bool("update-codes", false, "rewrite web/src/i18n/errorCo
 const codesFile = "../../web/src/i18n/errorCodes.json"
 
 // The type names whose `Code` field is not an HTTP error code of the API: JSON-RPC
-// and MCP tool errors are for agents, the notices and the problems of a file are shown by their own pages.
-var notAPICode = map[string]bool{"mcpError": true, "jsonrpc.Error": true, "Notice": true, "page.Problem": true}
+// and MCP tool errors are for agents, the notices and the problems of a file are shown by their own pages, and a
+// sign-in's ssoError is the sso_error of the redirect that ends it (the sign-in page explains it).
+var notAPICode = map[string]bool{"mcpError": true, "jsonrpc.Error": true, "Notice": true, "page.Problem": true, "ssoError": true}
 
 // errorCodesInSource finds every error code in the non-test Go files under
 // internal/: the code argument of writeError and coded, the Error of an errorBody,

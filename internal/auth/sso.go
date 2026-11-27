@@ -72,8 +72,8 @@ func (t *discoveryTransport) RoundTrip(r *http.Request) (*http.Response, error) 
 	return t.base.RoundTrip(r)
 }
 
-func (s *Service) discoveryClient(issuer, cached string) (*http.Client, *discoveryTransport) {
-	c := *s.httpClient()
+func (s *Service) discoveryClient(owner, issuer, cached string) (*http.Client, *discoveryTransport) {
+	c := *s.httpClientFor(owner)
 	base := c.Transport
 	if base == nil {
 		base = http.DefaultTransport
@@ -85,12 +85,12 @@ func (s *Service) discoveryClient(issuer, cached string) (*http.Client, *discove
 
 // buildOIDC makes the library's provider; with a stored discovery document
 // nothing is fetched.
-func (s *Service) buildOIDC(ctx context.Context, cfg provCfg, secret, redirect, cached string) (*authoidc.Provider, string, error) {
+func (s *Service) buildOIDC(ctx context.Context, owner string, cfg provCfg, secret, redirect, cached string) (*authoidc.Provider, string, error) {
 	scopes := cfg.Scopes
 	if len(scopes) == 0 {
 		scopes = []string{"profile", "email"}
 	}
-	client, tr := s.discoveryClient(cfg.Issuer, cached)
+	client, tr := s.discoveryClient(owner, cfg.Issuer, cached)
 	p, err := authoidc.New(context.WithoutCancel(ctx), authoidc.Config{IssuerURL: cfg.Issuer, ClientID: cfg.ClientID, ClientSecret: secret,
 		RedirectURL: redirect, Scopes: scopes, HTTPClient: client})
 	if err != nil {
@@ -102,8 +102,8 @@ func (s *Service) buildOIDC(ctx context.Context, cfg provCfg, secret, redirect, 
 }
 
 // discover fetches and checks the discovery document and returns it.
-func (s *Service) discover(ctx context.Context, cfg provCfg, secret, redirect string) (string, error) {
-	_, doc, err := s.buildOIDC(ctx, cfg, secret, redirect, "")
+func (s *Service) discover(ctx context.Context, owner string, cfg provCfg, secret, redirect string) (string, error) {
+	_, doc, err := s.buildOIDC(ctx, owner, cfg, secret, redirect, "")
 	return doc, err
 }
 
@@ -141,7 +141,7 @@ func (s *Service) oidcFor(ctx context.Context, rt *providerRT) (*authoidc.Provid
 	if rt.err != nil && s.now().Sub(rt.tried) < 5*time.Second {
 		return nil, rt.err
 	}
-	p, doc, err := s.buildOIDC(ctx, rt.cfg, secret, s.redirectURL(rt), cached)
+	p, doc, err := s.buildOIDC(ctx, rt.row.Owner, rt.cfg, secret, s.redirectURL(rt), cached)
 	rt.tried = s.now()
 	if err != nil {
 		rt.err = err
@@ -345,12 +345,20 @@ func (s *Service) samlLinkCookie(slug, value string, maxAge int) *http.Cookie {
 func SAMLCookieName(slug string) string { return samlCookieName(slug) }
 
 // LinkBegin starts linking the signed-in user to an account at a provider (by
-// the provider's id; a site provider's id is its slug). A tenant's provider is
-// not reachable yet: it has no sign-in route until 3.6 (d).
+// the provider's id; a site provider's id is its slug). A tenant's provider
+// links only its own tenant's people (3.6 d3); a provider the person may not
+// use is answered as one that is not there.
 func (s *Service) LinkBegin(ctx context.Context, providerID string, u *store.User, ret, ip string) (*BeginResult, error) {
 	rt := s.provs.getID(providerID)
-	if rt == nil || rt.row.Owner != store.ProviderSite || !s.signInOn(ctx, rt) {
+	if rt == nil || !s.signInOn(ctx, rt) {
 		return nil, errf(NotFound, "Single sign-on is not configured.")
+	}
+	if err := s.mayUse(ctx, rt, *u); err != nil {
+		var se *ssoError
+		if errors.As(err, &se) {
+			return nil, errf(NotFound, "Single sign-on is not configured.")
+		}
+		return nil, err
 	}
 	return s.SSOBegin(ctx, rt.row.Kind, rt.row.Slug, BeginParams{Intent: "link", Return: ret, User: u}, ip)
 }
@@ -361,8 +369,13 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 	if rt == nil || rt.row.Kind != kind {
 		return nil, errf(NotFound, "Single sign-on is not configured.")
 	}
-	// A provider that is off answers only the test an administrator runs on it.
-	if !rt.row.Enabled && p.Intent != "test" {
+	// A provider that is off answers only the test an administrator runs on
+	// it; so does a tenant's whose tenant lost features.ownSso or its domains.
+	if p.Intent != "test" && !s.signInOn(ctx, rt) {
+		return nil, errf(NotFound, "Single sign-on is not configured.")
+	}
+	// A tenant's own provider makes no first administrator of the server.
+	if p.Intent == "setup" && rt.row.Owner != store.ProviderSite {
 		return nil, errf(NotFound, "Single sign-on is not configured.")
 	}
 	switch p.Intent {
@@ -494,13 +507,32 @@ func failURL(intent, code string) string {
 	return base + "?sso_error=" + code
 }
 
+// tenantTestPage is where a test sign-in of a tenant's own provider goes back
+// to: the organisation console's sign-in tab.
+const tenantTestPage = "/admin/settings/signin"
+
+// ssoFailFor is ssoFail for a sign-in refused once its account was found
+// (not_allowed): the audit row names the account and its tenant.
+func (s *Service) ssoFailFor(kind, slug, intent, code, ip string, u *store.User, clear ...*http.Cookie) Outcome {
+	if intent == "test" {
+		return Outcome{Redirect: failURL(intent, code), Clear: clear}
+	}
+	s.Audit(AuditEvent{Kind: "login_failed", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip,
+		Detail: map[string]any{"method": kind, "reason": code, "provider": slug}})
+	return Outcome{Redirect: failURL(intent, code), Clear: clear}
+}
+
 // ssoFail is the outcome of a sign-in that did not work, and the audit row for it.
 func (s *Service) ssoFail(kind, slug, intent, code, ip string, clear ...*http.Cookie) Outcome {
 	// Only a sign-in that was really under way (it has an intent) is written
 	// down: anyone can send a callback that matches nothing, and the log is not
 	// for them to fill.
-	if intent != "" && intent != "test" && s.provs.get(slug) != nil {
-		s.Audit(AuditEvent{Kind: "login_failed", IP: ip, Detail: map[string]any{"method": kind, "reason": code, "provider": slug}})
+	rt := s.provs.get(slug)
+	if intent != "" && intent != "test" && rt != nil {
+		s.Audit(AuditEvent{Kind: "login_failed", Tenant: auditTenant(rt.row.Owner), IP: ip, Detail: map[string]any{"method": kind, "reason": code, "provider": slug}})
+	}
+	if intent == "test" && rt != nil && rt.row.Owner != store.ProviderSite {
+		return Outcome{Redirect: tenantTestPage + "?sso_error=" + code, Clear: clear}
 	}
 	return Outcome{Redirect: failURL(intent, code), Clear: clear}
 }
@@ -522,7 +554,7 @@ func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken 
 		return s.ssoFail(kind, slug, "", "provider_unavailable", ip)
 	}
 	// A provider that is off answers only the test an administrator ran on it.
-	off := !rt.row.Enabled
+	off := !s.signInOn(ctx, rt)
 	if off && binding == "" {
 		return s.ssoFail(kind, slug, "", "provider_unavailable", ip)
 	}
@@ -642,7 +674,7 @@ func (s *Service) SAMLComplete(ctx context.Context, slug string, r *http.Request
 		return s.ssoFail(KindSAML, slug, "", "provider_unavailable", ip)
 	}
 	// A provider that is off answers only the test an administrator ran on it.
-	off := !rt.row.Enabled
+	off := !s.signInOn(ctx, rt)
 	clear := []*http.Cookie{s.samlCookie(slug, "", -1)}
 	linkTie := ""
 	if ck, err := r.Cookie(s.samlLinkCookie(slug, "", 0).Name); err == nil {
@@ -791,7 +823,7 @@ func samlClaims(rt *providerRT, a *authsaml.Assertion) (claimed, error) {
 	}
 	c := claimed{subject: sub, name: attr(at.Name), preferred: attr(at.Username), email: email, src: emailSource{template: tmplSAML}}
 	c.labelOverride = email
-	if g, on := rt.groupsOn(); on {
+	if g, on := rt.groupsRead(); on {
 		c.groups = samlGroupClaim(g, a.Attributes)
 	}
 	return c, nil
@@ -871,7 +903,7 @@ func identityFromClaims(rt *providerRT, subject string, raw map[string]json.RawM
 	if rt.row.Template == TemplateApple {
 		c.src.relay = isAppleRelay(email) || claimTrue(raw, "is_private_email")
 	}
-	if g, on := rt.groupsOn(); on {
+	if g, on := rt.groupsRead(); on {
 		c.groups = oidcGroupClaim(g, raw)
 	}
 	return c, nil
@@ -889,11 +921,20 @@ func clip(s string, n int) string {
 	}, s)
 }
 
-type ssoError struct{ code string }
+// ssoError is a sign-in refused with an sso_error code; user is the account
+// it found, when it found one (its audit row names it).
+type ssoError struct {
+	code string
+	user *store.User
+}
 
 func (e *ssoError) Error() string { return e.code }
 
-func ssoErr(code string) error { return &ssoError{code} }
+func ssoErr(code string) error { return &ssoError{code: code} }
+
+// notAllowed is the refusal of a sign-in through a provider the account may
+// not use (mayUse): sso_error=not_allowed, audited with the account.
+func notAllowed(u *store.User) error { return &ssoError{code: "not_allowed", user: u} }
 
 // finishSSO turns a verified identity into what the intent asked for and ends
 // the attempt with a redirect.
@@ -904,6 +945,12 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 	var user *store.User
 	var created bool
 	var err error
+	// The groups allowlist is asked at every sign-in, not only when an
+	// account is made: who the identity provider takes out of the groups
+	// signs in no more.
+	if (e.intent == "login" || e.intent == "invite") && !rt.allowedByGroups(c.groups) {
+		return s.ssoFail(kind, slug, e.intent, "not_allowed", ip, clear...)
+	}
 	switch e.intent {
 	case "login":
 		user, created, err = s.ssoLogin(ctx, rt, c, ip)
@@ -924,6 +971,9 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 	if err != nil {
 		var se *ssoError
 		if errors.As(err, &se) {
+			if se.user != nil {
+				return s.ssoFailFor(kind, slug, e.intent, se.code, ip, se.user, clear...)
+			}
 			return s.ssoFail(kind, slug, e.intent, se.code, ip, clear...)
 		}
 		s.log.Error("sign-in failed", "error", err)
@@ -968,6 +1018,12 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 		if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 			return nil, false, ssoErr("disabled")
 		}
+		// The link row is not trusted to keep to the provider's tenant: the
+		// account it names is asked again (a row written across tenants
+		// signs nobody in), as is everything else the provider may reach.
+		if err := s.mayUse(ctx, rt, *u); err != nil {
+			return nil, false, err
+		}
 		if err := store.TouchLink(ctx, s.st.Q(), ident, c.email, c.emailVerified, c.label(), s.now()); err != nil {
 			s.log.Warn("could not record the sign-in on its linked account", "provider", rt.row.Slug, "error", err)
 		}
@@ -995,10 +1051,18 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	if rt.row.Kind == KindGitHub && len(rt.cfg.Organizations) == 0 {
 		return nil, false, ssoErr("no_account")
 	}
-	if s.st.TenantDisabled(rt.row.TenantID) { // the provider's tenant was disabled after it was set up
+	// A tenant's provider makes accounts in its own tenant only.
+	tenant := rt.row.TenantID
+	if rt.row.Owner != store.ProviderSite {
+		tenant = rt.row.Owner
+	}
+	if s.st.TenantDisabled(tenant) { // the provider's tenant was disabled after it was set up
 		return nil, false, ssoErr("no_account")
 	}
-	u, err := s.createFromClaims(ctx, c, "member", "", false, rt.row.TenantID, false)
+	if !s.tenantMayUse(ctx, rt, tenant) {
+		return nil, false, ssoErr("not_allowed")
+	}
+	u, err := s.createFromClaims(ctx, c, "member", "", false, tenant, false)
 	return u, true, err
 }
 
@@ -1023,6 +1087,12 @@ func (s *Service) ssoInvite(ctx context.Context, rt *providerRT, c claimed, toke
 		return nil, ssoErr("invite_invalid")
 	} else if err != nil {
 		return nil, err
+	}
+	// The account the invitation makes must be one the provider may sign in:
+	// a tenant's provider makes no site administrator, nor anyone of another
+	// tenant.
+	if inv.SiteAdmin && rt.row.Owner != store.ProviderSite || !s.tenantMayUse(ctx, rt, inv.TenantID) {
+		return nil, ssoErr("not_allowed")
 	}
 	u, err := s.createFromClaims(ctx, c, inv.Role, inv.ID, false, inv.TenantID, inv.SiteAdmin)
 	if errors.As(err, &ae) && ae.Kind == NotFound {
@@ -1051,6 +1121,11 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 		p = &Principal{User: *u, Access: access}
 	} else if p, err = s.Authenticate(ctx, sessionToken); err != nil || p.User.ID != userID {
 		return ssoErr("expired")
+	}
+	// Only who may sign in through the provider links it: a tenant's own
+	// provider, its tenant's people and never a site administrator.
+	if err := s.mayUse(ctx, rt, p.User); err != nil {
+		return err
 	}
 	if ident, err := store.FindLink(ctx, s.st.Q(), rt.row.ID, c.subject); err == nil {
 		if ident.UserID != userID {

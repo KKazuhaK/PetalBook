@@ -37,17 +37,24 @@ type GroupsCfg struct {
 	Claim   string          `json:"claim"`
 	Missing string          `json:"missing"`
 	Map     []GroupMapEntry `json:"map"`
+	// Allow, when not empty, lets through only people the identity provider
+	// says are in one of these groups (claim values): checked at every
+	// sign-in, not only when the account is made (3.6 d3); anyone else is
+	// refused (sso_error=not_allowed). It reads the same claim as Map, and
+	// works whether or not the groups are synced (Enabled).
+	Allow []string `json:"allow"`
 }
 
 // groupsView is the setting with its defaults filled in, never nil slices.
 func groupsView(kind string, g *GroupsCfg) GroupsCfg {
-	v := GroupsCfg{Missing: missingKeep, Map: []GroupMapEntry{}}
+	v := GroupsCfg{Missing: missingKeep, Map: []GroupMapEntry{}, Allow: []string{}}
 	if g != nil {
 		v.Enabled, v.Claim = g.Enabled, g.Claim
 		if g.Missing != "" {
 			v.Missing = g.Missing
 		}
 		v.Map = append(v.Map, g.Map...)
+		v.Allow = append(v.Allow, g.Allow...)
 	}
 	if kind == KindOIDC && v.Claim == "" {
 		v.Claim = defaultOIDCClaim
@@ -72,6 +79,7 @@ type groupsInput struct {
 	Claim   *string          `json:"claim"`
 	Missing *string          `json:"missing"`
 	Map     *[]GroupMapEntry `json:"map"`
+	Allow   *[]string        `json:"allow"`
 }
 
 func badControl(s string) bool {
@@ -147,10 +155,12 @@ func (s *Service) applyGroups(ctx context.Context, b *built, in *groupsInput) er
 		}
 		for _, e := range list {
 			src, ok := sources[e.GroupID]
-			if !ok {
+			// A tenant's provider maps to its own tenant's groups only: a
+			// group of another tenant is answered as one that does not exist.
+			if !ok || b.row.Owner != store.ProviderSite && src.TenantID != b.row.Owner {
 				return coded(404, "group_not_found", "A groups.map entry names a group that does not exist.")
 			}
-			if src != store.GroupSynced {
+			if src.Source != store.GroupSynced {
 				return coded(409, "group_not_synced", "Only a synced group can be mapped; %s is local.", e.GroupID)
 			}
 		}
@@ -159,10 +169,31 @@ func (s *Service) applyGroups(ctx context.Context, b *built, in *groupsInput) er
 		}
 		g.Map = slices.Clone(list)
 	}
-	if g.Enabled && kind == KindSAML && g.Claim == "" {
+	if in.Allow != nil {
+		if kind == KindGitHub && len(*in.Allow) > 0 {
+			return providerInvalid("A GitHub provider is held to its organisations: groups.allow cannot be set.")
+		}
+		if len(*in.Allow) > maxGroupMap {
+			return providerInvalid("groups.allow has at most %d values.", maxGroupMap)
+		}
+		var l []string
+		for _, v := range *in.Allow {
+			if v == "" || len(v) > maxClaimBytes || !utf8.ValidString(v) || badControl(v) {
+				return providerInvalid("A groups.allow value is 1 to %d bytes of text.", maxClaimBytes)
+			}
+			if !slices.Contains(l, v) {
+				l = append(l, v)
+			}
+		}
+		if !slices.Equal(l, g.Allow) {
+			mark("allow")
+		}
+		g.Allow = l
+	}
+	if (g.Enabled || len(g.Allow) > 0) && kind == KindSAML && g.Claim == "" {
 		return providerInvalid("groups.claim is the name of the SAML attribute that holds the groups.")
 	}
-	if g.Enabled || b.cfg.Groups != nil || in.Map != nil || in.Claim != nil || in.Missing != nil {
+	if g.Enabled || b.cfg.Groups != nil || in.Map != nil || in.Claim != nil || in.Missing != nil || in.Allow != nil {
 		b.cfg.Groups = &g
 	}
 	return nil
@@ -259,6 +290,32 @@ func samlGroupClaim(cfg *GroupsCfg, attrs map[string][]string) groupClaim {
 func (rt *providerRT) groupsOn() (*GroupsCfg, bool) {
 	g := rt.cfg.Groups
 	return g, g != nil && g.Enabled
+}
+
+// groupsRead reports whether a sign-in reads the groups claim: to sync the
+// groups, or to hold the person to the allowlist.
+func (rt *providerRT) groupsRead() (*GroupsCfg, bool) {
+	g := rt.cfg.Groups
+	return g, g != nil && (g.Enabled || len(g.Allow) > 0)
+}
+
+// allowedByGroups says whether the sign-in passes the provider's groups
+// allowlist: there is none, or the claim names one of its groups. A claim
+// that is missing passes nothing (it fails closed).
+func (rt *providerRT) allowedByGroups(gc groupClaim) bool {
+	g := rt.cfg.Groups
+	if g == nil || len(g.Allow) == 0 {
+		return true
+	}
+	if !gc.present {
+		return false
+	}
+	for _, v := range gc.values {
+		if slices.Contains(g.Allow, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // syncGroups brings the person's groups from this provider up to date after a

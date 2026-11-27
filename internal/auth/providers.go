@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"slices"
@@ -30,6 +32,7 @@ import (
 	crewjamsaml "github.com/crewjam/saml"
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 
+	"petalbook.app/server/internal/dailyfetch"
 	"petalbook.app/server/internal/secret"
 	"petalbook.app/server/internal/secrets"
 	"petalbook.app/server/internal/store"
@@ -91,7 +94,13 @@ type provCfg struct {
 	// itself is the site's secret signin.appleKey).
 	AppleTeamID string `json:"appleTeamId,omitempty"`
 	AppleKeyID  string `json:"appleKeyId,omitempty"`
+	// Offer is to whom a site SSO provider is offered (3.6 d3): "" every
+	// tenant, OfferList the tenants of provider_shares only.
+	Offer string `json:"offer,omitempty"`
 }
+
+// OfferList is provCfg.Offer of a site SSO provider offered to a list of tenants.
+const OfferList = "list"
 
 // SAMLAttrs name where the email, display name and username come from.
 type SAMLAttrs struct {
@@ -156,28 +165,53 @@ type PublicProvider struct {
 type providerSet struct {
 	mu   sync.RWMutex
 	list []*providerRT
-	// byID has every provider (of every owner); bySlug only the site's: the
-	// public routes name a provider by slug, and a slug means a site provider.
+	// byID and bySlug have every provider, of every owner: slugs are unique
+	// on the server (they are in the callback addresses), so the public
+	// routes resolve a tenant's provider by its slug too (3.6 d3); what it
+	// may sign in to is its tenant's alone (see mayUse).
 	byID   map[string]*providerRT
 	bySlug map[string]*providerRT
+	// shares are the tenants each site SSO provider offered to a list is
+	// offered to (provider_shares), by provider id.
+	shares map[string]map[string]bool
 	pub    atomic.Pointer[[]PublicProvider]
-	// anyOn is whether some provider is enabled.
+	// anyOn is whether some site provider is enabled.
 	anyOn atomic.Bool
 }
 
 func newProviderSet() *providerSet {
-	p := &providerSet{byID: map[string]*providerRT{}, bySlug: map[string]*providerRT{}}
+	p := &providerSet{byID: map[string]*providerRT{}, bySlug: map[string]*providerRT{}, shares: map[string]map[string]bool{}}
 	empty := []PublicProvider{}
 	p.pub.Store(&empty)
 	return p
 }
 
-// get is the site provider with the slug: what the public sign-in routes
-// resolve. A tenant's provider is never reached by a slug alone.
+// get is the provider with the slug, of any owner: what the public sign-in
+// routes resolve.
 func (p *providerSet) get(slug string) *providerRT {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.bySlug[slug]
+}
+
+// sharedWith reports whether the site provider id is offered to tenant by
+// its list (provider_shares).
+func (p *providerSet) sharedWith(id, tenant string) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.shares[id][tenant]
+}
+
+// sharesOf is the tenants a site provider's list names, sorted.
+func (p *providerSet) sharesOf(id string) []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	out := make([]string, 0, len(p.shares[id]))
+	for t := range p.shares[id] {
+		out = append(out, t)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // getID is the provider (of any owner) with the id.
@@ -197,24 +231,32 @@ func (p *providerSet) all() []*providerRT {
 	return slices.Clone(p.list)
 }
 
-func (p *providerSet) set(list []*providerRT) {
+func (p *providerSet) set(list []*providerRT, shares map[string][]string) {
 	pub := []PublicProvider{}
 	byID := make(map[string]*providerRT, len(list))
 	by := make(map[string]*providerRT, len(list))
+	sh := make(map[string]map[string]bool, len(shares))
+	for id, l := range shares {
+		m := make(map[string]bool, len(l))
+		for _, t := range l {
+			m[t] = true
+		}
+		sh[id] = m
+	}
 	on := false
 	for _, rt := range list {
 		byID[rt.row.ID] = rt
+		by[rt.row.Slug] = rt
 		if rt.row.Owner != store.ProviderSite {
 			continue
 		}
-		by[rt.row.Slug] = rt
 		if rt.row.Enabled {
 			on = true
 			pub = append(pub, PublicProvider{Slug: rt.row.Slug, Kind: rt.row.Kind, Name: rt.row.Name, Icon: rt.row.Icon})
 		}
 	}
 	p.mu.Lock()
-	p.list, p.byID, p.bySlug = list, byID, by
+	p.list, p.byID, p.bySlug, p.shares = list, byID, by, sh
 	p.mu.Unlock()
 	p.pub.Store(&pub)
 	p.anyOn.Store(on)
@@ -309,6 +351,10 @@ func (s *Service) reloadProviders(ctx context.Context, rebuild ...string) error 
 	if err != nil {
 		return err
 	}
+	shares, err := store.ProviderShares(ctx, s.st.Q())
+	if err != nil {
+		return err
+	}
 	old := map[string]*providerRT{}
 	for _, rt := range s.provs.all() {
 		old[rt.row.ID] = rt
@@ -321,7 +367,7 @@ func (s *Service) reloadProviders(ctx context.Context, rebuild ...string) error 
 		}
 		list = append(list, s.newRT(ctx, row))
 	}
-	s.provs.set(list)
+	s.provs.set(list, shares)
 	return nil
 }
 
@@ -346,12 +392,18 @@ type ProviderView struct {
 	AutoCreate         bool   `json:"autoCreate"`
 	MergeVerifiedEmail bool   `json:"mergeVerifiedEmail"`
 	// Tenant is the tenant autoCreate puts new accounts in (an id).
-	Tenant string      `json:"tenant"`
-	OIDC   *OIDCView   `json:"oidc,omitempty"`
-	SAML   *SAMLView   `json:"saml,omitempty"`
-	GitHub *GitHubView `json:"github,omitempty"`
-	Apple  *AppleView  `json:"apple,omitempty"`
-	Groups GroupsCfg   `json:"groups"`
+	Tenant string `json:"tenant"`
+	// Tenants is to whom a site SSO provider is offered: "all" or a list of
+	// tenant ids; null for a social provider and for a tenant's own (3.6 d3).
+	Tenants any `json:"tenants"`
+	// Domains are the verified domains of the provider's tenant routed to it
+	// (a tenant's own; [] for any other).
+	Domains []string    `json:"domains"`
+	OIDC    *OIDCView   `json:"oidc,omitempty"`
+	SAML    *SAMLView   `json:"saml,omitempty"`
+	GitHub  *GitHubView `json:"github,omitempty"`
+	Apple   *AppleView  `json:"apple,omitempty"`
+	Groups  GroupsCfg   `json:"groups"`
 	// Signin is always true here (these are the providers people sign in with);
 	// Repos says the provider also holds repositories (the GitHub row once its App
 	// is set up), whose own settings are the repository side's.
@@ -426,7 +478,7 @@ func (s *Service) samlURLs(slug string) (entity, acs, metaPath string) {
 	return s.publicBase() + metaPath, s.publicBase() + "/api/auth/saml/" + slug + "/acs", metaPath
 }
 
-func (s *Service) viewOf(rt *providerRT, people int) ProviderView {
+func (s *Service) viewOf(rt *providerRT, people int, routes map[string][]string) ProviderView {
 	row := rt.row
 	ok, checked, msg := rt.status()
 	v := ProviderView{ID: row.ID, Owner: row.Owner, Slug: row.Slug, Kind: row.Kind, Class: row.Class, Template: row.Template, Name: row.Name, Icon: row.Icon, Enabled: row.Enabled, Order: row.Position,
@@ -436,6 +488,16 @@ func (s *Service) viewOf(rt *providerRT, people int) ProviderView {
 		Created: rfc3339(row.Created), Updated: rfc3339(row.Updated), SecretUnreadable: rt.secretErr != nil}
 	if !checked.IsZero() {
 		v.Status.Checked = rfc3339(checked)
+	}
+	v.Domains = slices.Clone(routes[row.ID])
+	if v.Domains == nil {
+		v.Domains = []string{}
+	}
+	if row.Owner == store.ProviderSite && row.Class == ClassSSO {
+		v.Tenants = "all"
+		if rt.cfg.Offer == OfferList {
+			v.Tenants = s.provs.sharesOf(row.ID)
+		}
 	}
 	switch row.Kind {
 	case KindOIDC:
@@ -469,14 +531,25 @@ func rfc3339(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05Z")
 
 // Providers lists every provider in order.
 func (s *Service) Providers(ctx context.Context) ([]ProviderView, error) {
+	return s.ProvidersOf(ctx, "")
+}
+
+// ProvidersOf lists the providers of one owner ("site" or a tenant id; ""
+// for every owner) in order.
+func (s *Service) ProvidersOf(ctx context.Context, owner string) ([]ProviderView, error) {
 	people, err := store.ProviderPeople(ctx, s.st.Q())
 	if err != nil {
 		return nil, err
 	}
-	list := s.provs.all()
-	out := make([]ProviderView, len(list))
-	for i, rt := range list {
-		out[i] = s.viewOf(rt, people[rt.row.ID])
+	routes, err := store.DomainRoutes(ctx, s.st.Q())
+	if err != nil {
+		return nil, err
+	}
+	out := []ProviderView{}
+	for _, rt := range s.provs.all() {
+		if owner == "" || rt.row.Owner == owner {
+			out = append(out, s.viewOf(rt, people[rt.row.ID], routes))
+		}
 	}
 	return out, nil
 }
@@ -491,12 +564,59 @@ func (s *Service) Provider(ctx context.Context, id string) (*ProviderView, error
 	if err != nil {
 		return nil, err
 	}
-	v := s.viewOf(rt, people[rt.row.ID])
+	routes, err := store.DomainRoutes(ctx, s.st.Q())
+	if err != nil {
+		return nil, err
+	}
+	v := s.viewOf(rt, people[rt.row.ID], routes)
 	return &v, nil
+}
+
+// ProviderOwner is the owner of a provider ("site" or a tenant id), "" when
+// there is none with the id.
+func (s *Service) ProviderOwner(id string) string {
+	if rt := s.provs.getID(id); rt != nil {
+		return rt.row.Owner
+	}
+	return ""
+}
+
+// ProviderUse counts each tenant's own sign-in providers, and how many of
+// them are enabled, from memory: what switching features.ownSso off stops.
+func (s *Service) ProviderUse() map[string][2]int {
+	out := map[string][2]int{}
+	for _, rt := range s.provs.all() {
+		if rt.row.Owner == store.ProviderSite {
+			continue
+		}
+		n := out[rt.row.Owner]
+		n[0]++
+		if rt.row.Enabled {
+			n[1]++
+		}
+		out[rt.row.Owner] = n
+	}
+	return out
 }
 
 // PublicProviders is what GET /api/auth/providers lists, answered from memory.
 func (s *Service) PublicProviders() []PublicProvider { return s.provs.publicList() }
+
+// PublicProvidersFor is what the sign-in page of one tenant lists
+// (GET /api/auth/providers?tenant=): the site's social providers the tenant
+// allows (signin.social), the site's SSO offered to it, and its own that can
+// sign in now, in the administrators' order. From memory and the settings'
+// cache: no query.
+func (s *Service) PublicProvidersFor(ctx context.Context, tenant string) []PublicProvider {
+	out := []PublicProvider{}
+	for _, rt := range s.provs.all() {
+		if rt.row.Owner != store.ProviderSite && rt.row.Owner != tenant || !s.signInOn(ctx, rt) || !s.tenantMayUse(ctx, rt, tenant) {
+			continue
+		}
+		out = append(out, PublicProvider{Slug: rt.row.Slug, Kind: rt.row.Kind, Name: rt.row.Name, Icon: rt.row.Icon})
+	}
+	return out
+}
 
 // --- input -------------------------------------------------------------------
 
@@ -523,8 +643,11 @@ type ProviderInput struct {
 	AutoCreate         *bool       `json:"autoCreate"`
 	MergeVerifiedEmail *bool       `json:"mergeVerifiedEmail"`
 	Tenant             *string     `json:"tenant"`
-	OIDC               *OIDCInput  `json:"oidc"`
-	SAML               *struct {
+	// Tenants is to whom a site SSO provider is offered: "all" or a list of
+	// tenant ids (3.6 d3).
+	Tenants *TenantsInput `json:"tenants"`
+	OIDC    *OIDCInput    `json:"oidc"`
+	SAML    *struct {
 		MetadataURL       *string `json:"metadataUrl"`
 		MetadataXML       *string `json:"metadataXml"`
 		EntityID          *string `json:"entityId"`
@@ -536,6 +659,33 @@ type ProviderInput struct {
 	GitHub *GitHubInput `json:"github"`
 	Groups *groupsInput `json:"groups"`
 }
+
+// TenantsInput is "all" or a list of tenant ids.
+type TenantsInput struct {
+	All  bool
+	List []string
+}
+
+// UnmarshalJSON reads "all" or a list of ids.
+func (t *TenantsInput) UnmarshalJSON(b []byte) error {
+	var all string
+	if json.Unmarshal(b, &all) == nil {
+		if all != "all" {
+			return errors.New(`tenants is "all" or a list of tenant ids`)
+		}
+		*t = TenantsInput{All: true}
+		return nil
+	}
+	var l []string
+	if err := json.Unmarshal(b, &l); err != nil || l == nil {
+		return errors.New(`tenants is "all" or a list of tenant ids`)
+	}
+	*t = TenantsInput{List: l}
+	return nil
+}
+
+// maxShares is how many tenants one provider's list may name.
+const maxShares = 1000
 
 // OIDCInput is the OpenID Connect part of a POST or PATCH.
 type OIDCInput struct {
@@ -647,6 +797,10 @@ type built struct {
 	// given now (appleKeyPEM is set, and is stored with the row) or the stored one.
 	appleKey    *ecdsa.PrivateKey
 	appleKeyPEM string
+	// shares are the tenants a site SSO provider is offered to, written with
+	// the row when sharesSet.
+	shares    []string
+	sharesSet bool
 }
 
 // appleSecretNow signs a client secret with what b holds (to check the
@@ -972,6 +1126,11 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		}
 		b.row.TenantID = *in.Tenant
 	}
+	if in.Tenants != nil {
+		if err := s.applyTenants(ctx, b, cur, in.Tenants); err != nil {
+			return nil, err
+		}
+	}
 	if in.AutoCreate != nil {
 		if *in.AutoCreate != b.row.AutoCreate {
 			mark("autoCreate")
@@ -1233,6 +1392,47 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	return b, nil
 }
 
+// applyTenants checks and takes to whom a site SSO provider is offered.
+func (s *Service) applyTenants(ctx context.Context, b *built, cur *providerRT, in *TenantsInput) error {
+	if b.row.Owner != store.ProviderSite || b.row.Class != ClassSSO {
+		return providerInvalid("Only the site's single sign-on (class sso) is offered to tenants: social sign-in is pruned by each tenant's signin.social, and a tenant's own provider is its own.")
+	}
+	var was []string
+	wasList := false
+	if cur != nil {
+		wasList = cur.cfg.Offer == OfferList
+		if wasList {
+			was = s.provs.sharesOf(cur.row.ID)
+		}
+	}
+	b.sharesSet = true
+	if in.All {
+		b.cfg.Offer, b.shares = "", nil
+		if wasList {
+			b.changed = append(b.changed, "tenants")
+		}
+		return nil
+	}
+	if len(in.List) > maxShares {
+		return providerInvalid("Tenants lists at most %d tenants.", maxShares)
+	}
+	l := slices.Clone(in.List)
+	slices.Sort(l)
+	l = slices.Compact(l)
+	for _, id := range l {
+		if _, err := store.GetTenant(ctx, s.st.Q(), id); errors.Is(err, store.ErrNotFound) {
+			return providerInvalid("Tenants are ids of tenants; %s is none.", id)
+		} else if err != nil {
+			return err
+		}
+	}
+	b.cfg.Offer, b.shares = OfferList, l
+	if !wasList || !slices.Equal(was, l) {
+		b.changed = append(b.changed, "tenants")
+	}
+	return nil
+}
+
 // --- creating, changing, deleting ---------------------------------------------
 
 // CreateProvider adds a provider. The discovery document or the metadata is
@@ -1245,7 +1445,13 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) >= maxProviders {
+	// The limit is each owner's: one organisation's providers never keep
+	// another, or the site, from adding theirs.
+	owner := store.ProviderSite
+	if in.Owner != nil && *in.Owner != "" {
+		owner = *in.Owner
+	}
+	if n := len(slices.DeleteFunc(slices.Clone(rows), func(o store.ProviderRow) bool { return o.Owner != owner })); n >= maxProviders {
 		return nil, coded(409, "provider_limit", "At most %d providers.", maxProviders)
 	}
 	// Slugs are unique on the whole server, whoever owns the provider: the
@@ -1308,6 +1514,11 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 		if err := store.InsertProvider(ctx, q, b.row); err != nil {
 			return err
 		}
+		if b.sharesSet {
+			if err := store.SetProviderShares(ctx, q, b.row.ID, b.shares); err != nil {
+				return err
+			}
+		}
 		return s.storeAppleKey(ctx, q, b, actorID)
 	})
 	if err != nil {
@@ -1319,7 +1530,7 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	if err := s.reloadProviders(ctx, b.row.ID); err != nil {
 		return nil, err
 	}
-	s.AuditIn(ctx, AuditEvent{Kind: "provider_created", Actor: actorID, IP: ip, Detail: map[string]any{"slug": b.row.Slug, "kind": b.row.Kind, "name": b.row.Name}})
+	s.AuditIn(ctx, AuditEvent{Kind: providerAuditKind(b.row.Owner, "provider_created", "tenant_provider_created"), Actor: actorID, IP: ip, Tenant: auditTenant(b.row.Owner), Detail: map[string]any{"slug": b.row.Slug, "kind": b.row.Kind, "name": b.row.Name}})
 	return s.Provider(ctx, b.row.ID)
 }
 
@@ -1392,6 +1603,11 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, id string, in
 		if err := s.storeAppleKey(ctx, q, b, actorID); err != nil {
 			return err
 		}
+		if b.sharesSet {
+			if err := store.SetProviderShares(ctx, q, id, b.shares); err != nil {
+				return err
+			}
+		}
 		var err error
 		dropped, err = s.dropUnmapped(ctx, q, id, cur.cfg.Groups, b.cfg.Groups)
 		return err
@@ -1412,9 +1628,29 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, id string, in
 		for _, f := range b.changed {
 			d[f] = changedValue(b, f)
 		}
-		s.AuditIn(ctx, AuditEvent{Kind: "provider_changed", Actor: actorID, IP: ip, Detail: d})
+		s.AuditIn(ctx, AuditEvent{Kind: providerAuditKind(cur.row.Owner, "provider_changed", "tenant_provider_changed"), Actor: actorID, IP: ip, Tenant: auditTenant(cur.row.Owner), Detail: d})
 	}
 	return s.Provider(ctx, id)
+}
+
+// providerAuditKind is the kind of a provider's audit row: site's for the
+// site's own (site-only rows), tenant's for a tenant's own, which its
+// administrators read.
+func providerAuditKind(owner, site, tenant string) string {
+	if owner == store.ProviderSite {
+		return site
+	}
+	return tenant
+}
+
+// auditTenant is the tenant a provider's audit rows belong to: its own
+// tenant's for a tenant's provider (its administrators read them), none for
+// the site's.
+func auditTenant(owner string) string {
+	if owner == store.ProviderSite {
+		return ""
+	}
+	return owner
 }
 
 func secretChanged(in ProviderInput) bool {
@@ -1511,7 +1747,7 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, id string, fo
 	if err := s.reloadProviders(ctx); err != nil {
 		return err
 	}
-	s.AuditIn(ctx, AuditEvent{Kind: "provider_deleted", Actor: actorID, IP: ip, Detail: map[string]any{"slug": cur.row.Slug, "kind": cur.row.Kind}})
+	s.AuditIn(ctx, AuditEvent{Kind: providerAuditKind(cur.row.Owner, "provider_deleted", "tenant_provider_deleted"), Actor: actorID, IP: ip, Tenant: auditTenant(cur.row.Owner), Detail: map[string]any{"slug": cur.row.Slug, "kind": cur.row.Kind}})
 	return nil
 }
 
@@ -1581,7 +1817,7 @@ func (s *Service) fetchInto(ctx context.Context, b *built) *providerRT {
 				if b.row.Template == TemplateApple {
 					secret = s.appleSecretNow(b)
 				}
-				if _, _, err := s.buildOIDC(ctx, b.cfg, secret, s.publicBase()+redirectPath(b.row), doc); err != nil {
+				if _, _, err := s.buildOIDC(ctx, b.row.Owner, b.cfg, secret, s.publicBase()+redirectPath(b.row), doc); err != nil {
 					rt.statusMessage = oidcReason(err)
 					b.metaErr = providerInvalid("The provider's settings are not valid: %s.", oidcReason(err))
 					b.setStatus(rt)
@@ -1592,7 +1828,7 @@ func (s *Service) fetchInto(ctx context.Context, b *built) *providerRT {
 			rt.statusOK = true
 			break
 		}
-		doc, err := s.discover(ctx, b.cfg, b.secretFor(), s.publicBase()+redirectPath(b.row))
+		doc, err := s.discover(ctx, b.row.Owner, b.cfg, b.secretFor(), s.publicBase()+redirectPath(b.row))
 		if err != nil {
 			rt.statusMessage = oidcReason(err)
 			b.metaErr = errUnreachable
@@ -1607,7 +1843,7 @@ func (s *Service) fetchInto(ctx context.Context, b *built) *providerRT {
 		xmlText := b.cfg.MetadataXML
 		if b.cfg.MetadataURL != "" {
 			var err error
-			xmlText, err = s.fetchMetadata(ctx, b.cfg.MetadataURL)
+			xmlText, err = s.fetchMetadata(ctx, b.row.Owner, b.cfg.MetadataURL)
 			if err != nil {
 				rt.statusMessage = "the metadata could not be fetched"
 				b.metaErr = errUnreachable
@@ -1709,15 +1945,16 @@ func decodeEntity(data []byte) (*crewjamsaml.EntityDescriptor, error) {
 	return ent, err
 }
 
-// fetchMetadata gets metadata from an https address, at most 1 MiB, in 10 seconds.
-func (s *Service) fetchMetadata(ctx context.Context, rawURL string) (string, error) {
+// fetchMetadata gets metadata from an https address, at most 1 MiB, in 10
+// seconds, for a provider of owner (see httpClientFor).
+func (s *Service) fetchMetadata(ctx context.Context, owner, rawURL string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
-	client := *s.httpClient()
+	client := *s.httpClientFor(owner)
 	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
 		if r.URL.Scheme != "https" || len(via) >= 3 {
 			return http.ErrUseLastResponse
@@ -1747,6 +1984,38 @@ func (s *Service) httpClient() *http.Client {
 		return s.cfg.HTTPClient
 	}
 	return &http.Client{Timeout: 15 * time.Second}
+}
+
+// httpClientFor is the client that reaches a provider of owner. A tenant's
+// administrators choose its addresses (an issuer, a metadata address), but the
+// server makes the connections: they reach public addresses only, checked on
+// the address each name resolves to as it is dialled (docs/api.md, "Outgoing
+// requests made for a tenant"), with at most 3 redirects. The site's own
+// providers, and a client the tests give, are not held to it.
+func (s *Service) httpClientFor(owner string) *http.Client {
+	if owner == "" || owner == store.ProviderSite || s.cfg.HTTPClient != nil {
+		return s.httpClient()
+	}
+	return tenantHTTPClient
+}
+
+// tenantHTTPClient is httpClientFor's client of the tenants' providers. It
+// uses no proxy: the check is on the address dialled, which a proxy hides.
+var tenantHTTPClient = &http.Client{
+	Timeout: 15 * time.Second,
+	Transport: &http.Transport{
+		DialContext:            (&net.Dialer{Timeout: 10 * time.Second, Control: dailyfetch.RefuseAddrs(func(ip netip.Addr) bool { return !dailyfetch.Public(ip) })}).DialContext,
+		TLSHandshakeTimeout:    10 * time.Second,
+		ResponseHeaderTimeout:  10 * time.Second,
+		MaxResponseHeaderBytes: dailyfetch.MaxResponseHeaderBytes,
+		ForceAttemptHTTP2:      true,
+	},
+	CheckRedirect: func(r *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return errors.New("too many redirects")
+		}
+		return nil
+	},
 }
 
 // makeSAMLKey makes the signing key and certificate of a SAML provider (RSA
@@ -1857,6 +2126,13 @@ func changedValue(b *built, field string) any {
 		return orKeep(b.cfg.Groups.Missing)
 	case "groups.map":
 		return len(b.cfg.Groups.Map)
+	case "groups.allow":
+		return len(b.cfg.Groups.Allow)
+	case "tenants":
+		if b.cfg.Offer != OfferList {
+			return "all"
+		}
+		return b.shares
 	}
 	return "changed" // clientSecret, metadataXml
 }

@@ -146,6 +146,16 @@ var routeAccessAdded = map[string][4]string{
 	"GET /api/admin/domains":                                   {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 	"POST /api/admin/domains/{domain}/assign":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 
+	// 3.6 d3: a tenant's own single sign-on (its administrators', with features.ownSso).
+	"GET /api/admin/tenants/{tenant}/providers":             {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/tenants/{tenant}/providers":            {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/tenants/{tenant}/providers/{id}":        {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"PATCH /api/admin/tenants/{tenant}/providers/{id}":      {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"DELETE /api/admin/tenants/{tenant}/providers/{id}":     {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/tenants/{tenant}/providers/{id}/check": {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/tenants/{tenant}/providers/{id}/test":  {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/tenants/{tenant}/providers/{id}/test":   {"ok", "ok", "403 forbidden", "403 token_scope"},
+
 	// 3.6 step c: the tenant's page, for its administrators and the site's.
 	"GET /api/admin/tenants/{tenant}/overview": {"ok", "ok", "403 forbidden", "403 token_scope"},
 

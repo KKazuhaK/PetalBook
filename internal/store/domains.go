@@ -328,3 +328,34 @@ func AssignDomain(ctx context.Context, q Q, domain, to, by string, now time.Time
 	})
 	return from, err
 }
+
+// SetDomainProvider routes a tenant's domain to one of its sign-in providers
+// (3.6 d3; "" for none). The caller has checked that the provider is the
+// tenant's own.
+func SetDomainProvider(ctx context.Context, q Q, tenantID, domain, providerID string, now time.Time) (bool, error) {
+	res, err := q.Exec(ctx, `UPDATE tenant_domains SET provider_id = ?, updated = ? WHERE tenant_id = ? AND domain = ?`, providerID, ms(now), tenantID, domain)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// DomainRoutes is every domain routed to a provider, by provider id, each
+// list sorted: a provider's view lists its own.
+func DomainRoutes(ctx context.Context, q Q) (map[string][]string, error) {
+	rows, err := q.Query(ctx, `SELECT provider_id, domain FROM tenant_domains WHERE provider_id <> '' ORDER BY provider_id, domain`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var p, d string
+		if err := rows.Scan(&p, &d); err != nil {
+			return nil, err
+		}
+		out[p] = append(out[p], d)
+	}
+	return out, rows.Err()
+}

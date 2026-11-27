@@ -36,6 +36,10 @@ var registered = []Kind{
 	{Name: "provider_created", Category: Security, Visibility: Site},
 	{Name: "provider_changed", Category: Security, Visibility: Site},
 	{Name: "provider_deleted", Category: Security, Visibility: Site},
+	// A tenant's own SSO provider (3.6 d3): the tenant's administrators see them.
+	{Name: "tenant_provider_created", Category: Security},
+	{Name: "tenant_provider_changed", Category: Security},
+	{Name: "tenant_provider_deleted", Category: Security},
 	{Name: "connection_provider_changed", Category: Security, Visibility: Site},
 	{Name: "mail_changed", Category: Security, Visibility: Site, AddressFields: []string{"from", "to"}},
 	{Name: "mail_test", Category: Security, Visibility: Site, AddressFields: []string{"to"}},

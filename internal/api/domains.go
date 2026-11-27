@@ -13,6 +13,7 @@ import (
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/domains"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -72,7 +73,8 @@ type domainResp struct {
 	// last check by hand (null when none was made by hand).
 	NextCheckAllowedAt *string `json:"nextCheckAllowedAt"`
 	RestrictOrgs       bool    `json:"restrictOrgs"`
-	// Provider (3.6 d3) and Join (d5) are reserved: null.
+	// Provider is the id of the tenant's own sign-in provider the domain
+	// routes to (3.6 d3; null for none). Join (d5) is reserved: null.
 	Provider *string `json:"provider"`
 	Join     *string `json:"join"`
 	// RecordName is where the record goes. Code and Records are given only by
@@ -116,6 +118,10 @@ func (s *server) domainOf(r store.DomainRow, code string) domainResp {
 		VerifiedAt: optTime(r.VerifiedAt), MissingSince: optTime(r.MissingSince), LapsedAt: optTime(r.LapsedAt), CheckedAt: optTime(r.CheckedAt),
 		NextCheckAt: optTime(r.NextCheckAt), CodeExpires: optTime(r.CodeExpires), LastCheck: checkOf(domains.ParseCheck(r.LastCheck)),
 		RestrictOrgs: r.RestrictOrgs, RecordName: domains.RecordName(r.Domain), Created: rfc3339(r.Created)}
+	if r.ProviderID != "" {
+		p := r.ProviderID
+		out.Provider = &p
+	}
 	if !r.Verified() {
 		out.CodeExpired = !r.CodeExpires.After(s.now())
 	}
@@ -248,7 +254,10 @@ func (s *server) adminVerifyDomain(c *call) {
 	writeJSON(c.w, http.StatusOK, s.domainOf(res.Row, ""))
 }
 
-// adminPatchDomain is PATCH …/domains/{domain} {"restrictOrgs"}.
+// adminPatchDomain is PATCH …/domains/{domain} {"restrictOrgs", "provider"},
+// either or both: provider routes a verified domain to one of the tenant's
+// own sign-in providers (its id; null for none), which needs
+// tenant.signin.manage and features.ownSso too (3.6 d3).
 func (s *server) adminPatchDomain(c *call) {
 	t, ok := s.domainTenant(c)
 	if !ok {
@@ -259,26 +268,74 @@ func (s *server) adminPatchDomain(c *call) {
 		return
 	}
 	var restrict bool
+	var provider *string
+	setProvider := false
 	for k, v := range raw {
-		if k != "restrictOrgs" {
-			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown field "+k+": only restrictOrgs can be changed.")
+		switch k {
+		case "restrictOrgs":
+			if json.Unmarshal(v, &restrict) != nil {
+				writeError(c.w, http.StatusBadRequest, "invalid", "RestrictOrgs is true or false.")
+				return
+			}
+		case "provider":
+			setProvider = true
+			if json.Unmarshal(v, &provider) != nil {
+				writeError(c.w, http.StatusBadRequest, "invalid", "Provider is the id of one of the organisation's sign-in providers, or null.")
+				return
+			}
+		default:
+			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown field "+k+": only restrictOrgs and provider can be changed.")
 			return
 		}
-		if json.Unmarshal(v, &restrict) != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "RestrictOrgs is true or false.")
+	}
+	_, setRestrict := raw["restrictOrgs"]
+	if !setRestrict && !setProvider {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give restrictOrgs or provider.")
+		return
+	}
+	pid := ""
+	if setProvider {
+		if !c.p.Access.Can(authz.TenantSigninManage, t) {
+			writeError(c.w, http.StatusForbidden, "forbidden", "Routing a domain to a sign-in provider takes tenant.signin.manage.")
+			return
+		}
+		if on, err := s.settings.Feature(c.r.Context(), t, settings.FeatureOwnSSO); err != nil {
+			s.fail(c.w, err)
+			return
+		} else if !on {
+			writeError(c.w, http.StatusForbidden, "feature_off", "This organisation does not have its own single sign-on (features.ownSso).")
+			return
+		}
+		if provider != nil {
+			pid = *provider
+			if pid == "" || s.auth.ProviderOwner(pid) != t {
+				writeError(c.w, http.StatusNotFound, "not_found", "No such provider.")
+				return
+			}
+		}
+	}
+	var r store.DomainRow
+	var err error
+	if setRestrict {
+		if r, err = s.domains.SetRestrict(c.r.Context(), t, c.r.PathValue("domain"), restrict); err != nil {
+			s.failDomain(c, err)
 			return
 		}
 	}
-	if _, ok := raw["restrictOrgs"]; !ok {
-		writeError(c.w, http.StatusBadRequest, "invalid", "Give restrictOrgs.")
-		return
+	if setProvider {
+		if r, err = s.domains.SetProvider(c.r.Context(), t, c.r.PathValue("domain"), pid); err != nil {
+			s.failDomain(c, err)
+			return
+		}
 	}
-	r, err := s.domains.SetRestrict(c.r.Context(), t, c.r.PathValue("domain"), restrict)
-	if err != nil {
-		s.failDomain(c, err)
-		return
+	detail := map[string]any{"domain": r.Domain}
+	if setRestrict {
+		detail["restrictOrgs"] = restrict
 	}
-	s.audit(c, auth.AuditEvent{Kind: "domain_changed", Actor: c.user().ID, Tenant: t, Detail: map[string]any{"domain": r.Domain, "restrictOrgs": restrict}})
+	if setProvider {
+		detail["provider"] = provider
+	}
+	s.audit(c, auth.AuditEvent{Kind: "domain_changed", Actor: c.user().ID, Tenant: t, Detail: detail})
 	writeJSON(c.w, http.StatusOK, s.domainOf(r, ""))
 }
 

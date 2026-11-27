@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -70,6 +71,21 @@ func (s *Service) TestBegin(ctx context.Context, providerID string, u *store.Use
 		return nil, errf(NotFound, "No such provider.")
 	}
 	ret := "/admin/security/providers?provider_test=" + url.QueryEscape(rt.row.ID)
+	return s.SSOBegin(ctx, rt.row.Kind, rt.row.Slug, BeginParams{Intent: "test", Return: ret, User: u}, ip)
+}
+
+// TenantTestBegin starts a test sign-in at a tenant's own provider, on or
+// off, for the administrator u (3.6 d3). The browser comes back to page (an
+// address of the console; the organisation console's sign-in tab when "").
+func (s *Service) TenantTestBegin(ctx context.Context, tenant, providerID string, u *store.User, page, ip string) (*BeginResult, error) {
+	rt := s.provs.getID(providerID)
+	if rt == nil || rt.row.Owner != tenant || tenant == store.ProviderSite {
+		return nil, errf(NotFound, "No such provider.")
+	}
+	if !strings.HasPrefix(page, "/admin/") || strings.ContainsAny(page, "?#") {
+		page = tenantTestPage
+	}
+	ret := page + "?provider_test=" + url.QueryEscape(rt.row.ID)
 	return s.SSOBegin(ctx, rt.row.Kind, rt.row.Slug, BeginParams{Intent: "test", Return: ret, User: u}, ip)
 }
 

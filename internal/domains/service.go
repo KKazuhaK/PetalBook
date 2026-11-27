@@ -306,6 +306,27 @@ func (s *Service) SetRestrict(ctx context.Context, tenant, input string, restric
 	return store.GetDomain(ctx, s.opt.Store.Q(), tenant, r.Domain)
 }
 
+// ErrUnverified refuses routing a domain that is not verified to a provider.
+var ErrUnverified = refuse(http.StatusConflict, "domain_required", "Verify the domain first: only a verified domain is routed to a sign-in provider.")
+
+// SetProvider routes a tenant's verified domain to one of its own sign-in
+// providers (3.6 d3), "" for none. The caller has checked that the provider
+// is the tenant's. Only the routing is stored here; the sign-in page's
+// discovery that reads it is 3.6 d4.
+func (s *Service) SetProvider(ctx context.Context, tenant, input, providerID string) (store.DomainRow, error) {
+	r, err := s.Get(ctx, tenant, input)
+	if err != nil {
+		return r, err
+	}
+	if providerID != "" && !r.Verified() {
+		return r, ErrUnverified
+	}
+	if _, err := store.SetDomainProvider(ctx, s.opt.Store.Q(), tenant, r.Domain, providerID, s.opt.Now()); err != nil {
+		return r, err
+	}
+	return store.GetDomain(ctx, s.opt.Store.Q(), tenant, r.Domain)
+}
+
 // Remove deletes a tenant's claim.
 func (s *Service) Remove(ctx context.Context, tenant, input string) (store.DomainRow, error) {
 	r, err := s.Get(ctx, tenant, input)

@@ -421,3 +421,37 @@ func CountPasskeyRequired(ctx context.Context, q Q, roles []string) (required, w
 		FROM users u WHERE u.deleted_at IS NULL AND u.disabled = 0 AND (`+where+`)`, args...).Scan(&required, &without)
 	return
 }
+
+// ProviderShares is the tenants each site provider is offered to, by provider
+// id (3.6 d3): only the providers offered to a list have rows.
+func ProviderShares(ctx context.Context, q Q) (map[string][]string, error) {
+	rows, err := q.Query(ctx, `SELECT provider_id, tenant_id FROM provider_shares ORDER BY provider_id, tenant_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var p, t string
+		if err := rows.Scan(&p, &t); err != nil {
+			return nil, err
+		}
+		out[p] = append(out[p], t)
+	}
+	return out, rows.Err()
+}
+
+// SetProviderShares replaces the tenants a site provider is offered to.
+func SetProviderShares(ctx context.Context, q Q, providerID string, tenants []string) error {
+	return atomically(ctx, q, func(q Q) error {
+		if _, err := q.Exec(ctx, `DELETE FROM provider_shares WHERE provider_id = ?`, providerID); err != nil {
+			return err
+		}
+		for _, t := range tenants {
+			if _, err := q.Exec(ctx, `INSERT INTO provider_shares(provider_id, tenant_id) VALUES (?, ?)`, providerID, t); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
