@@ -84,6 +84,12 @@ type Kind struct {
 	Name       string
 	Category   Category
 	Visibility Visibility
+	// AddressFields are the places of the detail that may hold an email address
+	// of a person, as paths: "email" (a key), "old.email" (a key of an object),
+	// "results[].user" (a key of each entry of a list). A reader who may not see
+	// the address reads "(hidden)" there (RedactAddresses); an address anywhere
+	// else in a detail is a bug the writer's check finds (UndeclaredAddress).
+	AddressFields []string
 	// reserved: written by a later part; the scan does not require a writer.
 	reserved bool
 }

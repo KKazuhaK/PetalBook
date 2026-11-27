@@ -1041,8 +1041,10 @@ primary address and the addresses in the tenant's verified domains
 verified domain that is the primary address alone). The lists have the primary
 address only; the audit rows of the address kinds (`email_added`,
 `email_verified`, `email_removed`, `email_claim_withdrawn`,
-`email_primary_changed`, `email_released`, `registered`, and `user_changed` in
-its `email` and `old.email`) say `"(hidden)"` for an address such a reader may
+`email_primary_changed`, `email_released`, `registered`, `user_changed` in
+its `email` and `old.email`, and the typed `user` of each result of
+`members_batch`, `group_members_batch` and `invites_batch`, when it is an
+address; each kind declares its places in `internal/auditlog`) say `"(hidden)"` for an address such a reader may
 not see, in the list and in the CSV. `404 not_found`
 for a person who does not exist, is deleted, or is of another tenant than a
 tenant administrator's.
@@ -10501,7 +10503,10 @@ busy`). A site administrator follows it with `GET /api/admin/jobs/{id}` and
 administrator never sees it. A restart resumes it (the bounds are fixed when the
 job is made, and a delete of the same bounds only removes what is left). When
 the job ends it writes exactly one `audit_purged` row, with `deleted` and
-`partial: true` if it did not finish. `400 invalid` for a category that does not
+`partial: true` if it did not finish. A purge that deleted nothing still writes
+its row (`deleted: 0`): every purge leaves a trace. A person who holds
+`site.audit.purge` through a role, and no tenant key, follows the job with
+`GET /api/admin/jobs/{id}` and `GET /api/admin/jobs?kind=audit.purge`. `400 invalid` for a category that does not
 exist, a `before` that is not a time, or a `dry_run` that is not a boolean.
 
 ### Errors of this section

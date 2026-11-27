@@ -225,3 +225,24 @@ func TestAuditPurgeIsOneAtATime(t *testing.T) {
 		root.do("POST", "/api/admin/audit/purge", map[string]any{}).want(t, 409, "busy")
 	})
 }
+
+// A site role that holds only site.audit.purge starts a purge and follows its
+// job (and sees no other kind of job); a tenant's administrator still does not.
+func TestARoleWithOnlyThePurgeKeyFollowsItsJob(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		a.setup("root", pw)
+		keeper := a.addUser("keeper", pw, "member")
+		grantRole(t, a, "RP", store.RoleScopeSite, "", store.GrantToUser, mustUserID(t, a, "keeper"), "site.audit.purge")
+		j := keeper.do("POST", "/api/admin/audit/purge", map[string]any{"before": "2020-01-02"}).want(t, 202, "").body["job"].(map[string]any)
+		id := j["id"].(string)
+		if done := waitJob(t, keeper, id); done["state"] != "done" {
+			t.Fatalf("%v", done)
+		}
+		items := keeper.do("GET", "/api/admin/jobs", nil).want(t, 200, "").body["items"].([]any)
+		if len(items) != 1 || items[0].(map[string]any)["id"] != id {
+			t.Fatalf("the role sees %v", items)
+		}
+		keeper.do("GET", "/api/admin/jobs?kind=bulk", nil).want(t, 200, "")
+	})
+}

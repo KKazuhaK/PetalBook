@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -47,9 +48,45 @@ func NewAuditID(t time.Time) string {
 	return fmt.Sprintf("%012x%06x", ms(t), auditSeq.Add(1)&0xffffff)
 }
 
+// AuditRowCheck, when set, is called with every row InsertAudit writes, before
+// it is written: every writer of the log (the queue, the notices) goes through
+// InsertAudit. The tests set it once, at start (see CheckAuditAddresses).
+var AuditRowCheck func(r AuditRow)
+
+// CheckAuditAddresses makes InsertAudit record every row whose detail holds a
+// value shaped like an email address in a place its kind does not declare
+// (auditlog.Kind.AddressFields): the redaction of the audit list reads only the
+// declared places. For the main of a test binary: it returns the function that
+// lists what was recorded ("kind detail.path"), to fail the run with. (A panic
+// would be swallowed by a handler's recover.)
+func CheckAuditAddresses() func() []string {
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	AuditRowCheck = func(r AuditRow) {
+		if path, _ := auditlog.UndeclaredAddress(r.Kind, r.Detail); path != "" {
+			mu.Lock()
+			seen[r.Kind+" detail."+path] = true
+			mu.Unlock()
+		}
+	}
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]string, 0, len(seen))
+		for k := range seen {
+			out = append(out, k)
+		}
+		sort.Strings(out)
+		return out
+	}
+}
+
 // InsertAudit writes rows (a repeated id is ignored).
 func InsertAudit(ctx context.Context, q Q, rows []AuditRow) error {
 	for _, r := range rows {
+		if AuditRowCheck != nil {
+			AuditRowCheck(r)
+		}
 		cat := r.Category
 		if cat == "" {
 			cat = string(auditlog.CategoryOf(r.Kind))

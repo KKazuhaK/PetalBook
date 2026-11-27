@@ -135,26 +135,14 @@ func (s *server) pathRedactor(c *call) func(kind string, detail json.RawMessage)
 	}
 }
 
-// addressKinds are the kinds whose detail names an email address of the
-// person the row is about, under these keys. A key whose value is an object
-// (user_changed keeps what a change replaced under old) has its "email"
-// redacted. Every kind whose writer puts an address in its detail is here
-// (TestAuditAddressKinds).
-var addressKinds = map[string][]string{
-	"email_added": {"email"}, "email_verified": {"email"}, "email_removed": {"email"},
-	"email_claim_withdrawn": {"email"}, "email_primary_changed": {"email", "old"},
-	"email_released": {"email"}, "registered": {"email"}, "user_changed": {"email", "old"},
-}
-
-// hiddenAddress is what a row says in place of an address its reader may not see.
-const hiddenAddress = "(hidden)"
-
 // addressRedactor returns the function that makes a row's detail safe for this
 // reader: a site administrator across the whole site sees every address; any
 // other reader (a tenant's administrator, a site administrator in a tenant's
-// scope) sees the person's primary address and the addresses in the tenant's
-// verified domains, and the rest read "(hidden)". The person's primary address
-// is asked once for each person in the list.
+// scope) sees the primary address of the person the row is about and the
+// addresses in the tenant's verified domains, and the rest read "(hidden)".
+// Which places of a detail hold addresses is the kind's own declaration
+// (auditlog.Kind.AddressFields). The person's primary address is asked once for
+// each person in the list, and a tenant's domains once for each tenant.
 func (s *server) addressRedactor(c *call) func(kind, user, tenant string, detail json.RawMessage) json.RawMessage {
 	if c.siteWide(authz.TenantAuditRead) {
 		return func(_, _, _ string, detail json.RawMessage) json.RawMessage { return detail }
@@ -162,16 +150,14 @@ func (s *server) addressRedactor(c *call) func(kind, user, tenant string, detail
 	primary := map[string]string{}
 	rules := map[string]func(primary, email string) bool{}
 	return func(kind, user, tenant string, detail json.RawMessage) json.RawMessage {
-		keys := addressKinds[kind]
-		if len(keys) == 0 || len(detail) == 0 {
+		if len(detail) == 0 {
 			return detail
 		}
-		var d map[string]any
-		if json.Unmarshal(detail, &d) != nil {
+		if k, ok := auditlog.Lookup(kind); !ok || len(k.AddressFields) == 0 {
 			return detail
 		}
 		p, seen := primary[user]
-		if !seen {
+		if !seen && user != "" {
 			if u, err := store.GetUser(c.r.Context(), s.opt.Store.Q(), store.AllTenants(), user); err == nil {
 				p = u.Email
 			}
@@ -182,27 +168,7 @@ func (s *server) addressRedactor(c *call) func(kind, user, tenant string, detail
 			shown = s.auth.TenantAddressRule(c.r.Context(), tenant)
 			rules[tenant] = shown
 		}
-		changed := false
-		hide := func(m map[string]any, k string) {
-			if a, ok := m[k].(string); ok && a != "" && !shown(p, a) {
-				m[k], changed = hiddenAddress, true
-			}
-		}
-		for _, k := range keys {
-			if inner, ok := d[k].(map[string]any); ok {
-				hide(inner, "email")
-			} else {
-				hide(d, k)
-			}
-		}
-		if !changed {
-			return detail
-		}
-		out, err := json.Marshal(d)
-		if err != nil {
-			return json.RawMessage(`{}`)
-		}
-		return out
+		return auditlog.RedactAddresses(kind, detail, func(a string) bool { return shown(p, a) })
 	}
 }
 

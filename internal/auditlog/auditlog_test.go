@@ -78,3 +78,28 @@ func TestSettingsFollowTheRegistry(t *testing.T) {
 		}
 	}
 }
+
+func TestUndeclaredAddressFindsAddressesOutsideTheDeclaredPlaces(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ kind, detail, path string }{
+		{"email_added", `{"email":"a@b.example"}`, ""},
+		{"user_changed", `{"email":"a@b.example","old":{"email":"c@d.example","name":"x"}}`, ""},
+		{"members_batch", `{"results":[{"user":"a@b.example"},{"user":"bob"}]}`, ""},
+		{"login", `{"note":"a@b.example"}`, "note"},
+		{"user_changed", `{"old":{"username":"a@b.example"}}`, "old.username"},
+		{"members_batch", `{"results":[{"detail":"a@b.example"}]}`, "results[].detail"},
+		{"login", `{"reason":"mail bob@x.example soon"}`, ""}, // text, not an address
+	} {
+		if p, _ := auditlog.UndeclaredAddress(tc.kind, tc.detail); p != tc.path {
+			t.Errorf("%s %s: path %q, want %q", tc.kind, tc.detail, p, tc.path)
+		}
+	}
+}
+
+func TestRedactAddressesHidesOnlyDeclaredAddresses(t *testing.T) {
+	t.Parallel()
+	got := auditlog.RedactAddresses("members_batch", []byte(`{"results":[{"user":"a@b.example"},{"user":"bob"}],"x":"c@d.example"}`), func(a string) bool { return false })
+	if string(got) != `{"results":[{"user":"(hidden)"},{"user":"bob"}],"x":"c@d.example"}` {
+		t.Fatal(string(got))
+	}
+}

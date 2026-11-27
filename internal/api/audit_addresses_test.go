@@ -1,19 +1,16 @@
 package api_test
 
 import (
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
-	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/auditlog"
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/store"
 	"petalbook.app/server/internal/store/storetest"
 )
 
-// Every kind whose detail names an address is hidden from a tenant's
+// Every kind that declares an address in its detail is hidden from a tenant's
 // administrator (list and CSV) when the address is outside the tenant's domains,
 // and shown to a site administrator across the site: one case per kind, the
 // details as their writers make them.
@@ -33,15 +30,18 @@ func TestAuditAddressKindsAreHiddenFromTenantAdministrators(t *testing.T) {
 			"registered":            {"email": secret("registered")},
 			"user_changed":          {"email": secret("user_changed"), "old": map[string]any{"email": secret("user_changed_old"), "name": "Old"}, "name": "New"},
 		}
-		for kind := range api.AddressKinds() {
-			if details[kind] == nil {
-				t.Fatalf("kind %s is in addressKinds and has no case", kind)
+		// The batches: each entry's user is as typed, an address or a username.
+		for _, kind := range []string{"members_batch", "group_members_batch", "invites_batch"} {
+			details[kind] = map[string]any{"rows": 2, "results": []map[string]any{
+				{"row": 1, "user": secret(kind), "status": "added"}, {"row": 2, "user": "plainname", "status": "added"}}}
+		}
+		// Every kind that declares address fields has a case here, and the other way.
+		for _, k := range auditlog.Kinds() {
+			if k.Visibility == auditlog.Tenant && (len(k.AddressFields) > 0) != (details[k.Name] != nil) {
+				t.Errorf("kind %s: AddressFields %v, test case %v", k.Name, k.AddressFields, details[k.Name] != nil)
 			}
 		}
 		for kind, d := range details {
-			if api.AddressKinds()[kind] == nil {
-				t.Errorf("kind %s names an address and is not in addressKinds", kind)
-			}
 			a.auth.Audit(auth.AuditEvent{Kind: kind, Actor: f.userB, User: f.userB, Detail: d})
 		}
 		list := func(c *client, h ...string) string {
@@ -62,44 +62,19 @@ func TestAuditAddressKindsAreHiddenFromTenantAdministrators(t *testing.T) {
 		}
 		all := list(f.root)
 		for _, d := range details {
-			if want := d["email"].(string); !strings.Contains(all, want) {
+			want, _ := d["email"].(string)
+			if r, ok := d["results"].([]map[string]any); ok {
+				want = r[0]["user"].(string)
+			}
+			if !strings.Contains(all, want) {
 				t.Errorf("a site administrator does not see %s", want)
 			}
+		}
+		if !strings.Contains(list(f.admB), "plainname") {
+			t.Error("a username typed in a batch is hidden")
 		}
 		if !strings.Contains(all, "user_changed_old@secret.example") {
 			t.Error("a site administrator does not see old.email")
 		}
 	})
-}
-
-// A writer that puts an email in the detail of a kind names that kind in
-// addressKinds: the scan reads the source for a Kind and an "email" key on one
-// line.
-func TestEveryAddressWriterIsRedacted(t *testing.T) {
-	t.Parallel()
-	re := regexp.MustCompile(`Kind: "([a-z_]+)".*"email"`)
-	found := 0
-	for _, dir := range []string{"../auth", "../api", "../spaces", "../notify"} {
-		files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
-		for _, path := range files {
-			if strings.HasSuffix(path, "_test.go") {
-				continue
-			}
-			src, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, line := range strings.Split(string(src), "\n") {
-				if m := re.FindStringSubmatch(line); m != nil {
-					found++
-					if api.AddressKinds()[m[1]] == nil {
-						t.Errorf("%s writes an email in the detail of %q, which the audit list does not redact", path, m[1])
-					}
-				}
-			}
-		}
-	}
-	if found < 5 {
-		t.Fatalf("the scan found %d writers: it no longer sees them", found)
-	}
 }

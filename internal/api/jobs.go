@@ -72,6 +72,13 @@ var jobKinds = []string{bulkKindName, store.JobExport, store.JobRecycleMove, sto
 
 func (s *server) adminGetJob(c *call) {
 	j, err := s.jobs.Get(c.r.Context(), c.reach(), c.r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) && c.can(authz.SiteAuditPurge) {
+		// A purge is the site's job (no tenant sees it): whoever holds the key
+		// that starts it follows it, whatever their own tenant.
+		if j, err = s.jobs.Get(c.r.Context(), store.AllTenants(), c.r.PathValue("id")); err == nil && j.Kind != store.JobAuditPurge {
+			err = store.ErrNotFound
+		}
+	}
 	if err == nil && !c.can(jobKeyOf(j.Kind)) {
 		err = store.ErrNotFound
 	}
@@ -134,6 +141,12 @@ func (s *server) adminListJobs(c *call) {
 	sc, ok := s.adminScope(c)
 	if !ok {
 		return
+	}
+	// The purges are the site's: a holder of site.audit.purge who is not a site
+	// administrator reads them across tenants, when they ask for that kind or
+	// it is all they may follow.
+	if !sc.All() && len(kinds) > 0 && c.can(authz.SiteAuditPurge) && (q.Get("kind") == store.JobAuditPurge || (len(kinds) == 1 && kinds[0] == store.JobAuditPurge)) {
+		sc = store.AllTenants()
 	}
 	var rows []*store.Job
 	var next string
