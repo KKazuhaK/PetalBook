@@ -322,6 +322,7 @@ export const tenantsZhCN = {
       'features.ownCaptcha': '租户自己的验证码密钥',
       'features.ownConnections': '租户自己的代码托管连接',
       'features.ownDaily': '租户自己的每日一句接口与语句',
+      'features.githubConnect': '把 GitHub App 装到自己的 GitHub 账号上',
       'storage.mode': '新空间可以在哪里同步',
       'storage.pinnedBytes': '租户管理员可以固定的磁盘（字节）',
       'quota.people': '租户里的人数',

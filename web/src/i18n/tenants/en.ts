@@ -340,6 +340,7 @@ export const tenantsEn: TenantsMessages = {
       'features.ownCaptcha': "The tenant's own captcha keys",
       'features.ownConnections': "The tenant's own providers",
       'features.ownDaily': "The tenant's own daily text interfaces and lines",
+      'features.githubConnect': 'Installing the GitHub App on their own GitHub accounts',
       'storage.mode': 'Where new spaces may sync',
       'storage.pinnedBytes': 'Disk the tenant administrators may pin (bytes)',
       'quota.people': 'People in the tenant',

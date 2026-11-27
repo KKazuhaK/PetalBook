@@ -367,6 +367,8 @@ export const securityEn: SecurityMessages = {
       email_released: 'Address released',
       account_connected: 'Account connected',
       account_disconnected: 'Account disconnected',
+      github_installation_connected: 'GitHub installation connected',
+      github_installation_disconnected: 'GitHub installation disconnected',
       connection_provider_changed: 'Connection provider changed',
       mail_changed: 'Mail settings changed',
       mail_test: 'Test mail sent',

@@ -12,6 +12,9 @@ import { AdminLayout } from './AdminLayout'
 import { AdminPageHeader } from './AdminPageHeader'
 import { AdminTabs } from './AdminTabs'
 import { navFor } from './adminNav'
+
+// The tenant made with the server: its people are no organisation's (their spaces are their own).
+const DEFAULT_TENANT_ID = '0000000000'
 import { ScopeBanner, TenantScope, useAdminPaths } from './TenantScope'
 import { TenantPage } from './TenantPage'
 import { PersonPage } from './users/PersonPage'
@@ -50,8 +53,14 @@ function Console({ scope, segments }: { scope: string | null; segments: string[]
   const { path } = useAdminPaths()
   const site = acrossSite(useSession().data?.user) && scope === null
   const tenant = useTenant(scope)
-  const ownTenant = useSession().data?.user?.tenant?.name
-  const sections = navFor(site)
+  const ownTenant = useSession().data?.user?.tenant
+  const ownTenantName = ownTenant?.name
+  // An organisation's console: a tenant's (its own administrator's, or a site administrator's in its scope), not the
+  // default tenant's, which is no organisation.
+  const org =
+    !site &&
+    (scope !== null ? scope !== DEFAULT_TENANT_ID : ownTenant !== undefined && ownTenant.id !== DEFAULT_TENANT_ID)
+  const sections = navFor(site, org)
   const person = first === 'user' && second !== undefined
   // A tenant's own page: `/admin/tenants/<id>/<tab>`; the list's two pages are tenants and plans.
   const ofTenant = site && first === 'tenants' && second !== undefined && second !== 'tenants' && second !== 'plans'
@@ -84,7 +93,7 @@ function Console({ scope, segments }: { scope: string | null; segments: string[]
       ) : (
         <AdminPageHeader
           title={section.label}
-          description={pageHelp(`${section.key}/${tab?.key}`, site, scope !== null ? tenant.data?.name : ownTenant)}
+          description={pageHelp(`${section.key}/${tab?.key}`, site, scope !== null ? tenant.data?.name : ownTenantName)}
         >
           {tabs.length > 1 && (
             <AdminTabs

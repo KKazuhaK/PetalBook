@@ -109,7 +109,6 @@ export const keys = {
   adminConnectionList: ['admin', 'connections', 'list'] as const,
   adminForge: (id: string) => ['admin', 'connections', 'host', id] as const,
   adminGitHub: ['admin', 'connections', 'github'] as const,
-  adminGitHubInstallations: ['admin', 'connections', 'github', 'installations'] as const,
   // Connections, for everyone: the providers and the caller's connection to each; the accounts to make a repository in; a repository list.
   connections: ['connections'] as const,
   connectionOwners: (provider: string) => ['connections', provider, 'owners'] as const,

@@ -166,3 +166,54 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 	out, _ := c.Output()
 	return strings.TrimSpace(string(out))
 }
+
+// allowAll lends the hooks of a caller who may connect any installation.
+func allowAll(c context.Context) context.Context {
+	return connections.WithInstallHooks(c, connections.InstallHooks{Allow: func(context.Context, store.InstallOwner) error { return nil }})
+}
+
+// installFor plays a browser of userID that installs the App for owner o
+// (account: the GitHub organisation named for a tenant): GitHub login installs
+// it on the account on, authorising during installation when authorize. It
+// answers where the callback sends the browser.
+func (h *harness) installFor(userID string, o store.InstallOwner, account, login, on string, authorize bool) string {
+	h.t.Helper()
+	hc := allowAll(ctx)
+	u, binding, err := h.svc.StartInstallFor(hc, userID, o, account, "/back")
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	back, _ := url.Parse(h.f.InstallAppOn(u, login, on, h.svc.CallbackURL(), authorize))
+	to, _ := h.svc.CompleteAuthorization(hc, binding, userID, back.Query())
+	return to
+}
+
+// installMine installs the App on the person's own GitHub account (login) and
+// connects it to them; it answers the installation's id.
+func (h *harness) installMine(userID, login string) int64 {
+	h.t.Helper()
+	if to := h.installFor(userID, store.InstallOwner{UserID: userID}, "", login, login, true); to != "/back" {
+		h.t.Fatalf("installing on %s: %s", login, to)
+	}
+	return h.claimed(store.InstallOwner{UserID: userID}, login)
+}
+
+// installOrg has admin (GitHub login, a member of org) install the App on
+// the organisation org for tenant; it answers the installation's id.
+func (h *harness) installOrg(admin, tenant, org, login string) int64 {
+	h.t.Helper()
+	h.f.MakeAdmin(org, login) // an owner of the organisation installs it
+	if to := h.installFor(admin, store.InstallOwner{TenantID: tenant}, org, login, org, true); to != "/back" {
+		h.t.Fatalf("installing on %s: %s", org, to)
+	}
+	return h.claimed(store.InstallOwner{TenantID: tenant}, org)
+}
+
+func (h *harness) claimed(o store.InstallOwner, account string) int64 {
+	h.t.Helper()
+	in, err := store.GitHubInstallationOwnedOn(ctx, h.st.Q(), o, account)
+	if err != nil {
+		h.t.Fatalf("no installation of %+v on %s: %v", o, account, err)
+	}
+	return in.ID
+}

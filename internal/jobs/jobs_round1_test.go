@@ -87,16 +87,23 @@ func TestAFailedScanOrClaimIsTriedAgainAfterABackoff(t *testing.T) {
 			close(f.k.gate("J1"))
 			close(f.k.gate("J2"))
 			f.enqueue("J1", "")
-			fs.set(op, 2)
+			// The op fails until the second backoff is asked for. Not a count of
+			// failures: the enqueue and Start each wake the runner, and the loop
+			// may take them as one wakeup or two, so a pass more or less can fail
+			// while a retry is already pending (that pass asks for no timer).
+			fs.set(op, 1<<30)
 			f.r.Start()
-			// Two failures: 1s, then 2s.
-			for _, want := range []time.Duration{time.Second, 2 * time.Second} {
+			// Failures: 1s, then 2s.
+			for i, want := range []time.Duration{time.Second, 2 * time.Second} {
 				tm := nextTimer(t, asked)
 				if tm.d != want {
 					t.Fatalf("backoff %v; want %v", tm.d, want)
 				}
 				if n := f.k.runsOf("J1"); n != 0 {
 					t.Fatalf("J1 ran %d times while the %s failed", n, op)
+				}
+				if i == 1 {
+					fs.set(op, 0)
 				}
 				tm.fire <- f.clk.Now()
 			}

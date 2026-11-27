@@ -264,6 +264,11 @@ func New(opt Options) *Handler {
 				}
 			})
 			svc.SetSigninGuard(au.SigninLinkRemovable)
+			// The spaces that lose GitHub access when an installation is
+			// disconnected show it at once.
+			if opt.Spaces != nil {
+				svc.OnAccessLost(opt.Spaces.AccessLost)
+			}
 		}
 	}
 	s := &server{opt: opt, log: opt.Logger, settings: settings.Of(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),

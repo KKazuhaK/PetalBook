@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
@@ -40,8 +39,6 @@ var providerRoutes = []route{
 	{"POST", "/api/admin/providers/{id}/manifest", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminProviderManifest},
 	{"POST", "/api/admin/providers/{id}/manifest/retry", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminProviderManifestRetry},
 	{"GET", connManifestPath, public.always(), true, true, false, (*server).connectManifestCallback},
-	{"GET", "/api/admin/providers/{id}/installations", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminProviderInstallations},
-	{"PUT", "/api/admin/providers/{id}/installations/{installation}", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminPutProviderInstallation},
 
 	{"GET", "/api/account/links", signedIn.always(), true, false, false, (*server).listAccountLinks},
 	{"POST", "/api/account/links/{provider}/start", signedIn.always(), true, true, false, (*server).accountLinkStart},
@@ -595,50 +592,6 @@ func (s *server) adminProviderManifestRetry(c *call) {
 	s.writeProvider(c, http.StatusOK, p.Descriptor().ID)
 }
 
-func (s *server) adminProviderInstallations(c *call) {
-	in, ok := s.installable(c)
-	if !ok {
-		return
-	}
-	items, next, err := in.InstallationsView(c.r.Context(), c.r.URL.Query().Get("cursor"))
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Items any    `json:"items"`
-		Next  string `json:"next"`
-	}{items, next})
-}
-
-func (s *server) adminPutProviderInstallation(c *call) {
-	in, ok := s.installable(c)
-	if !ok {
-		return
-	}
-	id, err := strconv.ParseInt(c.r.PathValue("installation"), 10, 64)
-	if err != nil || id <= 0 {
-		s.connError(c, c.r.PathValue("id"), http.StatusNotFound, connections.CodeNotFound, "No such installation.")
-		return
-	}
-	var req struct {
-		Tenants *[]string `json:"tenants"`
-	}
-	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
-		return
-	}
-	if req.Tenants == nil {
-		s.connError(c, c.r.PathValue("id"), http.StatusBadRequest, connections.CodeInvalid, "Give tenants: the ids of the tenants to share with (none: []).")
-		return
-	}
-	it, err := in.SetInstallationTenants(c.r.Context(), id, *req.Tenants)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, it)
-}
-
 // --- a person's linked accounts ----------------------------------------------------------
 
 // accountLinkResp is a link of the signed-in person: an account at a provider
@@ -751,9 +704,12 @@ func (s *server) accountLinkStart(c *call) {
 		if !ok {
 			return
 		}
-		st, err := p.StartConnect(c.r.Context(), c.user().ID, connections.StartRequest{Return: req.Return, Install: req.Install})
+		// An installation through the install page connects it to the person: the
+		// GitHub service asks the hooks whether they may (the feature).
+		ctx := connections.WithInstallHooks(c.r.Context(), s.githubHooks(c))
+		st, err := p.StartConnect(ctx, c.user().ID, connections.StartRequest{Return: req.Return, Install: req.Install})
 		if err != nil {
-			s.fail(c.w, err)
+			s.refuse(c.w, err)
 			return
 		}
 		http.SetCookie(c.w, s.auth.FlowCookie(connCookieBase+p.Descriptor().ID, st.Binding, connAttemptTTL))

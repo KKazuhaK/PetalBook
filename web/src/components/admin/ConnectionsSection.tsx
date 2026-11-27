@@ -4,17 +4,14 @@ import { ExternalLink, Plus, RefreshCw, Save, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   useAdminGitHub,
-  useAdminGitHubInstallations,
   useCheckAdminGitHub,
   useDeleteAdminGitHub,
   useRetryGitHubManifest,
   useSaveAdminGitHub,
-  useShareGitHubInstallation,
   useStartGitHubManifest,
-  useTenants,
 } from '@/api/admin'
 import { ApiError } from '@/api/client'
-import type { AdminGitHub, GitHubInstallation } from '@/api/types'
+import type { AdminGitHub } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -31,14 +28,6 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
@@ -48,9 +37,9 @@ import { ForgeCards } from './ForgeCards'
 import { tg } from '@/i18n/github'
 
 // The connections of "Storage & sync": one card per platform the server can connect to. GitHub is the first;
-// the hosts with an OAuth application (GitLab, Gitea) follow it, one card each. A card is the platform's settings, and for GitHub where
-// the App is installed with the tenants each organisation's installation is shared with (docs/api.md,
-// "Administration", "Connections").
+// the hosts with an OAuth application (GitLab, Gitea) follow it, one card each. A card is the platform's settings. The
+// GitHub App's installations are not the site's to hand out: each person and each organisation installs it on their
+// own GitHub account and manages that themselves (docs/api.md, "Administration", "Connections").
 export function ConnectionsSection() {
   return (
     <section aria-labelledby="connections-title" className="space-y-4">
@@ -75,7 +64,6 @@ function GitHubCard() {
     <div className="space-y-8">
       <Returned />
       <AppSettings app={app.data} />
-      {app.data.configured && <Installations />}
     </div>
   )
 }
@@ -456,160 +444,5 @@ function CreateApp({ app }: { app: AdminGitHub }) {
         <span className="text-xs text-muted-foreground">{tg.admin.createManual}</span>
       </div>
     </div>
-  )
-}
-
-function Installations() {
-  const list = useAdminGitHubInstallations()
-  const items = list.data?.pages.flatMap((p) => p.items) ?? []
-  return (
-    <SettingsSection
-      title={tg.admin.installations}
-      id="github-installations-title"
-      description={tg.admin.installationsHelp}
-    >
-      {list.isPending ? (
-        <PageFallback />
-      ) : list.isError ? (
-        <ErrorState
-          message={t.fmt.labelled(tg.admin.installationsFailed, explain(list.error))}
-          onRetry={() => void list.refetch()}
-        />
-      ) : items.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{tg.admin.noInstallations}</p>
-      ) : (
-        <ul className="divide-y rounded-lg border">
-          {items.map((i) => (
-            <Installation key={i.id} installation={i} />
-          ))}
-        </ul>
-      )}
-      {list.hasNextPage && (
-        <div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={list.isFetchingNextPage}
-            onClick={() => void list.fetchNextPage()}
-          >
-            {list.isFetchingNextPage && <Spinner />}
-            {tg.admin.loadMore}
-          </Button>
-        </div>
-      )}
-    </SettingsSection>
-  )
-}
-
-function Installation({ installation: i }: { installation: GitHubInstallation }) {
-  const tenants = useTenants()
-  const [choosing, setChoosing] = useState(false)
-  const org = i.account.type === 'Organization'
-  const names = t.fmt.list(i.tenants.map((id) => tenants.data?.find((x) => x.id === id)?.name ?? id))
-  return (
-    <li className="grid grid-cols-1 gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-      <div className="min-w-0">
-        <p className="flex flex-wrap items-center gap-2 text-sm font-medium break-all">
-          <a className="underline-offset-4 hover:underline" href={i.htmlUrl} target="_blank" rel="noreferrer noopener">
-            {i.account.login}
-          </a>
-          <Badge variant="outline">{org ? tg.admin.organisation : tg.admin.user}</Badge>
-          <Badge variant="outline">
-            {i.repositorySelection === 'all' ? tg.admin.selectionAll : tg.admin.selectionSelected}
-          </Badge>
-          {i.suspended && <Badge variant="destructive">{tg.admin.suspended}</Badge>}
-        </p>
-        <p className="text-xs text-muted-foreground">{tg.admin.spacesUsing(i.spaces)}</p>
-      </div>
-      {org && (
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-testid="share-choose"
-            aria-label={tg.admin.chooseFor(i.account.login)}
-            onClick={() => setChoosing(true)}
-          >
-            {tg.admin.choose}
-          </Button>
-        </div>
-      )}
-      {!org && <p className="text-xs text-muted-foreground sm:col-span-2">{tg.admin.notShareable}</p>}
-      {org && (
-        <p className="text-xs text-muted-foreground sm:col-span-2">
-          {i.tenants.length > 0
-            ? t.fmt.sentences(tg.admin.sharedWith(names), tg.admin.sharedHelpOn)
-            : t.fmt.sentences(tg.admin.notShared, tg.admin.sharedHelpOff)}
-        </p>
-      )}
-      {choosing && <ShareDialog installation={i} onClose={() => setChoosing(false)} />}
-    </li>
-  )
-}
-
-// Ticks the tenants an installation is shared with; Save replaces the whole set.
-function ShareDialog({ installation: i, onClose }: { installation: GitHubInstallation; onClose: () => void }) {
-  const tenants = useTenants(true, true)
-  const share = useShareGitHubInstallation()
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(i.tenants))
-  const toggle = (id: string, on: boolean) =>
-    setPicked((prev) => {
-      const next = new Set(prev)
-      if (on) next.add(id)
-      else next.delete(id)
-      return next
-    })
-  const save = async () => {
-    try {
-      await share.mutateAsync({ id: i.id, tenants: [...picked] })
-      toast.success(tg.admin.sharedSaved(i.account.login))
-      onClose()
-    } catch (err) {
-      toast.error(explain(err))
-    }
-  }
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{tg.admin.chooseTitle(i.account.login)}</DialogTitle>
-          <DialogDescription>{tg.admin.chooseHelp}</DialogDescription>
-        </DialogHeader>
-        {tenants.isPending ? (
-          <p className="text-sm text-muted-foreground">{tg.admin.chooseLoading}</p>
-        ) : tenants.isError ? (
-          <ErrorState message={explain(tenants.error)} onRetry={() => void tenants.refetch()} />
-        ) : tenants.data.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{tg.admin.chooseNone}</p>
-        ) : (
-          <ul className="max-h-72 space-y-1 overflow-y-auto">
-            {tenants.data.map((x) => (
-              <li key={x.id}>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="size-4"
-                    checked={picked.has(x.id)}
-                    onChange={(e) => toggle(x.id, e.target.checked)}
-                  />
-                  <span>{x.name}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-        )}
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose}>
-            {tg.admin.shareCancel}
-          </Button>
-          <Button type="button" disabled={share.isPending || tenants.isPending} onClick={() => void save()}>
-            {share.isPending && <Spinner />}
-            {tg.admin.shareSave}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }

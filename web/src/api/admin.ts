@@ -98,11 +98,9 @@ import type {
   AdminTokenList,
   AdminGitHub,
   ClearedRule,
-  CursorPage,
   Plan,
   PlanRef,
   PlanWrite,
-  GitHubInstallation,
   GitHubManifestStart,
   PutAdminGitHubInput,
 } from './types'
@@ -473,14 +471,6 @@ export const adminApi = {
   // Saves the App GitHub made when saving it failed at the time (the redirect said `pending=1`).
   retryGitHubManifest: () =>
     request<AdminGitHub>('/admin/providers/github/manifest/retry', { method: 'POST', body: {} }),
-  adminGitHubInstallations: (cursor?: string, signal?: AbortSignal) =>
-    request<CursorPage<GitHubInstallation>>(
-      `/admin/providers/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`,
-      { signal },
-    ),
-  // Shares the installation with exactly these tenants; none stops sharing.
-  putAdminGitHubInstallation: (id: number, tenants: string[]) =>
-    request<GitHubInstallation>(`/admin/providers/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
   putDailyLines: (input: { lang: string } & ({ text: string; format: LinesFormat } | { lines: DailyLine[] })) =>
     request<AdminDailyBody>('/admin/daily/lines', { method: 'PUT', body: input }),
   // How a text would be split into lines, author and source; nothing is kept.
@@ -1378,32 +1368,6 @@ export function useRetryGitHubManifest() {
 export function useDeleteAdminGitHub() {
   const changed = useGitHubChanged()
   return useMutation({ mutationFn: () => adminApi.deleteAdminGitHub(), onSuccess: () => changed() })
-}
-
-// The App's installations, a page (one call to GitHub) at a time.
-export function useAdminGitHubInstallations(enabled = true) {
-  return useInfiniteQuery({
-    queryKey: keys.adminGitHubInstallations,
-    initialPageParam: '',
-    queryFn: ({ pageParam, signal }): Promise<CursorPage<GitHubInstallation>> =>
-      adminApi.adminGitHubInstallations(pageParam || undefined, signal),
-    getNextPageParam: (last) => last.next || undefined,
-    enabled,
-    staleTime: 15_000,
-  })
-}
-
-export function useShareGitHubInstallation() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, tenants }: { id: number; tenants: string[] }) =>
-      adminApi.putAdminGitHubInstallation(id, tenants),
-    onSuccess: () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: keys.adminGitHubInstallations }),
-        qc.invalidateQueries({ queryKey: ['connections'] }),
-      ]),
-  })
 }
 
 // --- server storage (docs/api.md, "Server storage") ---

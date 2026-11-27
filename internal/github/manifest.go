@@ -97,7 +97,7 @@ func (s *Service) StartManifest(ctx context.Context, userID string, req connecti
 		SetupURL:           ret,
 		Public:             true,
 		RequestOAuthOnInst: true,
-		DefaultPermissions: map[string]string{"administration": "write", "contents": "write", "metadata": "read"},
+		DefaultPermissions: map[string]string{"administration": "write", "contents": "write", "metadata": "read", "members": "read"},
 	}
 	return &connections.ManifestStart{URL: s.c.ManifestURL(org, state), Manifest: m, Binding: binding}, nil
 }
@@ -124,7 +124,7 @@ func (s *Service) CompleteManifest(ctx context.Context, binding, userID string, 
 	if binding == "" || state == "" || len(q["code"]) > 1 || len(q["state"]) > 1 {
 		return manifestFail + "expired", false
 	}
-	_, res := s.manifests.take(manifestKind, binding, state, userID)
+	_, res := s.manifests.take(binding, state, userID, manifestKind)
 	if res != takeOK {
 		return manifestFail + "expired", res == takeUnknown
 	}

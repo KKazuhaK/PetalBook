@@ -881,24 +881,37 @@ CREATE TABLE linked_accounts (
 CREATE INDEX linked_accounts_user ON linked_accounts(user_id);
 CREATE INDEX linked_accounts_renew ON linked_accounts(renew_at) WHERE refresh_enc <> '' AND state = 'ok';
 
--- The installations of an App-kind provider (GitHub) an administrator has
--- looked at: the account, to list it without asking the host.
+-- The installations of an App-kind provider (GitHub), each connected to its
+-- one owner on this server: a person (owner_user: their own GitHub account) or
+-- a tenant (owner_tenant: a GitHub organisation), never both and never two.
+-- An owner claims an installation on the App's setup callback, after GitHub
+-- showed with the claimer's own token that they reach it. A person's spaces
+-- sync only through their own installation, a tenant's only through its own.
+-- account_id is GitHub's immutable id of the account; claimed_by who claimed it.
 CREATE TABLE provider_installations (
   provider_id  TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
   id           BIGINT NOT NULL,
   account      TEXT COLLATE "C" NOT NULL,
+  account_id   BIGINT NOT NULL DEFAULT 0,
   account_type TEXT COLLATE "C" NOT NULL DEFAULT 'Organization',
+  owner_user   TEXT COLLATE "C" REFERENCES users(id) ON DELETE CASCADE,
+  owner_tenant TEXT COLLATE "C" REFERENCES tenants(id) ON DELETE CASCADE,
+  claimed_by   TEXT COLLATE "C" NOT NULL DEFAULT '',
+  created      BIGINT NOT NULL,
   updated      BIGINT NOT NULL,
-  PRIMARY KEY (provider_id, id)
+  PRIMARY KEY (provider_id, id),
+  CHECK ((owner_user IS NULL AND owner_tenant IS NOT NULL) OR (owner_user IS NOT NULL AND owner_tenant IS NULL))
 );
+CREATE INDEX provider_installations_user ON provider_installations(owner_user) WHERE owner_user IS NOT NULL;
+CREATE INDEX provider_installations_tenant ON provider_installations(owner_tenant) WHERE owner_tenant IS NOT NULL;
 
--- A site provider shared with a tenant (installation_id 0), or one of its
--- installations (its id): a tenant reaches only what is shared with it.
+-- A site provider shared with a tenant (reserved for org sign-in, 3.6 d): a
+-- tenant reaches only what is shared with it. GitHub installations are never
+-- shared; each has its own owner (provider_installations).
 CREATE TABLE provider_shares (
   provider_id     TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
-  installation_id BIGINT NOT NULL DEFAULT 0,
   tenant_id       TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  PRIMARY KEY (provider_id, installation_id, tenant_id)
+  PRIMARY KEY (provider_id, tenant_id)
 );
 CREATE INDEX provider_shares_tenant ON provider_shares(tenant_id);
 

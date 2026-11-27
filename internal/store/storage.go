@@ -185,12 +185,13 @@ func (p RemotePolicy) Deadline(created time.Time) (time.Time, bool) {
 
 // lacksRemote is the SQL that says a space s does not follow a remote of the
 // kind the policy requires, with the arguments of its placeholders: any remote,
-// or one that goes through the required provider's connection.
+// or one that goes through the required provider's connection. A remote that
+// lost its GitHub access (its installation is no longer its owner's) is none.
 func lacksRemote(p RemotePolicy) (string, []any) {
 	if p.Require == "any" {
-		return `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '')`, nil
+		return `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND ` + usableRemote + `)`, nil
 	}
-	return `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND r.cred_type = 'connection' AND r.provider = ?)`, []any{p.Require}
+	return `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND r.cred_type = 'connection' AND r.provider = ? AND ` + usableRemote + `)`, []any{p.Require}
 }
 
 // policyConds is the SQL that says a space s is asked for a remote it does not
@@ -322,8 +323,8 @@ func GetPolicyFacts(ctx context.Context, q Q, id string) (PolicyFacts, error) {
 	var personal sql.NullString
 	err := q.QueryRow(ctx, `SELECT s.created, s.personal_of, s.exempt,
 		(SELECT COUNT(*) FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0),
-		COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> ''), ''),
-		COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> ''), '')
+		COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND `+usableRemote+`), ''),
+		COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND `+usableRemote+`), '')
 		FROM spaces s WHERE s.id = ?`, id).Scan(&created, &personal, &exempt, &ownerExempt, &f.CredType, &f.Provider)
 	if errors.Is(err, sql.ErrNoRows) {
 		return f, ErrNotFound

@@ -46,6 +46,11 @@ func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember boo
 	}
 	switch r.Via {
 	case ViaApp:
+		if lost, err := s.lostAccess(ctx, r, checkMember); err != nil {
+			return "", offlineErr(err)
+		} else if lost != nil {
+			return "", lost
+		}
 		tok, err := st.app.Token(ctx, githubapp.TokenSpec{Installation: r.InstallationID, RepoIDs: []int64{r.RepoID}, Perms: contentsWrite})
 		if err == nil {
 			return tok, nil
@@ -64,17 +69,19 @@ func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember boo
 		return "", offlineErr(s.wrap(err))
 	case ViaUser:
 		if checkMember {
-			// Manage may come directly or through a group: the union counts.
-			roles, disabled, err := store.MemberStanding(ctx, s.opt.Store.Q(), r.SpaceID, r.CredUserID)
+			// A person's own token syncs only a person's space.
+			tenant, personal, err := store.SpaceOwnership(ctx, s.opt.Store.Q(), r.SpaceID)
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
 				return "", offlineErr(err)
 			}
-			var ps perm.Set
-			for _, role := range roles {
-				rp, _ := perm.ForRole(role)
-				ps |= rp
+			if err == nil && !connections.ScopeOfSpace(tenant, personal).Personal {
+				return "", credErr(CodeAccessLost, "an organisation's space syncs only through the organisation's own GitHub installation, never through a person's own connection; an administrator of the organisation connects GitHub, then the space is connected again", nil)
 			}
-			if errors.Is(err, store.ErrNotFound) || disabled || !ps.Has(perm.Manage) {
+			ok, err := s.canManage(ctx, r.SpaceID, r.CredUserID)
+			if err != nil {
+				return "", offlineErr(err)
+			}
+			if !ok {
 				return "", credErr(CodeConnectionMissing, "the GitHub connection this space syncs with belongs to someone who can no longer manage it; connect another", nil)
 			}
 		}
@@ -94,4 +101,71 @@ func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember boo
 		return "", offlineErr(err)
 	}
 	return "", credErr(CodeNotConfigured, "this space's GitHub credential is not understood by this server", nil)
+}
+
+// canManage says whether a person may still manage a space: directly or
+// through a group (the union of the roles counts), and not disabled.
+func (s *Service) canManage(ctx context.Context, spaceID, userID string) (bool, error) {
+	roles, disabled, err := store.MemberStanding(ctx, s.opt.Store.Q(), spaceID, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var ps perm.Set
+	for _, role := range roles {
+		rp, _ := perm.ForRole(role)
+		ps |= rp
+	}
+	return !disabled && ps.Has(perm.Manage), nil
+}
+
+// lostAccess is the refusal of a remote through an installation that is not
+// the space owner's own on this server any more (nil when it is): an
+// organisation's space needs the organisation's installation, a person's the
+// installation of the person the remote names, who must still be able to
+// manage the space. A space being made (staged) has no row yet: the
+// installation must still be connected to the owner the credential was
+// chosen for.
+func (s *Service) lostAccess(ctx context.Context, r *store.Remote, checkMember bool) (*gitstore.CredentialError, error) {
+	lost := credErr(CodeAccessLost, lostMessage, nil)
+	q := s.opt.Store.Q()
+	claim, err := store.GetGitHubInstallation(ctx, q, r.InstallationID)
+	if errors.Is(err, store.ErrNotFound) {
+		return lost, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !checkMember {
+		if (r.CredUserID != "" && claim.OwnerUser != r.CredUserID) || (r.CredUserID == "" && claim.OwnerTenant == "") {
+			return lost, nil
+		}
+		return nil, nil
+	}
+	tenant, personal, err := store.SpaceOwnership(ctx, q, r.SpaceID)
+	if errors.Is(err, store.ErrNotFound) {
+		return lost, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !connections.ScopeOfSpace(tenant, personal).Personal {
+		if claim.OwnerTenant != tenant {
+			return lost, nil
+		}
+		return nil, nil
+	}
+	if r.CredUserID == "" || claim.OwnerUser != r.CredUserID {
+		return lost, nil
+	}
+	ok, err := s.canManage(ctx, r.SpaceID, r.CredUserID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return credErr(CodeConnectionMissing, "the GitHub installation this space syncs with belongs to someone who can no longer manage it; connect another", nil), nil
+	}
+	return nil, nil
 }

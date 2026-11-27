@@ -2,8 +2,8 @@ package store_test
 
 import (
 	"errors"
-	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,79 +18,6 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
 		q := st.Q()
 		mkGitHubRow(t, st, now)
-		for _, i := range []store.GitHubInstallation{{ID: 30, Account: "Zeta", AccountType: "Organization"}, {ID: 10, Account: "Alpha", AccountType: "Organization"},
-			{ID: 20, Account: "Mid", AccountType: "Organization"}} {
-			i.Updated = now
-			if err := store.PutGitHubInstallation(ctx, q, i); err != nil {
-				t.Fatal(err)
-			}
-		}
-		for _, tn := range []string{"t1", "t2", "t3"} {
-			if err := st.CreateTenant(ctx, store.Tenant{ID: tn, Slug: tn, Name: tn, Created: now, Updated: now}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		// Shared per tenant: 30 with t1 and t2, 10 with t1, 20 with nobody.
-		for id, ts := range map[int64][]string{30: {"t2", "t1"}, 10: {"t1"}} {
-			if err := store.SetGitHubInstallationTenants(ctx, q, id, ts); err != nil {
-				t.Fatal(err)
-			}
-		}
-		t1, t2, t3 := store.InTenant("t1"), store.InTenant("t2"), store.InTenant("t3")
-		list, err := store.ListGitHubInstallationsOf(ctx, q, t1, 0, 10)
-		if err != nil || len(list) != 2 || list[0].ID != 10 || list[1].ID != 30 {
-			t.Fatalf("%+v %v", list, err)
-		}
-		if list, _ = store.ListGitHubInstallationsOf(ctx, q, t1, 10, 10); len(list) != 1 || list[0].ID != 30 {
-			t.Fatalf("%+v", list)
-		}
-		if list, _ = store.ListGitHubInstallationsOf(ctx, q, t2, 0, 10); len(list) != 1 || list[0].ID != 30 {
-			t.Fatalf("%+v", list)
-		}
-		if list, _ = store.ListGitHubInstallationsOf(ctx, q, t3, 0, 10); len(list) != 0 {
-			t.Fatalf("a tenant nothing is shared with sees %+v", list)
-		}
-		if list, _ = store.ListGitHubInstallationsOf(ctx, q, store.Scope{}, 0, 10); len(list) != 0 {
-			t.Fatalf("the zero scope sees %+v", list)
-		}
-		if i, err := store.GitHubInstallationOf(ctx, q, t2, "ZETA"); err != nil || i.ID != 30 {
-			t.Fatalf("%+v %v", i, err)
-		}
-		if _, err := store.GitHubInstallationOf(ctx, q, t2, "alpha"); !errors.Is(err, store.ErrNotFound) {
-			t.Fatal(err)
-		}
-		if _, err := store.GitHubInstallationOf(ctx, q, t1, "mid"); !errors.Is(err, store.ErrNotFound) {
-			t.Fatal(err)
-		}
-		if ok, err := store.GitHubInstallationShared(ctx, q, t1, 10); err != nil || !ok {
-			t.Fatal(ok, err)
-		}
-		if ok, _ := store.GitHubInstallationShared(ctx, q, t2, 10); ok {
-			t.Fatal("shared with the wrong tenant")
-		}
-		if ok, _ := store.GitHubInstallationShared(ctx, q, store.Scope{}, 10); ok {
-			t.Fatal("the zero scope reaches an installation")
-		}
-		m, err := store.GitHubInstallationTenants(ctx, q, []int64{10, 20, 30, 40})
-		if err != nil || len(m) != 2 || fmt.Sprint(m[10]) != "[t1]" || fmt.Sprint(m[30]) != "[t1 t2]" {
-			t.Fatalf("%v %v", m, err)
-		}
-		// Setting replaces the whole set; an empty set stops sharing.
-		if err := store.SetGitHubInstallationTenants(ctx, q, 30, []string{"t3", "t3"}); err != nil {
-			t.Fatal(err)
-		}
-		if m, _ = store.GitHubInstallationTenants(ctx, q, []int64{30}); fmt.Sprint(m[30]) != "[t3]" {
-			t.Fatalf("%v", m)
-		}
-		if err := store.SetGitHubInstallationTenants(ctx, q, 30, nil); err != nil {
-			t.Fatal(err)
-		}
-		if m, _ = store.GitHubInstallationTenants(ctx, q, []int64{30}); len(m) != 0 {
-			t.Fatalf("%v", m)
-		}
-		if err := store.SetGitHubInstallationTenants(ctx, q, 30, []string{"t1"}); err != nil {
-			t.Fatal(err)
-		}
 		// Spaces by installation and by user.
 		for _, id := range []string{"S1", "S2", "S3"} {
 			if err := store.InsertSpace(ctx, q, store.DefaultTenantID, id, id, "", "", now); err != nil {
@@ -103,10 +30,10 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		put("S1", store.Remote{Via: "app", InstallationID: 10, RepoID: 1})
-		put("S2", store.Remote{Via: "app", InstallationID: 10, RepoID: 2})
+		put("S1", store.Remote{Via: "app", InstallationID: 10, RepoID: 1, CredUserID: "A"})
+		put("S2", store.Remote{Via: "app", InstallationID: 10, RepoID: 2, CredUserID: "A"})
 		put("S3", store.Remote{Via: "user", CredUserID: "A", RepoID: 3})
-		counts, err := store.GitHubSpaceCounts(ctx, q, []int64{10, 20})
+		counts, err := store.GitHubSpaceCounts(ctx, q, store.InstallOwner{UserID: "A"}, []int64{10, 20})
 		if err != nil || counts[10] != 2 || counts[20] != 0 {
 			t.Fatalf("%v %v", counts, err)
 		}
@@ -191,21 +118,21 @@ func TestGitHubSpaceCountsIncludeAttachmentRepositories(t *testing.T) {
 		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "S1", URL: "https://example.test/s1.git", Branch: "main", State: "ok", Updated: now, CredType: "token"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.PutRemote(ctx, q, rem("S1", store.Remote{Role: store.RoleAssets, Via: "app", InstallationID: 10, RepoID: 11})); err != nil {
+		if err := store.PutRemote(ctx, q, rem("S1", store.Remote{Role: store.RoleAssets, Via: "app", InstallationID: 10, RepoID: 11, CredUserID: "A"})); err != nil {
 			t.Fatal(err)
 		}
 		// S2: both through installation 10.
-		if err := store.PutRemote(ctx, q, rem("S2", store.Remote{Via: "app", InstallationID: 10, RepoID: 2})); err != nil {
+		if err := store.PutRemote(ctx, q, rem("S2", store.Remote{Via: "app", InstallationID: 10, RepoID: 2, CredUserID: "A"})); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.PutRemote(ctx, q, rem("S2", store.Remote{Role: store.RoleAssets, Via: "app", InstallationID: 10, RepoID: 21})); err != nil {
+		if err := store.PutRemote(ctx, q, rem("S2", store.Remote{Role: store.RoleAssets, Via: "app", InstallationID: 10, RepoID: 21, CredUserID: "A"})); err != nil {
 			t.Fatal(err)
 		}
 		// S3: the attachments only, through user A.
 		if err := store.PutRemote(ctx, q, rem("S3", store.Remote{Role: store.RoleAssets, Via: "user", CredUserID: "A", RepoID: 31})); err != nil {
 			t.Fatal(err)
 		}
-		if counts, err := store.GitHubSpaceCounts(ctx, q, []int64{10}); err != nil || counts[10] != 2 {
+		if counts, err := store.GitHubSpaceCounts(ctx, q, store.InstallOwner{UserID: "A"}, []int64{10}); err != nil || counts[10] != 2 {
 			t.Fatalf("%v %v", counts, err)
 		}
 		if n, err := store.CountGitHubSpaces(ctx, q); err != nil || n != 3 {
@@ -217,42 +144,202 @@ func TestGitHubSpaceCountsIncludeAttachmentRepositories(t *testing.T) {
 	})
 }
 
-// Deleting the GitHub provider forgets its installations and who they were
-// shared with; deleting a tenant takes its shares.
-func TestGitHubInstallationSharesGoWithTheirOwners(t *testing.T) {
+// An installation is connected to one owner on this server, a person or a
+// tenant: a claim by another owner is refused (also when two race), the same
+// owner's claim refreshes it, and it goes with its owner and with the provider.
+func TestAGitHubInstallationHasOneOwner(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		q := st.Q()
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
 		mkGitHubRow(t, st, now)
-		for _, id := range []int64{1, 2} {
-			if err := store.PutGitHubInstallation(ctx, q, store.GitHubInstallation{ID: id, Account: fmt.Sprint("org", id), AccountType: "Organization", Updated: now}); err != nil {
+		mkUser(t, st, "A", "a", "member")
+		mkUser(t, st, "B", "b", "member")
+		for _, id := range []string{"T1", "T2"} {
+			if err := st.CreateTenant(ctx, store.Tenant{ID: id, Slug: strings.ToLower(id), Name: id, Created: now}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := st.CreateTenant(ctx, store.Tenant{ID: "T1", Slug: "one", Name: "One", Created: now}); err != nil {
+		claim := func(id int64, o store.InstallOwner, account string) error {
+			return store.ClaimGitHubInstallation(ctx, q, store.GitHubInstallation{ID: id, Account: account, AccountID: id * 10, AccountType: "Organization",
+				OwnerUser: o.UserID, OwnerTenant: o.TenantID, ClaimedBy: "A", Created: now, Updated: now})
+		}
+		t1, t2, a, b := store.InstallOwner{TenantID: "T1"}, store.InstallOwner{TenantID: "T2"}, store.InstallOwner{UserID: "A"}, store.InstallOwner{UserID: "B"}
+		if err := claim(1, t1, "Org1"); err != nil {
 			t.Fatal(err)
 		}
-		for _, id := range []int64{1, 2} {
-			if err := store.SetGitHubInstallationTenants(ctx, q, id, []string{"T1", store.DefaultTenantID}); err != nil {
-				t.Fatal(err)
+		if err := claim(2, a, "a-gh"); err != nil {
+			t.Fatal(err)
+		}
+		for _, o := range []store.InstallOwner{t2, a} {
+			if err := claim(1, o, "Org1"); !errors.Is(err, store.ErrInstallationTaken) {
+				t.Fatalf("another owner took installation 1: %v", err)
 			}
 		}
+		for _, o := range []store.InstallOwner{b, t1} {
+			if err := claim(2, o, "a-gh"); !errors.Is(err, store.ErrInstallationTaken) {
+				t.Fatalf("another owner took installation 2: %v", err)
+			}
+		}
+		if err := claim(1, store.InstallOwner{UserID: "A", TenantID: "T1"}, "x"); err == nil {
+			t.Fatal("a claim with two owners was taken")
+		}
+		// The same owner again: refreshed, not refused.
+		if err := claim(1, t1, "Org1-renamed"); err != nil {
+			t.Fatal(err)
+		}
+		in, err := store.GetGitHubInstallation(ctx, q, 1)
+		if err != nil || in.OwnerTenant != "T1" || in.OwnerUser != "" || in.Account != "Org1-renamed" || in.AccountID != 10 {
+			t.Fatalf("%+v %v", in, err)
+		}
+		// Two owners racing for one installation: one owner gets it, the other is refused.
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		got := map[string]int{}
+		for i := 0; i < 8; i++ {
+			o := t1
+			if i%2 == 1 {
+				o = t2
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := claim(7, o, "Race")
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case err == nil:
+					got[o.TenantID]++
+				case errors.Is(err, store.ErrInstallationTaken):
+				default:
+					t.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+		in, _ = store.GetGitHubInstallation(ctx, q, 7)
+		if in == nil || len(got) != 1 || got[in.OwnerTenant] != 4 {
+			t.Fatalf("racing owners: %v, stored %+v", got, in)
+		}
+		// Each owner lists its own; by account, case ignored.
+		if l, _ := store.ListGitHubInstallationsOwned(ctx, q, t1); len(l) == 0 || l[0].ID != 1 {
+			t.Fatalf("%+v", l)
+		}
+		if l, _ := store.ListGitHubInstallationsOwned(ctx, q, b); len(l) != 0 {
+			t.Fatalf("%+v", l)
+		}
+		if i, err := store.GitHubInstallationOwnedOn(ctx, q, a, "A-GH"); err != nil || i.ID != 2 {
+			t.Fatal(i, err)
+		}
+		if _, err := store.GitHubInstallationOwnedOn(ctx, q, b, "a-gh"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatal(err)
+		}
+		// Only the owner disconnects it.
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 2, b, "gone", now); !errors.Is(err, store.ErrNotFound) {
+			t.Fatal(err)
+		}
+		// It goes with its owner: a deleted tenant, a deleted person.
 		if err := st.DeleteTenant(ctx, "T1"); err != nil {
 			t.Fatal(err)
 		}
-		m, _ := store.GitHubInstallationTenants(ctx, q, []int64{1, 2})
-		if fmt.Sprint(m[1]) != "["+store.DefaultTenantID+"]" || len(m[2]) != 1 {
-			t.Fatalf("a deleted tenant is still shared with: %v", m)
+		if _, err := store.GetGitHubInstallation(ctx, q, 1); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("a deleted tenant's installation stayed: %v", err)
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM users WHERE id = 'A'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.GetGitHubInstallation(ctx, q, 2); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("a deleted person's installation stayed: %v", err)
 		}
 		if err := store.DeleteGitHubProvider(ctx, q); err != nil {
 			t.Fatal(err)
 		}
-		if n := count(t, st, `SELECT COUNT(*) FROM provider_shares`); n != 0 {
-			t.Fatalf("%d shares outlived their provider", n)
-		}
 		if n := count(t, st, `SELECT COUNT(*) FROM provider_installations`); n != 0 {
 			t.Fatalf("%d installations outlived their provider", n)
+		}
+	})
+}
+
+// Disconnecting an installation lists and marks the spaces on it as having
+// lost access, keeps their rows, and the storage requirement counts them as
+// lacking a remote until the same owner connects it again.
+func TestDisconnectingAnInstallationLosesItsSpacesAccess(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		mkGitHubRow(t, st, now)
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T1", Slug: "t1", Name: "T1", Created: now}); err != nil {
+			t.Fatal(err)
+		}
+		t1 := store.InstallOwner{TenantID: "T1"}
+		claim := func(tenant string) {
+			t.Helper()
+			if err := store.ClaimGitHubInstallation(ctx, q, store.GitHubInstallation{ID: 5, Account: "Org", AccountType: "Organization", OwnerTenant: tenant, Created: now, Updated: now}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		claim("T1")
+		for _, id := range []string{"SB", "SA", "SC"} {
+			if err := store.InsertSpace(ctx, q, "T1", id, "name "+id, "", "", now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		put := func(id string, r store.Remote) {
+			r.SpaceID, r.URL, r.Branch, r.State, r.Updated, r.CredType, r.Provider = id, "https://github.com/o/"+id+".git", "main", "ok", now, "connection", "github"
+			if err := store.PutRemote(ctx, q, r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		put("SA", store.Remote{Via: "app", InstallationID: 5, RepoID: 1})
+		put("SB", store.Remote{Via: "app", InstallationID: 5, RepoID: 2})
+		put("SB", store.Remote{Role: store.RoleAssets, Via: "app", InstallationID: 5, RepoID: 3})
+		put("SC", store.Remote{Via: "app", InstallationID: 6, RepoID: 4})
+		list, n, err := store.SpacesOnGitHubInstallation(ctx, q, t1, 5)
+		if err != nil || n != 2 || len(list) != 2 || list[0].ID != "SA" || list[1].ID != "SB" || list[0].Name != "name SA" {
+			t.Fatalf("%+v %d %v", list, n, err)
+		}
+		pol := store.RemotePolicy{Require: "github", All: true, Since: now.Add(-time.Hour), Grace: 24 * time.Hour, Now: now}
+		g, o, _, err := store.PolicyCounts(ctx, q, pol)
+		// SC syncs through an installation nobody connected: it has lost access already.
+		if err != nil || g != 1 || o != 0 {
+			t.Fatalf("grace %d overdue %d %v", g, o, err)
+		}
+		ids, err := store.DisconnectGitHubInstallation(ctx, q, 5, t1, "lost", now)
+		if err != nil || len(ids) != 2 {
+			t.Fatalf("%v %v", ids, err)
+		}
+		for _, role := range []string{store.RoleContent, store.RoleAssets} {
+			r, err := store.GetRemote(ctx, q, "SB", role)
+			if err != nil || r.State != store.RemoteError || r.ErrorKind != store.AccessLost || r.InstallationID != 5 || r.URL == "" {
+				t.Fatalf("%s: %+v %v", role, r, err)
+			}
+		}
+		if g, _, _, _ = store.PolicyCounts(ctx, q, pol); g != 3 {
+			t.Fatalf("%d spaces in their grace period, want 3", g)
+		}
+		f, err := store.GetPolicyFacts(ctx, q, "SA")
+		if err != nil || f.CredType != "" {
+			t.Fatalf("%+v %v", f, err)
+		}
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, t1, "lost", now); !errors.Is(err, store.ErrNotFound) {
+			t.Fatal(err)
+		}
+		// Connected again by its owner: the spaces have it again.
+		claim("T1")
+		if g, _, _, _ = store.PolicyCounts(ctx, q, pol); g != 1 {
+			t.Fatalf("%d spaces in their grace period, want 1", g)
+		}
+		// Claimed by another tenant: not the space's owner's, still lost.
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, t1, "lost", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T2", Slug: "t2", Name: "T2", Created: now}); err != nil {
+			t.Fatal(err)
+		}
+		claim("T2")
+		if g, _, _, _ = store.PolicyCounts(ctx, q, pol); g != 3 {
+			t.Fatalf("%d spaces in their grace period, want 3", g)
 		}
 	})
 }
@@ -329,6 +416,99 @@ func TestTheGitHubAppIsTheConfigOfTheGitHubRow(t *testing.T) {
 		got, _ := store.GetProvider(ctx, q, store.ProviderGitHub)
 		if !got.Enabled || got.SecretEnc != "" || !got.Repos || !strings.Contains(got.Config, `"organizations":["acme"]`) || !strings.Contains(got.Config, `"clientId":"Iv1.x"`) {
 			t.Fatalf("%+v", got)
+		}
+	})
+}
+
+// An installation another owner claims after the first let it go shows that
+// owner only its own spaces: the first owner's, still marked with the
+// installation's id, are neither listed nor counted for it, and its disconnect
+// leaves them alone.
+func TestAReclaimedInstallationShowsOnlyTheNewOwnersSpaces(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		mkGitHubRow(t, st, now)
+		for _, id := range []string{"TA", "TB"} {
+			if err := st.CreateTenant(ctx, store.Tenant{ID: id, Slug: strings.ToLower(id), Name: id, Created: now}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		a, b := store.InstallOwner{TenantID: "TA"}, store.InstallOwner{TenantID: "TB"}
+		claim := func(o store.InstallOwner) {
+			t.Helper()
+			if err := store.ClaimGitHubInstallation(ctx, q, store.GitHubInstallation{ID: 5, Account: "Org", AccountType: "Organization", OwnerTenant: o.TenantID, Created: now, Updated: now}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		claim(a)
+		if err := store.InsertSpace(ctx, q, "TA", "SA", "A's notes", "", "", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "SA", URL: "https://github.com/o/a.git", Branch: "main", State: "ok", Updated: now,
+			CredType: "connection", Provider: "github", Via: "app", InstallationID: 5, RepoID: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, a, "lost by A", now); err != nil {
+			t.Fatal(err)
+		}
+		claim(b)
+		list, n, err := store.SpacesOnGitHubInstallation(ctx, q, b, 5)
+		if err != nil || n != 0 || len(list) != 0 {
+			t.Fatalf("B sees %d space(s): %+v %v", n, list, err)
+		}
+		counts, err := store.GitHubSpaceCounts(ctx, q, b, []int64{5})
+		if err != nil || counts[5] != 0 {
+			t.Fatalf("B counts %v %v", counts, err)
+		}
+		ids, err := store.DisconnectGitHubInstallation(ctx, q, 5, b, "lost by B", now)
+		if err != nil || len(ids) != 0 {
+			t.Fatalf("B's disconnect reached %v %v", ids, err)
+		}
+		r, err := store.GetRemote(ctx, q, "SA", store.RoleContent)
+		if err != nil || r.LastError != "lost by A" {
+			t.Fatalf("B's disconnect touched A's remote: %+v %v", r, err)
+		}
+	})
+}
+
+// A space whose own repository syncs through something else (a token) and only
+// its attachment repository through the installation keeps the state of its own
+// remote when the installation is disconnected: only the attachment remote loses access.
+func TestDisconnectingMarksASpaceOnlyWhenItsOwnRepositoryWasOnIt(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		mkGitHubRow(t, st, now)
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T1", Slug: "t1", Name: "T1", Created: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.ClaimGitHubInstallation(ctx, q, store.GitHubInstallation{ID: 5, Account: "Org", AccountType: "Organization", OwnerTenant: "T1", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.InsertSpace(ctx, q, "T1", "SX", "x", "", "", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "SX", URL: "https://example.test/x.git", Branch: "main", State: "ok", Updated: now, CredType: "token"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "SX", Role: store.RoleAssets, URL: "https://github.com/o/x-assets.git", Branch: "main", State: "ok", Updated: now,
+			CredType: "connection", Provider: "github", Via: "app", InstallationID: 5, RepoID: 9}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, store.InstallOwner{TenantID: "T1"}, "lost", now); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, st, `SELECT COUNT(*) FROM spaces WHERE id = 'SX' AND remote_state = 'error'`); n != 0 {
+			t.Fatal("the space's own remote state was marked although its own repository is not on the installation")
+		}
+		if r, _ := store.GetRemote(ctx, q, "SX", store.RoleAssets); r.ErrorKind != store.AccessLost {
+			t.Fatalf("%+v", r)
+		}
+		if r, _ := store.GetRemote(ctx, q, "SX", store.RoleContent); r.State != "ok" {
+			t.Fatalf("%+v", r)
 		}
 	})
 }

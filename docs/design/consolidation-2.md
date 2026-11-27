@@ -654,20 +654,26 @@ CREATE TABLE linked_accounts (
 CREATE INDEX linked_accounts_user ON linked_accounts(user_id);
 CREATE INDEX linked_accounts_renew ON linked_accounts(renew_at) WHERE refresh_enc <> '' AND state = 'ok';  -- 5b: "the next one due" and "all due now"
 
--- Installations of an App-kind provider (GitHub today), and the tenants each is shared with.
+-- Installations of an App-kind provider (GitHub today), each connected to its one
+-- owner here: a person or a tenant (owner decision 2026-11-26; see "5c as built").
 CREATE TABLE provider_installations (
   provider_id  TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
   id           BIGINT NOT NULL,
   account      TEXT COLLATE "C" NOT NULL,
+  account_id   BIGINT NOT NULL DEFAULT 0,
   account_type TEXT COLLATE "C" NOT NULL DEFAULT 'Organization',
+  owner_user   TEXT COLLATE "C" REFERENCES users(id) ON DELETE CASCADE,
+  owner_tenant TEXT COLLATE "C" REFERENCES tenants(id) ON DELETE CASCADE,
+  claimed_by   TEXT COLLATE "C" NOT NULL DEFAULT '',
+  created      BIGINT NOT NULL,
   updated      BIGINT NOT NULL,
-  PRIMARY KEY (provider_id, id)
+  PRIMARY KEY (provider_id, id),
+  CHECK (exactly one of owner_user and owner_tenant)
 );
-CREATE TABLE provider_shares (           -- a site provider or installation shared with a tenant
+CREATE TABLE provider_shares (           -- a site provider shared with a tenant (reserved; never an installation)
   provider_id     TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
-  installation_id BIGINT NOT NULL DEFAULT 0,  -- 0: the provider itself
   tenant_id       TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  PRIMARY KEY (provider_id, installation_id, tenant_id)
+  PRIMARY KEY (provider_id, tenant_id)
 );
 CREATE INDEX provider_shares_tenant ON provider_shares(tenant_id);
 
@@ -827,9 +833,23 @@ in `secrets`. Where the routes differ from 5.3: the repository callback is
 `GET /api/providers/github/manifest/callback` (not under `/api/admin/`: it is a
 browser redirect), and `GET /api/account/links/{provider}/owners|repos` take the
 provider's id, not a link's, because a person with no link at GitHub still lists
-what their tenant's shared installations reach. A link that only connects
+what an organisation's own installations reach for its members. A link that only connects
 repositories does not sign in (`not_for_signin`) until the person links it for
 sign-in on the same link.
+
+**5c, installations (owner decision 2026-11-26).** The site administrator no
+longer shares installations with tenants: the share routes, their UI and the
+installation column of `provider_shares` are gone. The site keeps the App and the
+switch `features.githubConnect` (site, with a rule per tenant). Anyone installs
+the App on their own GitHub account from their settings, and an organisation's
+administrators (`tenant.github.manage`) on its GitHub organisation from the
+console; the setup callback connects the installation to that one owner only
+after GitHub lists it for the claimer's own user token and it is on the account
+asked for, and refuses a second owner (`installation_taken`). A person's space
+syncs only through their link or their own installation, an organisation's only
+through its own installation. Disconnecting one marks its spaces `access_lost`
+(notes kept), and the storage requirement counts them as without a remote. See
+docs/api.md, "The GitHub provider", "Installations".
 
 ### 5.7 Test plan
 

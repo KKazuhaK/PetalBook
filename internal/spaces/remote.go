@@ -441,7 +441,7 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 				return nil, err
 			}
 		}
-		if remote, ghCred, err = m.resolveConnection(ctx, sp.TenantID, req); err != nil {
+		if remote, ghCred, err = m.resolveConnection(ctx, connections.ScopeOfSpace(sp.TenantID, sp.Personal), req); err != nil {
 			return nil, err
 		}
 	} else if remote, err = gitstore.ParseURL(req.URL, m.hostPolicy()); err != nil {

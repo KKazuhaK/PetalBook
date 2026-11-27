@@ -9,6 +9,12 @@ import { find, paged, reply, Refusal, remove, rfc3339, type Ctx, type Route } fr
 
 const conn = (c: Ctx) => c.data.area.connections
 const providerOf = (c: Ctx) => find(conn(c).providers, (p) => p.id === c.params.provider, 'the provider')
+// The installations of one kind of owner (the fixtures have one person and one organisation); another owner's is
+// not found.
+const owned = (c: Ctx, kind: GitHubInstallation['owner']['kind']) =>
+  conn(c).installations.filter((i) => i.owner.kind === kind)
+const ownedOne = (c: Ctx, kind: GitHubInstallation['owner']['kind']) =>
+  find(owned(c, kind), (i) => String(i.id) === c.params.id, 'the installation')
 
 function githubView(c: Ctx): AdminGitHub {
   const g = conn(c).github
@@ -145,18 +151,70 @@ export const connectionRoutes: Route[] = [
       return g
     },
   ],
+  // --- the person's own GitHub installations ---
+  [
+    'POST',
+    '/api/account/github/install',
+    () => ({ url: 'https://github.com/apps/petalbook-notes/installations/new?state=fixture' }),
+  ],
+  ['GET', '/api/account/github/installations', (c) => ({ items: owned(c, 'person') })],
   [
     'GET',
-    '/api/admin/providers/github/installations',
-    (c) => paged<GitHubInstallation>(conn(c).installations, c.query),
+    '/api/account/github/installations/:id/spaces',
+    (c) => {
+      const i = ownedOne(c, 'person')
+      const items = conn(c).installationSpaces[i.id] ?? []
+      return { items, total: items.length }
+    },
   ],
   [
-    'PUT',
-    '/api/admin/providers/github/installations/:id',
-    (c): GitHubInstallation => {
-      const i = find(conn(c).installations, (x) => String(x.id) === c.params.id, 'the installation')
-      i.tenants = [...(c.body.tenants as string[])].sort()
-      return i
+    'GET',
+    '/api/account/github/installations/:id/repos',
+    (c) => paged(conn(c).repos[`github:${ownedOne(c, 'person').id}`] ?? [], c.query),
+  ],
+  [
+    'DELETE',
+    '/api/account/github/installations/:id',
+    (c) => {
+      const a = conn(c)
+      const i = ownedOne(c, 'person')
+      remove(a.installations, i)
+      const n = (a.installationSpaces[i.id] ?? []).length
+      delete a.installationSpaces[i.id]
+      return { spaces: n }
+    },
+  ],
+  // --- the organisation's own GitHub installations ---
+  [
+    'POST',
+    '/api/admin/github/install',
+    () => ({ url: 'https://github.com/apps/petalbook-notes/installations/new?state=fixture' }),
+  ],
+  ['GET', '/api/admin/github/installations', (c) => ({ items: owned(c, 'organization') })],
+  [
+    'GET',
+    '/api/admin/github/installations/:id/spaces',
+    (c) => {
+      const i = ownedOne(c, 'organization')
+      const items = conn(c).installationSpaces[i.id] ?? []
+      return { items, total: items.length }
+    },
+  ],
+  [
+    'GET',
+    '/api/admin/github/installations/:id/repos',
+    (c) => paged(conn(c).repos[`github:${ownedOne(c, 'organization').id}`] ?? [], c.query),
+  ],
+  [
+    'DELETE',
+    '/api/admin/github/installations/:id',
+    (c) => {
+      const a = conn(c)
+      const i = ownedOne(c, 'organization')
+      remove(a.installations, i)
+      const n = (a.installationSpaces[i.id] ?? []).length
+      delete a.installationSpaces[i.id]
+      return { spaces: n }
     },
   ],
 ]

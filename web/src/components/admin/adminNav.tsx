@@ -35,6 +35,7 @@ const DeletedSpaces = lazy(() => import('./manage/RecyclePanel').then((m) => ({ 
 const AccessPanel = lazyNamed(() => import('./AccessPanel'), 'AccessPanel')
 const StorageRules = lazyNamed(() => import('./StorageRules'), 'StorageRules')
 const ConnectionsSection = lazyNamed(() => import('./ConnectionsSection'), 'ConnectionsSection')
+const OrgGitHub = lazyNamed(() => import('./OrgGitHub'), 'OrgGitHub')
 const MailPanel = lazyNamed(() => import('./MailPanel'), 'MailPanel')
 const SecurityPanel = lazyNamed(() => import('./AdminSecurityPanel'), 'AdminSecurityPanel')
 const ProvidersSection = lazyNamed(() => import('./ProvidersSection'), 'ProvidersSection')
@@ -46,6 +47,8 @@ export interface NavTab {
   label: string
   // Only an administrator of the whole server sees it.
   siteOnly?: boolean
+  // Only in an organisation's console (a tenant's own, or a site administrator in a tenant's scope).
+  orgOnly?: boolean
   render: () => ReactNode
 }
 export interface NavSection {
@@ -100,6 +103,7 @@ export const NAV: readonly NavSection[] = [
         siteOnly: true,
         render: () => later(<ConnectionsSection />),
       },
+      { key: 'github', label: tc.tabs.storage.github, orgOnly: true, render: () => later(<OrgGitHub />) },
     ],
   },
   {
@@ -158,7 +162,11 @@ export const NAV: readonly NavSection[] = [
   },
 ]
 
-// What this administrator may open.
-export function navFor(site: boolean): NavSection[] {
-  return NAV.filter((s) => site || !s.siteOnly).map((s) => ({ ...s, tabs: s.tabs.filter((t) => site || !t.siteOnly) }))
+// What this administrator may open. `org`: the console is an organisation's (not the site's, nor the default tenant's,
+// which is no organisation).
+export function navFor(site: boolean, org = !site): NavSection[] {
+  return NAV.filter((s) => site || !s.siteOnly).map((s) => ({
+    ...s,
+    tabs: s.tabs.filter((t) => (site || !t.siteOnly) && (org || !t.orgOnly)),
+  }))
 }

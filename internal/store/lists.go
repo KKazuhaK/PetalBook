@@ -253,9 +253,12 @@ func deadlineCond(p RemotePolicy, which string) (string, []any) {
 	if !p.Active() {
 		return "1 = 0", nil
 	}
-	lacks, args := `s.remote_via = ''`, []any(nil)
+	// A GitHub remote that lost its access (its installation is no longer the
+	// owner's) counts as none: only spaces that follow GitHub are looked at.
+	lost := `(s.remote_via = 'github' AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND NOT ` + usableRemote + `))`
+	lacks, args := `(s.remote_via = '' OR `+lost+`)`, []any(nil)
 	if p.Require != "any" {
-		lacks, args = `s.remote_via <> ?`, []any{p.Require}
+		lacks, args = `(s.remote_via <> ? OR `+lost+`)`, []any{p.Require}
 	}
 	exempt := `s.exempt = 0 AND NOT EXISTS (SELECT 1 FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0)`
 	since, now, grace := ms(p.Since), ms(p.Now), p.Grace.Milliseconds()
@@ -428,8 +431,8 @@ func queryAdminSpaces(ctx context.Context, q Q, where, orderBy string, args []an
 			p.last_used, p.cache_state, p.pinned, p.exempt, p.index_bytes, p.cred_type, p.provider, p.owner_exempt, p.has_assets, p.location, p.remote_state, p.name_key
 		FROM (SELECT s.id, s.name, s.name_key, s.personal_of, s.inbox, s.created, s.disabled, s.size_bytes, s.tenant_id,
 			s.last_used, s.cache_state, s.pinned, s.exempt, s.index_bytes, s.location, s.remote_state,
-			COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> ''), '') AS cred_type,
-			COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> ''), '') AS provider,
+			COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND `+usableRemote+`), '') AS cred_type,
+			COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND `+usableRemote+`), '') AS provider,
 			(SELECT COUNT(*) FROM remotes ar WHERE ar.space_id = s.id AND ar.role = 'assets' AND ar.url <> '') AS has_assets,
 			(SELECT COUNT(*) FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0) AS owner_exempt,
 			(SELECT COUNT(*) FROM space_members m WHERE m.space_id = s.id) AS members,

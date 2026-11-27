@@ -3,6 +3,7 @@ package github_test
 import (
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -13,12 +14,14 @@ import (
 )
 
 // "Connect GitHub" leads to the App's installation page: installing on one's
-// own account and authorising happen in one GitHub flow, and the callback finishes both.
+// own account and authorising happen in one GitHub flow, and the callback
+// finishes both: the link, and the installation connected to the person.
 func TestConnectingByInstallingOnOnesOwnAccount(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
 		h.user("U1", "kazuha")
 		h.f.AddUser("kazuha-gh")
+		ctx := allowAll(ctx)
 		if _, _, err := h.svc.StartInstall(ctx, "U1", "/"); code(err) != "provider_not_configured" {
 			t.Fatalf("%v", err)
 		}
@@ -53,6 +56,10 @@ func TestConnectingByInstallingOnOnesOwnAccount(t *testing.T) {
 		if _, err := h.svc.PlanCreate(ctx, "U1", "kazuha-gh"); err != nil {
 			t.Fatal(err)
 		}
+		inst, err := store.GitHubInstallationOwnedOn(ctx, st.Q(), store.InstallOwner{UserID: "U1"}, "kazuha-gh")
+		if err != nil || inst.AccountType != "User" || inst.ClaimedBy != "U1" || back.Query().Get("installation_id") != strconv.FormatInt(inst.ID, 10) {
+			t.Fatalf("%+v %v", inst, err)
+		}
 		h.mustNotLeak()
 
 		// The plain authorisation still works with the same callback.
@@ -63,10 +70,18 @@ func TestConnectingByInstallingOnOnesOwnAccount(t *testing.T) {
 		}
 
 		// Installed, but GitHub did not ask for authorisation (the App does not
-		// request it during installation): the person is told to authorise.
+		// request it during installation): the person's own link is asked, and an
+		// installation it does not list is not theirs.
 		installURL, binding, _ = h.svc.StartInstall(ctx, "U1", "/")
 		q := url.Values{"setup_action": {"install"}, "installation_id": {"7"}, "state": {stateOf(installURL)}}
-		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", q); to != "/settings?provider=github&connection_error=installed" {
+		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", q); to != "/settings?provider=github&connection_error=installation_not_yours" {
+			t.Fatalf("%q", to)
+		}
+		// ...and without a link there is nothing to ask with.
+		h.user("U2", "two")
+		installURL, binding, _ = h.svc.StartInstall(ctx, "U2", "/")
+		q = url.Values{"setup_action": {"install"}, "installation_id": {"7"}, "state": {stateOf(installURL)}}
+		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U2", q); to != "/settings?provider=github&connection_error=not_connected" {
 			t.Fatalf("%q", to)
 		}
 		// An organisation that must approve the installation first.
@@ -121,7 +136,9 @@ func TestAnInstalledPersonalAccountWithoutAdministrationIsAPermissionProblem(t *
 		w := newWorld(t, st)
 		w.f.PersonalNeedsInstall = true
 		in := w.f.Install("tang", "all")
-		w.f.SetInstall(in, func(i *githubapptest.Install) { i.Perms = map[string]string{"contents": "write", "metadata": "read"} })
+		w.f.SetInstall(in, func(i *githubapptest.Install) {
+			i.Perms = map[string]string{"members": "read", "contents": "write", "metadata": "read"}
+		})
 		_, _, err := create(t, w, "U1", "tang", "notes")
 		if code(err) != "app_missing_permission" {
 			t.Fatalf("%v (%s)", err, code(err))

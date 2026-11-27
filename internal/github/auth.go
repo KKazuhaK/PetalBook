@@ -40,7 +40,11 @@ type attempt struct {
 	id, state, verifier, userID, ret string
 	// kind is what the attempt is for: "" connecting an account, "manifest"
 	// making the App. One never finishes the other.
-	kind    string
+	kind string
+	// owner and account (an installation attempt): who the installation is
+	// connected to, and the GitHub organisation named for a tenant.
+	owner   store.InstallOwner
+	account string
 	expires time.Time
 	elem    *list.Element
 }
@@ -94,13 +98,17 @@ const (
 	takeOther // the state or the user is not the attempt's: it stays for its owner
 )
 
-// take removes and returns the attempt of a browser if the state and the user
-// are the ones it was made for.
-func (p *attemptStore) take(kind, id, state, userID string) (*attempt, takeResult) {
+// take removes and returns the attempt of a browser if it is of one of the
+// kinds and the state and the user are the ones it was made for.
+func (p *attemptStore) take(id, state, userID string, kinds ...string) (*attempt, takeResult) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	a, ok := p.items[id]
-	if !ok || a.kind != kind {
+	known := false
+	for _, k := range kinds {
+		known = known || (ok && a.kind == k)
+	}
+	if !ok || !known {
 		return nil, takeUnknown
 	}
 	if !p.now().Before(a.expires) {
@@ -172,24 +180,13 @@ func (s *Service) needUserAuth(ctx context.Context) (*appState, error) {
 	return st, nil
 }
 
-// StartInstall begins connecting a user's GitHub account through the App's
-// installation page: with "request user authorization during installation"
-// GitHub authorises the person in the same flow, so installing on their own
-// account and connecting it are one step. The attempt is bound as for
-// StartAuthorization; its code carries no PKCE challenge, as GitHub gives
-// none to an installation, so none is sent back.
+// StartInstall begins installing the App on the person's own GitHub account
+// and connecting it to them (StartInstallFor): with "request user
+// authorization during installation" GitHub authorises them in the same flow,
+// so installing and connecting their account are one step. Its code carries no
+// PKCE challenge, as GitHub gives none to an installation.
 func (s *Service) StartInstall(ctx context.Context, userID, ret string) (installPage, binding string, err error) {
-	st, err := s.needUserAuth(ctx)
-	if err != nil {
-		return "", "", err
-	}
-	page := installURL(st.rec.HTMLURL)
-	if page == "" {
-		return "", "", errf(http.StatusConflict, CodeNotConfigured, "GitHub did not say where the App is installed.")
-	}
-	state := githubapp.RandomState()
-	binding = s.attempts.put(attempt{state: state, userID: userID, ret: safeReturn(ret)})
-	return page + "?state=" + url.QueryEscape(state), binding, nil
+	return s.StartInstallFor(ctx, userID, store.InstallOwner{UserID: userID}, "", ret)
 }
 
 // Callback failure codes (the connection_error of /settings).
@@ -230,14 +227,20 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 	if !ok1 || !ok2 || !ok3 || binding == "" || state == "" {
 		return failRedirect + cbExpired, false
 	}
-	a, res := s.attempts.take("", binding, state, userID)
+	a, res := s.attempts.take(binding, state, userID, "", kindInstall)
 	if res != takeOK {
 		return failRedirect + cbExpired, res == takeUnknown
 	}
 	fail := func(c string) (string, bool) { return failRedirect + c, true }
 	if gerr != "" {
 		s.log.Info("GitHub authorisation not given", "error", sanitize(gerr))
+		if a.kind == kindInstall && a.owner.TenantID != "" {
+			return withError(a.ret, cbDenied), true
+		}
 		return fail(cbDenied)
+	}
+	if a.kind == kindInstall {
+		return s.completeInstall(ctx, a, code, one)
 	}
 	if code == "" {
 		switch action, _ := one("setup_action"); action {
@@ -262,6 +265,20 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 		s.log.Warn("could not read the GitHub account", "reason", reason(err))
 		return fail(cbError)
 	}
+	if c := s.storeLink(ctx, userID, tok, acct); c != "" {
+		return fail(c)
+	}
+	s.forgetNoApp(acct.Login) // they may have installed the App in this very flow
+	s.changed(userID)
+	return a.ret, true
+}
+
+// storeLink stores the tokens of an authorisation on the person's link at
+// GitHub, under the rules of connecting: another GitHub account takes the
+// link over only when nothing syncs through the old one and the sign-in it
+// gives is not their last way in. It answers a callback failure code, "" when
+// stored.
+func (s *Service) storeLink(ctx context.Context, userID string, tok *githubapp.Tokens, acct *githubapp.User) string {
 	db := s.opt.Store.Q()
 	subject := strconv.FormatInt(acct.ID, 10)
 	// Their link at GitHub, whatever it is for: a sign-in that holds no tokens is
@@ -273,10 +290,10 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 		n, err := store.CountUserProviderSpaces(ctx, db, ProviderID, userID)
 		if err != nil {
 			s.log.Error("could not count the spaces of a GitHub connection", "error", err)
-			return fail(cbError)
+			return cbError
 		}
 		if n > 0 {
-			return fail(cbDifferent)
+			return cbDifferent
 		}
 	}
 	// Whether a sign-in may move with the link to the other account is asked in
@@ -301,16 +318,14 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 	switch err := s.tok.Put(ctx, connections.Account{ProviderID: ProviderID, UserID: userID, Subject: subject, Login: acct.Login, SigninMove: move},
 		connections.Pair{Access: tok.Access, Refresh: tok.Refresh, AccessExpires: tok.AccessExpires, RefreshExpires: tok.RefreshExpires}); {
 	case errors.Is(err, store.ErrExists):
-		return fail(cbInUse)
+		return cbInUse
 	case errors.Is(err, errLastMethod):
-		return fail(cbLastMethod)
+		return cbLastMethod
 	case err != nil:
 		s.log.Error("could not store a GitHub authorisation", "error", err)
-		return fail(cbError)
+		return cbError
 	}
-	s.forgetNoApp(acct.Login) // they may have installed the App in this very flow
-	s.changed(userID)
-	return a.ret, true
+	return ""
 }
 
 // errLastMethod refuses to move a link that is a person's last way to sign in;

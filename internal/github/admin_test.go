@@ -2,7 +2,6 @@ package github_test
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -90,7 +89,7 @@ func TestSaveRefusesWhatGitHubRefusesAndSavesNothing(t *testing.T) {
 func TestMissingPermissionsAreOnlyAWarning(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
-		h.f.AppPerms = map[string]string{"contents": "read", "metadata": "read"}
+		h.f.AppPerms = map[string]string{"members": "read", "contents": "read", "metadata": "read"}
 		v, err := h.svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM()})
 		if err != nil {
 			t.Fatal(err)
@@ -149,82 +148,6 @@ func TestAnotherAppIsRefusedWhileInUse(t *testing.T) {
 
 func githubapptestKeyPEM(h *harness) string { return h.f.KeyPEM() }
 
-func TestInstallationsListAndSharing(t *testing.T) {
-	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		h := newHarness(t, st)
-		if _, _, err := h.svc.Installations(ctx, ""); code(err) != "provider_not_configured" || status(err) != 409 {
-			t.Fatalf("%v", err)
-		}
-		h.configure()
-		h.f.AddUser("tang")
-		var orgInst int64
-		for i := 0; i < 40; i++ {
-			login := "org" + strings.Repeat("a", i+1)
-			h.f.AddOrg(login)
-			id := h.f.Install(login, "all")
-			if i == 35 {
-				orgInst = id
-			}
-		}
-		userInst := h.f.Install("tang", "all")
-		p1, next, err := h.svc.Installations(ctx, "")
-		if err != nil || len(p1) != 30 || next == "" {
-			t.Fatalf("%d %q %v", len(p1), next, err)
-		}
-		before := h.f.Count("GET", "/app/installations")
-		p2, next2, err := h.svc.Installations(ctx, next)
-		if err != nil || len(p2) != 11 || next2 != "" || h.f.Count("GET", "/app/installations") != before+1 {
-			t.Fatalf("%d %q %v", len(p2), next2, err)
-		}
-		if _, _, err := h.svc.Installations(ctx, "garbage"); code(err) != "invalid" {
-			t.Fatalf("%v", err)
-		}
-		// Share one organisation; a user's account cannot be shared; GitHub must know the installation.
-		it, err := h.svc.SetTenants(ctx, orgInst, []string{store.DefaultTenantID})
-		if err != nil || fmt.Sprint(it.Tenants) != "["+store.DefaultTenantID+"]" {
-			t.Fatalf("%+v %v", it, err)
-		}
-		if _, err := h.svc.SetTenants(ctx, userInst, []string{store.DefaultTenantID}); code(err) != "invalid" {
-			t.Fatalf("%v", err)
-		}
-		if _, err := h.svc.SetTenants(ctx, 12345, []string{store.DefaultTenantID}); code(err) != "not_found" || status(err) != 404 {
-			t.Fatalf("%v", err)
-		}
-		list, _, _ := h.svc.Installations(ctx, next)
-		shared := 0
-		all, _, _ := h.svc.Installations(ctx, "")
-		for _, x := range append(all, list...) {
-			if len(x.Tenants) > 0 {
-				shared++
-			}
-		}
-		if shared != 1 {
-			t.Fatalf("%d shared", shared)
-		}
-		// Sharing with a tenant that does not exist, or twice with one, or with none.
-		if _, err := h.svc.SetTenants(ctx, orgInst, []string{"no-such-tenant"}); code(err) != "invalid" || status(err) != 400 {
-			t.Fatalf("%v", err)
-		}
-		if err := st.CreateTenant(ctx, store.Tenant{ID: "T2", Slug: "two", Name: "Two", Created: h.now}); err != nil {
-			t.Fatal(err)
-		}
-		it, err = h.svc.SetTenants(ctx, orgInst, []string{"T2", store.DefaultTenantID, "T2"})
-		if err != nil || fmt.Sprint(it.Tenants) != "["+store.DefaultTenantID+" T2]" {
-			t.Fatalf("%+v %v", it, err)
-		}
-		if _, err := h.svc.SetTenants(ctx, userInst, nil); err != nil {
-			t.Fatalf("stopping to share a user's account is allowed: %v", err)
-		}
-		// A space counts toward its installation.
-		h.user("U1", "kazuha")
-		h.space("S1", store.Remote{Via: "app", InstallationID: orgInst, RepoID: 1})
-		it, err = h.svc.SetTenants(ctx, orgInst, nil)
-		if err != nil || len(it.Tenants) != 0 || it.Spaces != 1 {
-			t.Fatalf("%+v %v", it, err)
-		}
-	})
-}
-
 // Removing the client id only ends users' connections: spaces that sync
 // through the App's installations do not need it, so only connected users
 // stand in the way.
@@ -263,13 +186,13 @@ func appReads(h *harness) int {
 func TestRecheckReadsThePermissionsAgain(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
-		h.f.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
+		h.f.AppPerms = map[string]string{"members": "read", "contents": "write", "metadata": "read"}
 		v, err := h.svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM()})
 		if err != nil || strings.Join(v.Missing, ",") != "administration" {
 			t.Fatalf("%+v %v", v, err)
 		}
 		// The owner gives the App the permission on GitHub: the stored view is old until it is checked again.
-		h.f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
+		h.f.AppPerms = map[string]string{"members": "read", "administration": "write", "contents": "write", "metadata": "read"}
 		if v, _ = h.svc.View(ctx); strings.Join(v.Missing, ",") != "administration" {
 			t.Fatalf("a view read GitHub: %+v", v)
 		}
@@ -284,7 +207,9 @@ func TestRecheckReadsThePermissionsAgain(t *testing.T) {
 		// An installation that has not accepted the new permission is told apart from the App.
 		h.f.AddOrg("kazuhahub")
 		inst := h.f.Install("kazuhahub", "all")
-		h.f.SetInstall(inst, func(i *githubapptest.Install) { i.Perms = map[string]string{"contents": "read", "metadata": "read"} })
+		h.f.SetInstall(inst, func(i *githubapptest.Install) {
+			i.Perms = map[string]string{"members": "read", "contents": "read", "metadata": "read"}
+		})
 		v, err = h.svc.Recheck(ctx)
 		if err != nil || len(v.Missing) != 0 || len(v.Gaps) != 1 || v.Gaps[0].ID != inst || v.Gaps[0].Account != "kazuhahub" ||
 			strings.Join(v.Gaps[0].Missing, ",") != "administration,contents" {
@@ -318,9 +243,10 @@ func TestAPermissionRefusalRechecksTheAppByItself(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		w := newWorld(t, st)
 		repo := w.f.AddRepo("kazuhahub", "wiki", true)
-		w.space("S1", store.Remote{Via: "app", InstallationID: w.kazuhahub, RepoID: repo.ID})
+		w.asOrg("kazuhahub")
+		w.spaceIn("T1", "S1", "", store.Remote{Via: "app", InstallationID: w.kazuhahub, RepoID: repo.ID})
 		rem, _ := store.GetRemote(ctx, st.Q(), "S1", store.RoleContent)
-		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
+		w.f.AppPerms = map[string]string{"members": "read", "administration": "write", "metadata": "read"}
 		if v, _ := w.svc.View(ctx); len(v.Missing) != 0 {
 			t.Fatalf("%+v", v)
 		}
@@ -340,9 +266,9 @@ func TestAPermissionRefusalRechecksTheAppByItself(t *testing.T) {
 			t.Fatalf("%d reads of the App for six refusals", n)
 		}
 		w.clk.Advance(61 * time.Second)
-		w.f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
+		w.f.AppPerms = map[string]string{"members": "read", "administration": "write", "contents": "write", "metadata": "read"}
 		w.f.SetInstall(w.kazuhahub, func(i *githubapptest.Install) {
-			i.Perms = map[string]string{"administration": "write", "metadata": "read"}
+			i.Perms = map[string]string{"members": "read", "administration": "write", "metadata": "read"}
 		})
 		w.svc.GitToken(ctx, rem, false)
 		if v, _ = w.svc.View(ctx); len(v.Missing) != 0 || appReads(w.harness) != before+2 || len(v.Gaps) != 1 {

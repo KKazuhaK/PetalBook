@@ -65,6 +65,8 @@ export interface ConnectionsData {
   forges: AdminForge[]
   github: Extract<AdminGitHub, { configured: true }> | null
   installations: GitHubInstallation[]
+  // The spaces that sync through each installation, by its id.
+  installationSpaces: Record<number, { id: string; name: string }[]>
   // What GitHub says of the App the next time the server asks (a re-check): these fields replace the stored ones.
   githubSide: Partial<NonNullable<ConnectionsData['github']>> | null
 }
@@ -100,6 +102,7 @@ export function createArea(): AreaData {
       forges: [],
       github: null,
       installations: [],
+      installationSpaces: {},
       githubSide: null,
     },
     notifications: [],

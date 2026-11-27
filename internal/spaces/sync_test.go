@@ -246,6 +246,7 @@ func TestCreateASpaceWithAnOrganisationsNewRepository(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
+		e.org()
 		in, err := e.create("Tang", "kazuhahub", "tang-notes", true)
 		if err != nil {
 			t.Fatal(err)
@@ -320,14 +321,16 @@ func TestCreateASpaceInTheUsersOwnAccount(t *testing.T) {
 			t.Fatalf("%s", got)
 		}
 		e.noLeak()
-		// Installed on the personal account later: new spaces there use the installation.
-		inst := e.f.Install("tang", "all")
+		// Installed on the personal account later, but not connected to the
+		// person here: still their own token.
+		e.f.Install("tang", "all")
+		inst := e.claimMine()
 		in2, err := e.create("Mine 2", "tang", "notes2", true)
 		if err != nil {
 			t.Fatal(err)
 		}
 		row, _ = store.GetRemote(ctx, st.Q(), in2.ID, store.RoleContent)
-		if row.Via != "app" || row.InstallationID != inst {
+		if row.Via != "app" || row.InstallationID != inst || row.CredUserID != "U1" {
 			t.Fatalf("%+v", row)
 		}
 	})
@@ -466,6 +469,10 @@ func TestSelectedRepositoriesInstallation(t *testing.T) {
 		e := newGHEnv(t, st)
 		e.f.AddOrg("sel", "tang")
 		sel := e.f.Install("sel", "selected")
+		e.org()
+		e.claimOrg(orgTenant, "sel")
+		// GitHub adds a repository the installation makes to its selection.
+		e.f.AutoAdd = true
 		in, err := e.create("Sel", "sel", "notes", true)
 		if err != nil {
 			t.Fatal(err)
@@ -474,8 +481,9 @@ func TestSelectedRepositoriesInstallation(t *testing.T) {
 		if row.Via != "app" || row.InstallationID != sel {
 			t.Fatalf("%+v", row)
 		}
-		// Where the repository cannot be added: a 409 that names it, and no space.
-		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = true })
+		// Where it does not: a 409 that names it, and no space; no person's
+		// token changes the organisation's installation.
+		e.f.AutoAdd = false
 		_, err = e.create("Sel2", "sel", "stuck", true)
 		repo := ghRepo(err)
 		if ghCode(err) != "repo_not_in_installation" || repo == nil || repo.FullName != "sel/stuck" {
@@ -487,8 +495,11 @@ func TestSelectedRepositoriesInstallation(t *testing.T) {
 		if e.rows() != 1 || len(e.spaceDirs()) != 1 {
 			t.Fatalf("%d rows, %v", e.rows(), e.spaceDirs())
 		}
+		if e.f.Count("PUT", "/user/installations/") != 0 {
+			t.Fatal("a person's token changed the organisation's installation")
+		}
 		// The administrator adds it, and the retry works.
-		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = false })
+		e.f.SelectRepo(sel, "sel/stuck")
 		if _, err = e.create("Sel2", "sel", "stuck", false); err != nil {
 			t.Fatal(err)
 		}
@@ -563,17 +574,20 @@ func TestTheLimitCountsSpacesBeingMade(t *testing.T) {
 }
 
 // A site administrator connecting another tenant's space through the App is
-// judged by the space's tenant: the share must reach it, whichever tenant the
-// administrator belongs to.
+// judged by the space's tenant: the installation must be that tenant's own,
+// whichever tenant the administrator belongs to.
 func TestConnectingAnotherTenantsSpaceChecksTheSpacesTenant(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		e.f.AddRepo("kazuhahub", "wiki", true)
 		now := time.Now()
-		const tenB = "T000000002"
-		if err := st.CreateTenant(ctx, store.Tenant{ID: tenB, Slug: "acme", Name: "Acme", Created: now, Updated: now}); err != nil {
-			t.Fatal(err)
+		const tenB, tenC = "T000000002", "T000000003"
+		for _, tn := range []store.Tenant{{ID: tenB, Slug: "acme", Name: "Acme"}, {ID: tenC, Slug: "other", Name: "Other"}} {
+			tn.Created, tn.Updated = now, now
+			if err := st.CreateTenant(ctx, tn); err != nil {
+				t.Fatal(err)
+			}
 		}
 		owner := store.User{ID: "UB", Username: "bee", Name: "bee", Role: "member", Created: now, TenantID: tenB}
 		if err := store.InsertUser(ctx, st.Q(), owner); err != nil {
@@ -593,27 +607,75 @@ func TestConnectingAnotherTenantsSpaceChecksTheSpacesTenant(t *testing.T) {
 		}
 		defer h.Release()
 		req := ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", CredType: CredConnection, Provider: "github", Via: "app", UserID: admin.ID}
-		// Shared with the administrator's tenant only: the space's tenant has no right to it.
-		if _, err := e.svc.SetTenants(ctx, e.kazuhub, []string{store.DefaultTenantID}); err != nil {
-			t.Fatal(err)
-		}
+		// Connected by another tenant: the space's tenant has no right to it.
+		e.claimOrg(tenC, "kazuhahub")
 		if _, err := e.m.Connect(ctx, h, req); err == nil {
-			t.Fatal("the share of the administrator's tenant was used for another tenant's space")
+			t.Fatal("another tenant's installation was used for this tenant's space")
 		}
-		// Shared with the space's tenant: allowed, although the administrator's own tenant has no share.
-		if _, err := e.svc.SetTenants(ctx, e.kazuhub, []string{tenB}); err != nil {
+		// The space's tenant's own: allowed, although the administrator's own tenant has none.
+		if _, err := e.svc.DisconnectInstallation(ctx, store.InstallOwner{TenantID: tenC}, e.kazuhub); err != nil {
 			t.Fatal(err)
 		}
+		e.claimOrg(tenB, "kazuhahub")
 		if v, err := e.m.Connect(ctx, h, req); err != nil || v.Connection == nil || v.Connection.Via != "app" {
 			t.Fatalf("%+v %v", v, err)
 		}
+		// Through a person's own token: never, for an organisation's space.
+		req.Via = "user"
+		req.UserID = e.user.ID
+		if _, err := e.m.Connect(ctx, h, req); err == nil {
+			t.Fatal("an organisation's space was connected through a person's own token")
+		}
 	})
+}
+
+// claimOrg has the GitHub user "tang" (a member of org) install the App on the
+// organisation for a tenant, as one of its administrators would, through the
+// App's callback.
+func (e *ghEnv) claimOrg(tenant, org string) int64 {
+	e.t.Helper()
+	e.f.MakeAdmin(org, "tang") // an owner of the organisation installs it
+	hc := connections.WithInstallHooks(ctx, connections.InstallHooks{Allow: func(context.Context, store.InstallOwner) error { return nil }})
+	o := store.InstallOwner{TenantID: tenant}
+	u, binding, err := e.svc.StartInstallFor(hc, e.user.ID, o, org, "/back")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	back, _ := url.Parse(e.f.InstallAppOn(u, "tang", org, e.svc.CallbackURL(), true))
+	if to, _ := e.svc.CompleteAuthorization(hc, binding, e.user.ID, back.Query()); to != "/back" {
+		e.t.Fatalf("installing on %s: %s", org, to)
+	}
+	in, err := store.GitHubInstallationOwnedOn(ctx, e.st.Q(), o, org)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return in.ID
+}
+
+// claimMine has the person install the App on their own GitHub account ("tang").
+func (e *ghEnv) claimMine() int64 {
+	e.t.Helper()
+	hc := connections.WithInstallHooks(ctx, connections.InstallHooks{Allow: func(context.Context, store.InstallOwner) error { return nil }})
+	u, binding, err := e.svc.StartInstall(hc, e.user.ID, "/back")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	back, _ := url.Parse(e.f.InstallApp(u, "tang", e.svc.CallbackURL()))
+	if to, _ := e.svc.CompleteAuthorization(hc, binding, e.user.ID, back.Query()); to != "/back" {
+		e.t.Fatalf("installing on tang: %s", to)
+	}
+	in, err := store.GitHubInstallationOwnedOn(ctx, e.st.Q(), store.InstallOwner{UserID: e.user.ID}, "tang")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return in.ID
 }
 
 func TestSwitchingASpaceToTheApp(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
+		e.org()
 		// A space that follows a repository with a token, as before.
 		repo := e.f.AddRepo("kazuhahub", "wiki", true)
 		in, err := e.m.Create(ctx, e.user.ID, "Wiki")
@@ -625,7 +687,7 @@ func TestSwitchingASpaceToTheApp(t *testing.T) {
 		const tok = "ghp_ClassicToken0123456789abcdef"
 		pushTok := e.f.ClientSecret // any string the fake would accept is not available: use a user token
 		_ = pushTok
-		userTok, err := e.svc.UserToken(ctx, e.user.ID)
+		userTok, err := e.svc.UserToken(ctx, "U1") // a token of tang's, for the plain remote
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -930,6 +992,7 @@ func TestCreateASpaceWithAnAttachmentRepositoryOnGitHub(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
+		e.org()
 		in, err := e.m.CreateWithSync(ctx, e.user.ID, "Tang", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "tang-notes", Private: true, Create: true, Assets: &SyncAssets{}})
 		if err != nil {
 			t.Fatal(err)
@@ -1093,7 +1156,8 @@ func TestBothRepositoriesAreNamedWhenTheSelectedInstallationCannotTakeTheSecond(
 		e := newGHEnv(t, st)
 		e.f.AddOrg("sel", "tang")
 		sel := e.f.Install("sel", "selected")
-		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = true })
+		e.org()
+		e.claimOrg(orgTenant, "sel")
 		_, err := e.m.CreateWithSync(ctx, e.user.ID, "S", "", SyncCreate{Provider: "github", Owner: "sel", Name: "notes", Private: true, Create: true, Assets: &SyncAssets{}})
 		var he *connections.Error
 		if !errors.As(err, &he) || he.Code != connections.CodeRepoNotInInstall || he.Repo == nil && he.AssetsRepo == nil {
@@ -1102,8 +1166,9 @@ func TestBothRepositoriesAreNamedWhenTheSelectedInstallationCannotTakeTheSecond(
 		if l, _ := e.m.List(ctx, e.user.ID); len(l) != 0 {
 			t.Fatalf("a space was left: %+v", l)
 		}
-		// The retry with create false uses what was made.
-		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = false })
+		// The administrator adds both; the retry with create false uses what was made.
+		e.f.SelectRepo(sel, "sel/notes")
+		e.f.SelectRepo(sel, "sel/notes-assets")
 		in, err := e.m.CreateWithSync(ctx, e.user.ID, "S", "", SyncCreate{Provider: "github", Owner: "sel", Name: "notes", Private: true, Create: false, Assets: &SyncAssets{}})
 		if err != nil || in.Assets != "repository" {
 			t.Fatalf("%+v %v", in, err)
@@ -1256,6 +1321,89 @@ func TestAHostsGitUserNameIsKnownBeforeItsProviderIsLoaded(t *testing.T) {
 		cred := e.m.credential("S1", &store.Remote{SpaceID: "S1", CredType: CredConnection, Provider: "github", URL: "https://github.com/a/b.git"})
 		if tok, ok := cred.(gitstore.Token); !ok || tok.Username != "x-access-token" {
 			t.Fatalf("%+v", cred)
+		}
+	})
+}
+
+// orgTenant is the tenant org makes.
+const orgTenant = "T000000009"
+
+// org makes the environment an organisation's: tenant orgTenant connects the
+// App's installation on kazuhahub (tang, a member there, installs it), and
+// the person who makes spaces from here on is UO, a member of the tenant with
+// no GitHub connection of their own.
+func (e *ghEnv) org() {
+	e.t.Helper()
+	now := e.clk.Now()
+	if err := e.st.CreateTenant(ctx, store.Tenant{ID: orgTenant, Slug: "kazuha-org", Name: "Kazuha", Created: now, Updated: now}); err != nil {
+		e.t.Fatal(err)
+	}
+	u := store.User{ID: "UO", Username: "orga", Name: "orga", Role: "member", Created: now, TenantID: orgTenant}
+	if err := store.InsertUser(ctx, e.st.Q(), u); err != nil {
+		e.t.Fatal(err)
+	}
+	if id := e.claimOrg(orgTenant, "kazuhahub"); id != e.kazuhub {
+		e.t.Fatalf("%d", id)
+	}
+	e.user = u
+}
+
+// An organisation disconnecting its installation: the spaces on it are listed
+// first, then show that they lost GitHub access, keep their notes, and, when
+// the site requires a repository of their own, are in the storage
+// requirement's grace like any space without one; connecting it again ends that.
+func TestAnOrgDisconnectingGitHubLosesItsSpacesAccessWithinTheGrace(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.svc.OnAccessLost(e.m.AccessLost)
+		e.org()
+		r := "github"
+		if _, _, err := setStorage(e.m, ctx, func(s *StorageSettings) error { s.Remotes.Require = &r; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		in, err := e.create("Org notes", "kazuhahub", "org-notes", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, err := e.m.Open(ctx, e.user, in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Release()
+		if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Kept"}}}); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := e.m.Notice(ctx, in.ID); err != nil || n != nil {
+			t.Fatalf("%+v %v", n, err)
+		}
+		org := store.InstallOwner{TenantID: orgTenant}
+		list, total, err := e.svc.InstallationSpaces(ctx, org, e.kazuhub)
+		if err != nil || total != 1 || list[0].ID != in.ID || list[0].Name != "Org notes" {
+			t.Fatalf("%+v %d %v", list, total, err)
+		}
+		if _, err := e.svc.DisconnectInstallation(ctx, org, e.kazuhub); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, func() bool {
+			v, err := e.m.Remote(ctx, h)
+			return err == nil && v.ErrorCode == "access_lost"
+		})
+		n, err := e.m.Notice(ctx, in.ID)
+		if err != nil || n == nil || n.Required != "github" || n.Overdue {
+			t.Fatalf("not in the grace of the requirement: %+v %v", n, err)
+		}
+		if l, err := e.m.List(ctx, e.user.ID); err != nil || len(l) != 1 {
+			t.Fatalf("the space was not kept: %+v %v", l, err)
+		}
+		// Connected again: it syncs, and the requirement is met.
+		e.claimOrg(orgTenant, "kazuhahub")
+		waitFor(t, func() bool {
+			v, err := e.m.Remote(ctx, h)
+			return err == nil && v.ErrorCode == ""
+		})
+		if n, err := e.m.Notice(ctx, in.ID); err != nil || n != nil {
+			t.Fatalf("%+v %v", n, err)
 		}
 	})
 }

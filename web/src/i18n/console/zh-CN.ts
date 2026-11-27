@@ -62,7 +62,7 @@ export const consoleZhCN = {
   tabs: {
     users: { all: '全部用户', invites: '邀请', deleted: '已删除' },
     spaces: { all: '全部空间', deleted: '已删除' },
-    storage: { manage: '存储管理', usage: '用量', rules: '规则', connections: '连接' },
+    storage: { manage: '存储管理', usage: '用量', rules: '规则', connections: '连接', github: 'GitHub' },
     security: { signin: '登录', providers: '登录方式', access: '机器访问' },
     tenants: { tenants: '租户', plans: '套餐' },
     status: { status: '状态' },

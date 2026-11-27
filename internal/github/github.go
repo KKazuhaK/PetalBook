@@ -59,6 +59,7 @@ const (
 	CodeConnectionMissing = connections.CodeConnectionMissing
 	CodeInstallationGone  = connections.CodeInstallationGone
 	CodeHostMismatch      = connections.CodeHostMismatch
+	CodeAccessLost        = connections.CodeAccessLost
 )
 
 // Via values.
@@ -109,10 +110,11 @@ type Service struct {
 	cur       *appState // nil: not loaded
 	curAt     time.Time
 	attempts  *attemptStore
-	manifests *attemptStore          // the attempts to make the App: apart from attempts (see manifestCapacity)
-	noApp     map[string]time.Time   // GitHub logins the App is known not to be installed for, until (guarded by mu)
-	rechecked map[string]time.Time   // PetalBook user ids, until when their next recheck is refused (guarded by mu)
-	pending   map[string]*pendingApp // Apps GitHub made that could not be saved, by administrator (guarded by mu)
+	manifests *attemptStore           // the attempts to make the App: apart from attempts (see manifestCapacity)
+	noApp     map[string]time.Time    // GitHub logins the App is known not to be installed for, until (guarded by mu)
+	rechecked map[string]time.Time    // PetalBook user ids, until when their next recheck is refused (guarded by mu)
+	pending   map[string]*pendingApp  // Apps GitHub made that could not be saved, by administrator (guarded by mu)
+	onLost    func(spaceIDs []string) // told the spaces that lost GitHub access (guarded by mu)
 	onChange  func(userID string)
 	autoAt    time.Time // when the App was last re-checked because a token was refused
 	// guard says whether a person's sign-in link may be given up (they have

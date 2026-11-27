@@ -112,6 +112,24 @@ type Account struct {
 	NoCreate bool
 	// NoPrivate: private repositories cannot be created.
 	NoPrivate bool
+	// Admins: logins of the organisation's owners (GET /user/memberships/orgs/{org}
+	// answers role "admin" for them, "member" for the other members).
+	Admins map[string]bool
+}
+
+// MakeAdmin makes login a member and an owner of the organisation org.
+func (f *Fake) MakeAdmin(org, login string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a := f.accounts[strings.ToLower(org)]
+	if a.Members == nil {
+		a.Members = map[string]bool{}
+	}
+	if a.Admins == nil {
+		a.Admins = map[string]bool{}
+	}
+	a.Members[strings.ToLower(login)] = true
+	a.Admins[strings.ToLower(login)] = true
 }
 
 // Install is one installation of the App.
@@ -261,7 +279,7 @@ func New(t testing.TB, clock Clocker) *Fake {
 	yes := true
 	f := &Fake{t: t, Clock: clock, Public: &yes, AppID: 424242, Slug: "petalbook-notes", Name: "PetalBook Notes",
 		ClientID: "Iv23liFakeClientId", ClientSecret: "fake-client-secret-0123456789", Key: sharedKey(), nextID: 1000,
-		AppPerms: map[string]string{"administration": "write", "contents": "write", "metadata": "read"},
+		AppPerms: map[string]string{"administration": "write", "contents": "write", "members": "read", "metadata": "read"},
 		accounts: map[string]*Account{}, installs: map[int64]*Install{}, repos: map[string]*Repo{},
 		inst: map[string]*instToken{}, users: map[string]*userToken{}, refresh: map[string]*refreshToken{}, codes: map[string]*code{}, mcodes: map[string]*manifestCode{},
 		gitRoot: t.TempDir()}
@@ -421,6 +439,14 @@ func (f *Fake) Authorize(authURL, login string) string {
 // gives none to an installation.
 func (f *Fake) InstallApp(installURL, login, callback string) string {
 	f.t.Helper()
+	return f.InstallAppOn(installURL, login, login, callback, true)
+}
+
+// InstallAppOn is InstallApp on another account than the person's own (an
+// organisation login may install on), and, with authorize false, an App that
+// does not ask for authorisation during installation: no code comes back.
+func (f *Fake) InstallAppOn(installURL, login, account, callback string, authorize bool) string {
+	f.t.Helper()
 	u, err := url.Parse(installURL)
 	if err != nil || !strings.HasSuffix(u.Path, "/installations/new") {
 		f.t.Fatalf("not an installation URL: %q", installURL)
@@ -432,24 +458,30 @@ func (f *Fake) InstallApp(installURL, login, callback string) string {
 	f.mu.Lock()
 	var inst int64
 	for _, in := range f.installs {
-		if !in.Deleted && strings.EqualFold(in.Account, login) {
+		if !in.Deleted && strings.EqualFold(in.Account, account) {
 			inst = in.ID
 		}
 	}
+	action := "update"
 	if inst == 0 {
-		in := &Install{ID: f.id(), Account: login, Selection: "all", Repos: map[int64]bool{}}
+		in := &Install{ID: f.id(), Account: account, Selection: "all", Repos: map[int64]bool{}}
 		f.installs[in.ID] = in
-		inst = in.ID
+		inst, action = in.ID, "install"
 	}
-	c := randHex(10)
-	f.codes[c] = &code{login: login, redirect: callback}
+	c := ""
+	if authorize {
+		c = randHex(10)
+		f.codes[c] = &code{login: login, redirect: callback}
+	}
 	f.mu.Unlock()
 	back, _ := url.Parse(callback)
 	q := back.Query()
-	q.Set("code", c)
+	if c != "" {
+		q.Set("code", c)
+	}
 	q.Set("state", state)
 	q.Set("installation_id", strconv.FormatInt(inst, 10))
-	q.Set("setup_action", "install")
+	q.Set("setup_action", action)
 	back.RawQuery = q.Encode()
 	return back.String()
 }
@@ -968,6 +1000,30 @@ func (f *Fake) serveAPI(w http.ResponseWriter, r *http.Request) {
 		a := f.accounts[strings.ToLower(p.login)]
 		f.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"id": a.ID, "login": a.Login, "name": a.Name})
+	case r.Method == "GET" && strings.HasPrefix(path, "/user/memberships/orgs/") && p.kind == "user":
+		org := strings.ToLower(strings.TrimPrefix(path, "/user/memberships/orgs/"))
+		f.mu.Lock()
+		// GitHub answers this to an App's user token only when the App has the
+		// organisation's Members permission.
+		if f.AppPerms["members"] == "" {
+			f.mu.Unlock()
+			apiError(w, 403, "Resource not accessible by integration")
+			return
+		}
+		a := f.accounts[org]
+		me := strings.ToLower(p.login)
+		member := a != nil && a.Org && a.Members[me]
+		admin := member && a.Admins[me]
+		f.mu.Unlock()
+		if !member {
+			apiError(w, 404, "Not Found")
+			return
+		}
+		role := "member"
+		if admin {
+			role = "admin"
+		}
+		writeJSON(w, 200, map[string]any{"state": "active", "role": role, "organization": map[string]any{"login": a.Login, "id": a.ID}})
 	case r.Method == "GET" && path == "/user/emails" && p.kind == "user":
 		f.mu.Lock()
 		a := f.accounts[strings.ToLower(p.login)]

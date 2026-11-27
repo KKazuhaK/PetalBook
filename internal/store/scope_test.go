@@ -107,17 +107,20 @@ var scopeAllowlist = map[string]string{
 	"InsertAudit":  "each row carries its tenant, or takes its user's",
 	// --- the tenants table and the layers of settings are not a tenant's data -----
 	"CountTenantRows": "counts the rows of one tenant to refuse deleting it",
-	// --- 2.7: GitHub. A connection is its user's, a remote its space's; the App and
-	// its installations are the server's own (each is shared with chosen tenants, docs/design/milestones/phase-2-connections.md, 2.7) ---
-	"CountGitHubSpaces":      "the App's own count, shown to site administrators only",
-	"CountGitSpaces":         "the count of plain-address remotes, shown to site administrators only",
-	"GitHubSpaceCounts":      "the App's own count per installation, shown to site administrators only",
-	"CountUserGitHubSpaces":  "the spaces syncing through one person's connection: same-tenant, as connecting checks",
-	"GetGitHubApp":           "the GitHub App of the server: its record is the config of the GitHub provider row",
-	"PutGitHubApp":           "the GitHub App set up by a site administrator, on the GitHub provider row",
-	"CompareAndSetGitHubApp": "what a re-check of the GitHub App found, written only to the App it was made with",
-	"UserTenant":             "the tenant of a user already found, to scope what they may use of the App",
-	"LockProvider":           "a lock of a provider row by its id, taken by writes that already checked who may make them",
+	// --- 2.7: GitHub. A connection is its user's, a remote its space's; the App is
+	// the server's own, and each installation has one owner, a person or a tenant ---
+	"CountGitHubSpaces":            "the App's own count, shown to site administrators only",
+	"CountGitSpaces":               "the count of plain-address remotes, shown to site administrators only",
+	"GitHubSpaceCounts":            "the count per installation, shown to the installation's owner (whose installation the caller checked)",
+	"SpacesOnGitHubInstallation":   "the spaces on one installation, listed to its owner only (the caller checked the owner); the owner's own spaces sync through it",
+	"DisconnectGitHubInstallation": "its owner's claim, by owner (a person or a tenant): the remotes it marks are those of the spaces that synced through it",
+	"SpaceOwnership":               "the tenant of a space whose remote is being given a token, by its id, to check the installation is its owner's",
+	"CountUserGitHubSpaces":        "the spaces syncing through one person's connection: same-tenant, as connecting checks",
+	"GetGitHubApp":                 "the GitHub App of the server: its record is the config of the GitHub provider row",
+	"PutGitHubApp":                 "the GitHub App set up by a site administrator, on the GitHub provider row",
+	"CompareAndSetGitHubApp":       "what a re-check of the GitHub App found, written only to the App it was made with",
+	"UserTenant":                   "the tenant of a user already found, to scope what they may use of the App",
+	"LockProvider":                 "a lock of a provider row by its id, taken by writes that already checked who may make them",
 	// --- 3.8: GitLab and Gitea providers. A provider is the server's own (or its
 	// tenant's: owner), set up by site administrators; a connection and a reminder are
 	// their user's; the account link is unique per provider on the whole server ---

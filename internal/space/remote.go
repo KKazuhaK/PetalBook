@@ -53,7 +53,7 @@ const (
 func IsConnectionKind(kind string) bool {
 	switch kind {
 	case "connection_expired", "connection_missing", "installation_gone", "app_missing_permission",
-		"provider_not_configured", "repo_not_in_installation":
+		"provider_not_configured", "repo_not_in_installation", "access_lost":
 		return true
 	}
 	return false

@@ -634,6 +634,9 @@
   "error": "string",
   "message": "string"
  },
+ "GET /api/account/github/installations 200": {
+  "items": []
+ },
  "GET /api/account/grants 404": {
   "error": "string",
   "message": "string"
@@ -1203,6 +1206,11 @@
   "next": "string"
  },
  "GET /api/admin/exports 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/github/installations 403": {
   "error": "string",
   "message": "string",
   "permission": "string"
@@ -2378,6 +2386,7 @@
    "features.adminView": "boolean",
    "features.auditDownload": "boolean",
    "features.domains": "boolean",
+   "features.githubConnect": "boolean",
    "features.idpAdmins": "boolean",
    "features.managedAccounts": "boolean",
    "features.mcp": "boolean",
@@ -4369,6 +4378,11 @@
  "POST /api/account/emails/primary 404": {
   "error": "string",
   "message": "string"
+ },
+ "POST /api/account/github/install 409": {
+  "error": "string",
+  "message": "string",
+  "provider": "string"
  },
  "POST /api/account/password 400": {
   "error": "string",
