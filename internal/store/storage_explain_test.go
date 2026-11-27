@@ -129,6 +129,9 @@ func TestListQueriesUseIndexes(t *testing.T) {
 				if i%50 == 0 {
 					state = "error"
 				}
+				if i%10 == 0 {
+					via = "xpgt" // through a person's own link, below
+				}
 			}
 			pinned, exempt := 0, 0
 			if i%400 == 0 {
@@ -140,6 +143,23 @@ func TestListQueriesUseIndexes(t *testing.T) {
 			return []any{fmt.Sprintf("S%07d", i), fmt.Sprintf("Space %d", i%977), fmt.Sprintf("space %d", i%977), now.Add(-time.Duration(i) * time.Minute).UnixMilli(), tenantOf(i), size,
 				(i % 7) * 100000, via, state, loc, cache, pinned, exempt, fmt.Sprintf("U%07d", i)}
 		})
+		// A tenth of the spaces sync through their first owner's own link at a
+		// provider (the remote says so; the link holds tokens for a quarter of
+		// them, and the rest have none: those spaces lack a remote).
+		if err := store.InsertConnProviderRow(ctx, st.Q(), store.ConnProviderRow{ID: "xpgt", Type: "gitea", Host: "xpgt.example.com", Scheme: "https", Name: "x",
+			Owner: store.ConnProviderSite, State: "ok", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		bulk(t, st, "linked_accounts", "id, provider_id, user_id, subject, access_enc, created, updated", n/40, 200, func(i int) []any {
+			return []any{fmt.Sprintf("K%07d", i), "xpgt", fmt.Sprintf("U%07d", i*40), fmt.Sprintf("%d", i), "a", now.UnixMilli(), now.UnixMilli()}
+		})
+		bulk(t, st, "remotes", "space_id, role, url, updated, cred_type, provider, via, cred_user_id", n/10, 200, func(i int) []any {
+			return []any{fmt.Sprintf("S%07d", i*10), store.RoleContent, "https://xpgt.example.com/r.git", now.UnixMilli(), "connection", "xpgt", "user", fmt.Sprintf("U%07d", i*10)}
+		})
+		if _, err := st.Q().Exec(ctx, `UPDATE spaces SET remote_lost_at = ? WHERE id IN (SELECT space_id FROM remotes WHERE provider = 'xpgt') AND created > ?`,
+			now.Add(-24*time.Hour).UnixMilli(), now.Add(-3000*time.Minute).UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := st.Q().Exec(ctx, `ANALYZE`); err != nil {
 			t.Fatal(err)
 		}

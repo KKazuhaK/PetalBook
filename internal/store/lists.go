@@ -248,11 +248,12 @@ type SpaceFilter struct {
 
 // lacksViaSQL is the SQL that a space s lacks a remote of the kind the policy
 // requires, from the columns of the space: it follows none, or another provider,
-// or a GitHub remote that lost its access (its installation is no longer the
-// owner's), which counts as none. The deadline lists, the counts of each person
-// and the counts of the summary all use it.
+// or a remote that lost its access (its installation is no longer the owner's,
+// or the person it syncs with no longer holds tokens), which counts as none.
+// The deadline lists, the counts of each person and the counts of the summary
+// all use it.
 func lacksViaSQL(p RemotePolicy) (string, []any) {
-	lost := `(s.remote_via = 'github' AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND NOT ` + usableRemote + `))`
+	lost := `(s.remote_via NOT IN ('', 'git') AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND NOT ` + usableRemote + `))`
 	if p.Require != "any" {
 		return `(s.remote_via <> ? OR ` + lost + `)`, []any{p.Require}
 	}

@@ -268,7 +268,7 @@ const AccessLost = "access_lost"
 // spaces and their notes stay; the remote rows stay too, so the same
 // installation connected again by that owner restores them). It reports the
 // ids of the spaces marked; ErrNotFound when the owner has no such installation.
-func DisconnectGitHubInstallation(ctx context.Context, q Q, id int64, o InstallOwner, msg string, now time.Time) ([]string, error) {
+func DisconnectGitHubInstallation(ctx context.Context, q Q, id int64, o InstallOwner, msg, require string, now time.Time) ([]string, error) {
 	if !o.Valid() {
 		return nil, ErrNotFound
 	}
@@ -334,10 +334,14 @@ func DisconnectGitHubInstallation(ctx context.Context, q Q, id int64, o InstallO
 			for _, sid := range rest[:n] {
 				largs = append(largs, sid)
 			}
-			if _, err := q.Exec(ctx, `UPDATE spaces SET remote_lost_at = ? WHERE id IN (?`+marks+`)
-				AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = spaces.id AND r.role = 'content' AND `+onInstallation+`
-					AND (spaces.remote_lost_at = 0 OR r.last_sync > spaces.remote_lost_at))`, append(largs, id)...); err != nil {
-				return err
+			// (Only when the requirement accepts a GitHub remote: losing one
+			// that did not count gives no new time.)
+			if AcceptsProvider(require, ProviderGitHub) {
+				if _, err := q.Exec(ctx, `UPDATE spaces SET remote_lost_at = ? WHERE id IN (?`+marks+`)
+					AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = spaces.id AND r.role = 'content' AND `+onInstallation+`
+						AND (spaces.remote_lost_at = 0 OR r.last_sync > spaces.remote_lost_at))`, append(largs, id)...); err != nil {
+					return err
+				}
 			}
 			rest = rest[n:]
 		}
@@ -353,10 +357,89 @@ func DisconnectGitHubInstallation(ctx context.Context, q Q, id int64, o InstallO
 const ClaimedBySpaceOwner = `EXISTS (SELECT 1 FROM provider_installations pi WHERE pi.provider_id = 'github' AND pi.id = r.installation_id
 	AND (pi.owner_tenant = s.tenant_id OR (pi.owner_user IS NOT NULL AND pi.owner_user = r.cred_user_id)))`
 
+// holdsTokens is the SQL that the person a remote r names (r.cred_user_id) has
+// a repository link with tokens at the remote's provider: one probe of the
+// unique key (provider_id, user_id).
+const holdsTokens = `EXISTS (SELECT 1 FROM linked_accounts la WHERE la.provider_id = r.provider AND la.user_id = r.cred_user_id AND la.access_enc <> '')`
+
 // usableRemote is the SQL that a remote r of a space s can still be synced on
 // the face of it: a GitHub remote through an installation needs the
-// installation still connected to the space's owner (else it lost access).
-const usableRemote = `NOT (r.provider = 'github' AND r.via = 'app' AND NOT ` + ClaimedBySpaceOwner + `)`
+// installation still connected to the space's owner, and a remote through a
+// person's own link (via 'user') needs the person to still hold tokens at its
+// provider; else it lost access.
+const usableRemote = `(NOT (r.provider = 'github' AND r.via = 'app' AND NOT ` + ClaimedBySpaceOwner + `)
+	AND NOT (r.via = 'user' AND r.cred_type = 'connection' AND NOT ` + holdsTokens + `))`
+
+// UserLinkLostMessage is what a remote says that synced through a person's own
+// link, once the person's tokens are gone.
+const UserLinkLostMessage = "this space lost access: the person whose account it synced with disconnected it (or it expired); they connect it again, or connect the space to another repository"
+
+// AcceptsProvider says whether a storage requirement (the site's
+// remotes.require: "", "any" or a provider's id) accepts a remote that goes
+// through a connection of the provider.
+func AcceptsProvider(require, providerID string) bool {
+	return require == "any" || (require != "" && require == providerID)
+}
+
+// LoseUserRemotes marks the remotes that sync through a person's own link at a
+// provider as having lost access (the remote rows and the spaces stay; the
+// person connecting again restores them). It runs in the transaction that
+// removes the tokens. The space's own remote shows on the space, and the
+// space's grace period under the storage requirement (require: the site's
+// remotes.require) starts again now, by the rule of
+// DisconnectGitHubInstallation: only when the lost remote was one the
+// requirement accepts (losing one that did not count gives no new time), and
+// only when it synced well since the last loss, or there was none. It reports
+// the ids of the spaces whose remotes it marked (either role), to be told to
+// the spaces manager once the transaction has committed.
+//
+// Lock order: remotes first, then spaces, as UpdateRemoteStatus and
+// DisconnectGitHubInstallation take them.
+func LoseUserRemotes(ctx context.Context, q Q, providerID, userID, require string, now time.Time) ([]string, error) {
+	const mine = `r.cred_user_id = ? AND r.cred_user_id <> '' AND r.url <> '' AND r.cred_type = 'connection' AND r.provider = ? AND r.via = 'user'`
+	args := []any{userID, providerID}
+	rows, err := q.Query(ctx, `SELECT DISTINCT r.space_id FROM remotes r WHERE `+mine, args...)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, sid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// The remotes first (the order of every writer); marking leaves last_sync
+	// alone, which the grace below reads.
+	if _, err := q.Exec(ctx, `UPDATE remotes SET state = ?, error_kind = ?, last_error = ?, updated = ?
+		WHERE cred_user_id = ? AND cred_user_id <> '' AND url <> '' AND cred_type = 'connection' AND provider = ? AND via = 'user'`,
+		RemoteError, AccessLost, UserLinkLostMessage, ms(now), userID, providerID); err != nil {
+		return nil, err
+	}
+	if AcceptsProvider(require, providerID) {
+		if _, err := q.Exec(ctx, `UPDATE spaces SET remote_lost_at = ? WHERE id IN
+			(SELECT r.space_id FROM remotes r WHERE r.role = 'content' AND `+mine+`)
+			AND (remote_lost_at = 0 OR EXISTS (SELECT 1 FROM remotes c WHERE c.space_id = spaces.id AND c.role = 'content' AND c.last_sync > spaces.remote_lost_at))`,
+			append([]any{ms(now)}, args...)...); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := q.Exec(ctx, `UPDATE spaces SET remote_state = ? WHERE remote_state <> ? AND id IN
+		(SELECT r.space_id FROM remotes r WHERE r.role = 'content' AND `+mine+`)`,
+		append([]any{RemoteError, RemoteError}, args...)...); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
 
 // MaxGitHubLeftovers is how many reminders of empty repositories a user keeps
 // at a provider: the newest.

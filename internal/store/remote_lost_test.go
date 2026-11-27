@@ -81,7 +81,7 @@ func TestASpaceThatLosesItsGitHubRemoteGetsItsGraceAgain(t *testing.T) {
 					}
 				}
 				at(disconnected, 0, 0) // it has its remote
-				if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, owner, "lost", disconnected); err != nil {
+				if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, owner, "lost", "any", disconnected); err != nil {
 					t.Fatal(err)
 				}
 				at(disconnected, 1, 0) // its grace, from the disconnect
@@ -92,7 +92,7 @@ func TestASpaceThatLosesItsGitHubRemoteGetsItsGraceAgain(t *testing.T) {
 				at(disconnected.Add(10*day), 0, 0)
 				// Connected and disconnected again with no successful sync between:
 				// no new grace, the first loss counts.
-				if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, owner, "lost", disconnected.Add(20*day)); err != nil {
+				if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, owner, "lost", "any", disconnected.Add(20*day)); err != nil {
 					t.Fatal(err)
 				}
 				at(disconnected.Add(20*day), 1, 0)
@@ -102,7 +102,7 @@ func TestASpaceThatLosesItsGitHubRemoteGetsItsGraceAgain(t *testing.T) {
 				if err := store.UpdateRemoteStatus(ctx, q, "S1", store.RoleContent, store.RemoteStatus{State: "ok", LastSync: disconnected.Add(40 * day)}, disconnected.Add(40*day)); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, owner, "lost", disconnected.Add(50*day)); err != nil {
+				if _, err := store.DisconnectGitHubInstallation(ctx, q, 5, owner, "lost", "any", disconnected.Add(50*day)); err != nil {
 					t.Fatal(err)
 				}
 				at(disconnected.Add(50*day), 1, 0)

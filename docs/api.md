@@ -2069,7 +2069,7 @@ Every error of a connection has `provider` (the id) next to `error` and
 | `connection_missing` | the person it names has no connection (any more) (as a remote's `errorCode`) |
 | `not_connected` | the request needs the caller's connection and there is none, or it is expired |
 | `installation_gone` | the App was uninstalled or suspended, or the repository left its selection |
-| `access_lost` | the installation is no longer connected to the space's owner here (disconnected), or the credential is not the owner's own (a person's token for an organisation's space) |
+| `access_lost` | the installation is no longer connected to the space's owner here (disconnected), or the credential is not the owner's own (a person's token for an organisation's space), or the person whose own tokens it synced with (`via: "user"`) no longer holds any at that provider (disconnected, unlinked, expired, deleted) |
 | `repo_not_in_installation` | no installation reaches the repository and it could not be added |
 | `app_not_installed` | the App is not installed where the caller wants a repository (`installUrl`): their own account, or an organisation the App was removed from |
 | `app_missing_permission` | the App or its installation lacks a permission (`permission` names the first, `missing` all) |
@@ -2267,11 +2267,30 @@ administrator who installed it; any of its administrators manages it).
   `deleted`) and when a person disconnects their own installation. A space
   that is connected again and disconnected again without a successful sync in
   between keeps its first loss time (no endless grace by toggling); a loss after
-  a successful sync starts a grace of its own. Connecting the same
+  a successful sync starts a grace of its own. A loss starts a grace only
+  when the requirement accepts the lost remote (`require` is `any` or the
+  remote's provider): under `require: "gitlab"`, losing a GitHub remote
+  leaves a space that was overdue overdue, so a remote that does not count
+  cannot be used to restart the grace. Connecting the same
   installation again by the same owner restores the spaces; for an organisation that needs the App uninstalled on GitHub
   and installed again from here, since who installed it proved one claim (the
   record is used up when the claim succeeds). The spaces listed, counted and marked are the owner's only: a
   space of an earlier owner that still names the installation is not.
+- **A person's own tokens** (`via: "user"`, at GitHub, GitLab or Gitea) are the
+  same: a remote that syncs with them is usable only while that person holds
+  tokens at its provider. When they go, by the person disconnecting
+  (`DELETE /api/account/links/{id}/repos`, or unlinking the account), an
+  administrator unlinking it (`DELETE /api/users/{id}/links/{link}`), the
+  authorisation expiring or being revoked, the provider's application being
+  replaced, or the person being deleted, then, in the same transaction, every
+  remote of theirs that synced with them at that provider shows
+  `state: "error"` and `errorCode: "access_lost"` (the rows and the notes stay),
+  and under a storage requirement the space counts as having no remote and is
+  in the grace again from that moment, by the rule above (only for a remote the
+  requirement accepts; never cleared when they connect again; kept when there
+  was no successful sync since the last loss). Spaces that sync through an installation, and other people's remotes,
+  are not affected. The person connecting again restores the remotes with the
+  next sync (open spaces fetch at once).
 - Another owner's installation is as good as not there: `404 not_found`.
 
 ### Webhook
@@ -2671,7 +2690,7 @@ the server next mints or renews a token, or when Git is refused:
 | `connection_expired` | the refresh token expired or was revoked | the user the remote names connects again |
 | `connection_missing` | that user disconnected, was disabled or deleted, or lost `manage` in the space (directly and through every group) | they connect again, or someone with `manage` switches the credential |
 | `installation_gone` | the App was uninstalled or suspended there, or the repository was taken out of its selection | install it again, or add the repository |
-| `access_lost` | the installation it synced through was disconnected from its owner here, or is not the space owner's own | connect GitHub again (the same installation restores it), or connect another repository |
+| `access_lost` | the installation it synced through was disconnected from its owner here, or is not the space owner's own; or the person whose own tokens it synced with no longer has any (it is shown at once when they go; the next sync then reports `connection_missing` or `connection_expired`) | connect GitHub again (the same installation, or the same person connecting again, restores it), or connect another repository |
 | `app_missing_permission` | GitHub refuses the installation's token because the App or its installation lacks Contents | an administrator gives the App Contents (write) and accepts the change in the installation's settings; then re-check in the administration |
 | `provider_not_configured` | the server's App is not configured, or its key no longer works | an administrator fixes the App |
 
@@ -2858,7 +2877,7 @@ Exempt users' spaces and exempt spaces (below) are left out.
   `petalbook-<username>` in their account).
 - **Existing spaces**, with `scope: "all"`: a space that does not meet the
   requirement gets the deadline `since + graceDays` (a space that lost its
-  GitHub remote, below, the later of that and the loss plus `graceDays`). Until then nothing
+  remote, below, the later of that and the loss plus `graceDays`). Until then nothing
   changes but the notice: `storage.remote` in the space
   (`{"required": "github", "deadline": "…", "overdue": false}`), shown to every
   member, with the way to connect offered to those with `manage`.

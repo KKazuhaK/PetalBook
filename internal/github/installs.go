@@ -393,7 +393,7 @@ func (s *Service) DisconnectInstallation(ctx context.Context, o store.InstallOwn
 // DisconnectInstallation does, without asking first whether it is theirs (the
 // statement does).
 func (s *Service) disconnect(ctx context.Context, o store.InstallOwner, id int64) ([]string, error) {
-	ids, err := store.DisconnectGitHubInstallation(ctx, s.opt.Store.Q(), id, o, lostMessage, s.opt.Now())
+	ids, err := store.DisconnectGitHubInstallation(ctx, s.opt.Store.Q(), id, o, lostMessage, s.tok.Require(), s.opt.Now())
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, errf(http.StatusNotFound, CodeNotFound, "No such installation.")
 	}

@@ -323,7 +323,9 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 	}
 	// 4. what the person held to open the server is revoked (not restored later),
 	// and last the row is marked, in one transaction with the item.
-	s.revokeUserAccess(ctx, id)
+	if err := s.revokeUserAccess(ctx, id); err != nil {
+		return nil, err // the deletion goes on from here when it is asked for again
+	}
 	item, err := s.spaces.FinishUserDeletion(ctx, sc, store.FinishUserDeletionIn{ItemID: page.NewID(s.now()), UserID: id, By: in.Actor.ID, ByName: in.Actor.Username,
 		Reason: in.Reason, WasDisabled: target.Disabled, Transfers: out.Transfers, Left: left, Recycled: out.Recycled})
 	if err != nil {
@@ -390,9 +392,11 @@ func (s *server) revokeTokensAndGrants(ctx context.Context, id, why string) {
 
 // revokeUserAccess ends the API tokens and OAuth grants of a person, and
 // disconnects their account at the providers (best effort: a platform that
-// cannot be reached does not stop the deletion; their authorisation row goes
-// either way, with the rest of their data, when they are purged).
-func (s *server) revokeUserAccess(ctx context.Context, id string) {
+// cannot be reached does not stop the deletion). Removing their links in the
+// state database is not: it is what marks the remotes that synced with their
+// tokens as having lost access, and the later purge must never drop the links
+// without it, so a failure is returned and the deletion is asked for again.
+func (s *server) revokeUserAccess(ctx context.Context, id string) error {
 	s.revokeTokensAndGrants(ctx, id, "the person was deleted")
 	for _, p := range s.opt.Connections.List() {
 		if p.Descriptor().ID == "git" {
@@ -405,9 +409,13 @@ func (s *server) revokeUserAccess(ctx context.Context, id string) {
 	}
 	// A connection to a provider that is not up (or one that could not be
 	// ended) goes with the person all the same.
-	if err := store.DeleteUserRepoLinks(ctx, s.opt.Store.Q(), id); err != nil {
+	ids, err := store.DeleteUserRepoLinks(ctx, s.opt.Store.Q(), id, s.requirement(), s.now())
+	if err != nil {
 		s.log.Warn("could not remove the connections of a deleted person", "user", id, "error", err)
+		return err
 	}
+	s.accessLost(ids)
+	return nil
 }
 
 func (s *server) adminDeleteUser(c *call) {

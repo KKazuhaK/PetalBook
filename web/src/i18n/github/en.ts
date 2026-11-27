@@ -151,6 +151,7 @@ export const githubEn = {
     viaAppOf: (account: string) => `GitHub App (${account})`,
     viaUserOf: (username: string, login: string) => `GitHub connection of ${username}${login ? ` (${login})` : ''}`,
     reconnect: 'Connect GitHub again',
+    accountLinks: 'Open connected accounts',
     reconnectFailed: 'Could not start connecting',
     keptSafe: 'The space can still be read. Changes are refused until this is fixed, and drafts are kept.',
     openInstall: 'Open the App’s installation page',
@@ -176,9 +177,9 @@ export const githubEn = {
           'GitHub refuses a token because the App or its installation lacks the Contents permission. An administrator gives it to the App on GitHub, accepts the change in the installation’s settings and presses Re-check in the administration.',
       },
       access_lost: {
-        title: 'This space lost GitHub access',
+        title: 'This space lost access to its repository',
         body: () =>
-          'The GitHub installation it synced through is no longer connected to its owner here (it was disconnected), or it is not the space owner’s own. The notes are kept. Connect GitHub again, or connect the space to another repository.',
+          'What it synced with is no longer connected here: the person whose account it used disconnected it, or it expired, or the installation it went through was disconnected from the space’s owner. The notes are kept. Connect the account again, or connect the space to another repository.',
       },
       provider_not_configured: {
         title: 'The server’s GitHub App does not work',

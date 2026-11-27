@@ -140,6 +140,7 @@ export const githubZhCN: GitHubMessages = {
     viaAppOf: (account: string) => `GitHub App（${account}）`,
     viaUserOf: (username: string, login: string) => `${username} 的 GitHub 连接${login ? `（${login}）` : ''}`,
     reconnect: '重新连接 GitHub',
+    accountLinks: '打开已连接的账号',
     reconnectFailed: '没能开始连接',
     keptSafe: '空间仍然可以阅读。问题解决之前，修改会被拒绝，草稿都保留着。',
     openInstall: '打开 App 的安装页面',
@@ -163,9 +164,9 @@ export const githubZhCN: GitHubMessages = {
           'GitHub 拒绝发令牌，因为 App 或它的安装缺少 Contents 权限。需要管理员在 GitHub 上给 App 加上，在安装设置里接受变更，再到管理页点「重新检查」。',
       },
       access_lost: {
-        title: '这个空间失去了 GitHub 访问',
+        title: '这个空间失去了对仓库的访问',
         body: () =>
-          '它同步所用的 GitHub 安装已经不再连接到它在这里的所有者（被断开了），或者那不是空间所有者自己的安装。笔记都保留着。请重新连接 GitHub，或者把空间连到别的仓库。',
+          '它同步所用的连接在这里已经不在了：用这个账号的人断开了它，或者授权已过期，或者它所走的安装已从空间所有者那里断开。笔记都保留着。请重新连接账号，或者把空间连到别的仓库。',
       },
       provider_not_configured: {
         title: '服务器的 GitHub App 不能用了',

@@ -59,11 +59,17 @@ func newHarness(t *testing.T, st *store.Store) *harness {
 	}
 	box := secret.NewBoxWithKey([32]byte{1, 2, 3})
 	logs := &lockedBuffer{}
-	svc, err := github.New(github.Options{Store: st, Secrets: box, Client: c, PublicURL: publicURL, Now: clk.Now,
+	// The token service of the server: its registry says what the site requires
+	// of a remote (any), as the storage settings do.
+	reg := connections.NewRegistry()
+	reg.SetRequire(func() string { return "any" })
+	tok := connections.NewTokens(connections.TokenOptions{Store: st, Secrets: box, Registry: reg, Now: clk.Now})
+	svc, err := github.New(github.Options{Store: st, Secrets: box, Client: c, PublicURL: publicURL, Now: clk.Now, Tokens: tok,
 		Logger: slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})), SettingsTTL: time.Nanosecond})
 	if err != nil {
 		t.Fatal(err)
 	}
+	reg.Add(svc)
 	return &harness{t: t, st: st, f: f, clk: clk, svc: svc, box: box, logs: logs, now: clk.Now()}
 }
 

@@ -113,6 +113,7 @@ var scopeAllowlist = map[string]string{
 	"CountGitSpaces":               "the count of plain-address remotes, shown to site administrators only",
 	"GitHubSpaceCounts":            "the count per installation, shown to the installation's owner (whose installation the caller checked)",
 	"SpacesOnGitHubInstallation":   "the spaces on one installation, listed to its owner only (the caller checked the owner); the owner's own spaces sync through it",
+	"LoseUserRemotes":              "the remotes a person's own tokens synced, by the person and the provider: called in the transaction that removes the tokens",
 	"DisconnectGitHubInstallation": "its owner's claim, by owner (a person or a tenant): the remotes it marks are those of the spaces that synced through it",
 	"SpaceOwnership":               "the tenant of a space whose remote is being given a token, by its id, to check the installation is its owner's",
 	"CountUserGitHubSpaces":        "the spaces syncing through one person's connection: same-tenant, as connecting checks",

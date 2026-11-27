@@ -665,6 +665,40 @@ describe('the sync settings of a space', () => {
     expect(panel()!.textContent).toContain(tg.sync.keptSafe)
     expect(button(tg.sync.reconnect, panel()!)).toBeTruthy()
   })
+
+  it('sends the person whose account a space synced with to their connected accounts when access is lost', async () => {
+    await openSync()
+    const own = (id: string) =>
+      appRemote({
+        url: 'https://gitlab.example.com/tang/journal.git',
+        provider: 'gitlab',
+        credential: {
+          type: 'connection',
+          provider: 'gitlab',
+          via: 'user',
+          user: { id, username: 'someone' },
+          login: 'tang',
+          repoId: 1,
+        },
+        state: 'error',
+        error: 'this space lost access',
+        errorCode: 'access_lost',
+      })
+    await follow(own(m!.fx.data.auth.signedIn!))
+    await settle(() => panel()!.textContent!.includes(tg.sync.codes.access_lost.title), 'the notice')
+    // The text names no one provider, and the action goes to the account links.
+    expect(tg.sync.codes.access_lost.title).not.toMatch(/GitHub/)
+    expect(tg.sync.codes.access_lost.body()).not.toMatch(/GitHub/)
+    expect(panel()!.querySelector('[role="alert"] a[href="/settings/connections"]')?.textContent).toContain(
+      tg.sync.accountLinks,
+    )
+    // Someone else's connection: nothing for this person to reconnect.
+    await follow(own('someone-else'))
+    await settle(
+      () => panel()!.querySelector('[role="alert"] a[href="/settings/connections"]') === null,
+      'the notice of another person',
+    )
+  })
 })
 
 // --- the administrators' App -------------------------------------------------------------
