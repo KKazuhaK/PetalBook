@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/authz"
-	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -15,14 +14,6 @@ import (
 // "Joining by email domain"): a tenant's administrators list them, and
 // approve or deny each (tenant.users.manage, features.domains). The person's
 // side is the waiting page's (mailapi.go).
-
-var joinRoutes = []route{
-	{"GET", "/api/admin/tenants/{tenant}/join-requests", needs(authz.TenantUsersManage).on(settings.FeatureDomains), true, false, false, (*server).adminListJoinRequests},
-	{"POST", "/api/admin/tenants/{tenant}/join-requests/{id}/approve", needs(authz.TenantUsersManage).on(settings.FeatureDomains), true, false, false, (*server).adminApproveJoinRequest},
-	{"POST", "/api/admin/tenants/{tenant}/join-requests/{id}/deny", needs(authz.TenantUsersManage).on(settings.FeatureDomains), true, false, false, (*server).adminDenyJoinRequest},
-}
-
-func init() { routeTable = append(routeTable, joinRoutes...) }
 
 type joinDecidedByResp struct {
 	ID   string `json:"id"`
