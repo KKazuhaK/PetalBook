@@ -145,10 +145,9 @@ func TestTwoTenantsVerifyingOneDomainEndWithOneWinner(t *testing.T) {
 		key, codeB := claim(t, f.admB, f.tenB, "shared.example")
 		_, codeC := claim(t, f.admC, f.tenC, "shared.example")
 		a.dns.SetTXT("_petalbook."+key, "petalbook-verify="+codeB, "petalbook-verify="+codeC)
-		// Both checks have found their record before either writes.
-		var arrived sync.WaitGroup
-		arrived.Add(2)
-		a.dns.Hook = func(string) { arrived.Done(); arrived.Wait() }
+		// Both ask at once. The minute of a domain is one for both tenants, so
+		// one of them may be told to wait instead; the race of the writes
+		// themselves (two servers) is TestTwoVerificationsOfOneDomainRaceToOneWinner.
 		var wg sync.WaitGroup
 		res := make([]result, 2)
 		for i, c := range []struct {
@@ -159,13 +158,12 @@ func TestTwoTenantsVerifyingOneDomainEndWithOneWinner(t *testing.T) {
 			go func() { defer wg.Done(); res[i] = checkNow(c.cl, c.t, key) }()
 		}
 		wg.Wait()
-		a.dns.Hook = nil
 		won, lost := 0, 0
 		for _, r := range res {
 			switch {
 			case r.code == 200 && r.body["state"] == "verified":
 				won++
-			case r.code == 409 && r.body["error"] == "domain_claimed":
+			case r.code == 409 && r.body["error"] == "domain_claimed", r.code == 429 && r.body["error"] == "rate_limited":
 				lost++
 				if strings.Contains(r.raw, "Acme") || strings.Contains(r.raw, "acme") || strings.Contains(r.raw, "Beta") || strings.Contains(r.raw, "beta") {
 					t.Fatalf("the refusal names a tenant: %s", r.raw)

@@ -3,6 +3,8 @@ package domains_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,6 +44,57 @@ func TestMixedScriptLabelsAreFound(t *testing.T) {
 			t.Errorf("MixedScript(%q) = %v, want %v", in, got, want)
 		}
 	}
+}
+
+// Two servers that found both records verify at the same moment: the write
+// (one conditional statement and the unique index) leaves exactly one winner,
+// the other told ErrDomainClaimed.
+func TestTwoVerificationsOfOneDomainRaceToOneWinner(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		ctx := context.Background()
+		now := time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T000000002", Slug: "acme", Name: "Acme", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		tenants := []string{store.DefaultTenantID, "T000000002"}
+		for i := range 20 {
+			domain := fmt.Sprintf("race%d.example", i)
+			for _, tn := range tenants {
+				if err := store.InsertDomain(ctx, st.Q(), store.DomainRow{TenantID: tn, Domain: domain, CodeHash: "h", CodeExpires: now.Add(time.Hour), Created: now, Updated: now}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			oks := make([]bool, 2)
+			errs := make([]error, 2)
+			for j, tn := range tenants {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					oks[j], errs[j] = store.VerifyDomain(ctx, st.Q(), tn, domain, "", now, now.Add(24*time.Hour))
+				}()
+			}
+			close(start)
+			wg.Wait()
+			won, lost := 0, 0
+			for j := range tenants {
+				switch {
+				case errs[j] == nil && oks[j]:
+					won++
+				case errors.Is(errs[j], store.ErrDomainClaimed):
+					lost++
+				default:
+					t.Fatalf("%s: %v %v", domain, oks[j], errs[j])
+				}
+			}
+			if won != 1 || lost != 1 {
+				t.Fatalf("%s: %d won, %d lost", domain, won, lost)
+			}
+		}
+	})
 }
 
 func countAudit(t *testing.T, st *store.Store, kind string) int {
