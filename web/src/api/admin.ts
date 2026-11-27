@@ -47,6 +47,8 @@ import type {
   SettingLower,
   SiteSetting,
   SecretMeta,
+  TenantDomain,
+  TenantDomainList,
   Tenancy,
   ConsoleScope,
   Tenant,
@@ -272,6 +274,30 @@ export const adminApi = {
     request<{ secrets: SecretMeta[] }>(`${tenant ? `/admin/tenants/${enc(tenant)}` : '/admin'}/secrets/${enc(name)}`, {
       method: 'DELETE',
     }),
+  // --- a tenant's email domains (3.6 d2); `domain` takes any spelling ---
+  tenantDomains: (tenant: string, signal?: AbortSignal) =>
+    request<TenantDomainList>(`/admin/tenants/${enc(tenant)}/domains`, { signal }),
+  claimDomain: (tenant: string, domain: string) =>
+    request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains`, { method: 'POST', body: { domain } }),
+  verifyDomain: (tenant: string, domain: string) =>
+    request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}/verify`, { method: 'POST' }),
+  newDomainCode: (tenant: string, domain: string) =>
+    request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}/code`, { method: 'POST' }),
+  patchDomain: (tenant: string, domain: string, input: { restrictOrgs: boolean }) =>
+    request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}`, { method: 'PATCH', body: input }),
+  deleteDomain: (tenant: string, domain: string) =>
+    request<void>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}`, { method: 'DELETE' }),
+  // The site's: every tenant's claims, and the transfer of a verified one.
+  siteDomains: (params: { verified?: boolean; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.verified) q.set('verified', 'true')
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<{ domains: TenantDomain[]; next: string | null }>(`/admin/domains${qs ? `?${qs}` : ''}`, { signal })
+  },
+  assignDomain: (domain: string, tenant: string) =>
+    request<TenantDomain>(`/admin/domains/${enc(domain)}/assign`, { method: 'POST', body: { tenant } }),
   // --- layered settings (3.3) ---
   plans: (signal?: AbortSignal) => request<{ plans: Plan[] }>('/admin/plans', { signal }),
   createPlan: (input: PlanWrite & { slug: string; name: string }) =>
@@ -286,14 +312,21 @@ export const adminApi = {
       body: { plan },
     }),
   siteSettings: (signal?: AbortSignal) => request<{ settings: SiteSetting[] }>('/admin/settings', { signal }),
-  putSiteSetting: (key: string, input: { value?: unknown; lower?: SettingLower | null }) =>
+  // `confirm` is change_capabilities' token, for switching off a feature that is in use.
+  putSiteSetting: (key: string, input: { value?: unknown; lower?: SettingLower | null; confirm?: string }) =>
     request<SiteSetting>(`/admin/settings/${enc(key)}`, { method: 'PUT', body: input }),
   tenantSettings: (tenant: string, signal?: AbortSignal) =>
     request<{ settings: TenantSetting[] }>(`/admin/tenants/${enc(tenant)}/settings`, { signal }),
   putTenantSetting: (
     tenant: string,
     key: string,
-    input: { value?: unknown; lower?: SettingLower | null; siteLock?: boolean; siteRule?: RuleWrite | null },
+    input: {
+      value?: unknown
+      lower?: SettingLower | null
+      siteLock?: boolean
+      siteRule?: RuleWrite | null
+      confirm?: string
+    },
   ) =>
     request<TenantSettingWritten>(`/admin/tenants/${enc(tenant)}/settings/${enc(key)}`, { method: 'PUT', body: input }),
 
@@ -798,6 +831,7 @@ export function usePutSetting() {
       lower?: SettingLower | null
       siteLock?: boolean
       siteRule?: RuleWrite | null
+      confirm?: string
     }): Promise<{ affected?: number; warning?: { code: string; keys: string[]; message: string } }> =>
       tenant ? adminApi.putTenantSetting(tenant, key, input) : adminApi.putSiteSetting(key, input),
     onSuccess: () =>
@@ -811,6 +845,64 @@ export function usePutSetting() {
         qc.invalidateQueries({ queryKey: keys.adminSecurity }),
         qc.invalidateQueries({ queryKey: keys.adminStorage }),
       ]),
+  })
+}
+
+// --- email domains --------------------------------------------------------------------------------
+
+// A tenant's claimed email domains, by domain. The answers that make a code carry it: they are kept in the list until
+// it is read again, so the records stay on the page that asked for them.
+export function useTenantDomains(tenant: string) {
+  return useQuery({
+    queryKey: keys.tenantDomains(tenant),
+    queryFn: ({ signal }) => adminApi.tenantDomains(tenant, signal),
+    enabled: tenant !== '',
+    staleTime: 10_000,
+  })
+}
+// Puts one domain as the server answered it into the list (a new one in its place by key), keeping a code the list
+// already showed unless the answer has one.
+function putDomain(qc: QueryClient, tenant: string, d: TenantDomain) {
+  qc.setQueryData<TenantDomainList>(keys.tenantDomains(tenant), (old) => {
+    if (!old) return old
+    const prev = old.domains.find((x) => x.domain === d.domain)
+    const next =
+      d.code === null && prev?.code && d.state === 'unverified' ? { ...d, code: prev.code, records: prev.records } : d
+    const rest = old.domains.filter((x) => x.domain !== d.domain)
+    return { ...old, domains: [...rest, next].sort((a, b) => (a.domain < b.domain ? -1 : a.domain > b.domain ? 1 : 0)) }
+  })
+}
+export function useDomainChange(tenant: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (
+      a:
+        | { op: 'claim'; domain: string }
+        | { op: 'verify' | 'code' | 'delete'; domain: string }
+        | { op: 'restrict'; domain: string; restrictOrgs: boolean },
+    ): Promise<TenantDomain | null> => {
+      switch (a.op) {
+        case 'claim':
+          return adminApi.claimDomain(tenant, a.domain)
+        case 'verify':
+          return adminApi.verifyDomain(tenant, a.domain)
+        case 'code':
+          return adminApi.newDomainCode(tenant, a.domain)
+        case 'restrict':
+          return adminApi.patchDomain(tenant, a.domain, { restrictOrgs: a.restrictOrgs })
+        case 'delete':
+          return adminApi.deleteDomain(tenant, a.domain).then(() => null)
+      }
+    },
+    onSuccess: (d, a) => {
+      if (d) putDomain(qc, tenant, d)
+      else
+        qc.setQueryData<TenantDomainList>(keys.tenantDomains(tenant), (old) =>
+          old ? { ...old, domains: old.domains.filter((x) => x.domain !== a.domain) } : old,
+        )
+    },
+    // A refused check may still have been recorded (another tenant holds the domain): the list is read again.
+    onError: () => void qc.invalidateQueries({ queryKey: keys.tenantDomains(tenant) }),
   })
 }
 

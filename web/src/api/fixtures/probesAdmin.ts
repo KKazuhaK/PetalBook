@@ -3,6 +3,7 @@
 
 import { sharedSpace } from './data/model.ts'
 import type { FixtureServer } from './server.ts'
+import { newDomain } from './routes/admin.ts'
 
 // What the contract suite does not record, and why.
 export const ADMIN_UNRECORDED: Record<string, string> = {
@@ -22,6 +23,8 @@ export const ADMIN_UNRECORDED: Record<string, string> = {
   'POST /api/admin/providers/company/test 200': 'needs a provider',
   'GET /api/admin/providers/company/test 200': 'needs a provider',
   'GET /api/admin/grants 200': 'needs an authorization client',
+  'POST /api/admin/domains/{}/assign 200': 'needs a domain verified by DNS',
+
   'PUT /api/admin/daily/providers/hitokoto 200': 'no contract case changes a provider yet',
 }
 
@@ -195,6 +198,7 @@ export function adminProbes(fx: FixtureServer): Call[] {
   const S = `/api/admin/spaces/${extra}`
   const U = '/api/users/01FXDAVE01'
   const T = '/api/admin/tenants/01TNTWO001'
+
   const G = '/api/admin/groups/01GPONE001'
   return [
     // the check page
@@ -264,6 +268,30 @@ export function adminProbes(fx: FixtureServer): Call[] {
     ['PUT', `${T}/plan`, { plan: null }],
     ['GET', `${T}/settings`],
     ['PUT', `${T}/settings/quota.people`, { siteRule: { value: 7 } }],
+    // As the contract suite can: nothing is published (no DNS), so a check finds nothing and nothing is verified.
+    ['POST', `${T}/domains`, { domain: 'probe.example' }],
+    ['POST', `${T}/domains`, { domain: 'other.example' }],
+    ['GET', `${T}/domains`],
+    ['POST', `${T}/domains/probe.example/verify`],
+    ['POST', `${T}/domains/probe.example/code`],
+    ['PATCH', `${T}/domains/probe.example`, { restrictOrgs: true }],
+    ['GET', `${T}/domains`],
+    ['GET', '/api/admin/domains'],
+    // Only a verified domain moves; the contract suite cannot verify one, so it is made verified here, just before.
+    [
+      'POST',
+      '/api/admin/domains/held.example/assign',
+      () => {
+        d.admin.domains['01TNTWO001'].push({
+          ...newDomain('held.example', at, at),
+          state: 'verified',
+          verifiedAt: at,
+          nextCheckAt: at,
+        })
+        return { tenant: '0000000000' }
+      },
+    ],
+    ['DELETE', `${T}/domains/probe.example`],
     ['GET', `${T}/secrets`],
     ['PUT', `${T}/secrets/mail.password`, { value: 'x' }],
     ['DELETE', `${T}/secrets/mail.password`],

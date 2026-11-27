@@ -27,6 +27,7 @@ import type {
   Plan,
   RecycleItem,
   SecretMeta,
+  TenantDomain,
   SiteSetting,
   Tenant,
   TenantSetting,
@@ -68,6 +69,12 @@ export interface AdminData {
   plans: Plan[]
   groups: GroupRec[]
   secrets: { site: Record<string, SecretMeta>; tenants: Record<string, Record<string, SecretMeta>> }
+  // Each tenant's claimed email domains (3.6 d2), by tenant id.
+  domains: Record<string, TenantDomain[]>
+  // The domains whose record "Check now" finds (the fixtures' DNS).
+  publishedDomains: string[]
+  // The host of the server's public address, which a CNAME points under ('' for none, as the contract's server).
+  siteHost: string
   mail: MailSettings
   captcha: { siteKey: string; hasSecret: boolean }
   // What the sign-in security page is told besides the settings: whether passkeys can work here, and its notices.
@@ -141,6 +148,9 @@ export function createAdminData(now: number, admin: { id: string; username: stri
       ),
       tenants: {},
     },
+    domains: {},
+    publishedDomains: [],
+    siteHost: '',
     mail: {
       enabled: false,
       host: '',

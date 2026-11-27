@@ -69,6 +69,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   not_fixable: '这种问题不能在这里修复。',
   remote_required: '这个空间需要先连接远程仓库。',
   confirm_stale: '确认之后情况有变化，请重新确认。',
+  confirm_required: '这个功能正在使用中。请先看会停止什么，再确认。',
 
   // Settings.
   setting_locked: '这项设置被上一级锁定，不能修改。',
@@ -91,6 +92,13 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   saml_metadata_invalid: '登录服务的元数据不能用。',
   saml_needs_https: 'SAML 需要 https 的公开地址。',
   domain_required: '租户拥有的登录提供方，需要租户先有一个已验证的域名。',
+  domain_public: '这是公共邮箱服务的域名，谁都可以在那里有地址，所以任何组织都不能认领。',
+  domain_exists: '这个组织已经认领过这个域名。',
+  domain_limit: '一个组织最多认领 20 个域名。',
+  domain_claimed: '另一个组织已经验证了这个域名。全站管理员可以把它转过来。',
+  domain_code_expired: '验证码已过期。请生成新的验证码并发布。',
+  domain_verified: '这个域名已经验证，它的记录保持不变。',
+  domain_managed: '这个邮箱域名的地址由一个组织管理。请让它把你加进去，而不是另建一个组织。',
   already_linked: '你在这个提供方已经关联了一个账号。请先取消关联，再关联另一个。',
   last_method: '这是最后一种登录方式。请先设置密码或关联另一种登录方式。',
   github_app_client: '这个提供方的客户端就是 GitHub 应用的客户端：请在仓库提供方里改应用的设置。',

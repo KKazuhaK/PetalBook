@@ -360,6 +360,7 @@ export const tenantsEn: TenantsMessages = {
       'features.orgCreation': 'People may create organisations of their own',
       'orgCreation.perPerson': 'Organisations one person may create',
       'orgCreation.perHour': 'Organisations created in an hour (whole server)',
+      'domains.checksPerMinute': 'Email domain checks a minute (whole server)',
       'orgCreation.plan': 'Plan a new organisation starts with',
       'features.passkeys': 'Passkeys may be used to sign in',
       'signin.mode': 'Sign-in page mode',
@@ -399,6 +400,8 @@ export const tenantsEn: TenantsMessages = {
         'Off by default. On: the registration page offers "Create my organisation": a person gives a name and an address, confirms their email, and becomes the administrator of a new tenant (never a site administrator). Needs the tenants switch and mail. Site administrators only.',
       'orgCreation.perPerson':
         'At most this many organisations one account may create; 0 allows none. It counts the organisations an account created, and matters once signed-in people can create more (milestone 3.7): a registration creates at most one. Site administrators only.',
+      'domains.checksPerMinute':
+        'How many times a minute people may choose Check now on a claimed email domain, all organizations together. Each domain also waits a minute, and each organization has 20 an hour.',
       'orgCreation.perHour':
         'Empty (the default) is no cap. Over it, a request is answered as usual and the message says that no organisation was made.',
       'orgCreation.plan':
@@ -535,6 +538,7 @@ export const tenantsEn: TenantsMessages = {
       settings: 'Settings',
       plan: 'Plan and rules',
       audit: 'Audit',
+      signin: 'Sign-in',
       danger: 'Danger zone',
     },
     overview: {

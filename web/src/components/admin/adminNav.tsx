@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { PageFallback } from '@/components/common'
 import { tc } from '@/i18n/console'
+import { tdom } from '@/i18n/domains'
 import type { AdminSection } from '@/lib/urls'
 import { GroupsPanel } from './GroupsPanel'
 import { SettingsPanel } from './SettingsPanel'
@@ -41,6 +42,7 @@ const SecurityPanel = lazyNamed(() => import('./AdminSecurityPanel'), 'AdminSecu
 const ProvidersSection = lazyNamed(() => import('./ProvidersSection'), 'ProvidersSection')
 const PlansPanel = lazyNamed(() => import('./PlansPanel'), 'PlansPanel')
 const AuditSection = lazyNamed(() => import('./AuditSection'), 'AuditSection')
+const OrgDomains = lazyNamed(() => import('./OrgDomains'), 'OrgDomains')
 
 export interface NavTab {
   key: string
@@ -135,7 +137,11 @@ export const NAV: readonly NavSection[] = [
     key: 'settings',
     label: tc.sections.settings,
     Icon: Layers,
-    tabs: [{ key: 'settings', label: tc.sections.settings, render: () => <SettingsPanel /> }],
+    tabs: [
+      { key: 'settings', label: tc.sections.settings, render: () => <SettingsPanel /> },
+      // The organisation's own email domains (3.6 d2); a site administrator has them on each tenant's page.
+      { key: 'signin', label: tdom.title, orgOnly: true, render: () => later(<OrgDomains />) },
+    ],
   },
   {
     key: 'tenants',

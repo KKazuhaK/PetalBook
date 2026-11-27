@@ -1612,6 +1612,47 @@ function suite(target: Target) {
           }
         })
 
+        it('email domains: a claim shows its records once, a check records what DNS said, the site lists every claim', async () => {
+          const own = '/api/admin/tenants/0000000000/domains'
+          const key = `ct-${run}.example`.toLowerCase()
+          const made = await call(admin, 'POST', own, { domain: key.toUpperCase() })
+          expect(made.status).toBe(201)
+          expect(made.json).toMatchObject({ domain: key, state: 'unverified', codeExpired: false, restrictOrgs: false })
+          const code = made.json.code as string
+          expect(made.json.records.txt).toEqual({ name: `_petalbook.${key}`, value: `petalbook-verify=${code}` })
+          // A second claim that is never checked: the lists hold one of each.
+          const other = `ct2-${run}.example`.toLowerCase()
+          expect((await call(admin, 'POST', own, { domain: other })).status).toBe(201)
+          try {
+            expect((await call(admin, 'POST', own, { domain: key })).json.error).toBe('domain_exists')
+            expect((await call(admin, 'POST', own, { domain: 'gmail.com' })).json.error).toBe('domain_public')
+            // The list never shows the code again.
+            const listed = (await call(admin, 'GET', own)).json.domains.find((d: any) => d.domain === key)
+            expect([listed.code, listed.records]).toEqual([null, null])
+            // Nothing is published for this name: missing, or a failure to ask DNS where there is none to ask.
+            const checked = await call(admin, 'POST', `${own}/${key}/verify`)
+            expect(checked.status).toBe(200)
+            expect(['missing', 'dns_error']).toContain(checked.json.lastCheck.result)
+            expect(checked.json.state).toBe('unverified')
+            expect((await call(admin, 'GET', own)).json.domains.length).toBeGreaterThanOrEqual(2)
+            const again = await call(admin, 'POST', `${own}/${key}/verify`, undefined, JSON_HEADERS, {
+              expect429: true,
+            })
+            expect([again.status, again.json.error]).toEqual([429, 'rate_limited'])
+            const renewed = await call(admin, 'POST', `${own}/${key}/code`)
+            expect(renewed.json.code).not.toBe(code)
+            expect((await call(admin, 'PATCH', `${own}/${key}`, { restrictOrgs: true })).json.restrictOrgs).toBe(true)
+            const site = await call(admin, 'GET', '/api/admin/domains')
+            expect(site.json.domains.find((d: any) => d.domain === key).tenant.id).toBe('0000000000')
+            expect(
+              (await call(admin, 'POST', `/api/admin/domains/${key}/assign`, { tenant: '0000000000' })).json.error,
+            ).toBe('not_found')
+          } finally {
+            expect((await call(admin, 'DELETE', `${own}/${key}`)).status).toBe(204)
+            expect((await call(admin, 'DELETE', `${own}/${other}`)).status).toBe(204)
+          }
+        })
+
         it('secrets are write-only: the lists say set or not and when, a replace or a clear answers the list, the GitHub ones are changed elsewhere, a tenant holds only what its features allow', async () => {
           const names = (r: { json: any }) => r.json.secrets.map((x: { name: string }) => x.name)
           const list = await call(admin, 'GET', '/api/admin/secrets')
