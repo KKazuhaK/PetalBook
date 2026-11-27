@@ -842,6 +842,7 @@
      "limit?": "number",
      "method?": "string",
      "name?": "string",
+     "newTenant?": "boolean",
      "old?": {
       "disabled?": "boolean",
       "email?": "string",
@@ -2399,6 +2400,7 @@
    "features.passkeys": "boolean",
    "features.registration": "boolean",
    "features.tenancy": "boolean",
+   "features.tenantAudit": "boolean",
    "features.tokens": "boolean",
    "mail.ownSender": "boolean"
   },

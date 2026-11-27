@@ -50,7 +50,7 @@ var (
 	TenantRecycleRestore  = Register("tenant.recycle.restore", ScopeTenant, "", "Restore an item of the recycle bin")
 	TenantBulkRun         = Register("tenant.bulk.run", ScopeTenant, "", "Confirm and run bulk actions, and follow their jobs")
 	TenantUsageRead       = Register("tenant.usage.read", ScopeTenant, "", "Read the usage of the tenant")
-	TenantAuditRead       = Register("tenant.audit.read", ScopeTenant, "", "Read the audit log")
+	TenantAuditRead       = Register("tenant.audit.read", ScopeTenant, "features.tenantAudit", "Read the audit log")
 	TenantTokensRead      = Register("tenant.tokens.read", ScopeTenant, "", "List people's API tokens and app authorizations")
 	TenantTokensRevoke    = Register("tenant.tokens.revoke", ScopeTenant, "", "Revoke people's API tokens and app authorizations")
 	TenantPermissionsRead = Register("tenant.permissions.read", ScopeTenant, "", "List the permission keys")

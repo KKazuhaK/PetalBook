@@ -24,6 +24,7 @@ var featureNames = map[string]string{
 	settings.FeatureTenancy:         "multiple tenants",
 	settings.FeatureAdminView:       "administrator view of spaces",
 	settings.FeatureAuditDownload:   "audit log download",
+	settings.FeatureTenantAudit:     "audit log",
 	settings.FeatureOwnSSO:          "own single sign-on",
 	settings.FeatureDomains:         "claimed email domains",
 	settings.FeatureManagedAccounts: "managed accounts",
@@ -55,13 +56,19 @@ func featureOffError(feature, permission string) *accessError {
 // asks a key whose feature it is was checked by allow (which a holder of the
 // key across the site is not bound by); in single-user mode every feature is on.
 func (s *server) featureGate(c *call, rt route) bool {
+	if c.p == nil || s.single || s.settings == nil {
+		return true
+	}
 	f := rt.access.feature
-	if f == "" || c.p == nil || (rt.access.kind == kindKey && rt.access.key.Feature() == f) {
-		return true
+	if f != "" && !(rt.access.kind == kindKey && rt.access.key.Feature() == f) && !s.gateOne(c, f) {
+		return false
 	}
-	if s.single || s.settings == nil {
-		return true
-	}
+	return rt.access.also == "" || s.gateOne(c, rt.access.also)
+}
+
+// gateOne checks one feature for the caller's tenant; it reports false after
+// answering.
+func (s *server) gateOne(c *call, f string) bool {
 	on, err := s.featureOn(c.r.Context(), c.tenant(), f)
 	if err != nil {
 		// Not knowing is not "on": the handler does not run (as the hand checks it replaced answered).

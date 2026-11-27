@@ -25,6 +25,7 @@ import { PersonSecurity } from './PersonSecurity'
 import { PersonSessions } from './PersonSessions'
 import { PersonSpaces } from './PersonSpaces'
 import { PersonUsage } from './PersonUsage'
+import { useConsoleFeature } from '../useConsoleFeature'
 import { useUserChange } from './useUserChange'
 import { ViewAsDialog } from './ViewAsDialog'
 
@@ -42,6 +43,9 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
   const session = useSession()
   const me = session.data?.user
   const site = useAcrossSite()
+  // The log is the console's tenant's only while the site gives it (features.tenantAudit); the whole site's console
+  // always has it.
+  const auditOff = useConsoleFeature('features.tenantAudit') === false && !site
   const row = useUserRow(id)
   const { change, busy, error, messageRef } = useUserChange()
   const [deleting, setDeleting] = useState(false)
@@ -52,7 +56,7 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
   // Until the signed-in person is known the page waits: nobody is taken for a site administrator (the Sessions tab
   // would flash), and a link to that tab is not sent away before it is known.
   if (session.isPending) return <PageFallback />
-  const tabs = PERSON_TABS.filter((x) => x !== 'sessions' || site)
+  const tabs = PERSON_TABS.filter((x) => (x !== 'sessions' || site) && (x !== 'audit' || !auditOff))
   if (tab !== undefined && !isTab(tab)) return <Navigate to={adminUserPath(id)} replace />
   const active: PersonTab = tab && tabs.includes(tab) ? tab : 'profile'
   if (tab === 'sessions' && !site) return <Navigate to={adminUserPath(id)} replace />

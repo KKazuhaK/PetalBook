@@ -248,7 +248,7 @@
     {
       "name": "tenant.audit.read",
       "scope": "tenant",
-      "feature": "",
+      "feature": "features.tenantAudit",
       "description": "Read the audit log",
       "builtInOnly": false
     },
@@ -747,6 +747,7 @@
     "features.mcp",
     "features.tenancy",
     "features.passkeys",
+    "tenants.newAuditDefault",
     "features.orgCreation",
     "orgCreation.perPerson",
     "orgCreation.perHour",
@@ -782,6 +783,7 @@
     "features.idpAdmins",
     "features.adminView",
     "features.auditDownload",
+    "features.tenantAudit",
     "mail.ownSender",
     "features.ownCaptcha",
     "features.ownConnections",

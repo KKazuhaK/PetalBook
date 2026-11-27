@@ -12,6 +12,7 @@ import { AdminLayout } from './AdminLayout'
 import { AdminPageHeader } from './AdminPageHeader'
 import { AdminTabs } from './AdminTabs'
 import { navFor } from './adminNav'
+import { useConsoleFeature } from './useConsoleFeature'
 
 // The tenant made with the server: its people are no organisation's (their spaces are their own).
 const DEFAULT_TENANT_ID = '0000000000'
@@ -60,7 +61,10 @@ function Console({ scope, segments }: { scope: string | null; segments: string[]
   const org =
     !site &&
     (scope !== null ? scope !== DEFAULT_TENANT_ID : ownTenant !== undefined && ownTenant.id !== DEFAULT_TENANT_ID)
-  const sections = navFor(site, org)
+  // The audit log is the console's tenant's only while the site gives it (features.tenantAudit): a tenant's own
+  // administrator's, and a site administrator's in that tenant's scope; the whole site's console always has it.
+  const auditOff = useConsoleFeature('features.tenantAudit') === false && !site
+  const sections = navFor(site, org).filter((s) => s.key !== 'audit' || !auditOff)
   const person = first === 'user' && second !== undefined
   // A tenant's own page: `/admin/tenants/<id>/<tab>`; the list's two pages are tenants and plans.
   const ofTenant = site && first === 'tenants' && second !== undefined && second !== 'tenants' && second !== 'plans'

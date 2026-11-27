@@ -104,6 +104,24 @@ describe('the administration frame', () => {
     await settle(() => locationText() === '/admin/storage', 'sent back to the section')
   })
 
+  it("hides the audit log from a tenant administrator while the site withholds it, and never from the site's", async () => {
+    m = await open('/admin/audit', (d) => {
+      tenantAdmin(d)
+      d.features['features.tenantAudit'] = true
+    })
+    await settle(() => links().includes(tc.sections.audit), 'the audit section')
+    await m.unmount()
+    m = await open('/admin/audit', (d) => {
+      tenantAdmin(d)
+      d.features['features.tenantAudit'] = false
+    })
+    await settle(() => locationText() === '/admin/users', 'sent to the users')
+    expect(links()).not.toContain(tc.sections.audit)
+    await m.unmount()
+    m = await open('/admin/audit', (d) => void (d.features['features.tenantAudit'] = false))
+    await settle(() => links().includes(tc.sections.audit), 'the site still has it')
+  })
+
   it('folds on a tablet, and the choice is kept in this browser', async () => {
     m = await open('/admin/groups')
     await settle(() => document.querySelector('[data-slot="admin-layout"]') !== null, 'the frame')

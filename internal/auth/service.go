@@ -719,10 +719,11 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		return nil, err
 	}
 	var released *store.Released
+	var stamped func()
 	for attempt := 0; ; attempt++ {
 		u.ID = s.newID()
 		cand := u
-		released = nil
+		released, stamped = nil, nil
 		if attempt > 0 && p.RetryUsername {
 			cand.Username = suffixed(username, attempt)
 		}
@@ -763,6 +764,10 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return errOrgLimit
 				}
 				if err := store.InsertTenant(ctx, q, nt.Made); err != nil {
+					return err
+				}
+				var err error
+				if stamped, err = s.settings.Load().StampNewTenant(ctx, q, nt.Made.ID, cand.ID, ""); err != nil {
 					return err
 				}
 				if planID != "" {
@@ -865,6 +870,9 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		return nil, err
 	}
 	stg.Commit(u.ID)
+	if stamped != nil {
+		stamped()
+	}
 	if p.NewTenant != nil {
 		if err := s.st.TenantStateReload(ctx); err != nil {
 			s.log.Warn("could not reload the tenants", "error", err)

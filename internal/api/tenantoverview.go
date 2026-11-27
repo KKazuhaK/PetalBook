@@ -8,6 +8,7 @@ import (
 	"petalbook.app/server/internal/auditlog"
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -94,7 +95,16 @@ func (s *server) adminTenantOverview(c *call) {
 	sort.Strings(off)
 	// The audit is read by those who hold the key to it; the rest get none.
 	recent := []overviewAuditResp{}
-	if c.p.Access.Can(authz.TenantAuditRead, t.ID) {
+	// A tenant without features.tenantAudit gets none, as the audit routes refuse it.
+	auditOn := true
+	if c.p.Access.Can(authz.TenantAuditRead, t.ID) && !c.siteWide(authz.TenantAuditRead) && !s.single && s.settings != nil {
+		var err error
+		if auditOn, err = s.featureOn(ctx, t.ID, settings.FeatureTenantAudit); err != nil {
+			s.fail(c.w, err)
+			return
+		}
+	}
+	if auditOn && c.p.Access.Can(authz.TenantAuditRead, t.ID) {
 		rows, err := s.recentAdminActivity(ctx, t.ID, !c.siteWide(authz.TenantAuditRead))
 		if err != nil {
 			s.fail(c.w, err)

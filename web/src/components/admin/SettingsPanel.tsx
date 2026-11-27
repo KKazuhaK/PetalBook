@@ -493,6 +493,7 @@ const GROUP_ORDER = [
   'files',
   'registration',
   'orgCreation',
+  'tenants',
   'legal',
   'daily',
   'mail',

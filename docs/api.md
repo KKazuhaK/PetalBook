@@ -7290,6 +7290,22 @@ created, counted by `createdBy`; it becomes meaningful with signed-in creation i
 (for the whole server, default null: no cap) and `orgCreation.plan` (a plan's
 slug, `""` for none; `400 invalid` for a plan that does not exist).
 
+**Whether a new tenant's administrators get the audit log.** `features.tenantAudit`
+(site, with a rule per tenant; on when no rule says otherwise) is the feature of
+the key `tenant.audit.read`: while it is off for a tenant, its administrators
+get `403 feature_off` from `GET /api/admin/audit`, `…/kinds` and
+`…/download`, and no audit in the overview or the console. It is the site's
+alone to set (no tenant layer). `tenants.newAuditDefault` (site only, default
+**off**) is the value a tenant is made with: when a tenant is made (by a site
+administrator or by a person registering an organisation) a locked manual rule
+for `features.tenantAudit` with that value is written in the same transaction,
+together with its `setting_changed` row (the tenant as subject, the capacity of the creation).
+Changing the default later touches no tenant that exists; a site administrator
+sets one tenant with `PUT /api/admin/tenants/{tenant}/settings/features.tenantAudit`
+(`siteRule` or `siteLock`). Tenants that had no rule (those before the switch)
+keep the audit. The rows are written either way, and site administrators read
+every tenant's rows as before.
+
 - `GET /api/register` also has `orgCreation: {"open": true|false}`; `open` is the
   joining of the tenant, as before. When neither is open the answer is
   `{"open": false, "orgCreation": {"open": false}}`. `GET /api/auth/providers` has
@@ -9199,8 +9215,8 @@ the **site layer's rule for that tenant** in the layered settings (owner,
 - **Features** (`features.*`, `mail.ownSender`) are whole things a tenant may or
   may not have: `features.ownSso`, `features.domains`,
   `features.managedAccounts`, `features.idpAdmins` (default off),
-  `features.adminView`, `features.auditDownload`, `features.ownCaptcha`,
-  `features.ownConnections`, `features.ownDaily`, `mail.ownSender` (default
+  `features.adminView`, `features.auditDownload`, `features.tenantAudit`,
+  `features.ownCaptcha`, `features.ownConnections`, `features.ownDaily`, `mail.ownSender` (default
   **off**), and the settings that already existed, `features.registration` and
   `features.offline`. A feature is on unless a rule says otherwise. "This
   organisation does not have feature X" is X's value `false`, locked, for that
@@ -9291,7 +9307,10 @@ internal billing module's unit; the site's administrators define them.
 - `PUT /api/admin/tenants/{tenant}/plan` `{"plan": "slug"|null}` gives a tenant a
   plan. It clears **every** manual rule of the tenant, undated adjustments and
   dated grants alike (a grant that should outlive the change is set again
-  after it); billing's rules stay. The answer is `{"plan", "cleared": [...]}`,
+  after it), except the rule of `features.tenantAudit`: that one is the site's
+  decision about the tenant (stamped when the tenant was made, or set by a site
+  administrator), not an adjustment to a plan, and clearing it would turn the
+  audit log on for a tenant the site withheld it from. Billing's rules stay. The answer is `{"plan", "cleared": [...]}`,
   each rule with its `key`.
 - Plans are held in memory as one snapshot with its own generation; a plan
   change recomputes the tenants lazily at their next read.
@@ -9476,7 +9495,7 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | Keys | Kind | Layers |
 |---|---|---|
 | `features.tokens`, `features.mcp`, `features.offline`, `features.registration` | boolean | S, T |
-| `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`, `.githubConnect`; `mail.ownSender` | boolean (features) | S + rule |
+| `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.tenantAudit`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`, `.githubConnect`; `mail.ownSender` | boolean (features) | S + rule |
 | `features.passkeys`, `features.tenancy` | boolean | S! |
 | `audit.signins`, `.reads`, `.downloads`, `.api` | boolean | S, T |
 | `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` 0 for no age limit), choice `or`, `and` | S! |
@@ -10370,12 +10389,12 @@ own organisation**.
 | `GET /api/admin/storage` | their tenant's summary, settings read only | all, and `PUT` |
 | `/api/admin/recycle…` (list, restore), `/api/admin/confirm`, `/api/admin/bulk`, `/api/admin/jobs…` | their tenant | every tenant |
 | `DELETE /api/admin/recycle/{item}` (purge early), exports with `history` | `403` | yes |
-| `GET /api/admin/audit` | their tenant's rows, without the site's kinds | every row |
+| `GET /api/admin/audit`, `…/kinds` | their tenant's rows, without the site's kinds, with `features.tenantAudit` | every row |
 | `/api/admin/tenants/{own}`: `GET`, `PATCH name`, `…/overview`, `…/settings`, `…/security`, `…/auth/providers…`, `…/domains…`, `…/join`, `…/join-requests…`, `…/mail…`, `…/captcha`, `…/daily…`, `…/connections…`, `…/storage/target`, `…/storage/moves`, `…/storage/usage`, `…/usage/export` | yes, within the site's rules and the tenant's features (`403 feature_off`), not what a site administrator locked | every tenant, may also set every rule and lock a tenant's value (`siteLock`), never limited by features |
 | `GET /api/admin/tenants/{own}/settings` (the rules, with `rules`, `inEffect`, `next`), `GET …/secrets` | read only | every tenant |
 | `PUT /api/admin/tenants/{tenant}/settings/{key}` with `siteRule` or `siteLock`, `PUT …/plan`, `/api/admin/plans…`, `/api/admin/secrets…` | `403 forbidden` | yes |
 | `POST /api/admin/spaces/{space}/view`, `/api/admin/exports…` (3.5) | their tenant's organisation spaces, with `features.adminView` | every space |
-| `GET /api/admin/audit/download` | their tenant's rows, with `features.auditDownload` | every row |
+| `GET /api/admin/audit/download` | their tenant's rows, with `features.tenantAudit` and `features.auditDownload` | every row |
 | `POST /api/admin/audit/purge` (`site.audit.purge`) | `403 forbidden` | yes |
 | `POST /api/spaces/{space}/storage/move` | their tenant's spaces (and owners their own) | every space |
 | `/api/admin/security`, `/api/admin/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/providers…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
@@ -10433,7 +10452,7 @@ held by the built-in site administrator only: no custom role may hold it.
 | `tenant.recycle.restore` | tenant | — | Restore an item of the recycle bin |
 | `tenant.bulk.run` | tenant | — | Confirm and run bulk actions, and follow their jobs |
 | `tenant.usage.read` | tenant | — | Read the usage of the tenant |
-| `tenant.audit.read` | tenant | — | Read the audit log |
+| `tenant.audit.read` | tenant | `features.tenantAudit` | Read the audit log |
 | `tenant.tokens.read` | tenant | — | List people's API tokens and app authorizations |
 | `tenant.tokens.revoke` | tenant | — | Revoke people's API tokens and app authorizations |
 | `tenant.permissions.read` | tenant | — | List the permission keys |
@@ -10634,7 +10653,7 @@ SQLite and PostgreSQL.
 | `role_from_idp` | `groups.admins` promoted or demoted a person, or skipped a demotion | `user`, `provider`, `from`, `to`, `skipped` |
 | `email_released` | an unverified address moved to the account that confirmed it | `user` (the one cleared), `to` |
 | `plan_created`, `plan_changed`, `plan_deleted` | a plan | `plan`, `rules`, `affected`; `plan_changed` also `from` and `to` (each key's rule before and after, `null` for none) |
-| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (the manual rules, dated or not, each `{key, value, lower, from, until}`) |
+| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (the manual rules, dated or not, except `features.tenantAudit`'s, each `{key, value, lower, from, until}`) |
 | `storage_target_changed` | a tenant's storage target made, changed or removed | `tenant`, `kind`, `owner` or `host` and `namespace`, secrets as `"changed"` |
 | `storage_repository_created` | a repository made at a tenant's target for a space | `space`, `repository` |
 | `space_storage_moved` | a space moved between modes or targets | `space`, `from`, `to`, `job` |

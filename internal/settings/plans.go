@@ -184,7 +184,9 @@ type KeyedRule struct {
 // SetTenantPlan gives a tenant a plan ("" for none) and clears every manual
 // rule of the tenant, dated or not: they were adjustments to the old plan
 // (docs/api.md, "Plans"; the owner's decision of 2026-11-26). The billing
-// rules stay. It answers the rules it cleared.
+// rules stay, and so does the tenant's audit switch (StampNewTenant: it is the
+// site's decision about the tenant, not an adjustment to a plan). It answers the
+// rules it cleared.
 func (s *Service) SetTenantPlan(ctx context.Context, tenant, planID string) (cleared []KeyedRule, err error) {
 	if _, ok := s.st.TenantRefOf(tenant); !ok {
 		return nil, store.ErrNotFound
@@ -195,7 +197,7 @@ func (s *Service) SetTenantPlan(ctx context.Context, tenant, planID string) (cle
 			return err
 		}
 		var err error
-		gone, err = store.DeleteManualRules(ctx, q, tenant)
+		gone, err = store.DeleteManualRules(ctx, q, tenant, FeatureTenantAudit)
 		return err
 	})
 	if err != nil {

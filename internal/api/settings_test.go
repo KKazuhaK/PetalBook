@@ -74,7 +74,7 @@ func TestTenantSettingsHonourTheSitesLocksAndRestrictions(t *testing.T) {
 			s["tenant"].(map[string]any)["value"] != nil || s["tenant"].(map[string]any)["inEffect"] != true {
 			t.Fatal(s)
 		}
-		if len(r.body["settings"].([]any)) != 45 {
+		if len(r.body["settings"].([]any)) != 46 {
 			t.Fatalf("every setting that has a tenant layer, and the three the site may force for one tenant: %s", r.raw)
 		}
 		f.admB.do("GET", "/api/admin/tenants/"+store.DefaultTenantID+"/settings", nil).want(t, 404, "not_found")

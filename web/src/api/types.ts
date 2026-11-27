@@ -2238,6 +2238,7 @@ export type FeatureKey =
   | 'features.passkeys'
   | 'features.adminView'
   | 'features.auditDownload'
+  | 'features.tenantAudit'
   | 'features.ownSso'
   | 'features.domains'
   | 'features.managedAccounts'

@@ -265,6 +265,7 @@ export const tenantsEn: TenantsMessages = {
       files: 'Files',
       registration: 'Registration',
       orgCreation: 'Organisations people create',
+      tenants: 'New organisations',
       legal: 'Legal',
       daily: 'Daily text',
       mail: 'Mail',
@@ -336,6 +337,7 @@ export const tenantsEn: TenantsMessages = {
       'features.idpAdmins': 'Administrators chosen by the identity provider',
       'features.adminView': "Administrators viewing the content of the organisation's spaces",
       'features.auditDownload': 'Downloading the audit log',
+      'features.tenantAudit': "The organisation's administrators reading its audit log",
       'mail.ownSender': "The tenant's own mail sender (SMTP)",
       'features.ownCaptcha': "The tenant's own captcha keys",
       'features.ownConnections': "The tenant's own providers",
@@ -354,6 +356,7 @@ export const tenantsEn: TenantsMessages = {
       'features.tokens': 'API tokens may be made and used',
       'features.mcp': 'MCP and OAuth for MCP clients',
       'features.tenancy': 'Tenants besides the default one may exist',
+      'tenants.newAuditDefault': 'New organisations get the audit log',
       'features.orgCreation': 'People may create organisations of their own',
       'orgCreation.perPerson': 'Organisations one person may create',
       'orgCreation.perHour': 'Organisations created in an hour (whole server)',
@@ -390,6 +393,8 @@ export const tenantsEn: TenantsMessages = {
         'On by default. Off, nobody of the tenant can make or use API tokens; the tokens are kept and work again when it is on. A tenant may switch it off for itself; the site may force it for one tenant.',
       'features.mcp':
         'On by default. Off, /mcp and the authorization server answer 404 for the tenant; connected apps are kept. A tenant may switch it off for itself; the site may force it for one tenant.',
+      'tenants.newAuditDefault':
+        'Off by default. The value an organisation is made with for "The organisation\'s administrators reading its audit log", which is then locked: the organisation cannot change it. Only organisations made after you set this are affected; for one that exists, change it on its own page. The log is written either way, and site administrators read every organisation\'s.',
       'features.orgCreation':
         'Off by default. On: the registration page offers "Create my organisation": a person gives a name and an address, confirms their email, and becomes the administrator of a new tenant (never a site administrator). Needs the tenants switch and mail. Site administrators only.',
       'orgCreation.perPerson':

@@ -76,10 +76,17 @@ const (
 	FeatureIdPAdmins       = "features.idpAdmins"
 	FeatureAdminView       = "features.adminView"
 	FeatureAuditDownload   = "features.auditDownload"
-	MailOwnSender          = "mail.ownSender"
-	FeatureOwnCaptcha      = "features.ownCaptcha"
-	FeatureOwnConnections  = "features.ownConnections"
-	FeatureOwnDaily        = "features.ownDaily"
+	// FeatureTenantAudit is whether a tenant's administrators read the
+	// tenant's audit log (the tenant console's audit tab and its routes). On
+	// unless a rule says otherwise; a tenant made after the site's
+	// TenantsNewAuditDefault was set gets a locked rule from it (StampNewTenant),
+	// and a site administrator changes it for one tenant by hand. The rows are
+	// written either way; the site audit is not bound by it.
+	FeatureTenantAudit    = "features.tenantAudit"
+	MailOwnSender         = "mail.ownSender"
+	FeatureOwnCaptcha     = "features.ownCaptcha"
+	FeatureOwnConnections = "features.ownConnections"
+	FeatureOwnDaily       = "features.ownDaily"
 	// FeatureGitHubConnect is whether people and organisations may install the
 	// site's GitHub App on their own GitHub account and sync with it: a site
 	// switch, turned off for one tenant by a rule.
@@ -116,6 +123,11 @@ const (
 	FeatureTenancy = "features.tenancy"
 	// FeaturePasskeys is whether passkeys may be used to sign in.
 	FeaturePasskeys = "features.passkeys"
+
+	// TenantsNewAuditDefault is the value of FeatureTenantAudit a tenant is
+	// made with (off by default). Site level only: it is read once, when the
+	// tenant is made, and a later change touches no tenant that exists.
+	TenantsNewAuditDefault = "tenants.newAuditDefault"
 
 	// Organisations people create themselves (docs/design/3-6-c.md, 2): the
 	// switch, how many one person may make, an optional cap per hour for the
@@ -237,6 +249,10 @@ func baseDefinitions() []*Def {
 		{Key: FeaturePasskeys, Kind: Bool, Layers: []Layer{Site}, Default: true, Lower: Lower{Mode: Allow},
 			ServerWide: signinWhy},
 
+		// What a new tenant starts with.
+		{Key: TenantsNewAuditDefault, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow},
+			ServerWide: "it is the value a tenant is made with; the tenant does not exist yet"},
+
 		// Organisations people create themselves: off until the site allows it.
 		{Key: FeatureOrgCreation, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: orgCreationWhy},
 		{Key: OrgCreationPerPerson, Kind: Limit, Layers: []Layer{Site}, Default: int64(3), Min: 0, Max: 100, Lower: Lower{Mode: Allow}, ServerWide: orgCreationWhy},
@@ -286,6 +302,7 @@ func baseDefinitions() []*Def {
 		{Key: FeatureIdPAdmins, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: false, Lower: Lower{Mode: Allow}},
 		{Key: FeatureAdminView, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
 		{Key: FeatureAuditDownload, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureTenantAudit, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
 		{Key: MailOwnSender, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: false, Lower: Lower{Mode: Allow}},
 		{Key: FeatureOwnCaptcha, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
 		{Key: FeatureOwnConnections, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
