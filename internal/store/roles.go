@@ -39,10 +39,9 @@ const (
 // in another tenant.
 var ErrInvalidRole = errors.New("invalid role")
 
-// roleKeys checks a role's keys for its scope and returns them by their
-// current names (a former name is resolved through its alias): a site role
-// holds site and tenant keys, a tenant role tenant keys, a space role space
-// keys; none holds a key only the built-in roles hold.
+// roleKeys checks a role's keys for its scope: a site role holds site and
+// tenant keys, a tenant role tenant keys, a space role space keys; none holds a
+// key only the built-in roles hold.
 func roleKeys(scope, tenantID string, names []string) ([]string, error) {
 	var allowed authz.Set
 	switch scope {
