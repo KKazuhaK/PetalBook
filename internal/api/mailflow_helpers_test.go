@@ -37,20 +37,27 @@ func verifiedUser(t *testing.T, a *acc, username, email string) {
 	}
 }
 
-// tokenOf is the token of the n-th message (0 based) to an address.
+// lastTo is the last message to an address. The mail queue delivers after the
+// request that queued it has been answered, so it waits (up to 5 seconds) for
+// the address's first message; a caller that needs a later one waits for it
+// first (srv.Wait).
 func lastTo(t *testing.T, srv *mailtest.Server, to string) mailtest.Message {
 	t.Helper()
-	var found *mailtest.Message
-	for _, m := range srv.Messages() {
-		m := m
-		if m.To == to {
-			found = &m
+	for end := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		var found *mailtest.Message
+		for _, m := range srv.Messages() {
+			m := m
+			if m.To == to {
+				found = &m
+			}
+		}
+		if found != nil {
+			return *found
+		}
+		if time.Now().After(end) {
+			t.Fatalf("no message to %s", to)
 		}
 	}
-	if found == nil {
-		t.Fatalf("no message to %s", to)
-	}
-	return *found
 }
 
 func countTo(srv *mailtest.Server, to string) int {
