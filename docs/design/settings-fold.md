@@ -109,7 +109,7 @@ cache:
 | `daily` | default, languages, allow (`own`, `api`), the administrators' interfaces, the built-in providers' state (`api/dailyapis.go:41`) | `api/dailyapis.go:100`. Two of its fields are bound into settings | `/api/admin/daily*` (`api/routes.go:215-224`) |
 | `github_app` | App id, sealed key, secret and webhook secret, observed slug, owner, permissions and gaps (`github/github.go:170`) | `github/github.go:225`, compare-and-set refresh (`github/admin.go:557`) | `/api/admin/connections/github…` |
 | `mail` | the SMTP sender: host, port, user, sealed password, from (`auth/mailcfg.go:22`) | `auth/mailcfg.go:71` | `/api/admin/mail` |
-| `oidc_imported`, `passkey_fake_key`, `first_user` | one-time markers and a sealed key | `auth/config.go:12`, `auth/passkeys.go:30`, `store/users.go:236` | internal |
+| `passkey_fake_key`, `first_user` | a one-time marker and a sealed key | `auth/passkeys.go:30`, `store/users.go:236` | internal |
 
 Also outside settings, and staying outside:
 
@@ -368,7 +368,7 @@ These stay as records, in `site_settings` renamed **`site_records`**:
 - the daily interfaces and built-in provider state (in a `daily` record);
 - `storage.remotes.since`: the time the requirement took its present form. It is
   observed state, written when the effective `storage.remotes.require` changes;
-- `oidc_imported`, `passkey_fake_key`, `first_user`.
+- `passkey_fake_key`, `first_user`.
 
 None of these has layers, and a settings GET must never return a secret (open
 question 1).

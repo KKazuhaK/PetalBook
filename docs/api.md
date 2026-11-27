@@ -177,7 +177,7 @@ Never an error; no session needed. `Cache-Control: no-store`.
   "user": null,
   "setup": false,
   "hold": null,
-  "methods": {"password": true, "oidc": {"name": "Company SSO"}}
+  "methods": {"password": true}
 }
 ```
 

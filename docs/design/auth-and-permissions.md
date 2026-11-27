@@ -233,8 +233,8 @@ What the conventions above became in code:
   `HeldRoles` never reads such a row. The builder holds the same lines again:
   a tenant role adds only tenant keys, in the tenant it is held in; a site
   role held in a tenant only its tenant keys there; space grants are the
-  space level's and add nothing outside spaces. A renamed key keeps working in stored roles through
-  `authz.Alias`; a name that is no key grants nothing and is logged. A
+  space level's and add nothing outside spaces. A name that is no key (a renamed one included: there
+  are no aliases) grants nothing and is logged. A
   tenant's roles and grants go with the tenant, a group's grants with the
   group. `auth.Service.RolesChanged` drops the cached people when roles or
   grants change; a change of a person's groups drops that person
