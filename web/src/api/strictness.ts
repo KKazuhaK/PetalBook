@@ -34,7 +34,34 @@ export function isLooser(
       if (!Array.isArray(value) || !Array.isArray(floor) || floor.includes('*')) return false
       return value.includes('*') || value.some((x) => !floor.includes(x))
     }
+    case 'superset': {
+      // A list is stricter the more it holds: looser when it lacks an entry the floor has.
+      if (!Array.isArray(value) || !Array.isArray(floor)) return false
+      return floor.some((x) => !value.includes(x))
+    }
+    case 'document':
+      return captchaLooser(value, floor)
     default:
       return false
   }
+}
+
+interface CaptchaForm {
+  on?: boolean
+  when?: string
+  failures?: number
+}
+
+// captcha.contexts, form by form: a form on above is looser off; of two that are on, asking always is stricter than
+// asking after failures, and of two that ask after failures, fewer failures is stricter. A form off above is free.
+function captchaLooser(value: unknown, floor: unknown): boolean {
+  if (typeof value !== 'object' || typeof floor !== 'object' || !value || !floor) return false
+  const v = value as Record<string, CaptchaForm | undefined>
+  return Object.entries(floor as Record<string, CaptchaForm | undefined>).some(([name, f]) => {
+    if (!f?.on) return false
+    const c = v[name] ?? { on: false }
+    if (!c.on) return true
+    if (f.when === 'always') return c.when !== 'always'
+    return c.when !== 'always' && (c.failures ?? 3) > (f.failures ?? 3)
+  })
 }

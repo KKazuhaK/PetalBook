@@ -73,6 +73,13 @@ const (
 	// StrictSubset: a list is stricter when it holds fewer of the entries
 	// allowed above ("*", the entry for all, is the loosest of all).
 	StrictSubset Strictness = "subset"
+	// StrictSuperset: a list is stricter when it holds more of the entries: it
+	// is looser when it lacks one the value above holds (the roles that must
+	// hold a passkey).
+	StrictSuperset Strictness = "superset"
+	// StrictDoc: a document whose own function says which of two is looser
+	// (Def.LooserDoc), field by field.
+	StrictDoc Strictness = "document"
 )
 
 // MaxNote is the most characters of a rule's note.
@@ -150,6 +157,9 @@ type Def struct {
 	// value at least as strict as the one above (docs/api.md, "Forced,
 	// minimum, default"). "" means the key cannot be tightened.
 	Strict Strictness
+	// LooserDoc says whether the document v is looser than above, for a key
+	// of Strict StrictDoc (v and above are decoded JSON).
+	LooserDoc func(v, above any) bool
 	// TenantDefault, when set, is the value of a tenant that neither sets the
 	// setting nor has a rule for it: the site's own value is then for the
 	// site's own people (the default tenant) only and never flows into a
@@ -195,6 +205,19 @@ func (d *Def) looser(v, above any) bool {
 		}
 		// A floor that is not one of the choices holds nothing open: it is the strictest.
 		return slices.Index(d.Choices, a) < 0 || slices.Index(d.Choices, b) < slices.Index(d.Choices, a)
+	case StrictDoc:
+		return d.LooserDoc != nil && d.LooserDoc(v, above)
+	case StrictSuperset:
+		a, ok1 := toStrings(above)
+		b, ok2 := toStrings(v)
+		if !ok1 || !ok2 {
+			return false
+		}
+		for _, x := range a {
+			if !slices.Contains(b, x) {
+				return true
+			}
+		}
 	case StrictSubset:
 		a, ok1 := toStrings(above)
 		b, ok2 := toStrings(v)

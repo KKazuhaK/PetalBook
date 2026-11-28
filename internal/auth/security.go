@@ -315,7 +315,11 @@ func (s *Service) bindSettings() {
 		b.Lock = &s.keysMu
 		set.Bind(key, b)
 	}
-	bind(settings.SigninMode, settings.SiteBinding{Check: func(ctx context.Context, _ string, v any) (any, error) {
+	bind(settings.SigninMode, settings.SiteBinding{Check: func(ctx context.Context, tenant string, v any) (any, error) {
+		if tenant != "" {
+			// A tenant's mode only shapes its sign-in page (see storedModeOf).
+			return v, nil
+		}
 		// Leaving local_only while ssoOnly is on needs a way out.
 		if st := s.sec(ctx); st.Login.SSOOnly && st.Login.Mode == ModeLocalOnly && v != ModeLocalOnly {
 			return v, s.needPasswordAdmin(ctx)
@@ -345,7 +349,7 @@ func (s *Service) bindSettings() {
 		st := s.sec(ctx)
 		return v, s.checkPasskeys(ctx, v == true, st.Passkeys.RequireRoles, st.Passkeys.Enabled)
 	}})
-	bind(settings.SigninPasskeyRoles, settings.SiteBinding{Check: func(ctx context.Context, _ string, v any) (any, error) {
+	bind(settings.SigninPasskeyRoles, settings.SiteBinding{Check: func(ctx context.Context, tenant string, v any) (any, error) {
 		in, _ := v.([]string)
 		var roles []string
 		for _, r := range in {
@@ -361,16 +365,35 @@ func (s *Service) bindSettings() {
 			roles = []string{}
 		}
 		st := s.sec(ctx)
+		if tenant != "" {
+			// An organisation's requirement needs passkeys that can work; whom it
+			// asks is for the organisation (the site's lock-out check counts the
+			// site's roles).
+			if len(roles) > 0 && !s.passkeysOn(st) {
+				return nil, coded(400, "passkey_unavailable", "Passkeys cannot be used here: they need a --public-url that is https, and passkeys switched on.")
+			}
+			return roles, nil
+		}
 		return roles, s.checkPasskeys(ctx, st.Passkeys.Enabled, roles, st.Passkeys.Enabled)
 	}})
-	bind(settings.SessionsIdleDays, settings.SiteBinding{Check: func(ctx context.Context, _ string, v any) (any, error) {
-		if n, _ := v.(int64); int(n) > s.sec(ctx).Limits.SessionMaxDays {
+	// The other lifetime, as the layer written has it: the site's, or the
+	// tenant's (what its people have now).
+	idleDays := func(ctx context.Context, tenant string) int {
+		idle, _ := s.lifetimesOf(ctx, s.sec(ctx), tenant)
+		return int(idle / (24 * time.Hour))
+	}
+	maxDays := func(ctx context.Context, tenant string) int {
+		_, max := s.lifetimesOf(ctx, s.sec(ctx), tenant)
+		return int(max / (24 * time.Hour))
+	}
+	bind(settings.SessionsIdleDays, settings.SiteBinding{Check: func(ctx context.Context, tenant string, v any) (any, error) {
+		if n, _ := v.(int64); int(n) > maxDays(ctx, tenant) {
 			return nil, errf(Invalid, "sessions.maxDays is at least sessions.idleDays.")
 		}
 		return v, nil
 	}})
-	bind(settings.SessionsMaxDays, settings.SiteBinding{Check: func(ctx context.Context, _ string, v any) (any, error) {
-		if n, _ := v.(int64); int(n) < s.sec(ctx).Limits.SessionIdleDays {
+	bind(settings.SessionsMaxDays, settings.SiteBinding{Check: func(ctx context.Context, tenant string, v any) (any, error) {
+		if n, _ := v.(int64); int(n) < idleDays(ctx, tenant) {
 			return nil, errf(Invalid, "sessions.maxDays is at least sessions.idleDays.")
 		}
 		return v, nil
@@ -404,8 +427,11 @@ func (s *Service) bindSettings() {
 			return err
 		},
 	})
-	bind(settings.CaptchaContexts, settings.SiteBinding{Check: func(ctx context.Context, _ string, v any) (any, error) {
+	bind(settings.CaptchaContexts, settings.SiteBinding{Check: func(ctx context.Context, tenant string, v any) (any, error) {
 		st := s.sec(ctx)
+		if tenant != "" {
+			return s.checkTenantCaptcha(ctx, st, tenant, v)
+		}
 		next, err := contextsOf(v, st.Captcha.Contexts)
 		if err != nil {
 			return nil, err
@@ -422,6 +448,50 @@ func (s *Service) bindSettings() {
 		}
 		return contextsDoc(next), nil
 	}})
+}
+
+// checkTenantCaptcha validates the captcha.contexts an organisation writes: a
+// document of login, forgot and register (the invitation and the setup are the
+// site's), merged over what the organisation has now and written whole. Asking
+// a third-party captcha needs the site's keys, which an organisation does not
+// have of its own here.
+func (s *Service) checkTenantCaptcha(ctx context.Context, st *secState, tenant string, v any) (any, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var names map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &names); err != nil {
+		return nil, errf(Invalid, "captcha.contexts is an object of contexts.")
+	}
+	for name := range names {
+		if !slices.Contains(settings.CaptchaTenantContexts, name) {
+			return nil, errf(Invalid, "captcha.contexts of an organization has login, forgot and register (%q is the site's).", name)
+		}
+	}
+	base := st.Captcha.Contexts
+	if cur, ok := s.tenantValue(ctx, tenant, settings.CaptchaContexts); ok {
+		if m, err := contextsOf(cur, base); err == nil {
+			base = m
+		}
+	}
+	next, err := contextsOf(v, base)
+	if err != nil {
+		return nil, err
+	}
+	mine := make(map[string]CaptchaCtx, len(settings.CaptchaTenantContexts))
+	for _, k := range settings.CaptchaTenantContexts {
+		mine[k] = next[k]
+	}
+	if st.Captcha.Provider != CaptchaImage && anyOn(mine) {
+		if s.cfg.PublicURL == "" {
+			return nil, errNeedsPublicURL()
+		}
+		if err := s.needCaptchaKeys(st.Captcha.SiteKey, st.Captcha.HasSecret); err != nil {
+			return nil, err
+		}
+	}
+	return contextsDoc(mine), nil
 }
 
 func anyOn(c map[string]CaptchaCtx) bool {

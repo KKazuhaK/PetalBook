@@ -796,7 +796,7 @@ export const api = {
   // Where an address signs in: about its domain only, never an account; a username gets null.
   discover: (email: string) =>
     request<{ sso: DiscoveredSSO | null }>('/auth/discover', { method: 'POST', body: { email } }),
-  login: async (input: { username: string; password: string; captcha?: CaptchaAnswer }) => {
+  login: async (input: { username: string; password: string; captcha?: CaptchaAnswer; tenant?: string }) => {
     const r = await request<SignInAnswer>('/login', { method: 'POST', body: input })
     markSignedIn()
     rememberUser(r.user.id)
@@ -812,10 +812,15 @@ export const api = {
     if (who) await offlineHooks.signedOut?.(who).catch(() => undefined)
   },
   // What the sign-in page draws: the enabled providers, the mode in effect and whether passkeys work.
-  providers: (signal?: AbortSignal) => request<AuthProviders>('/auth/providers', { signal }),
-  // Whether a captcha is needed now, and the challenge when it is. `account` matters for `login` only.
-  captcha: (ctx: CaptchaContext, account?: string, signal?: AbortSignal) =>
-    request<CaptchaChallenge>(`/captcha?ctx=${enc(ctx)}${account ? `&account=${enc(account)}` : ''}`, { signal }),
+  providers: (signal?: AbortSignal, tenant?: string) =>
+    request<AuthProviders>(`/auth/providers${tenant ? `?tenant=${enc(tenant)}` : ''}`, { signal }),
+  // Whether a captcha is needed now, and the challenge when it is. `account` matters for `login` only; `tenant` (a
+  // slug) is the organisation the form is opened for, whose captcha settings apply (absent: the site's).
+  captcha: (ctx: CaptchaContext, account?: string, tenant?: string, signal?: AbortSignal) =>
+    request<CaptchaChallenge>(
+      `/captcha?ctx=${enc(ctx)}${account ? `&account=${enc(account)}` : ''}${tenant ? `&tenant=${enc(tenant)}` : ''}`,
+      { signal },
+    ),
   // Setup, invite and link carry a token or a session, so they ask for the address with a POST; a login is a plain navigation (see `providerStartUrl`).
   providerStart: (
     kind: ProviderKind,

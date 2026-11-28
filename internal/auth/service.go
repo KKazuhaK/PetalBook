@@ -426,9 +426,18 @@ func (s *Service) ClearFlowCookie(base string) *http.Cookie {
 	return s.newCookie(s.cookieName(base), "", -1)
 }
 
-// SessionCookie carries a new session token to the browser.
-func (s *Service) SessionCookie(token string) *http.Cookie {
-	return s.newCookie(s.SessionCookieName(), token, int(s.secPtr.Load().max/time.Second))
+// SessionCookie carries a new session token to the browser, for as long as
+// the session may last: the sessions.maxDays of its person's tenant (the
+// site's when the session cannot be found).
+func (s *Service) SessionCookie(ctx context.Context, token string) *http.Cookie {
+	st := s.sec(ctx)
+	max := st.max
+	if row, _, err := store.LookupSession(ctx, s.st.Q(), hashToken(token)); err == nil {
+		if u, _, err := s.cachedEntry(ctx, row.UserID); err == nil {
+			_, max = s.lifetimesOf(ctx, st, u.TenantID)
+		}
+	}
+	return s.newCookie(s.SessionCookieName(), token, int(max/time.Second))
 }
 
 // ClearSessionCookie tells the browser to drop its session.

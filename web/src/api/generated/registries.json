@@ -921,6 +921,7 @@
     "audit.keepDays.api"
   ],
   "settingStrictness": {
+    "captcha.contexts": "document",
     "files.maxBytes": "lower",
     "registration.mode": "order",
     "registration.perHour": "lower",
@@ -929,6 +930,7 @@
     "signin.lockout.enabled": "higher",
     "signin.lockout.minutes": "higher",
     "signin.maxFailures": "lower",
+    "signin.passkeyRoles": "superset",
     "signin.perMinute": "lower",
     "signin.social": "subset",
     "signin.ssoOnly": "higher",

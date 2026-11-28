@@ -273,9 +273,8 @@ const DEFS: SiteSetting[] = [
   {
     key: 'signin.mode',
     kind: 'choice',
-    layers: ['site'],
+    layers: ['site', 'tenant'],
     choices: ['dual', 'sso_first', 'sso_redirect', 'local_only'],
-    serverWide: 'the sign-in page comes before any tenant is known',
     site: { value: 'dual', lower: { mode: 'allow' } },
   },
   {
@@ -293,9 +292,8 @@ const DEFS: SiteSetting[] = [
   {
     key: 'signin.passkeyRoles',
     kind: 'list',
-    layers: ['site'],
-    serverWide: 'the sign-in page comes before any tenant is known',
-    site: { value: [], lower: { mode: 'allow' } },
+    layers: ['site', 'tenant'],
+    site: { value: [], lower: { mode: 'tighten' } },
   },
   {
     key: 'signin.lockout.enabled',
@@ -343,16 +341,14 @@ const DEFS: SiteSetting[] = [
   {
     key: 'sessions.idleDays',
     kind: 'limit',
-    layers: ['site'],
-    serverWide: "sessions are the server's until organisations get their own lifetimes",
-    site: { value: 30, lower: { mode: 'allow' } },
+    layers: ['site', 'tenant'],
+    site: { value: 30, lower: { mode: 'tighten' } },
   },
   {
     key: 'sessions.maxDays',
     kind: 'limit',
-    layers: ['site'],
-    serverWide: "sessions are the server's until organisations get their own lifetimes",
-    site: { value: 90, lower: { mode: 'allow' } },
+    layers: ['site', 'tenant'],
+    site: { value: 90, lower: { mode: 'tighten' } },
   },
   {
     key: 'captcha.provider',
@@ -365,8 +361,7 @@ const DEFS: SiteSetting[] = [
   {
     key: 'captcha.contexts',
     kind: 'doc',
-    layers: ['site'],
-    serverWide: 'the sign-in page comes before any tenant is known',
+    layers: ['site', 'tenant'],
     site: {
       value: {
         login: { on: false, when: 'after_failures', failures: 3 },
@@ -375,7 +370,7 @@ const DEFS: SiteSetting[] = [
         forgot: { on: false, when: 'after_failures', failures: 3 },
         register: { on: false, when: 'after_failures', failures: 3 },
       },
-      lower: { mode: 'allow' },
+      lower: { mode: 'tighten' },
     },
   },
   {
@@ -498,6 +493,11 @@ export const TENANT_KEYS: string[] = [
   'signin.social',
   'signin.ssoOnly',
   'signin.ssoOnlyAdmins',
+  'signin.mode',
+  'signin.passkeyRoles',
+  'sessions.idleDays',
+  'sessions.maxDays',
+  'captcha.contexts',
   'mail.useSite',
   'daily.useSiteApis',
   'connections.useSiteApps',

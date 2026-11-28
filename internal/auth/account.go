@@ -207,7 +207,7 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 	// host: then the session is held for one, as a password sign-in would be.
 	if p.Held && p.HeldBy == HoldPassword {
 		needKey := false
-		if s.passkeyRequiredOf(s.sec(ctx), p.User) {
+		if s.passkeyRequiredOf(ctx, s.sec(ctx), p.User) {
 			n, err := store.CountPasskeysForRP(ctx, s.st.Q(), p.User.ID, s.pk.rpID)
 			if err != nil {
 				return err
@@ -820,7 +820,7 @@ func (s *Service) SweepSessionEnds(ctx context.Context) {
 func (s *Service) Sweep(ctx context.Context) {
 	now := s.now()
 	sec := s.sec(ctx)
-	if n, err := store.DeleteExpiredSessions(ctx, s.st.Q(), now.Add(-sec.idle), now.Add(-sec.max), now); err != nil {
+	if n, err := store.DeleteExpiredSessions(ctx, s.st.Q(), now.Add(-sec.idle), now.Add(-sec.max), now, s.sessionCutoffs(ctx, sec, now)); err != nil {
 		s.log.Warn("could not delete expired sessions", "error", err)
 	} else if n > 0 {
 		s.log.Info("deleted expired sessions", "count", n)
@@ -846,7 +846,7 @@ func (s *Service) Sweep(ctx context.Context) {
 // or by their role (for showing it; sign-in also needs passkeys to work).
 func (s *Service) PasskeyRequiredOf(u store.User) bool {
 	st := s.secPtr.Load()
-	return u.PasskeyRequired || (st != nil && st.roles[u.Role])
+	return u.PasskeyRequired || (st != nil && s.passkeyRoleHeld(context.Background(), st, u.TenantID, u.Role))
 }
 
 // Counts are how many passkeys and identities each user has.
@@ -897,20 +897,20 @@ func (s *Service) PublicInfo(ctx context.Context) PublicInfo {
 	info := PublicInfo{Providers: s.provs.publicList(), Mode: s.effectiveMode(st)}
 	info.Local, info.SSO = info.Mode != ModeSSORedirect, info.Mode != ModeLocalOnly
 	info.Passkey = s.passkeysOn(st)
-	s.identifierFirst(ctx, st, &info)
+	s.identifierFirst(ctx, st.Login.Mode, &info)
 	return info
 }
 
 // PublicInfoFor is PublicInfo for the sign-in page of one tenant: the
-// providers its people may use (PublicProvidersFor). The mode is the site's,
-// as the server enforces it (signin.mode stays site-only), even when the
-// tenant's list is empty: a looser hint than what is enforced would mislead.
+// providers its people may use (PublicProvidersFor), and the mode of the
+// tenant (signin.mode as it has it; see modeOf), which never shows a looser
+// page than the server enforces.
 func (s *Service) PublicInfoFor(ctx context.Context, tenant string) PublicInfo {
 	st := s.sec(ctx)
-	info := PublicInfo{Providers: s.PublicProvidersFor(ctx, tenant), Mode: s.effectiveMode(st)}
+	info := PublicInfo{Providers: s.PublicProvidersFor(ctx, tenant), Mode: s.modeOf(ctx, st, tenant)}
 	info.Local, info.SSO = info.Mode != ModeSSORedirect, info.Mode != ModeLocalOnly
 	info.Passkey = s.passkeysOn(st)
-	s.identifierFirst(ctx, st, &info)
+	s.identifierFirst(ctx, s.storedModeOf(ctx, st, tenant), &info)
 	return info
 }
 

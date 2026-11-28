@@ -263,29 +263,65 @@ func TrimSessions(ctx context.Context, q Q, userID string, n int) error {
 	return err
 }
 
+// SessionCutoff is when the sessions of one tenant's people expire, for a
+// tenant whose session lifetimes differ from the site's.
+type SessionCutoff struct {
+	Tenant                    string
+	IdleBefore, CreatedBefore time.Time
+}
+
 // DeleteExpiredSessions removes sessions idle since idleBefore or older than
-// createdBefore (recording each as ended at `at` for want of use), and reports how many.
-func DeleteExpiredSessions(ctx context.Context, q Q, idleBefore, createdBefore, at time.Time) (int64, error) {
+// createdBefore (recording each as ended at `at` for want of use), and reports
+// how many. The cutoffs are the site's, except for the people of the tenants in
+// own, who have their own.
+func DeleteExpiredSessions(ctx context.Context, q Q, idleBefore, createdBefore, at time.Time, own []SessionCutoff) (int64, error) {
 	var total int64
-	for _, st := range []struct {
+	type cut struct {
 		col string
 		at  time.Time
-	}{
-		{"last_used", idleBefore},
-		{"created", createdBefore},
-	} {
-		if _, err := q.Exec(ctx, `INSERT INTO session_ends(id, user_id, reason, ended) SELECT id, user_id, ?, ? FROM sessions WHERE `+st.col+` < ?
-			ON CONFLICT(id) DO NOTHING`, EndExpired, ms(at), ms(st.at)); err != nil {
-			return total, err
+	}
+	for _, o := range own {
+		for _, c := range []cut{{"last_used", o.IdleBefore}, {"created", o.CreatedBefore}} {
+			n, err := deleteExpired(ctx, q, c.col, c.at, at, ` AND user_id IN (SELECT id FROM users WHERE tenant_id = ?)`, o.Tenant)
+			total += n
+			if err != nil {
+				return total, err
+			}
 		}
-		res, err := q.Exec(ctx, `DELETE FROM sessions WHERE `+st.col+` < ?`, ms(st.at))
+	}
+	// Everyone else, by the site's.
+	rest, args := "", []any(nil)
+	if len(own) > 0 {
+		marks := make([]string, len(own))
+		for i, o := range own {
+			marks[i] = "?"
+			args = append(args, o.Tenant)
+		}
+		rest = ` AND user_id NOT IN (SELECT id FROM users WHERE tenant_id IN (` + strings.Join(marks, ",") + `))`
+	}
+	for _, c := range []cut{{"last_used", idleBefore}, {"created", createdBefore}} {
+		n, err := deleteExpired(ctx, q, c.col, c.at, at, rest, args...)
+		total += n
 		if err != nil {
 			return total, err
 		}
-		n, _ := res.RowsAffected()
-		total += n
 	}
 	return total, nil
+}
+
+// deleteExpired removes the sessions whose col is before cutoff and which match
+// the extra condition, recording each as ended at `at`.
+func deleteExpired(ctx context.Context, q Q, col string, cutoff, at time.Time, extra string, args ...any) (int64, error) {
+	if _, err := q.Exec(ctx, `INSERT INTO session_ends(id, user_id, reason, ended) SELECT id, user_id, ?, ? FROM sessions WHERE `+col+` < ?`+extra+`
+		ON CONFLICT(id) DO NOTHING`, append([]any{EndExpired, ms(at), ms(cutoff)}, args...)...); err != nil {
+		return 0, err
+	}
+	res, err := q.Exec(ctx, `DELETE FROM sessions WHERE `+col+` < ?`+extra, append([]any{ms(cutoff)}, args...)...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // ReleaseSession lifts the hold of one session.

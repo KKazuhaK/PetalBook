@@ -28,6 +28,26 @@ describe('isLooser', () => {
     expect(isLooser('subset', 'list', undefined, ['*'], ['a'])).toBe(true)
     expect(isLooser('subset', 'list', undefined, ['a'], ['*'])).toBe(false)
   })
+  it('holds a list of roles to a superset: more is stricter', () => {
+    expect(isLooser('superset', 'list', undefined, ['admin', 'member'], ['admin'])).toBe(false)
+    expect(isLooser('superset', 'list', undefined, ['member'], ['admin'])).toBe(true)
+    expect(isLooser('superset', 'list', undefined, [], ['member'])).toBe(true)
+    expect(isLooser('superset', 'list', undefined, ['admin'], [])).toBe(false)
+  })
+  it('compares the captcha forms one by one', () => {
+    const on = { on: true, when: 'after_failures', failures: 3 }
+    const off = { on: false, when: 'after_failures', failures: 3 }
+    const always = { on: true, when: 'always', failures: 3 }
+    const cmp = (v: unknown, f: unknown) => isLooser('document', 'doc', undefined, v, f)
+    expect(cmp({ login: off }, { login: on })).toBe(true)
+    expect(cmp({}, { login: on })).toBe(true)
+    expect(cmp({ login: on }, { login: off })).toBe(false)
+    expect(cmp({ login: on }, { login: always })).toBe(true)
+    expect(cmp({ login: always }, { login: on })).toBe(false)
+    expect(cmp({ login: { ...on, failures: 9 } }, { login: on })).toBe(true)
+    expect(cmp({ login: { ...on, failures: 1 } }, { login: on })).toBe(false)
+    expect(cmp({ forgot: on }, { login: off })).toBe(false)
+  })
   it('has nothing to compare without an order', () => {
     expect(isLooser(undefined, 'limit', undefined, 99, 1)).toBe(false)
   })

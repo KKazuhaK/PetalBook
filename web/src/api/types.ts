@@ -2330,8 +2330,9 @@ export interface SettingLower {
   note?: string
 }
 // What stricter means for a key, which the lower mode tighten needs; a key without one cannot be tightened.
-// higher/lower: a larger/smaller number (or true/false); order: later in the choices; subset: fewer entries.
-export type Strictness = 'higher' | 'lower' | 'order' | 'subset'
+// higher/lower: a larger/smaller number (or true/false); order: later in the choices; subset/superset: fewer/more
+// entries; document: field by field, by the setting's own rule (captcha.contexts).
+export type Strictness = 'higher' | 'lower' | 'order' | 'subset' | 'superset' | 'document'
 // The rule a tenant's layer is held to, as the tenant is shown it. floor: under tighten, the value the tenant's own
 // must be at least as strict as.
 // by: the site's own layer (site) or its rule for this tenant (rule).

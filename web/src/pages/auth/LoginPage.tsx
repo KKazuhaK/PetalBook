@@ -62,7 +62,9 @@ export default function LoginPage() {
   const ret = safeReturn(params.get('return'))
   const signedIn = session.data?.mode === 'accounts' && !!session.data.user
   const needsProviders = session.data?.mode === 'accounts' && !session.data.setup && !signedIn
-  const providers = useAuthProviders(needsProviders)
+  // `?tenant={slug}`: the page of one organisation, with its providers, mode and captcha.
+  const tenant = params.get('tenant') ?? undefined
+  const providers = useAuthProviders(needsProviders, tenant)
 
   if (session.isPending) return <PageFallback />
   if (session.isError)
@@ -99,6 +101,7 @@ export default function LoginPage() {
       providers={providers.data}
       ssoError={params.get('sso_error')}
       local={params.get('local') === '1'}
+      tenant={tenant}
     />
   )
 }
@@ -126,6 +129,7 @@ function LoginForm({
   providers,
   ssoError,
   local,
+  tenant,
 }: {
   // Why the last session ended, and who it was (when this browser knows): the page then speaks to that person.
   reason: EndedReason | null
@@ -137,6 +141,8 @@ function LoginForm({
   providers: AuthProviders
   ssoError: string | null
   local: boolean
+  // The organisation the page is opened for (`?tenant=`), if any.
+  tenant?: string
 }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -186,7 +192,10 @@ function LoginForm({
     if (step === 'sso') ssoLinkRef.current?.focus()
   }, [step])
   // Someone who is back is asked about by name from the start; with the address first, the captcha waits for the name.
-  const captcha = useCaptcha('login', { auto: formOpen && !redirecting && !returningPassword && !identifierFirst })
+  const captcha = useCaptcha('login', {
+    auto: formOpen && !redirecting && !returningPassword && !identifierFirst,
+    tenant,
+  })
   const askCaptcha = captcha.refresh
   useEffect(() => {
     if (returningPassword) void askCaptcha(username.trim().toLowerCase())
@@ -276,6 +285,7 @@ function LoginForm({
         username: username.trim(),
         password: pass,
         ...(sent ? { captcha: sent } : {}),
+        ...(tenant ? { tenant } : {}),
       })
       rememberAccount(answer.user, { type: 'password' })
       applySignIn(qc, answer)

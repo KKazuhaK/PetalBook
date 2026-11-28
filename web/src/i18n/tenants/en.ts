@@ -239,6 +239,11 @@ export const tenantsEn: TenantsMessages = {
     tightenHelp: 'The layers below may set this value or a stricter one.',
     stricterThan: (what: string) => `At least as strict as ${what}`,
     looserBlocked: "Looser than the site's minimum",
+    captchaForms: { login: 'Sign-in', forgot: 'Password reset', register: 'Registration' } as Record<string, string>,
+    captchaWhen: { always: 'Always', after_failures: 'After failures' },
+    captchaWhenLabel: 'When it is asked',
+    captchaFailuresLabel: 'Failures before it is asked',
+    captchaSiteForms: "The invitation form and the first-run setup are the site's.",
     overriddenBySite: "Overridden by the site's value",
     noteLabel: 'Note for the layers below',
     notePlaceholder: 'Why: shown beside the setting',
@@ -255,6 +260,13 @@ export const tenantsEn: TenantsMessages = {
         allow: 'Allow: clone it in full',
         refuse: 'Refuse: do not connect it',
       },
+      'signin.mode': {
+        dual: 'Both: password and single sign-on side by side',
+        sso_first: 'Single sign-on first, password below',
+        sso_redirect: 'Go straight to single sign-on',
+        local_only: 'Password only',
+      },
+      'signin.passkeyRoles': { admin: 'Administrators', member: 'Members' },
       'registration.mode': {
         open: 'Open: anyone may make an account',
         invite: 'By invitation: only with an invite link',
@@ -463,6 +475,16 @@ export const tenantsEn: TenantsMessages = {
         "The largest a single write may be: every page, attachment and file of an import counts, images too. The site's value is --max-upload and cannot be changed here; an organisation may set any value up to it. Over it, saving is refused and what you wrote stays where it is.",
       'domains.joinRole':
         "The role given to a person who joins by the domain of their address, at once or when an administrator approves the request. Only roles that are not the administrator's are offered.",
+      'signin.mode':
+        "How the sign-in page of this organisation puts its options (when it is opened for it). It changes the page only: the site's single sign-on only rule holds whatever the page shows, and a password-only page never lifts it.",
+      'signin.passkeyRoles':
+        "Roles whose people must sign in with a passkey. An organisation may add roles to the site's, never drop one of them.",
+      'sessions.idleDays':
+        "Days without use after which a session of this organisation's people ends. Shorter than the site's unless the site allows more; it applies to sessions that exist already.",
+      'sessions.maxDays':
+        "Days a session of this organisation's people may last in all, however often it is used. Shorter than the site's unless the site allows more; it applies to sessions that exist already.",
+      'captcha.contexts':
+        "Where a captcha is asked of this organisation's people: signing in, password reset and registration, when the form is opened for this organisation (?tenant=). A form opened without one has the site's settings, and a form the site asks stays asked.",
       'signin.ssoOnlyAdmins':
         "Off by default. Only matters while single sign-on only is on. Off: the organisation's administrators keep their password, as a way in if the identity provider fails. On: administrators sign in through single sign-on like everyone else, and no administrator needs a password. Site administrators always keep theirs.",
       'audit.signins':

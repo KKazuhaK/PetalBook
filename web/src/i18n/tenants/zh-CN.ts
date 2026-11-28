@@ -225,6 +225,11 @@ export const tenantsZhCN = {
     tightenHelp: '下面各层可以设成这个值，或比它更严。',
     stricterThan: (what: string) => `至少和 ${what} 一样严`,
     looserBlocked: '比全站的最低要求宽松',
+    captchaForms: { login: '登录', forgot: '重置密码', register: '注册' } as Record<string, string>,
+    captchaWhen: { always: '每次都要', after_failures: '失败几次后' },
+    captchaWhenLabel: '何时要验证码',
+    captchaFailuresLabel: '失败几次后要验证码',
+    captchaSiteForms: '邀请表单和首次安装由全站管。',
     overriddenBySite: '被全站的值盖过了',
     noteLabel: '给下面各层的说明',
     notePlaceholder: '为什么这样设：显示在这一项旁边',
@@ -241,6 +246,13 @@ export const tenantsZhCN = {
         allow: '允许：完整克隆',
         refuse: '拒绝：不连接这样的远端',
       },
+      'signin.mode': {
+        dual: '并排：密码和单点登录',
+        sso_first: '单点登录在前，密码在下',
+        sso_redirect: '直接跳到单点登录',
+        local_only: '只用密码',
+      },
+      'signin.passkeyRoles': { admin: '管理员', member: '成员' },
       'registration.mode': {
         open: '开放：谁都能建号',
         invite: '凭邀请：只有邀请链接能建号',
@@ -439,6 +451,14 @@ export const tenantsZhCN = {
       'files.maxBytes':
         '一次写入最大能有多大，页面、附件和导入里的每个文件都算，图片也算。站点的值来自 --max-upload，不能在这里改；组织可以设一个不超过它的值。超过时保存会被拒绝，你写的内容会留在原处，不会丢。',
       'domains.joinRole': '用邮箱域名加入的人得到的角色，直接加入或管理员批准申请后都用它。只提供不是管理员的角色。',
+      'signin.mode':
+        '这个组织的登录页怎么摆放登录方式（为它打开登录页时）。只改页面：全站“只许单点登录”照旧生效，只用密码的页面也解不开它。',
+      'signin.passkeyRoles': '这些角色的人必须用 passkey 登录。组织可以在全站的角色之上再加，不能去掉其中任何一个。',
+      'sessions.idleDays': '这个组织的人闲置多少天后会话结束。比全站短；除非全站允许更长。对已有的会话也生效。',
+      'sessions.maxDays':
+        '这个组织的人的会话最多持续多少天，不管用得多勤。比全站短；除非全站允许更长。对已有的会话也生效。',
+      'captcha.contexts':
+        '对这个组织的人，在哪些表单要验证码：登录、重置密码和注册（为这个组织打开表单时，即 ?tenant=）。不带组织打开的表单用全站的设置；全站要的验证码一直要。',
       'signin.ssoOnlyAdmins':
         '默认关。只在“只许单点登录”开着时有用。关：组织的管理员保留密码，身份提供方出故障时还能进来。开：管理员和其他人一样通过单点登录，不再需要任何有密码的管理员。站点管理员始终保留自己的密码。',
       'audit.signins': '默认开。关掉后，这个组织的登录不再写记录。核心类别（安全、管理、数据、系统）不能关。',
