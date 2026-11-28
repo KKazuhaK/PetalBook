@@ -117,6 +117,9 @@ func (s *server) deleteSecret(c *call, tenant, name string) {
 	if tenant == "" && name == secrets.CaptchaSecret && s.auth != nil {
 		// Not while a third-party captcha needs it: nobody could sign in.
 		err = s.auth.ClearCaptchaSecret(ctx)
+	} else if tenant != "" && name == secrets.CaptchaSecret && s.auth != nil {
+		// Not while the tenant's forms depend on its provider and the site's cannot take over.
+		err = s.auth.ClearTenantCaptchaSecret(ctx, tenant)
 	} else {
 		err = s.opt.Store.Tx(ctx, func(q store.Q) error { return s.vault.Clear(ctx, q, tenant, name) })
 	}
@@ -148,6 +151,12 @@ func (s *server) secretChanged(c *call, tenant, name, what string) {
 		// The organisation's own sender is kept in memory with its password.
 		if err := s.auth.ReloadTenantMail(ctx, tenant); err != nil {
 			s.log.Warn("could not apply the tenant's mail password", "error", err)
+		}
+	}
+	if tenant != "" && name == secrets.CaptchaSecret && s.auth != nil {
+		// The organisation's own captcha is kept in memory with its secret.
+		if err := s.auth.ReloadTenantCaptcha(ctx, tenant); err != nil {
+			s.log.Warn("could not apply the tenant's captcha secret", "error", err)
 		}
 	}
 	at := tenant

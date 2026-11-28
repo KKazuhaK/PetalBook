@@ -47,6 +47,9 @@ var registered = []Kind{
 	// password is never in a row.
 	{Name: "tenant_mail_changed", Category: Security, AddressFields: []string{"from", "replyTo"}},
 	{Name: "tenant_mail_test", Category: Security, AddressFields: []string{"to"}},
+	// An organisation's own captcha provider (3.6): the secret is never in a row.
+	{Name: "tenant_captcha_changed", Category: Security},
+	{Name: "tenant_captcha_test", Category: Security},
 	{Name: "secret_changed", Category: Security},
 	// Email domains (3.6 d2): claims, codes, every check by hand, verifying,
 	// the recheck's findings, and a site administrator's transfers (each

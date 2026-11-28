@@ -59,14 +59,7 @@ func (s *Service) captchaRebuild(nst, old *secState) {
 	}
 	secret := c.secret
 	s.capSecretErr.Store(false)
-	opts := []captcha.TokenOption{captcha.WithAllowedHostnames(captcha.HostOf(s.cfg.PublicURL))}
-	if s.cfg.HTTPClient != nil {
-		opts = append(opts, captcha.WithHTTPClient(s.cfg.HTTPClient))
-	}
-	if s.cfg.CaptchaEndpoint != "" {
-		opts = append(opts, captcha.WithEndpoint(s.cfg.CaptchaEndpoint))
-	}
-	v, err := captcha.NewTokenVerifier(captcha.Provider(c.Provider), secret, opts...)
+	v, err := s.newVerifier(c.Provider, secret)
 	if err != nil {
 		s.log.Warn("could not set up the captcha check", "reason", err.Error())
 		s.capTok.Store(nil)
@@ -85,13 +78,10 @@ func (s *Service) CaptchaProvider(ctx context.Context) string {
 	return ""
 }
 
-// captchaRequired says whether the context asks for a captcha of this address
-// (and, for the login, this username), by the settings of the tenant the
-// request is scoped to (tenant "": the request names none, and the site's
-// settings are used).
-func (s *Service) captchaRequired(ctx context.Context, st *secState, tenant, ctxName, ip, username string) bool {
-	c, ok := s.captchaCtxOf(ctx, st, tenant, ctxName)
-	if !ok || !c.On {
+// needs says whether a setting of a form asks a captcha of this address (and,
+// for the login, this username).
+func (s *Service) needs(st *secState, c CaptchaCtx, ctxName, ip, username string) bool {
+	if !c.On {
 		return false
 	}
 	if c.When == "always" {
@@ -100,12 +90,42 @@ func (s *Service) captchaRequired(ctx context.Context, st *secState, tenant, ctx
 	if s.failIP.Count("ip:"+ip, st.window) >= c.Failures {
 		return true
 	}
-	return ctxName == CtxLogin && username != "" && s.failUser.Count(userKey(username), st.window) >= c.Failures
+	return ctxName == CtxLogin && username != "" && s.failTyped.Count(userKey(username), st.window) >= c.Failures
+}
+
+// capPlan is what a form is asked, for a request scoped to a tenant (tenant "":
+// the request names none, and the site's settings are used).
+//
+// required: the stricter of the site's setting and the tenant's, never less
+// than the site's (captchaCtxOf).
+//
+// own: whose provider asks and checks it. The site's (nil) wherever the site's
+// own setting asks a captcha of this address and name. The tenant's own
+// provider only where the tenant alone asks: whoever controls a provider's
+// secret can make it pass for anything, so it may stand in for no captcha, never
+// for the site's. The choice depends on the tenant the request names, the
+// settings and the failures counted for the address and the name the form
+// carries, and never on whether the name is an account or whose.
+type capPlan struct {
+	required bool
+	own      *tenantCaptcha
+}
+
+func (s *Service) captchaPlan(ctx context.Context, st *secState, tenant, ctxName, ip, username string) capPlan {
+	c, ok := s.captchaCtxOf(ctx, st, tenant, ctxName)
+	if !ok || !s.needs(st, c, ctxName, ip, username) {
+		return capPlan{}
+	}
+	if site, found := st.Captcha.Contexts[ctxName]; found && s.needs(st, site, ctxName, ip, username) {
+		return capPlan{required: true}
+	}
+	return capPlan{required: true, own: s.tenantCaptchaFor(ctx, tenant)}
 }
 
 // CaptchaFor answers GET /api/captcha. tenant is the id of the tenant the
 // request is scoped to, or "" for none: the captcha of login, forgot and
-// register is then the tenant's own, else the site's.
+// register is then the stricter of the tenant's and the site's, asked by the
+// provider captchaPlan names.
 func (s *Service) CaptchaFor(ctx context.Context, tenant, ctxName, account, ip string) (*CaptchaChallenge, error) {
 	if err := s.allow(ctx, ip); err != nil {
 		return nil, err
@@ -118,12 +138,17 @@ func (s *Service) CaptchaFor(ctx context.Context, tenant, ctxName, account, ip s
 		return nil, errf(Invalid, "Ctx is login, invite, setup, forgot or register.")
 	}
 	st := s.sec(ctx)
-	if !s.captchaRequired(ctx, st, tenant, ctxName, ip, account) {
+	plan := s.captchaPlan(ctx, st, tenant, ctxName, ip, account)
+	if !plan.required {
 		return &CaptchaChallenge{}, nil
 	}
-	out := &CaptchaChallenge{Required: true, Provider: st.Captcha.Provider}
-	if st.Captcha.Provider != CaptchaImage {
-		out.SiteKey = st.Captcha.SiteKey
+	provider, siteKey := st.Captcha.Provider, st.Captcha.SiteKey
+	if plan.own != nil {
+		provider, siteKey = plan.own.Provider, plan.own.SiteKey
+	}
+	out := &CaptchaChallenge{Required: true, Provider: provider}
+	if provider != CaptchaImage {
+		out.SiteKey = siteKey
 		return out, nil
 	}
 	ch, err := s.capImg.Generate()
@@ -135,22 +160,30 @@ func (s *Service) CaptchaFor(ctx context.Context, tenant, ctxName, account, ip s
 }
 
 // checkCaptcha refuses the request when the context needs a captcha of this
-// address and the answer is not right. It runs before anything costs work.
+// address and the answer is not right. It runs before anything costs work. The
+// provider that checks is captchaPlan's, never one the request chose.
 func (s *Service) checkCaptcha(ctx context.Context, st *secState, tenant, ctxName, username, ip string, ans *CaptchaAnswer) error {
-	if !s.captchaRequired(ctx, st, tenant, ctxName, ip, username) {
+	plan := s.captchaPlan(ctx, st, tenant, ctxName, ip, username)
+	if !plan.required {
 		return nil
 	}
 	if ans == nil || (ans.Token == "" && (ans.ID == "" || ans.Answer == "")) {
 		return errCaptcha()
 	}
-	if st.Captcha.Provider == CaptchaImage {
+	provider, tc := st.Captcha.Provider, s.capTok.Load()
+	if plan.own != nil {
+		provider, tc = plan.own.Provider, nil
+		if plan.own.v != nil {
+			tc = &tokenChecker{provider: provider, v: plan.own.v}
+		}
+	}
+	if provider == CaptchaImage {
 		if !s.capImg.Verify(ans.ID, ans.Answer) {
 			return errCaptcha()
 		}
 		return nil
 	}
-	tc := s.capTok.Load()
-	if tc == nil || tc.provider != st.Captcha.Provider || ans.Token == "" || len(ans.Token) > 4096 {
+	if tc == nil || tc.provider != provider || ans.Token == "" || len(ans.Token) > 4096 {
 		return errCaptcha()
 	}
 	res, err := tc.v.Verify(ctx, ans.Token, ip)

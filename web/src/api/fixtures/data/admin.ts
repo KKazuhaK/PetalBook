@@ -22,6 +22,7 @@ import type {
   Invite,
   MailSettings,
   TenantMail,
+  TenantCaptcha,
   Passkey,
   Link,
   ProviderTestResult,
@@ -83,6 +84,8 @@ export interface AdminData {
   mail: MailSettings
   // Each tenant's own sender (3.6), by tenant id; one with no record is the defaults.
   tenantMail: Record<string, TenantMail>
+  // Each tenant's own captcha provider (3.6), by tenant id; one with no record is the defaults.
+  tenantCaptcha: Record<string, TenantCaptcha>
   captcha: { siteKey: string; hasSecret: boolean }
   // What the sign-in security page is told besides the settings: whether passkeys can work here, and its notices.
   security: { passkeysAvailable: boolean; notices: SecurityNotice[] }
@@ -177,6 +180,7 @@ export function createAdminData(now: number, admin: { id: string; username: stri
       queue: { waiting: 0, sentLastHour: 0, failedLastHour: 0 },
     },
     tenantMail: {},
+    tenantCaptcha: {},
     captcha: { siteKey: '', hasSecret: false },
     security: { passkeysAvailable: true, notices: [] },
     providers: [],

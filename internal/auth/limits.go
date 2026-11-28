@@ -28,6 +28,7 @@ func (s *Service) initLimits(now ratelimit.Clock) {
 	s.failIP = ratelimit.NewLockout(maxLimitKeys, now)
 	s.failUser = ratelimit.NewLockout(maxLimitKeys, now)
 	s.failPair = ratelimit.NewLockout(maxLimitKeys, now)
+	s.failTyped = ratelimit.NewLockout(maxLimitKeys, now)
 	s.starts = ratelimit.NewBucket(10_000, 30, 20, now).OnFull(ratelimit.Open) // starts of single sign-on: 30 a minute, a burst of 20
 	s.mailCaps = newHourCaps(maxLimitKeys, now)
 	s.testCaps = newHourCaps(4, now)

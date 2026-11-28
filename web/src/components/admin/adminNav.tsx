@@ -40,6 +40,7 @@ const ConnectionsSection = lazyNamed(() => import('./ConnectionsSection'), 'Conn
 const OrgGitHub = lazyNamed(() => import('./OrgGitHub'), 'OrgGitHub')
 const MailPanel = lazyNamed(() => import('./MailPanel'), 'MailPanel')
 const OrgMail = lazyNamed(() => import('./TenantMail'), 'OrgMail')
+const OrgCaptcha = lazyNamed(() => import('./TenantCaptcha'), 'OrgCaptcha')
 const SecurityPanel = lazyNamed(() => import('./AdminSecurityPanel'), 'AdminSecurityPanel')
 const ProvidersSection = lazyNamed(() => import('./ProvidersSection'), 'ProvidersSection')
 const PlansPanel = lazyNamed(() => import('./PlansPanel'), 'PlansPanel')
@@ -147,6 +148,8 @@ export const NAV: readonly NavSection[] = [
       { key: 'signin', label: tdom.signinTab, orgOnly: true, render: () => later(<OrgDomains />) },
       // Its own mail server (3.6) and whether it may borrow the site's.
       { key: 'mail', label: tm.org.tab, orgOnly: true, render: () => later(<OrgMail />) },
+      // Its own captcha provider (3.6).
+      { key: 'captcha', label: tm.orgCaptcha.tab, orgOnly: true, render: () => later(<OrgCaptcha />) },
     ],
   },
   {

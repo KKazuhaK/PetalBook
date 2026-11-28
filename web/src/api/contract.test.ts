@@ -1817,10 +1817,10 @@ function suite(target: Target) {
           }
           try {
             const own = `/api/admin/tenants/${t.id}/secrets`
-            expect(names(await call(admin, 'GET', own))).toEqual(['mail.password'])
+            expect(names(await call(admin, 'GET', own))).toEqual(['mail.password', 'captcha.secret'])
             const off = await call(admin, 'PUT', `${own}/mail.password`, { value: 'x' })
             expect([off.status, off.json.error, off.json.feature]).toEqual([403, 'feature_off', 'mail.ownSender'])
-            expect((await call(admin, 'PUT', `${own}/captcha.secret`, { value: 'x' })).json.error).toBe('not_found')
+            expect((await call(admin, 'PUT', `${own}/github.appKey`, { value: 'x' })).json.error).toBe('not_found')
             expect(
               (
                 await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/mail.ownSender`, {
@@ -1902,6 +1902,62 @@ function suite(target: Target) {
               expect((await call(m.browser, method, p, method === 'GET' ? undefined : {})).status, p).toBe(403)
             expect((await call(admin, 'DELETE', path)).status).toBe(204)
             expect((await call(admin, 'GET', path)).json).toMatchObject({ host: '', hasPassword: false })
+          } finally {
+            await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
+            await putSite(admin, 'features.tenancy', was)
+          }
+        })
+
+        it("a tenant's own captcha provider: never shows the secret, keeps its keys with its provider, and goes with its tenant", async () => {
+          const was = await siteValue(admin, 'features.tenancy')
+          await putSite(admin, 'features.tenancy', true)
+          const t = (await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('oc'), name: 'Own captcha' }))
+            .json as {
+            id: string
+          }
+          try {
+            const path = `/api/admin/tenants/${t.id}/captcha`
+            const secret = 'tenant-captcha-secret'
+            expect((await call(admin, 'GET', path)).json).toMatchObject({
+              enabled: false,
+              provider: 'image',
+              siteKey: '',
+              hasSecret: false,
+              ready: false,
+            })
+            // A third party is checked against the public address, which this server has none of; the image has no keys.
+            expect((await call(admin, 'PUT', path, { provider: 'turnstile', enabled: true })).json.error).toBe(
+              'captcha_needs_public_url',
+            )
+            expect((await call(admin, 'PUT', path, { provider: 'image', siteKey: 'k' })).json.error).toBe('invalid')
+            const put = await call(admin, 'PUT', path, { provider: 'turnstile', siteKey: '1x00', secret })
+            expect(put.status).toBe(200)
+            expect(put.json).toMatchObject({ provider: 'turnstile', siteKey: '1x00', hasSecret: true, ready: false })
+            expect(JSON.stringify(put.json)).not.toContain(secret)
+            expect(JSON.stringify((await call(admin, 'GET', path)).json)).not.toContain(secret)
+            expect(JSON.stringify((await call(admin, 'GET', `/api/admin/tenants/${t.id}/secrets`)).json)).not.toContain(
+              secret,
+            )
+            // The keys belong to the provider they were made for.
+            expect((await call(admin, 'PUT', path, { provider: 'hcaptcha' })).json).toMatchObject({
+              provider: 'hcaptcha',
+              siteKey: '',
+              hasSecret: false,
+            })
+            // Nothing to test for the image, and nothing to check a token with before the keys.
+            expect((await call(admin, 'POST', `${path}/test`, { token: 'x' })).json.error).toBe(
+              'captcha_not_configured',
+            )
+            const m = await newMember(uniq('oc'))
+            for (const [method, p] of [
+              ['GET', path],
+              ['PUT', path],
+              ['DELETE', path],
+              ['POST', `${path}/test`],
+            ] as const)
+              expect((await call(m.browser, method, p, method === 'GET' ? undefined : {})).status, p).toBe(403)
+            expect((await call(admin, 'DELETE', path)).status).toBe(204)
+            expect((await call(admin, 'GET', path)).json).toMatchObject({ provider: 'image', hasSecret: false })
           } finally {
             await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
             await putSite(admin, 'features.tenancy', was)

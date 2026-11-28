@@ -45,6 +45,7 @@ export type PermissionKey =
   | 'tenant.domains.manage'
   | 'tenant.signin.manage'
   | 'tenant.mail.manage'
+  | 'tenant.captcha.manage'
   | 'space.read'
   | 'space.write'
   | 'space.members.manage'

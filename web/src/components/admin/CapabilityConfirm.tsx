@@ -110,9 +110,11 @@ function ConfirmBody({ change, onClose }: { change: CapabilityChange; onClose: (
               <span className="font-medium">{l.name}</span>{' '}
               <span className="text-muted-foreground">
                 ({l.slug}) ·{' '}
-                {l.providers !== undefined
-                  ? tc.providersLine(l.providers, l.enabled ?? 0)
-                  : tc.line(l.domains ?? 0, l.verified ?? 0)}
+                {l.captcha
+                  ? tc.captchaLine(l.captcha)
+                  : l.providers !== undefined
+                    ? tc.providersLine(l.providers, l.enabled ?? 0)
+                    : tc.line(l.domains ?? 0, l.verified ?? 0)}
                 {l.requests ? ` · ${tc.requestsLine(l.requests)}` : ''}
               </span>
             </li>

@@ -48,14 +48,14 @@ type Spec struct {
 	ManagedBy string
 }
 
-// Known are the secrets that exist. A tenant's own sender is the only secret a
+// Known are the secrets that exist. A tenant's own sender and captcha provider are the only secrets a
 // tenant holds yet; its sign-in and App secrets come with their features.
 var Known = []Spec{
 	{Name: GitHubAppKey, Site: true, ManagedBy: "/api/admin/providers/github"},
 	{Name: GitHubClientSecret, Site: true, ManagedBy: "/api/admin/providers/github"},
 	{Name: GitHubWebhookSecret, Site: true, ManagedBy: "/api/admin/providers/github"},
 	{Name: MailPassword, Site: true, Tenant: true, Feature: "mail.ownSender"},
-	{Name: CaptchaSecret, Site: true},
+	{Name: CaptchaSecret, Site: true, Tenant: true, Feature: "features.ownCaptcha"},
 	{Name: AppleSignInKey, Site: true, ManagedBy: "/api/admin/providers"},
 }
 
