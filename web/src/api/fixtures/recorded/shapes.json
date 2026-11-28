@@ -2147,7 +2147,34 @@
       "boolean|null|number|string",
       [
        "string"
-      ]
+      ],
+      {
+       "forgot": {
+        "failures": "number",
+        "on": "boolean",
+        "when": "string"
+       },
+       "invite": {
+        "failures": "number",
+        "on": "boolean",
+        "when": "string"
+       },
+       "login": {
+        "failures": "number",
+        "on": "boolean",
+        "when": "string"
+       },
+       "register": {
+        "failures": "number",
+        "on": "boolean",
+        "when": "string"
+       },
+       "setup": {
+        "failures": "number",
+        "on": "boolean",
+        "when": "string"
+       }
+      }
      ]
     },
     "key": "string",
@@ -2157,7 +2184,39 @@
     ],
     "reason?": {
      "by": "string",
-     "floor?": "boolean",
+     "floor?": {
+      "$or": [
+       "boolean|number",
+       [],
+       {
+        "forgot": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "invite": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "login": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "register": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "setup": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        }
+       }
+      ]
+     },
      "max?": "number",
      "mode": "string"
     },
@@ -2171,7 +2230,34 @@
        "boolean|null|number|string",
        [
         "string"
-       ]
+       ],
+       {
+        "forgot": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "invite": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "login": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "register": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "setup": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        }
+       }
       ]
      }
     },

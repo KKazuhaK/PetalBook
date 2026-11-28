@@ -581,11 +581,14 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
                   onChange={setValue}
                 />
               )}
-              {tightened && floor !== undefined && s.kind !== 'doc' && (
-                <p className="text-xs text-muted-foreground" data-slot="rule-floor">
-                  {ts.stricterThan(floorText(s, floor))}
-                </p>
-              )}
+              {tightened &&
+                floor !== undefined &&
+                s.kind !== 'doc' &&
+                !(Array.isArray(floor) && floor.length === 0) && (
+                  <p className="text-xs text-muted-foreground" data-slot="rule-floor">
+                    {ts.stricterThan(floorText(s, floor))}
+                  </p>
+                )}
               {reason?.note && (
                 <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="rule-note">
                   {ts.noteOf(reason.note)}
