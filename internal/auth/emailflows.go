@@ -619,6 +619,9 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, lang, ip string) (
 	}
 	p := CreateParams{Username: reg.Username, Name: reg.Name, Email: reg.Email, EmailVerified: true, TakeUnverified: true, Role: "member",
 		PasswordHash: reg.PasswordHash, TenantID: reg.TenantID, RegistrationID: reg.ID, Terms: reg.Terms}
+	if joinMode == store.JoinModeAuto {
+		p.Role = s.joinRole(ctx, reg.TenantID)
+	}
 	if org {
 		p.Role = "admin"
 		p.NewTenant = &NewTenant{Name: reg.OrgName, Slug: reg.OrgSlug, PlanSlug: orules.PlanSlug, MaxPerPerson: orules.PerPerson}
@@ -869,7 +872,7 @@ func (s *Service) canUsePassword(ctx context.Context, q store.Q, u store.User) (
 	} else if err != nil {
 		return false, err
 	}
-	return !(s.ssoOnlyFor(ctx, s.sec(ctx), u.TenantID) && !u.IsAdmin()), nil
+	return !s.localRefusedUser(ctx, s.sec(ctx), &u), nil
 }
 
 // resetLinks makes a reset link for each account that can use a password and

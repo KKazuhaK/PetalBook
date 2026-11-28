@@ -61,6 +61,10 @@ export const signinEn: SigninMessages = {
     invite_invalid: 'The invite is invalid, expired or already used.',
     setup_invalid: 'The setup token is wrong, or there is an administrator already.',
     rate_limited: 'Too many requests. Wait a moment and try again.',
+    join_pending:
+      'You have asked to join this organisation already. Wait for its administrators to answer, or withdraw the request from its waiting page.',
+    join_limit:
+      'This organisation has too many requests to join waiting, or you have asked too often today. Try again later.',
     sso_required: 'Your organisation requires its own single sign-on: sign in with it.',
     saml_destination: 'The SAML response has no destination, or one that is not this server.',
     saml_weak_signature:

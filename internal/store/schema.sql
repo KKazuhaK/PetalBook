@@ -1101,7 +1101,10 @@ CREATE INDEX tenant_domains_provider ON tenant_domains(provider_id, domain) WHER
 -- '' for a sign-up). token_hash is the SHA-256 of the registration link's
 -- token, which the waiting page shows the request by. email_key is the
 -- address as addresses are compared; domain the domain's key. decided_by is
--- the administrator who approved or denied it ('' otherwise).
+-- the administrator who approved or denied it ('' otherwise). A request made by
+-- a site social provider's sign-in has no password; it holds the identity
+-- (provider_id, subject, identity_label) the approval links to the account,
+-- cleared with the password hash when the request is decided.
 CREATE TABLE join_requests (
   id            TEXT COLLATE "C" PRIMARY KEY,
   tenant_id     TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -1121,7 +1124,10 @@ CREATE TABLE join_requests (
   expires       BIGINT NOT NULL,
   decided_at    BIGINT NOT NULL DEFAULT 0,
   decided_by    TEXT COLLATE "C" NOT NULL DEFAULT '',
-  made_user     TEXT COLLATE "C" NOT NULL DEFAULT ''
+  made_user     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  provider_id   TEXT COLLATE "C" NOT NULL DEFAULT '',
+  subject       TEXT COLLATE "C" NOT NULL DEFAULT '',
+  identity_label TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
 -- A pending request holds its username, and one person (address) has one
 -- pending request per tenant.

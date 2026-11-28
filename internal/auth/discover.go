@@ -157,6 +157,23 @@ func (s *Service) tenantSSOOnlyOn(ctx context.Context, tenant string) bool {
 		tv.SiteRule != nil && tv.SiteRule.InEffect && tv.SiteRule.Value == true
 }
 
+// tenantSSOOnlyAdmins says whether the tenant's signin.ssoOnlyAdmins is on:
+// its ssoOnly then holds its administrators too (not site administrators).
+func (s *Service) tenantSSOOnlyAdmins(ctx context.Context, tenant string) bool {
+	st := s.settings.Load()
+	if st == nil || tenant == "" {
+		return false
+	}
+	e, err := st.Get(ctx, tenant, settings.SigninSSOOnlyAdmins)
+	if err != nil || e.Tenant == nil {
+		return false
+	}
+	// As tenantSSOOnlyOn: the tenant's own layer, or the site's rule for it; the site's own layer holds no tenant's administrators.
+	tv := e.Tenant
+	return tv.Value == true && tv.InEffect ||
+		tv.SiteRule != nil && tv.SiteRule.InEffect && tv.SiteRule.Value == true
+}
+
 // errLastLocalAdmin refuses taking away a tenant's last enabled administrator
 // with a password while its ssoOnly is on: the back door while its identity
 // provider fails (2.8's rule, per tenant, 3.6 d4).
@@ -169,7 +186,8 @@ func errLastLocalAdmin() *Error {
 // deleting them is refused (409 last_local_admin). q is the transaction the
 // change is made in.
 func (s *Service) LastLocalAdmin(ctx context.Context, q store.Q, u store.User) (bool, error) {
-	if !u.IsAdmin() || u.Disabled || !s.tenantSSOOnlyOn(ctx, u.TenantID) {
+	// With ssoOnlyAdmins its administrators sign in through the SSO, so none needs a password.
+	if !u.IsAdmin() || u.Disabled || !s.tenantSSOOnlyOn(ctx, u.TenantID) || s.tenantSSOOnlyAdmins(ctx, u.TenantID) {
 		return false, nil
 	}
 	if _, err := store.GetPasswordHash(ctx, q, u.ID); errors.Is(err, store.ErrNotFound) {
@@ -202,6 +220,22 @@ func (s *Service) ssoOnlyFor(ctx context.Context, st *secState, tenant string) b
 	return s.ssoOnlyInEffect(st) || s.tenantSSOOnly(ctx, tenant)
 }
 
+// localRefused says whether password and passkey sign-in are refused to an
+// account of the tenant with role (siteAdmin: of the whole server): members
+// whenever ssoOnlyFor; administrators of the tenant only when its
+// ssoOnlyAdmins holds them too. A site administrator keeps the password.
+func (s *Service) localRefused(ctx context.Context, st *secState, tenant, role string, siteAdmin bool) bool {
+	if !store.IsAdminRole(role) {
+		return s.ssoOnlyFor(ctx, st, tenant)
+	}
+	return !siteAdmin && s.tenantSSOOnly(ctx, tenant) && s.tenantSSOOnlyAdmins(ctx, tenant)
+}
+
+// localRefusedUser is localRefused for an account.
+func (s *Service) localRefusedUser(ctx context.Context, st *secState, u *store.User) bool {
+	return s.localRefused(ctx, st, u.TenantID, u.Role, u.SiteAdmin)
+}
+
 // checkTenantSSOOnly is the check of a tenant turning its signin.ssoOnly on
 // (its administrators, or the site's rule for it): it needs a single sign-on
 // its people can use, and an enabled administrator of the tenant with a
@@ -209,6 +243,10 @@ func (s *Service) ssoOnlyFor(ctx context.Context, st *secState, tenant string) b
 func (s *Service) checkTenantSSOOnly(ctx context.Context, tenant string) error {
 	if !s.tenantHasSSO(ctx, tenant) {
 		return coded(400, "sso_provider_required", "Turn on a single sign-on provider for this organization first: its people would have no way to sign in.")
+	}
+	// Administrators held to the SSO too need no password back door.
+	if s.tenantSSOOnlyAdmins(ctx, tenant) {
+		return nil
 	}
 	n, err := store.CountTenantPasswordAdmins(ctx, s.st.Q(), tenant)
 	if err != nil {

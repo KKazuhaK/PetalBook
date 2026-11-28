@@ -983,6 +983,12 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 		return Outcome{Redirect: e.ret, Clear: clear}
 	}
 	if err != nil {
+		var sw *ssoWaiting
+		if errors.As(err, &sw) {
+			// A request to join waits for the organisation's administrators: no
+			// session, and the waiting page by the request's token (in the fragment).
+			return Outcome{Redirect: "/register/waiting#" + sw.token, Clear: clear}
+		}
 		var se *ssoError
 		if errors.As(err, &se) {
 			if se.user != nil {
@@ -1076,6 +1082,16 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	}
 	if rt.row.Kind == KindGitHub && len(rt.cfg.Organizations) == 0 {
 		return nil, false, ssoErr("no_account")
+	}
+	// An address the sign-in vouches for, on a domain that joins people to a
+	// tenant, makes the account there as that domain's join mode says (3.6 d5);
+	// only the site's social providers, whose accounts are anyone's.
+	if rt.row.Owner == store.ProviderSite && rt.row.Class == ClassSocial && c.emailVerified {
+		if e, err := s.cleanEmailFor(ctx, c.email); err == nil && e != "" {
+			if jt, jd, jm, ok := s.joinOf(ctx, e); ok {
+				return s.socialJoin(ctx, rt, c, e, jt, jd, jm, ip)
+			}
+		}
 	}
 	// A tenant's provider makes accounts in its own tenant only.
 	tenant := rt.row.TenantID
@@ -1200,10 +1216,7 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 // site does not accept).
 func (s *Service) createFromClaims(ctx context.Context, c claimed, role, inviteID string, setup bool, tenantID string, siteAdmin bool) (*store.User, error) {
 	base := usernameFrom(c)
-	name := clip(c.name, 100)
-	if strings.TrimSpace(name) == "" {
-		name = base
-	}
+	name := nameFrom(c, base)
 	email, verified, by := "", false, ""
 	if e, err := s.cleanEmailFor(ctx, c.email); err == nil && e != "" {
 		email, verified = e, c.emailVerified
@@ -1219,6 +1232,16 @@ func (s *Service) createFromClaims(ctx context.Context, c claimed, role, inviteI
 		return nil, ssoErr("identity_in_use")
 	}
 	return u, err
+}
+
+// nameFrom is the display name of an account made from claims: the name
+// claim, or the username derived from them.
+func nameFrom(c claimed, username string) string {
+	name := clip(c.name, 100)
+	if strings.TrimSpace(name) == "" {
+		return username
+	}
+	return name
 }
 
 // usernameFrom derives a valid username from the claims.

@@ -139,8 +139,8 @@ func TestAPlanRestrictsAndAChangeOfPlanClearsTheManualRules(t *testing.T) {
 		f.root.do("PUT", path+"/plan", map[string]any{"plan": "none"}).want(t, 400, "invalid")
 		r = f.root.do("PUT", path+"/plan", map[string]any{"plan": "team"}).want(t, 200, "")
 		cleared := r.body["cleared"].([]any)
-		if _, has := r.body["kept"]; has || r.body["plan"].(map[string]any)["slug"] != "team" || len(cleared) != 2 ||
-			cleared[0].(map[string]any)["key"] != "quota.bytes" || cleared[1].(map[string]any)["key"] != "quota.pages" {
+		if _, has := r.body["kept"]; has || r.body["plan"].(map[string]any)["slug"] != "team" || len(cleared) != 3 ||
+			cleared[0].(map[string]any)["key"] != "features.tenantAudit" || cleared[1].(map[string]any)["key"] != "quota.bytes" || cleared[2].(map[string]any)["key"] != "quota.pages" {
 			t.Fatal(r.raw)
 		}
 		s := f.admB.do("GET", path+"/settings", nil).want(t, 200, "")

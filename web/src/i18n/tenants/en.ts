@@ -266,6 +266,7 @@ export const tenantsEn: TenantsMessages = {
       registration: 'Registration',
       orgCreation: 'Organisations people create',
       tenants: 'New organisations',
+      domains: 'Email domains',
       legal: 'Legal',
       daily: 'Daily text',
       mail: 'Mail',
@@ -365,7 +366,9 @@ export const tenantsEn: TenantsMessages = {
       'orgCreation.plan': 'Plan a new organisation starts with',
       'features.passkeys': 'Passkeys may be used to sign in',
       'signin.mode': 'Sign-in page mode',
+      'domains.joinRole': 'Role of people who join by email domain',
       'signin.ssoOnly': 'Single sign-on only',
+      'signin.ssoOnlyAdmins': 'Administrators use single sign-on too',
       'signin.passkeyRoles': 'Roles that must use a passkey',
       'signin.lockout.enabled': 'Lock accounts after failures',
       'signin.lockout.minutes': 'Minutes a lockout lasts',
@@ -427,6 +430,10 @@ export const tenantsEn: TenantsMessages = {
       'quota.pagesPerPerson': "How many pages a person's spaces hold in all; empty is no limit. Going over only warns.",
       'files.maxBytes':
         "The largest a single write may be: every page, attachment and file of an import counts, images too. The site's value is --max-upload and cannot be changed here; an organisation may set any value up to it. Over it, saving is refused and what you wrote stays where it is.",
+      'domains.joinRole':
+        "The role given to a person who joins by the domain of their address, at once or when an administrator approves the request. Only roles that are not the administrator's are offered.",
+      'signin.ssoOnlyAdmins':
+        "Off by default. Only matters while single sign-on only is on. Off: the organisation's administrators keep their password, as a way in if the identity provider fails. On: administrators sign in through single sign-on like everyone else, and no administrator needs a password. Site administrators always keep theirs.",
       'audit.signins':
         'On by default. Off: signing in writes no row for this organization. The core categories (security, administration, data, system) cannot be switched off.',
       'audit.reads':

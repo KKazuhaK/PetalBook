@@ -153,3 +153,34 @@ func TestATenantsSSOOnlyRefusesMembersPasskeysAndResets(t *testing.T) {
 		a.newClient("").do("POST", "/api/password/reset", map[string]any{"token": tok, "password": "a brand new password"}).want(t, 404, "not_found")
 	})
 }
+
+// signin.ssoOnlyAdmins: with it on, the tenant's administrators are held to
+// its single sign-on like its members (password and password invite refused),
+// the last-password-administrator guard does not apply, and a site
+// administrator keeps the password. Off (the default), nothing changes.
+func TestSSOOnlyAdminsHoldsAdministratorsToSSOToo(t *testing.T) {
+	t.Parallel()
+	idp := ssoIDP(t)
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		f := newSSOFx(t, a, idp)
+		f.orgProvider(t, f.admB, f.tenB, "acme-sso", nil)
+		put := func(key string, v bool) result {
+			return f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/"+key, map[string]any{"value": v})
+		}
+		login := func(ip, user string) result {
+			return a.newClient(ip).do("POST", "/api/login", map[string]any{"username": user, "password": pw})
+		}
+		put("signin.ssoOnly", true).want(t, 200, "")
+		// Off by default: the administrator keeps the password, and is the last one.
+		login("203.0.113.70", "adm-b").want(t, 200, "")
+		admB := mustUserID(t, a, "adm-b")
+		f.root.do("PATCH", "/api/users/"+admB, map[string]any{"role": "member"}).want(t, 409, "last_local_admin")
+		// On: the administrator is refused like a member, and the guard is gone.
+		put("signin.ssoOnlyAdmins", true).want(t, 200, "")
+		login("203.0.113.71", "adm-b").want(t, 403, "local_login_refused")
+		login("203.0.113.72", "root").want(t, 200, "")
+		inv := f.admB.do("POST", "/api/invites", map[string]any{"role": "admin"}).want(t, 201, "")
+		a.newClient("").do("POST", "/api/invites/accept", map[string]any{"token": inv.body["token"], "username": "adm-b9", "name": "adm-b9", "password": pw}).want(t, 403, "local_login_refused")
+		f.root.do("PATCH", "/api/users/"+admB, map[string]any{"role": "member"}).want(t, 200, "")
+	})
+}

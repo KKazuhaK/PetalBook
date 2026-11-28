@@ -126,15 +126,11 @@ func DeleteLayered(ctx context.Context, q Q, layer, layerID, key, source string)
 }
 
 // DeleteManualRules removes every manual rule of a tenant (the site's rules
-// for it of source manual, dated or not; billing's stay) except those of the
-// keys in keep, and answers the ones it removed.
-func DeleteManualRules(ctx context.Context, q Q, tenant string, keep ...string) ([]LayeredRow, error) {
+// for it of source manual, dated or not; billing's stay) and answers the ones
+// it removed.
+func DeleteManualRules(ctx context.Context, q Q, tenant string) ([]LayeredRow, error) {
 	where := ` WHERE layer = ? AND layer_id = ? AND source = ?`
 	args := []any{LayeredSite, tenant, SourceManual}
-	for _, k := range keep {
-		where += ` AND key <> ?`
-		args = append(args, k)
-	}
 	rows, err := queryLayered(ctx, q, `SELECT `+layeredCols+` FROM layered_settings`+where, args...)
 	if err != nil || len(rows) == 0 {
 		return nil, err

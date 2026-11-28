@@ -59,6 +59,8 @@ export const signinZhCN = {
     invite_invalid: '邀请无效、已过期或已被用过。',
     setup_invalid: '设置令牌不对，或者已经有管理员了。',
     rate_limited: '请求太频繁，请稍等一会儿再试。',
+    join_pending: '你已经申请加入这个组织了。请等它的管理员答复，或在等待页面撤回申请。',
+    join_limit: '这个组织等待中的申请太多，或你今天申请得太频繁。请稍后再试。',
     sso_required: '你的组织要求通过它自己的单点登录进入，请用它登录。',
     saml_destination: 'SAML 回应没有目的地址，或目的地址不是这个服务器。',
     saml_weak_signature: 'SAML 回应的签名或摘要太弱（需要 SHA-256 或更强）。请让身份提供方改用更强的算法。',

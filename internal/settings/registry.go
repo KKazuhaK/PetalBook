@@ -3,7 +3,10 @@ package settings
 import (
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
+
+	"petalbook.app/server/internal/store"
 )
 
 // Keys of the settings of 3.3.
@@ -146,6 +149,12 @@ const (
 	// now"; each tenant has its own hour and each domain its own minute too).
 	DomainsChecksPerMinute = "domains.checksPerMinute"
 
+	// DomainsJoinRole is the role a person gets who joins an organisation by
+	// the domain of their address, automatically or when an administrator
+	// approves the request (3.6 d5): one of store.JoinRoles, never an
+	// administrator's.
+	DomainsJoinRole = "domains.joinRole"
+
 	// SigninSocial is which of the site's social sign-in providers the people
 	// of a tenant may use (3.6 d3): their slugs, or ["*"] for every one. Site
 	// and tenant: the site's value is the default, and its lower rule (or a
@@ -158,7 +167,8 @@ const (
 	// before any tenant is known.
 	SigninMode           = "signin.mode" // dual, sso_first, sso_redirect or local_only
 	SigninSSOOnly        = "signin.ssoOnly"
-	SigninPasskeyRoles   = "signin.passkeyRoles" // the roles that must hold a passkey: admin, member
+	SigninSSOOnlyAdmins  = "signin.ssoOnlyAdmins" // an organisation's ssoOnly holds its administrators too
+	SigninPasskeyRoles   = "signin.passkeyRoles"  // the roles that must hold a passkey: admin, member
 	SigninLockoutEnabled = "signin.lockout.enabled"
 	SigninLockoutMinutes = "signin.lockout.minutes"
 	SigninLockoutScope   = "signin.lockout.scope" // ip_account, ip or account
@@ -277,6 +287,9 @@ func baseDefinitions() []*Def {
 		{Key: DomainsChecksPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(60), Min: 1, Max: 100000, Lower: Lower{Mode: Allow},
 			ServerWide: "the server's own resolver asks DNS for every tenant"},
 
+		// The role of a person who joins by email domain; the organisation chooses.
+		{Key: DomainsJoinRole, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: store.DefaultJoinRole, Choices: slices.Clone(store.JoinRoles), Lower: Lower{Mode: Allow}},
+
 		// The social providers a tenant's people may use.
 		{Key: SigninSocial, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{"*"}, Lower: Lower{Mode: Allow}, Check: checkSocial},
 
@@ -285,6 +298,10 @@ func baseDefinitions() []*Def {
 		// An organisation may require its own single sign-on of its people
 		// (3.6 d4); it never lifts the site's.
 		{Key: SigninSSOOnly, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Allow}, TightenOnly: true},
+		// With ssoOnly on, the organisation's administrators are held to its
+		// single sign-on like its members; off (the default) they keep their
+		// password. A site administrator always keeps theirs.
+		{Key: SigninSSOOnlyAdmins, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Allow}, TightenOnly: true},
 		{Key: SigninPasskeyRoles, Kind: List, Layers: []Layer{Site}, Default: []string{}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		{Key: SigninLockoutEnabled, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		{Key: SigninLockoutMinutes, Kind: Limit, Layers: []Layer{Site}, Default: int64(15), Min: 1, Max: 10080, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},

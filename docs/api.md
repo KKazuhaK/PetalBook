@@ -445,7 +445,8 @@ cookie; `return` is made safe as for single sign-on.
   copied: refused, recorded in the audit log, and the stored counter is not
   moved), or the account is disabled. One code and one message for all.
 - `403 local_login_refused`: `ssoOnly` is in effect and the account is not an
-  administrator (see "Security settings").
+  administrator (or is a tenant administrator of a tenant whose
+  `signin.ssoOnlyAdmins` is on; see "Security settings").
 
 A passkey sign-in costs two indexed queries (the credential, by its id or by
 the named user's handle, and the user, by its id: a browser that is signing in
@@ -631,6 +632,8 @@ own.
 | `setup_invalid` | `setup`: setup is done, or the token is wrong |
 | `rate_limited` | the address made too many requests (SAML ACS, starts) |
 | `sso_required` | from 3.6 d4: the site's social sign-in, for a person whose tenant requires its own single sign-on (`signin.ssoOnly`) |
+| `join_pending` | a social sign-in whose address joins a tenant by request, when it has a request waiting there already |
+| `join_limit` | the same, over the day's requests for the address or the tenant's waiting ones |
 | `saml_destination` | the response has no `Destination`, or another one |
 | `saml_weak_signature` | the response is signed or digested with something weaker than SHA-256 |
 | `saml_encrypted` | the response carries an encrypted assertion, which the provider does not allow |
@@ -9388,10 +9391,8 @@ internal billing module's unit; the site's administrators define them.
 - `PUT /api/admin/tenants/{tenant}/plan` `{"plan": "slug"|null}` gives a tenant a
   plan. It clears **every** manual rule of the tenant, undated adjustments and
   dated grants alike (a grant that should outlive the change is set again
-  after it), except the rule of `features.tenantAudit`: that one is the site's
-  decision about the tenant (stamped when the tenant was made, or set by a site
-  administrator), not an adjustment to a plan, and clearing it would turn the
-  audit log on for a tenant the site withheld it from. Billing's rules stay. The answer is `{"plan", "cleared": [...]}`,
+  after it), the rule of `features.tenantAudit` included (a site administrator
+  sets it again after the change). Billing's rules stay. The answer is `{"plan", "cleared": [...]}`,
   each rule with its `key`.
 - Plans are held in memory as one snapshot with its own generation; a plan
   change recomputes the tenants lazily at their next read.
@@ -9579,6 +9580,8 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.tenantAudit`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`, `.githubConnect`; `mail.ownSender` | boolean (features) | S + rule |
 | `features.passkeys`, `features.tenancy` | boolean | S! |
 | `signin.social` | list: provider slugs, or `["*"]` (default) | S, T (3.6 d3) |
+| `domains.joinRole` | choice: `member` (the account roles that are not administrator's) | S, T (3.6 d5) |
+| `signin.ssoOnly`, `signin.ssoOnlyAdmins` | boolean (`true` is stricter; tenant layer only tightens) | S, T (3.6 d4) |
 | `audit.signins`, `.reads`, `.downloads`, `.api` | boolean | S, T |
 | `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` 0 for no age limit), choice `or`, `and` | S! |
 | `audit.keepDays.<category>` (eight) | limit, 0 (forever) to 3,650, or none | S! |
@@ -10285,12 +10288,18 @@ tenant with a rule, as for any key.
   sign-in** (`?sso_error=sso_required`; the social buttons are left off the
   tenant's page). It is met by the tenant's own SSO and by a site SSO offered to
   the tenant.
-- **The back door.** The tenant's administrators and the site's administrators
-  are never refused by it: they keep the password (and a site administrator the
-  site's social sign-in) until 3.7's emergency accounts. *Decision recorded for
-  the owner to confirm (2026-11-27): this is 2.8's rule carried to the tenant;
-  the alternative would refuse a tenant administrator too and rely on the site's
-  administrators alone.*
+- **The back door, and `signin.ssoOnlyAdmins`.** By default (`false`) the
+  tenant's administrators and the site's administrators are not refused by it:
+  they keep the password. The tenant-layer key `signin.ssoOnlyAdmins` (boolean,
+  default `false`, site and tenant layers, tightens only, as `ssoOnly`; set with
+  `PUT /api/admin/tenants/{tenant}/settings/signin.ssoOnlyAdmins`) decides
+  whether the tenant's administrators are held to the single sign-on like its
+  members. It matters only while `ssoOnly` is in effect for the tenant. On: a
+  tenant administrator's password and passkey sign-in, a password invite for an
+  administrator, and a reset link are refused (`403 local_login_refused`, as for
+  a member), and the site's social sign-in is refused to them as to members. A
+  site administrator always keeps the password, whatever a tenant sets (owner's
+  decision, 2026-11-27).
 - Another tenant's people are not touched: the setting is per tenant.
 - **Registration.** Registering with a password answers `409 sso_required`
   with `sso` (the answer of `discover` for the address, or absent when the
@@ -10303,7 +10312,10 @@ tenant with a rule, as for any key.
   `signin.ssoOnly` is on (in its own layer or by the site's rule, whether or not
   a single sign-on meets it now), demoting, disabling or deleting its last
   enabled administrator who has a password answers `409 last_local_admin`: the
-  site's 2.8 rule, per tenant.
+  site's 2.8 rule, per tenant. It does not apply while the tenant's
+  `signin.ssoOnlyAdmins` is on (no administrator needs a password then), and
+  turning `ssoOnly` on then does not need an administrator with a password
+  (`local_admin_required`).
 - **The sign-in calls of a tenant's provider** (discovery, keys, tokens, user
   information) do **not** spend the tenant's outbound share
   (`rate.outboundPerMinute`; decided in the d4 review): anyone may start
@@ -10375,9 +10387,9 @@ The tenant's layer of `signin.ssoOnly`, `auth.loginMode`,
 contexts above, gathered as one page with 2.8's checks scoped to the tenant:
 `local_admin_required` counts the tenant's enabled administrators with a
 password; `ssoOnly` needs an enabled SSO provider of the tenant or offered to
-it. Tenant administrators are never refused a password by `ssoOnly` (2.8's back
-door, kept per tenant). A site administrator is never refused by a tenant's
-setting.
+it. Tenant administrators are not refused a password by `ssoOnly` unless the
+tenant's `signin.ssoOnlyAdmins` is on (2.8's back door, kept per tenant by
+default). A site administrator is never refused by a tenant's setting.
 
 ### Storage modes
 
@@ -10693,8 +10705,8 @@ the form while `open` is false; `/api/auth/providers`' `register` is then true.
 
 Following the link (`POST /api/register/confirm`) asks the domain's mode again:
 
-- **(b) `auto`**: the account is made in the tenant as a `member`, with the
-  address verified, and signed in, as any registration: `201` with
+- **(b) `auto`**: the account is made in the tenant with the role of the
+  tenant's `domains.joinRole` (default `member`, see below), with the address verified, and signed in, as any registration: `201` with
   `"joined": {"slug": "acme", "name": "Acme"}`, so the page says which
   organisation it joined. Audited as `registered` and `join_auto`.
 - **(c) `request`**: no account: the registration becomes a **join request**,
@@ -10721,6 +10733,39 @@ Following the link (`POST /api/register/confirm`) asks the domain's mode again:
 `state` is `pending`, `approved`, `denied`, `withdrawn`, `expired` or
 `cancelled`.
 
+**The role of a joiner: `domains.joinRole`** (site and tenant layers, a choice,
+default `member`; `tenant.settings.write`). The role a person gets who joins by
+domain, whether by `auto` (a password sign-up or a social sign-in) or when an
+administrator approves the request without naming a role. The choices are the
+account roles that exist and are not the administrator's (today only `member`;
+a viewer role, when accounts have one, is added to the choices): `400 invalid`
+for any other value, `admin` included. It is read when the account is made, so
+a change touches no account that exists and no request already approved.
+
+**Social sign-in follows the join mode too.** A new account made by a **site
+social provider's `autoCreate`** with an address the provider vouches for (the
+rule "Which sign-ins vouch for an address", the one `trustsEmail` applies) on a domain that joins a tenant is made as the domain's mode
+says, instead of in the provider's own tenant (an address it does not vouch
+for, a subdomain, a domain with mode `off` or a tenant without
+`features.domains` is as before):
+
+- `auto`: the account is made in the tenant (role `domains.joinRole`) linked to
+  the identity, and signed in; audited as `join_auto`.
+- `request`: no account and no session: the identity is kept in a join request
+  (as a password sign-up's request, without a password), and the callback
+  redirects to `/register/waiting#<token>`, the same waiting page; the token is
+  the request's capability. The username comes from the claims, with a number
+  added when taken. Approving makes the account **linked to that identity**
+  (no password; the person signs in through the provider), with
+  `409 provider_unavailable` if the provider is gone or the tenant no longer
+  allows it (`signin.social`, or `ssoOnly`). Asking again while a request waits
+  redirects to `/login?sso_error=join_pending`; over the day's 3 requests or
+  the tenant's 1,000 waiting ones, to `?sso_error=join_limit`.
+- A disabled tenant takes nobody (`?sso_error=no_account`); a tenant that
+  refuses the provider (`signin.social`, its `ssoOnly`) answers
+  `?sso_error=not_allowed`. Mail need not be on: the address is verified by the
+  provider, and only the approval's message is sent when it is.
+
 **The waiting page** (`/register/waiting#<token>`, the registration link's
 token, which stays the request's capability):
 
@@ -10738,9 +10783,11 @@ as for one that does not exist):
 - `GET /api/admin/tenants/{tenant}/join-requests?state=pending|all&cursor=&limit=`
   (1 to 200, 50 by default): `{"items": [JoinRequest], "next": cursor | null}`,
   newest first; `pending` (the default) lists those still waiting.
-- `POST …/join-requests/{id}/approve` (`{"role": "member"}`, optional; `member`
-  is the only role): makes the account in the tenant with the address verified
-  and the password chosen at sign-up, and a personal space, in one transaction
+- `POST …/join-requests/{id}/approve` (`{"role": "member"}`, optional: one of
+  the roles `domains.joinRole` offers, the tenant's `domains.joinRole` when
+  absent; `400 invalid` for another, `admin` included): makes the account in
+  the tenant with the address verified and the password chosen at sign-up (or,
+  for a request made with a social sign-in, linked to that identity), and a personal space, in one transaction
   with the approval; the person is mailed a link to sign in, and the new account
   gets a `join_approved` notification. `200` with the JoinRequest (`user` is the
   account). `409 join_decided` when it is not waiting (decided, withdrawn,
@@ -10748,7 +10795,13 @@ as for one that does not exist):
   `409 sso_required` while the tenant requires its
   single sign-on (no password account is made: deny it, and the person signs in
   through the SSO); `409 exists` or `409 email_taken` when the username or the
-  address was taken meanwhile. Audited as `join_approved`.
+  address was taken meanwhile. For a request made with a social sign-in:
+  `409 conflict` ("That account is linked to another person.") when its identity
+  has meanwhile been linked to another account (the request stays waiting; deny
+  it), and `409 provider_unavailable` when the provider is gone or the tenant
+  no longer allows it. The account's username takes a number when the one asked
+  for was taken meanwhile, and the mail names the account made, in the language
+  of the sign-in's `Accept-Language`. Audited as `join_approved`.
 - `POST …/join-requests/{id}/deny`: the username is free again, and the person
   is mailed that it was not approved. `200` with the JoinRequest. Audited as
   `join_denied`.
@@ -11143,7 +11196,7 @@ SQLite and PostgreSQL.
 | `role_from_idp` | `groups.admins` promoted or demoted a person, or skipped a demotion | `user`, `provider`, `from`, `to`, `skipped` |
 | `email_released` | an unverified address moved to the account that confirmed it | `user` (the one cleared), `to` |
 | `plan_created`, `plan_changed`, `plan_deleted` | a plan | `plan`, `rules`, `affected`; `plan_changed` also `from` and `to` (each key's rule before and after, `null` for none) |
-| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (the manual rules, dated or not, except `features.tenantAudit`'s, each `{key, value, lower, from, until}`) |
+| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (the manual rules, dated or not, each `{key, value, lower, from, until}`) |
 | `storage_target_changed` | a tenant's storage target made, changed or removed | `tenant`, `kind`, `owner` or `host` and `namespace`, secrets as `"changed"` |
 | `storage_repository_created` | a repository made at a tenant's target for a space | `space`, `repository` |
 | `space_storage_moved` | a space moved between modes or targets | `space`, `from`, `to`, `job` |

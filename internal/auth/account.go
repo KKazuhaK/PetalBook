@@ -923,7 +923,7 @@ func (s *Service) waysToSignIn(ctx context.Context, q store.Q, userID, without s
 		}
 	}
 	st := s.sec(ctx)
-	if s.ssoOnlyFor(ctx, st, u.TenantID) && !u.IsAdmin() {
+	if s.localRefusedUser(ctx, st, u) {
 		return n, nil
 	}
 	if _, err := store.GetPasswordHash(ctx, q, userID); err == nil {

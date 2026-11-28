@@ -49,6 +49,9 @@ type JoinRequest struct {
 	DecidedAt    time.Time
 	DecidedBy    string
 	MadeUser     string
+	// ProviderID, Subject and IdentityLabel are the identity of the site social
+	// provider a request was made with ("" for a password sign-up).
+	ProviderID, Subject, IdentityLabel string
 }
 
 // StateAt is the request's state at now: a pending one past its expiry is expired.
@@ -60,13 +63,13 @@ func (r JoinRequest) StateAt(now time.Time) string {
 }
 
 const joinCols = `id, tenant_id, user_id, username, name, email, email_key, domain, password_hash, terms, lang, token_hash, state,
-	created, expires, decided_at, decided_by, made_user`
+	created, expires, decided_at, decided_by, made_user, provider_id, subject, identity_label`
 
 func scanJoin(sc interface{ Scan(...any) error }) (JoinRequest, error) {
 	var r JoinRequest
 	var cr, ex, de int64
 	err := sc.Scan(&r.ID, &r.TenantID, &r.UserID, &r.Username, &r.Name, &r.Email, &r.EmailKey, &r.Domain, &r.PasswordHash, &r.Terms, &r.Lang,
-		&r.TokenHash, &r.State, &cr, &ex, &de, &r.DecidedBy, &r.MadeUser)
+		&r.TokenHash, &r.State, &cr, &ex, &de, &r.DecidedBy, &r.MadeUser, &r.ProviderID, &r.Subject, &r.IdentityLabel)
 	r.Created, r.Expires, r.DecidedAt = fromMS(cr), fromMS(ex), optFromMS(de)
 	return r, err
 }
@@ -93,14 +96,14 @@ func queryJoins(ctx context.Context, q Q, query string, args ...any) ([]JoinRequ
 // written expired first; a live one is ErrJoinUsername or ErrJoinPending.
 // Run it in a transaction.
 func InsertJoinRequest(ctx context.Context, q Q, r JoinRequest, now time.Time) error {
-	if _, err := q.Exec(ctx, `UPDATE join_requests SET state = 'expired', password_hash = '' WHERE state = 'pending' AND expires <= ?
+	if _, err := q.Exec(ctx, `UPDATE join_requests SET state = 'expired', password_hash = '', provider_id = '', subject = '', identity_label = '' WHERE state = 'pending' AND expires <= ?
 		AND (username = ? OR tenant_id = ? AND email_key = ?)`, ms(now), r.Username, r.TenantID, r.EmailKey); err != nil {
 		return err
 	}
 	return atomically(ctx, q, func(q Q) error {
-		_, err := q.Exec(ctx, `INSERT INTO join_requests(`+joinCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 0, '', '')`,
+		_, err := q.Exec(ctx, `INSERT INTO join_requests(`+joinCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 0, '', '', ?, ?, ?)`,
 			r.ID, r.TenantID, r.UserID, r.Username, r.Name, r.Email, r.EmailKey, r.Domain, r.PasswordHash, r.Terms, r.Lang, r.TokenHash,
-			ms(r.Created), ms(r.Expires))
+			ms(r.Created), ms(r.Expires), r.ProviderID, r.Subject, r.IdentityLabel)
 		if on, ok := UniqueOn(err); ok {
 			if strings.Contains(on, "username") {
 				return ErrJoinUsername
@@ -164,7 +167,7 @@ func ListJoinRequests(ctx context.Context, q Q, tenantID string, f JoinFilter, n
 // approval made. The password hash goes. False when there is no such pending
 // request: the single point where two decisions are told apart.
 func DecideJoinRequest(ctx context.Context, q Q, tenantID, id, state, by, madeUser string, now time.Time) (bool, error) {
-	res, err := q.Exec(ctx, `UPDATE join_requests SET state = ?, decided_at = ?, decided_by = ?, made_user = ?, password_hash = ''
+	res, err := q.Exec(ctx, `UPDATE join_requests SET state = ?, decided_at = ?, decided_by = ?, made_user = ?, password_hash = '', provider_id = '', subject = '', identity_label = ''
 		WHERE id = ? AND tenant_id = ? AND state = 'pending' AND expires > ?`, state, ms(now), by, madeUser, id, tenantID, ms(now))
 	if err != nil {
 		return false, err
@@ -176,7 +179,7 @@ func DecideJoinRequest(ctx context.Context, q Q, tenantID, id, state, by, madeUs
 // WithdrawJoinRequest withdraws the pending request of a token (the person,
 // from the waiting page); false when it is not pending.
 func WithdrawJoinRequest(ctx context.Context, q Q, tokenHash string, now time.Time) (bool, error) {
-	res, err := q.Exec(ctx, `UPDATE join_requests SET state = 'withdrawn', decided_at = ?, password_hash = ''
+	res, err := q.Exec(ctx, `UPDATE join_requests SET state = 'withdrawn', decided_at = ?, password_hash = '', provider_id = '', subject = '', identity_label = ''
 		WHERE token_hash = ? AND state = 'pending' AND expires > ?`, ms(now), tokenHash, ms(now))
 	if err != nil {
 		return false, err
@@ -199,7 +202,7 @@ func CancelJoinRequests(ctx context.Context, q Q, tenantID, domain string, now t
 		}
 		out = out[:0]
 		for _, r := range read {
-			res, err := q.Exec(ctx, `UPDATE join_requests SET state = 'cancelled', decided_at = ?, password_hash = ''
+			res, err := q.Exec(ctx, `UPDATE join_requests SET state = 'cancelled', decided_at = ?, password_hash = '', provider_id = '', subject = '', identity_label = ''
 				WHERE id = ? AND state = 'pending'`, ms(now), r.ID)
 			if err != nil {
 				return err
@@ -271,7 +274,7 @@ const JoinKeep = 30 * 24 * time.Hour
 // (their password hash goes), and deletes those that ended more than
 // JoinKeep before now.
 func SweepJoinRequests(ctx context.Context, q Q, now time.Time) error {
-	if _, err := q.Exec(ctx, `UPDATE join_requests SET state = 'expired', password_hash = '' WHERE state = 'pending' AND expires <= ?`, ms(now)); err != nil {
+	if _, err := q.Exec(ctx, `UPDATE join_requests SET state = 'expired', password_hash = '', provider_id = '', subject = '', identity_label = '' WHERE state = 'pending' AND expires <= ?`, ms(now)); err != nil {
 		return err
 	}
 	cut := ms(now.Add(-JoinKeep))
