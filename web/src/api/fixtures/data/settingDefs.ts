@@ -6,10 +6,11 @@ import type { SiteSetting } from '../../types.ts'
 
 export const SETTING_DEFS: SiteSetting[] = [
   {
-    key: 'features.registration',
-    kind: 'boolean',
+    key: 'registration.mode',
+    kind: 'choice',
     layers: ['site', 'tenant'],
-    site: { value: false, lower: { mode: 'lock' } },
+    choices: ['open', 'invite', 'closed'],
+    site: { value: 'invite', lower: { mode: 'allow' } },
   },
   {
     key: 'registration.domains',
@@ -431,7 +432,7 @@ export const SETTING_DEFS: SiteSetting[] = [
 // The settings a tenant has a rule for (the ones with a tenant layer, and the site's own that a site administrator
 // may set for one tenant).
 export const TENANT_KEYS: string[] = [
-  'features.registration',
+  'registration.mode',
   'registration.domains',
   'registration.perHour',
   'legal.termsUrl',

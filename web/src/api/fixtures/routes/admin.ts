@@ -1035,7 +1035,7 @@ export const adminRoutes: Route[] = [
         name: rest.name,
         default: false,
         disabled: false,
-        registration: { open: false },
+        registration: { mode: 'invite' },
         quota: { people: null, spaces: null, bytes: null, pages: null },
         plan: null,
         origin: 'admin' as const,

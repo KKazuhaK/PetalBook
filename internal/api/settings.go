@@ -158,9 +158,10 @@ func (s *server) readChange(c *call, tenantLayer bool) (settings.Change, string,
 	return ch, tok, true
 }
 
-// beforeOpening is the checks of "Registration" for a value that opens it.
-// Registration needs mail (the next part of 3.3), so until it exists nothing
-// opens; the check for ssoOnly joins here with it.
+// beforeOpening is the checks of a setting that opens something: organisation
+// creation needs tenants and mail, and a plan must exist. The registration
+// mode needs none: an account made by a sign-in needs no mail, and password
+// sign-up checks mail when it is used.
 func (s *server) beforeOpening(ctx context.Context, key string, ch settings.Change, site bool) error {
 	switch key {
 	case settings.FeatureOrgCreation:
@@ -175,30 +176,6 @@ func (s *server) beforeOpening(ctx context.Context, key string, ch settings.Chan
 			}
 		}
 		return nil
-	}
-	if key != settings.RegistrationOpen {
-		return nil
-	}
-	opens := ch.HasValue && ch.Value == true || ch.HasSiteRule && ch.SiteRule != nil && ch.SiteRule.Value == true
-	if !opens && site && ch.HasLower && ch.Lower != nil && ch.Lower.Mode != settings.Lock {
-		// Unlocking lets a tenant's stored true take effect, or the site's for
-		// one tenant.
-		for _, l := range []settings.Layer{settings.Tenant, settings.Site} {
-			on, err := store.AnyLayeredValue(ctx, s.opt.Store.Q(), string(l), key, "true")
-			if err != nil {
-				return err
-			}
-			opens = opens || on
-		}
-	}
-	if !opens {
-		return nil
-	}
-	if !s.registrationReady() {
-		return &settings.Error{Code: "mail_not_configured", Msg: "Registration verifies addresses by mail, and mail is not enabled."}
-	}
-	if s.auth.SSOOnlyStored(ctx) {
-		return &settings.Error{Code: "sso_only_with_registration", Msg: "Password sign-in is refused (ssoOnly), so nobody could finish registering; switch ssoOnly off first."}
 	}
 	return nil
 }
@@ -227,7 +204,7 @@ func (s *server) beforeOrgCreation(ctx context.Context, ch settings.Change) erro
 // closedRegistration cancels the pending registrations of tenants that are not
 // open now, after a change that may have closed one.
 func (s *server) closedRegistration(ctx context.Context, key string) {
-	if key != settings.RegistrationOpen && key != settings.FeatureOrgCreation && key != settings.FeatureTenancy {
+	if key != settings.RegistrationMode && key != settings.FeatureOrgCreation && key != settings.FeatureTenancy {
 		return
 	}
 	if err := s.auth.CancelClosedRegistrations(ctx); err != nil {

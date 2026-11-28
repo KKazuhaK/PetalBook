@@ -48,8 +48,18 @@ func (f *ssoFx) orgProvider(t *testing.T, c *client, tenant, slug string, extra 
 	t.Helper()
 	f.idp.idp.RedirectURIs = append(f.idp.idp.RedirectURIs, testPublic+"/api/auth/oidc/"+slug+"/callback")
 	body := f.idp.providerBody(slug, map[string]any{"enabled": true})
+	open := false
 	for k, v := range extra {
+		if k == "_open" {
+			// Not a field of the provider: the organisation's registration is
+			// opened, so that its sign-ins make accounts.
+			open = v == true
+			continue
+		}
 		body[k] = v
+	}
+	if open {
+		c.do("PUT", "/api/admin/tenants/"+tenant+"/settings/registration.mode", map[string]any{"value": "open"}).want(t, 200, "")
 	}
 	r := c.do("POST", providersPath(tenant), body).want(t, 201, "")
 	if r.body["owner"] != tenant || r.body["class"] != "sso" || r.body["enabled"] != true {
@@ -117,8 +127,8 @@ func TestTwoTenantsOnTheSameIssuerStayApart(t *testing.T) {
 	idp := ssoIDP(t)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		f := newSSOFx(t, a, idp)
-		f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"autoCreate": true})
-		f.orgProvider(t, f.admC, f.tenC, "beta-sso", map[string]any{"autoCreate": true})
+		f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"_open": true})
+		f.orgProvider(t, f.admC, f.tenC, "beta-sso", map[string]any{"_open": true})
 		b, c := a.newClient(""), a.newClient("")
 		if loc := idp.signIn2(t, b, "acme-sso", "alice", nil); loc != "/" {
 			t.Fatal(loc)
@@ -156,7 +166,7 @@ func TestAutoCreateLandsInTheProvidersTenant(t *testing.T) {
 		f := newSSOFx(t, a, idp)
 		// The jit tenant of a tenant's provider is its own: another is refused.
 		f.admC.do("POST", providersPath(f.tenC), idp.providerBody("beta-sso", map[string]any{"tenant": f.tenB})).want(t, 400, "invalid")
-		id := f.orgProvider(t, f.admC, f.tenC, "beta-sso", map[string]any{"autoCreate": true})
+		id := f.orgProvider(t, f.admC, f.tenC, "beta-sso", map[string]any{"_open": true})
 		if p := f.admC.do("GET", providersPath(f.tenC)+"/"+id, nil).want(t, 200, ""); p.body["tenant"] != f.tenC {
 			t.Fatal(p.raw)
 		}
@@ -302,7 +312,7 @@ func TestTheGroupAllowlistIsCheckedAtEverySignIn(t *testing.T) {
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		idp.idp.Users["dave"]["groups"] = []string{"staff", "x"}
 		f := newSSOFx(t, a, idp)
-		id := f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"autoCreate": true, "groups": map[string]any{"allow": []string{"staff"}}})
+		id := f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"_open": true, "groups": map[string]any{"allow": []string{"staff"}}})
 		if g := f.admB.do("GET", providersPath(f.tenB)+"/"+id, nil).want(t, 200, "").body["groups"].(map[string]any); strs(g["allow"])[0] != "staff" || g["enabled"] != false {
 			t.Fatal(g)
 		}
@@ -334,7 +344,7 @@ func TestASiteProviderOfferedToAList(t *testing.T) {
 	idp.idp.RedirectURIs = append(idp.idp.RedirectURIs, testPublic+"/api/auth/oidc/corp/callback")
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		f := newSSOFx(t, a, idp)
-		r := f.root.do("POST", "/api/admin/providers", idp.providerBody("corp", map[string]any{"tenants": []string{f.tenB}, "autoCreate": true, "tenant": f.tenC})).want(t, 201, "")
+		r := f.root.do("POST", "/api/admin/providers", idp.providerBody("corp", map[string]any{"tenants": []string{f.tenB}, "tenant": f.tenC})).want(t, 201, "")
 		if ts := strs(r.body["tenants"]); len(ts) != 1 || ts[0] != f.tenB {
 			t.Fatal(r.raw)
 		}
@@ -428,7 +438,7 @@ func TestOwnSSOOffNeedsTheConfirmation(t *testing.T) {
 	idp := ssoIDP(t)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		f := newSSOFx(t, a, idp)
-		id := f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"autoCreate": true})
+		id := f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"_open": true})
 		rule := "/api/admin/tenants/" + f.tenB + "/settings/features.ownSso"
 
 		// A dated rule that switches it off later.
@@ -535,7 +545,7 @@ func TestATenantsSSOTrustsOnlyItsOwnVerifiedDomains(t *testing.T) {
 	idp.addUser("sub", testidp.Claims{"sub": "sub-sub", "preferred_username": "subby", "email": "subby@eu.acme.example", "email_verified": true})
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		f := newSSOFx(t, a, idp)
-		f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"autoCreate": true})
+		f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"_open": true})
 		for who, want := range map[string]bool{"alice": true, "carol": false, "sub": false} {
 			c := a.newClient("")
 			if loc := idp.signIn2(t, c, "acme-sso", who, nil); loc != "/" {

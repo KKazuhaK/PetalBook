@@ -839,7 +839,6 @@ CREATE TABLE providers (
   secret_enc        TEXT COLLATE "C" NOT NULL DEFAULT '',
   config            TEXT COLLATE "C" NOT NULL DEFAULT '{}',
   jit_tenant        TEXT COLLATE "C" NOT NULL DEFAULT '',
-  auto_create       BIGINT NOT NULL DEFAULT 0,
   trust_email_optin BIGINT NOT NULL DEFAULT 0,
   cache             TEXT COLLATE "C" NOT NULL DEFAULT '',
   status_ok         BIGINT NOT NULL DEFAULT 0,

@@ -86,7 +86,7 @@ func TestARegistrationHoldsItsOrganisationSlugUntilItEnds(t *testing.T) {
 			t.Fatalf("joins pending: %d", n)
 		}
 		// Cancelling a tenant's joining registrations leaves the organisation's.
-		if _, err := store.DeleteRegistrationsOf(ctx, st.Q(), store.DefaultTenantID); err != nil {
+		if _, err := store.DeleteRegistrationsOf(ctx, st.Q(), store.DefaultTenantID, true); err != nil {
 			t.Fatal(err)
 		}
 		if n, _ := store.CountPendingOrgRegistrations(ctx, st.Q(), now); n != 1 {

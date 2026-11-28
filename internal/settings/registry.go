@@ -11,7 +11,10 @@ import (
 
 // Keys of the settings of 3.3.
 const (
-	RegistrationOpen    = "features.registration"
+	// RegistrationMode is who may make an account: open, invite or closed. The
+	// site's value governs the people who belong to no organisation (the default
+	// tenant); an organisation has its own, which the site's does not bound.
+	RegistrationMode    = "registration.mode"
 	RegistrationDomains = "registration.domains"
 	RegistrationPerHour = "registration.perHour"
 	LegalTermsURL       = "legal.termsUrl"
@@ -104,7 +107,8 @@ const (
 
 	// What a tenant may use in all: set for a tenant by a site rule or its
 	// plan, never by the tenant (no tenant layer); null is no limit.
-	// QuotaPeople is counted and shown, not refused.
+	// QuotaPeople is refused when an account would be made over it (see
+	// auth.Service.CreateUser).
 	QuotaPeople = "quota.people"
 	QuotaSpaces = "quota.spaces"
 	QuotaBytes  = "quota.bytes"
@@ -204,6 +208,16 @@ const (
 	QuotaPagesPerPerson  = "quota.pagesPerPerson"
 )
 
+// The values of RegistrationMode, loosest first. open: any way of making an
+// account works. invite: only a holder of an invite link makes one (an
+// organisation's own email-domain join keeps working: its administrators chose
+// it). closed: nothing makes an account, invite links included.
+const (
+	RegOpen   = "open"
+	RegInvite = "invite"
+	RegClosed = "closed"
+)
+
 // baseDefinitions are most of the settings that exist, in the order the pages
 // show them (Definitions adds the audit log's, see registry_audit.go).
 //
@@ -215,7 +229,7 @@ const (
 // read by internal/quota, not something a person sets for themselves.
 func baseDefinitions() []*Def {
 	return []*Def{
-		{Key: RegistrationOpen, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Lock}},
+		{Key: RegistrationMode, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: RegInvite, Choices: []string{RegOpen, RegInvite, RegClosed}, Lower: Lower{Mode: Allow}},
 		{Key: RegistrationDomains, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{}, Lower: Lower{Mode: Allow}, Check: checkDomains},
 		{Key: RegistrationPerHour, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: int64(50), Min: 1, Max: 10000,
 			Lower: Lower{Mode: Restrict, Max: i64(50)}},

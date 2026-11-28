@@ -236,6 +236,11 @@ export const tenantsEn: TenantsMessages = {
     fromFlag: 'Set by a command-line flag; read only here',
     choices: {
       'storage.assets': { space: "In the space's own repository", repository: 'In a separate attachments repository' },
+      'registration.mode': {
+        open: 'Open: anyone may make an account',
+        invite: 'By invitation: only with an invite link',
+        closed: 'Closed: nobody makes an account',
+      },
     } as Record<string, Record<string, string>>,
     siteLock: 'Force for this tenant',
     siteLockHelp:
@@ -296,7 +301,7 @@ export const tenantsEn: TenantsMessages = {
       other: 'That did not work',
     },
     names: {
-      'features.registration': 'Open registration',
+      'registration.mode': 'Who may make an account',
       'registration.domains': 'Email domains registration allows',
       'signin.social': 'Social sign-in its people may use',
       'registration.perHour': 'Registrations per hour',
@@ -417,8 +422,8 @@ export const tenantsEn: TenantsMessages = {
       'storage.hosts': 'One host per line; * allows any. Read only when the server was started with --remote-host.',
       'cache.partial': 'Needs a Git that supports partial clones.',
       'daily.languages': 'Canonical language tags, such as zh-Hans and en.',
-      'features.registration':
-        'Off by default and locked for tenants: to open it, a site administrator unlocks it first, then it is switched on in the tenant. Needs mail to be enabled.',
+      'registration.mode':
+        "By invitation by default. For the site this governs people who belong to no organization; each organization has its own, which the site's does not bound. Closed also stops invite links and email-domain joins. Password sign-up needs mail.",
       'registration.perHour': 'How many registrations one tenant takes in an hour.',
       'features.offline':
         "On by default. Off: the sync endpoints answer 403 feature_off (features.offline), and the web app stops syncing and deletes the offline copies of the signed-in account on its next start or poll. Copies are not encrypted by the app and are deleted when a person signs out. A tenant can turn it off for itself; the site's value is what tenants that say nothing follow, and the site can lock it (a locked off is off for every tenant) or restrict it to off.",

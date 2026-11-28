@@ -16,7 +16,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { adminApi, useAuthProviders, useProviderTemplates, useSyncedGroups, useTenantProviders } from '@/api/admin'
 import { ApiError } from '@/api/client'
-import { useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { keys } from '@/api/hooks'
 import type {
   AuthProvider,
@@ -50,6 +50,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { absoluteTime } from '@/lib/time'
+import { adminPath } from '@/lib/urls'
 import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
@@ -487,7 +488,6 @@ interface F {
   icon: string
   enabled: boolean
   order: string
-  autoCreate: boolean
   mergeVerifiedEmail: boolean
   oidc: { issuer: string; clientId: string; secret: string | null; scopes: string }
   saml: {
@@ -501,7 +501,7 @@ interface F {
     signRequests: boolean
     allowIdpInitiated: boolean
   }
-  github: { baseUrl: string; clientId: string; secret: string | null; organizations: string }
+  github: { baseUrl: string; clientId: string; secret: string | null }
   groups: {
     enabled: boolean
     claim: string
@@ -521,7 +521,6 @@ const blank = (): F => ({
   icon: '',
   enabled: true,
   order: '0',
-  autoCreate: false,
   mergeVerifiedEmail: false,
   oidc: { issuer: '', clientId: '', secret: null, scopes: 'profile email' },
   saml: {
@@ -535,7 +534,7 @@ const blank = (): F => ({
     signRequests: false,
     allowIdpInitiated: false,
   },
-  github: { baseUrl: 'https://github.com', clientId: '', secret: null, organizations: '' },
+  github: { baseUrl: 'https://github.com', clientId: '', secret: null },
   groups: { enabled: false, claim: 'groups', missing: 'keep', map: [], allow: '' },
 })
 
@@ -549,7 +548,6 @@ function formOf(p: AuthProvider): F {
   f.icon = p.icon
   f.enabled = p.enabled
   f.order = String(p.order)
-  f.autoCreate = p.autoCreate
   f.mergeVerifiedEmail = p.mergeVerifiedEmail
   if (p.oidc)
     f.oidc = {
@@ -582,7 +580,6 @@ function formOf(p: AuthProvider): F {
       baseUrl: p.github.baseUrl,
       clientId: p.github.clientId,
       secret: null,
-      organizations: p.github.organizations.join('\n'),
     }
   return f
 }
@@ -607,7 +604,6 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
   // A new provider that is left on is not asked to be: the server then keeps one it cannot reach switched off.
   if (was ? diff('enabled') : !f.enabled) out.enabled = f.enabled
   if (diff('order')) out.order = Number(f.order)
-  if (diff('autoCreate')) out.autoCreate = f.autoCreate
   if (diff('mergeVerifiedEmail')) out.mergeVerifiedEmail = f.mergeVerifiedEmail
   const gb = base?.groups
   const groups: NonNullable<ProviderInput['groups']> = {}
@@ -657,7 +653,6 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
     if (!b || g.baseUrl !== b.baseUrl) block.baseUrl = g.baseUrl.trim()
     if (!b || g.clientId !== b.clientId) block.clientId = g.clientId.trim()
     if (g.secret !== null) block.clientSecret = g.secret
-    if (!b || g.organizations !== b.organizations) block.organizations = lines(g.organizations)
     if (Object.keys(block).length || !was) out.github = block
   }
   return out
@@ -776,12 +771,12 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
           onChange={(e) => set({ order: e.target.value })}
         />
         <Check label={tp.enabledLabel} checked={f.enabled} onChange={(on) => set({ enabled: on })} />
-        <Check
-          label={tp.autoCreate}
-          help={tp.autoCreateHelp}
-          checked={f.autoCreate}
-          onChange={(on) => set({ autoCreate: on })}
-        />
+        <p className="text-xs text-muted-foreground" data-slot="registration-note">
+          {tp.registrationNote}{' '}
+          <Link to={adminPath('settings', undefined, api.tenant)} className="text-brand underline underline-offset-4">
+            {tp.registrationNoteLink}
+          </Link>
+        </p>
         {org ? (
           <p className="text-xs text-muted-foreground" data-slot="org-trust">
             {tp.org.trust}
@@ -1322,18 +1317,6 @@ function GithubFields({ f, set, initial }: Sub) {
           onChange={(v) => up({ secret: v })}
         />
       )}
-      <div className="grid gap-1.5">
-        <Label htmlFor="github-orgs">{tp.github.organizations}</Label>
-        <Textarea
-          id="github-orgs"
-          value={g.organizations}
-          onChange={(e) => up({ organizations: e.target.value })}
-          spellCheck={false}
-          rows={3}
-          className="min-w-0 break-all"
-        />
-        <p className="text-xs text-muted-foreground">{tp.github.organizationsHelp}</p>
-      </div>
       {initial?.github && <ReadOnly label={tp.github.redirectUrl} value={initial.github.redirectUrl} />}
     </fieldset>
   )

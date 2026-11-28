@@ -7,11 +7,11 @@ import (
 	"petalbook.app/server/internal/auth/testidp"
 )
 
-// A new account made by a site social provider's autoCreate with an address
+// A new account made by a site social provider with an address
 // the provider vouches for follows the domain's join mode (3.6 d5), as a
 // password sign-up does: auto joins the organisation, request waits for its
 // administrators, off is as before (the provider's own tenant).
-func TestSocialAutoCreateFollowsTheDomainsJoinMode(t *testing.T) {
+func TestSocialSignInFollowsTheDomainsJoinMode(t *testing.T) {
 	t.Parallel()
 	idp := newIDPFor(t, "soc")
 	add := func(key, email string, verified bool) {
@@ -24,13 +24,14 @@ func TestSocialAutoCreateFollowsTheDomainsJoinMode(t *testing.T) {
 	add("dan", "dan@acme.example", true)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		f := newJoinFx(t, a)
-		f.root.do("POST", "/api/admin/providers", idp.providerBody("soc", map[string]any{"enabled": true, "class": "social", "autoCreate": true, "mergeVerifiedEmail": true})).want(t, 201, "")
+		f.root.do("POST", "/api/admin/providers", idp.providerBody("soc", map[string]any{"enabled": true, "class": "social", "mergeVerifiedEmail": true})).want(t, 201, "")
 		in := func(who string) (string, *client) {
 			c := a.newClient("")
 			return idp.signIn2(t, c, "soc", who, nil), c
 		}
 
-		// Off (the default): as before, the account is made where the provider puts it.
+		// Off (the default): the account is made where the provider puts it, as the site's mode (open here) allows.
+		f.root.putSetting("registration.mode", "open").want(t, 200, "")
 		if loc, c := in("dan"); loc != "/" || signedInAs(t, c) != "dan" || userTenant(t, a, "dan").TenantID == f.tenB {
 			t.Fatalf("off: %s", loc)
 		}

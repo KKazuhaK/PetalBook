@@ -40,11 +40,11 @@ func lower(mode string) *settings.Lower { return &settings.Lower{Mode: mode} }
 func TestDefaultsAndFollowing(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
-		e, err := s.Get(ctx, ten, settings.RegistrationOpen)
+		e, err := s.Get(ctx, ten, settings.RegistrationMode)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if e.Value != false || e.Site.Lower.Mode != settings.Lock || e.Tenant == nil || e.Tenant.Value != nil || !e.Tenant.InEffect {
+		if e.Value != settings.RegInvite || e.Site.Lower.Mode != settings.Allow || e.Tenant == nil || e.Tenant.Value != nil || !e.Tenant.InEffect {
 			t.Fatalf("%+v %+v", e, e.Tenant)
 		}
 		// The tenant follows the site until it says otherwise.
@@ -148,39 +148,28 @@ func TestRestrictLimit(t *testing.T) {
 	})
 }
 
-func TestRegistrationOpenIsLockedBySite(t *testing.T) {
+func TestRegistrationModeIsTheTenantsOwn(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
-		if err := s.SetTenant(ctx, ten, settings.RegistrationOpen, settings.Change{HasValue: true, Value: true}); code(err) != settings.CodeLocked {
-			t.Fatalf("%v", err)
-		}
-		// Unlocked at the site, the tenant may open it; the site's own value stays false.
-		if _, err := s.SetSite(ctx, settings.RegistrationOpen, settings.Change{HasLower: true, Lower: lower("allow")}); err != nil {
+		// The tenant's mode is not bounded by the site's: it may be looser.
+		if _, err := s.SetSite(ctx, settings.RegistrationMode, settings.Change{HasValue: true, Value: settings.RegClosed}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.SetTenant(ctx, ten, settings.RegistrationOpen, settings.Change{HasValue: true, Value: true}); err != nil {
-			t.Fatal(err)
+		if err := s.SetTenant(ctx, ten, settings.RegistrationMode, settings.Change{HasValue: true, Value: settings.RegOpen}); err != nil {
+			t.Fatalf("the site's mode does not bound an organisation's: %v", err)
 		}
-		if e, _ := s.Get(ctx, ten, settings.RegistrationOpen); e.Value != true || e.Site.Value != false {
+		if e, _ := s.Get(ctx, ten, settings.RegistrationMode); e.Value != settings.RegOpen || e.Site.Value != settings.RegClosed {
 			t.Fatalf("%+v", e)
 		}
-		if e, _ := s.Get(ctx, "", settings.RegistrationOpen); e.Value != false {
+		if e, _ := s.Get(ctx, "", settings.RegistrationMode); e.Value != settings.RegClosed {
 			t.Fatal("a tenant's value leaked into the site's")
 		}
-		// A boolean can only be restricted to [false].
-		_, err := s.SetSite(ctx, settings.RegistrationOpen, settings.Change{HasLower: true, Lower: &settings.Lower{Mode: settings.Restrict, Options: []any{true}}})
-		if code(err) != settings.CodeInvalid {
-			t.Fatalf("%v", err)
-		}
-		if _, err := s.SetSite(ctx, settings.RegistrationOpen, settings.Change{HasLower: true, Lower: &settings.Lower{Mode: settings.Restrict, Options: []any{false}}}); err != nil {
+		// A site rule for the tenant still restricts it, as for any setting.
+		if _, err := s.SetSite(ctx, settings.RegistrationMode, settings.Change{HasLower: true, Lower: &settings.Lower{Mode: settings.Restrict, Options: []any{settings.RegInvite, settings.RegClosed}}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.SetTenant(ctx, ten, settings.RegistrationOpen, settings.Change{HasValue: true, Value: true}); code(err) != settings.CodeRestricted {
-			t.Fatalf("turning on under 'only off': %v", err)
-		}
-		// The tenant's true is kept but no longer in effect.
-		if e, _ := s.Get(ctx, ten, settings.RegistrationOpen); e.Tenant.InEffect || e.Value != false {
-			t.Fatalf("%+v", e)
+		if err := s.SetTenant(ctx, ten, settings.RegistrationMode, settings.Change{HasValue: true, Value: settings.RegOpen}); code(err) != settings.CodeRestricted {
+			t.Fatalf("under a restriction: %v", err)
 		}
 	})
 }
@@ -199,7 +188,7 @@ func TestValuesAreChecked(t *testing.T) {
 			{settings.LegalTermsURL, "http://example.com", settings.CodeInvalid},
 			{settings.LegalTermsURL, "https://user:pw@example.com", settings.CodeInvalid},
 			{settings.LegalTermsURL, "", ""},
-			{settings.RegistrationOpen, "yes", settings.CodeInvalid},
+			{settings.RegistrationMode, "yes", settings.CodeInvalid},
 		}
 		for _, c := range cases {
 			_, err := s.SetSite(ctx, c.key, settings.Change{HasValue: true, Value: c.v})

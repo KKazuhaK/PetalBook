@@ -176,12 +176,15 @@ func (s *server) getRegister(c *call) {
 	// An address of a domain that joins its organisation signs up whatever
 	// the tenant's own registration says (3.6 d5).
 	domainJoin := s.auth.DomainJoinOpen(c.r.Context())
-	if !rules.Open && !orgOpen && !domainJoin {
-		writeJSON(c.w, http.StatusOK, map[string]any{"open": false, "orgCreation": map[string]bool{"open": false}, "domainJoin": false})
+	// The mode of the tenant the page names says what to tell a person who
+	// cannot sign up here: use the link of an invitation, or ask an administrator.
+	mode := rules.Mode
+	if !rules.PasswordOpen && !orgOpen && !domainJoin {
+		writeJSON(c.w, http.StatusOK, map[string]any{"open": false, "mode": mode, "orgCreation": map[string]bool{"open": false}, "domainJoin": false})
 		return
 	}
-	joinOpen := rules.Open
-	if !rules.Open {
+	joinOpen := rules.PasswordOpen
+	if !rules.PasswordOpen {
 		id = store.DefaultTenantID
 		if rules, err = s.auth.Registration(c.r.Context(), id); err != nil {
 			s.fail(c.w, err)
@@ -193,7 +196,7 @@ func (s *server) getRegister(c *call) {
 	if domains == nil {
 		domains = []string{}
 	}
-	writeJSON(c.w, http.StatusOK, map[string]any{"open": joinOpen, "orgCreation": map[string]bool{"open": orgOpen}, "domainJoin": domainJoin,
+	writeJSON(c.w, http.StatusOK, map[string]any{"open": joinOpen, "mode": mode, "orgCreation": map[string]bool{"open": orgOpen}, "domainJoin": domainJoin,
 		"tenant": map[string]string{"slug": ref.Slug, "name": ref.Name}, "domains": domains, "termsUrl": rules.TermsURL, "privacyUrl": rules.PrivacyURL, "password": map[string]int{"minLength": auth.MinPasswordChars}})
 }
 

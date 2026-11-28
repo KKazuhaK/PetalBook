@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/ratelimit"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -339,6 +340,10 @@ func (s *Service) inviteGate(ctx context.Context, token, ip string, cap *Captcha
 	inv, err := s.findInvite(ctx, token)
 	if err == nil {
 		s.refundIP(ip)
+		// A closed tenant makes no account, by an invite either.
+		if s.RegistrationMode(ctx, inv.TenantID) == settings.RegClosed {
+			return nil, st, closedErr()
+		}
 	}
 	return inv, st, err
 }

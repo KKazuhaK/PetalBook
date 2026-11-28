@@ -329,7 +329,7 @@ with the reason given in the registry.
 | `integrations.tokens` + `machine_access.tokens` | `features.tokens` | bool, S+T, `true` |
 | `integrations.mcp` + `machine_access.mcp` | `features.mcp` | bool, S+T, `true` |
 | `other.offline` + `offline.copies` | `features.offline` | bool, S+T, `true` (the endpoints answer `403 feature_off`, step (b)) |
-| `other.registration` + `registration.open` | `features.registration` | bool, S+T, `false`, site lower lock |
+| `other.registration` + `registration.open` | `registration.mode` | choice (`open`, `invite`, `closed`), S+T, `invite`, site lower `allow`; the site's value governs the default tenant, an organisation's is its own (2026-11-27) |
 | `sync.assetsRepository` | **dropped**: a per-tenant rule restricting `storage.assets` to `[space]`. `AssetsInput.RepositoryOff` goes | — |
 | `storage.modes` | `storage.mode` | choice `server` / `own` / `tenant`, S+T. Restrict = the allowed modes |
 | `storage.maxFileBytes` | **dropped**: a per-tenant rule restricting `files.maxBytes` | — |
@@ -602,7 +602,7 @@ run on SQLite and PostgreSQL (`PETALBOOK_TEST_POSTGRES`).
   tenant's own lower may only tighten): `storage.mode` (the allowed modes),
   `files.maxBytes` (`--max-upload` and per-tenant restrictions),
   `quota.*PerPerson` (the tenant's choice for its people, under the site's
-  restriction), `features.registration`, `features.offline`, `registration.*`,
+  restriction), `features.offline`, `registration.*`,
   `daily.*`, `legal.*`, `storage.assets`. For these a site rule that should hold
   must be a lock or a restriction; a value alone is a default the tenant may
   change, by design ("default or forced").

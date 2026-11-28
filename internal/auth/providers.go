@@ -63,8 +63,7 @@ type provCfg struct {
 	ClientID string   `json:"clientId,omitempty"`
 	Scopes   []string `json:"scopes,omitempty"`
 	// GitHub
-	BaseURL       string   `json:"baseUrl,omitempty"`
-	Organizations []string `json:"organizations,omitempty"`
+	BaseURL string `json:"baseUrl,omitempty"`
 	// App is the GitHub App's record, when the row is the one the App is set up
 	// on (internal/github): the row's client is the App's, its secret is in
 	// secrets, and only the App's own settings change them. Kept as it is here.
@@ -389,9 +388,9 @@ type ProviderView struct {
 	Icon               string `json:"icon"`
 	Enabled            bool   `json:"enabled"`
 	Order              int    `json:"order"`
-	AutoCreate         bool   `json:"autoCreate"`
 	MergeVerifiedEmail bool   `json:"mergeVerifiedEmail"`
-	// Tenant is the tenant autoCreate puts new accounts in (an id).
+	// Tenant is the tenant the provider is aimed at, where its new accounts land
+	// as that tenant's registration mode allows (an id).
 	Tenant string `json:"tenant"`
 	// Tenants is to whom a site SSO provider is offered: "all" or a list of
 	// tenant ids; null for a social provider and for a tenant's own (3.6 d3).
@@ -458,11 +457,10 @@ type SAMLView struct {
 
 // GitHubView is the GitHub part of a provider.
 type GitHubView struct {
-	BaseURL       string   `json:"baseUrl"`
-	ClientID      string   `json:"clientId"`
-	HasSecret     bool     `json:"hasSecret"`
-	Organizations []string `json:"organizations"`
-	RedirectURL   string   `json:"redirectUrl"`
+	BaseURL     string `json:"baseUrl"`
+	ClientID    string `json:"clientId"`
+	HasSecret   bool   `json:"hasSecret"`
+	RedirectURL string `json:"redirectUrl"`
 	// App: the client is the GitHub App's (set with the App, not here).
 	App bool `json:"app"`
 }
@@ -482,7 +480,7 @@ func (s *Service) viewOf(rt *providerRT, people int, routes map[string][]string)
 	row := rt.row
 	ok, checked, msg := rt.status()
 	v := ProviderView{ID: row.ID, Owner: row.Owner, Slug: row.Slug, Kind: row.Kind, Class: row.Class, Template: row.Template, Name: row.Name, Icon: row.Icon, Enabled: row.Enabled, Order: row.Position,
-		AutoCreate: row.AutoCreate, MergeVerifiedEmail: row.MergeVerifiedEmail, Tenant: row.TenantID, People: people, Groups: groupsView(row.Kind, rt.cfg.Groups),
+		MergeVerifiedEmail: row.MergeVerifiedEmail, Tenant: row.TenantID, People: people, Groups: groupsView(row.Kind, rt.cfg.Groups),
 		Signin: true, Repos: row.Repos,
 		Status:  ProviderStat{OK: ok, Message: msg},
 		Created: rfc3339(row.Created), Updated: rfc3339(row.Updated), SecretUnreadable: rt.secretErr != nil}
@@ -506,11 +504,7 @@ func (s *Service) viewOf(rt *providerRT, people int, routes map[string][]string)
 			v.Apple = &AppleView{TeamID: rt.cfg.AppleTeamID, KeyID: rt.cfg.AppleKeyID, HasKey: rt.apple != nil}
 		}
 	case KindGitHub:
-		orgs := slices.Clone(rt.cfg.Organizations)
-		if orgs == nil {
-			orgs = []string{}
-		}
-		v.GitHub = &GitHubView{BaseURL: rt.cfg.BaseURL, ClientID: rt.cfg.ClientID, HasSecret: row.SecretEnc != "" || (len(rt.cfg.App) > 0 && rt.secret != ""), Organizations: orgs,
+		v.GitHub = &GitHubView{BaseURL: rt.cfg.BaseURL, ClientID: rt.cfg.ClientID, HasSecret: row.SecretEnc != "" || (len(rt.cfg.App) > 0 && rt.secret != ""),
 			RedirectURL: s.redirectURL(rt), App: len(rt.cfg.App) > 0}
 	case KindSAML:
 		entity, acs, metaPath := s.samlURLs(row.Slug)
@@ -640,7 +634,6 @@ type ProviderInput struct {
 	Icon               *string     `json:"icon"`
 	Enabled            *bool       `json:"enabled"`
 	Order              *int        `json:"order"`
-	AutoCreate         *bool       `json:"autoCreate"`
 	MergeVerifiedEmail *bool       `json:"mergeVerifiedEmail"`
 	Tenant             *string     `json:"tenant"`
 	// Tenants is to whom a site SSO provider is offered: "all" or a list of
@@ -697,10 +690,9 @@ type OIDCInput struct {
 
 // GitHubInput is the GitHub part of a POST or PATCH.
 type GitHubInput struct {
-	BaseURL       *string   `json:"baseUrl"`
-	ClientID      *string   `json:"clientId"`
-	ClientSecret  *string   `json:"clientSecret"`
-	Organizations *[]string `json:"organizations"`
+	BaseURL      *string `json:"baseUrl"`
+	ClientID     *string `json:"clientId"`
+	ClientSecret *string `json:"clientSecret"`
 }
 
 // AppleInput is the team id, the key id and the key (an AuthKey_<id>.p8) that
@@ -1054,7 +1046,6 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		}
 		b.cfg.AuthMethods = slices.Clone(cur.cfg.AuthMethods)
 		b.cfg.Scopes = slices.Clone(cur.cfg.Scopes)
-		b.cfg.Organizations = slices.Clone(cur.cfg.Organizations)
 		if cur.cfg.Groups != nil {
 			g := *cur.cfg.Groups
 			g.Map = slices.Clone(g.Map)
@@ -1136,12 +1127,6 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		if err := s.applyTenants(ctx, b, cur, in.Tenants); err != nil {
 			return nil, err
 		}
-	}
-	if in.AutoCreate != nil {
-		if *in.AutoCreate != b.row.AutoCreate {
-			mark("autoCreate")
-		}
-		b.row.AutoCreate = *in.AutoCreate
 	}
 	if in.MergeVerifiedEmail != nil {
 		if *in.MergeVerifiedEmail && b.row.Owner != store.ProviderSite {
@@ -1262,16 +1247,6 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 				}
 				b.cfg.ClientID = id
 			}
-			if g.Organizations != nil {
-				orgs, err := cleanList("github.organizations", *g.Organizations, 50)
-				if err != nil {
-					return nil, err
-				}
-				if !slices.Equal(orgs, b.cfg.Organizations) {
-					mark("github.organizations")
-				}
-				b.cfg.Organizations = orgs
-			}
 			if g.ClientSecret != nil && len(*g.ClientSecret) > 16*1024 {
 				return nil, providerInvalid("github.clientSecret is too long.")
 			}
@@ -1294,9 +1269,6 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			}
 		}
 		b.row.Issuer = b.cfg.BaseURL
-		if b.row.AutoCreate && len(b.cfg.Organizations) == 0 {
-			return nil, coded(400, "auto_create_needs_org", "Name at least one organisation: anyone with a GitHub account could otherwise make an account here.")
-		}
 	case KindSAML:
 		if !strings.HasPrefix(s.cfg.PublicURL, "https://") {
 			return nil, coded(400, "saml_needs_https", "SAML needs an https --public-url: the cookie that crosses from the identity provider must be Secure.")
@@ -2103,8 +2075,6 @@ func changedValue(b *built, field string) any {
 		return b.row.Enabled
 	case "order":
 		return b.row.Position
-	case "autoCreate":
-		return b.row.AutoCreate
 	case "mergeVerifiedEmail":
 		return b.row.MergeVerifiedEmail
 	case "apple.teamId":
@@ -2119,8 +2089,6 @@ func changedValue(b *built, field string) any {
 		return b.cfg.Scopes
 	case "github.baseUrl":
 		return b.cfg.BaseURL
-	case "github.organizations":
-		return b.cfg.Organizations
 	case "saml.metadataUrl":
 		return b.cfg.MetadataURL
 	case "saml.entityId":

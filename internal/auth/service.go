@@ -818,6 +818,13 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			} else if barred {
 				return errRetiredName
 			}
+			// The first account, and an organisation's own administrator, are
+			// not held to a cap that is no one's yet.
+			if !p.Setup && !p.FirstOK && p.NewTenant == nil {
+				if err := s.withinPeople(ctx, q, cand.TenantID); err != nil {
+					return err
+				}
+			}
 			// The row without its address, then the address by the rules of
 			// every address (store.SetPrimaryEmail), in the same transaction.
 			// It checks who holds the address in this transaction; another

@@ -67,10 +67,10 @@ func TestSAMLSignIn(t *testing.T) {
 			t.Fatal(start.body["url"])
 		}
 
-		// Nobody has this identity and the provider does not create accounts.
+		// Nobody has this identity and accounts are by invitation only.
 		at := idp.begin(t, c, samlSlug, map[string]any{})
 		r := c.postACS(samlSlug, at.response, at.relay, at.cookie)
-		if r.code != 303 || r.resp.Header.Get("Location") != "/login?sso_error=no_account" {
+		if r.code != 303 || r.resp.Header.Get("Location") != "/login?sso_error=invite_required" {
 			t.Fatalf("%d %s", r.code, r.resp.Header.Get("Location"))
 		}
 		clear := false
@@ -81,7 +81,7 @@ func TestSAMLSignIn(t *testing.T) {
 			t.Fatal("the attempt cookie was not cleared")
 		}
 		// Making accounts from the mapped attributes.
-		admin.do("PATCH", "/api/admin/providers/campus", map[string]any{"autoCreate": true}).want(t, 200, "")
+		admin.putSetting("registration.mode", "open").want(t, 200, "")
 		c = a.newClient("")
 		at = idp.begin(t, c, samlSlug, map[string]any{"return": "/s/x"})
 		r = c.postACS(samlSlug, at.response, at.relay, at.cookie)
@@ -158,7 +158,8 @@ func TestSAMLRefusesWhatItMust(t *testing.T) {
 	weak := newFakeSAML(t, true)
 	evil := newFakeSAML(t, false)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
-		admin := samlFixture(t, a, idp, map[string]any{"autoCreate": true})
+		a.setSetting(t, "registration.mode", "open")
+		admin := samlFixture(t, a, idp, nil)
 		weak.spMeta, evil.spMeta = idp.spMeta, idp.spMeta
 		post := func(body []byte, relay string, ck *http.Cookie) string {
 			r := a.newClient("").postACS(samlSlug, body, relay, ck)
@@ -303,7 +304,8 @@ func TestSAMLIdPInitiatedAndReplay(t *testing.T) {
 	t.Parallel()
 	idp := newFakeSAML(t, false)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
-		admin := samlFixture(t, a, idp, map[string]any{"autoCreate": true})
+		a.setSetting(t, "registration.mode", "open")
+		admin := samlFixture(t, a, idp, nil)
 		// Refused by default.
 		r := a.newClient("").postACS(samlSlug, idp.idpInitiated(t), "", nil)
 		if r.resp.Header.Get("Location") != "/login?sso_error=expired" {

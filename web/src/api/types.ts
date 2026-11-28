@@ -900,6 +900,8 @@ export type ErrorCode =
   | 'mail_from_required'
   | 'mail_needs_public_url'
   | 'registration_closed'
+  | 'invite_required'
+  | 'people_limit'
   | 'password_reset_off'
   | 'email_domain_not_allowed'
   | 'email_limit'
@@ -1291,10 +1293,15 @@ export interface MailTestResult {
   ok: boolean
   message?: string
 }
-// What registration offers: a place in the tenant (`open`) and, when the site allows it, an organisation of the person's
-// own (`orgCreation.open`). When neither is open only those two flags are there.
+// Who may make an account (registration.mode): `open` any way, `invite` only a holder of an invitation (an
+// organisation's own email-domain join keeps working), `closed` nobody, invitations included.
+export type RegistrationMode = 'open' | 'invite' | 'closed'
+// What registration offers: a place in the tenant (`open`: its mode is open and mail is on) and, when the site allows
+// it, an organisation of the person's own (`orgCreation.open`). `mode` is the tenant's registration mode, for the words
+// to a person who cannot sign up here (use the link of an invitation, or ask an administrator).
 export interface RegisterInfo {
   open: boolean
+  mode: RegistrationMode
   orgCreation: { open: boolean }
   // Some verified domain joins people to its organisation at sign-up (3.6 d5): the form is offered while open is false.
   domainJoin: boolean
@@ -1910,7 +1917,6 @@ export interface GithubSettings {
   baseUrl: string
   clientId: string
   hasSecret: boolean
-  organizations: string[]
   redirectUrl: string
   // The client is the GitHub App's: it is set with the App, not here.
   app?: boolean
@@ -1959,9 +1965,8 @@ export interface AuthProvider {
   icon: string
   enabled: boolean
   order: number
-  autoCreate: boolean
   mergeVerifiedEmail: boolean
-  // The tenant autoCreate makes accounts in (a tenant's own provider: that tenant).
+  // The tenant the provider is aimed at: its new accounts land there, as that tenant's registration mode allows (a tenant's own provider: that tenant).
   tenant: string
   // A site SSO provider is offered to every tenant ('all') or a list of tenant ids; null for any other (3.6 d3).
   tenants: 'all' | string[] | null
@@ -1994,7 +1999,6 @@ export interface ProviderInput {
   icon?: string
   enabled?: boolean
   order?: number
-  autoCreate?: boolean
   mergeVerifiedEmail?: boolean
   tenants?: 'all' | string[]
   groups?: Partial<GroupsMapping>
@@ -2005,7 +2009,7 @@ export interface ProviderInput {
       'metadataUrl' | 'metadataXml' | 'entityId' | 'attributes' | 'nameIdFormat' | 'signRequests' | 'allowIdpInitiated'
     >
   >
-  github?: Partial<Pick<GithubSettings, 'baseUrl' | 'clientId' | 'organizations'>> & { clientSecret?: string }
+  github?: Partial<Pick<GithubSettings, 'baseUrl' | 'clientId'>> & { clientSecret?: string }
 }
 
 // What a row of the audit log is about (docs/api.md, "Audit log"): the core categories are always written, the optional
@@ -2146,7 +2150,8 @@ export interface TenantUsage {
 export interface Tenant extends TenantRef {
   default: boolean
   disabled: boolean
-  registration: { open: boolean }
+  // Who may make an account in the tenant: its own registration mode (the site's, for the default tenant).
+  registration: { mode: RegistrationMode }
   quota: Record<TenantQuotaKey, number | null>
   // The plan the tenant has, null for none.
   plan: PlanRef | null
@@ -2344,7 +2349,6 @@ export type FeatureKey =
   | 'features.tokens'
   | 'features.mcp'
   | 'features.offline'
-  | 'features.registration'
   | 'features.tenancy'
   | 'features.passkeys'
   | 'features.adminView'

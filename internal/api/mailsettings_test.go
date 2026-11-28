@@ -29,7 +29,7 @@ func TestMailIsOffUntilAnAdministratorEnablesIt(t *testing.T) {
 		}
 		anon.do("POST", "/api/password/forgot", map[string]any{"login": "root"}).want(t, 403, "password_reset_off")
 		root.do("POST", "/api/account/email/verify", map[string]any{}).want(t, 409, "mail_not_configured")
-		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
+		root.do("PUT", "/api/admin/settings/registration.mode", map[string]any{"value": "open"}).want(t, 200, "")
 		root.do("POST", "/api/admin/mail/test", map[string]any{"to": "x@example.test"}).want(t, 409, "mail_not_configured")
 		// Members and tenant administrators have no say in it.
 		mem := a.addUser("mem", pw, "member")

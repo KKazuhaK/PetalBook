@@ -301,6 +301,7 @@ func TestMicrosoftIssuerIsCheckedAgainstTheTokensTenant(t *testing.T) {
 	const tidA = "72f988bf-86f1-41af-91ab-2d7cd011db47"
 	const tidB = "9188040d-6c67-4c5b-b112-36a304b66dad"
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		f := newIDPFor(t, "microsoft")
 		var mu sync.Mutex
 		iss, tid := "", ""
@@ -324,7 +325,7 @@ func TestMicrosoftIssuerIsCheckedAgainstTheTokensTenant(t *testing.T) {
 		f.addUser("edov", testidp.Claims{"sub": "s-edov", "preferred_username": "edov", "email": "edov@contoso.test", "xms_edov": true, "name": "Ed"})
 		f.addUser("plain", testidp.Claims{"sub": "s-plain", "preferred_username": "plain", "email": "ceo@victim.test", "email_verified": true, "name": "Pl"})
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/providers", map[string]any{"template": "microsoft", "clientId": idpClient, "clientSecret": idpSecret, "autoCreate": true}).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", map[string]any{"template": "microsoft", "clientId": idpClient, "clientSecret": idpSecret}).want(t, 201, "")
 		pattern := f.srv.URL + "/{tenantid}/v2.0"
 		pointAt(t, a, "microsoft", pattern, f.srv.URL)
 		in := func(who string) (string, *client) {
@@ -374,6 +375,7 @@ var metaRefresh = regexp.MustCompile(`http-equiv="refresh" content="0;url=([^"]+
 func TestSignInWithApple(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		ctx := context.Background()
 		key, keyPEM := appleP8(t)
 		f := newIDPFor(t, "apple")
@@ -412,7 +414,7 @@ func TestSignInWithApple(t *testing.T) {
 		f.addUser("relay", testidp.Claims{"sub": "s-relay", "email": relay, "email_verified": "true", "is_private_email": "true"})
 		admin := a.setup("kazuha", pw)
 
-		body := map[string]any{"template": "apple", "clientId": idpClient, "autoCreate": true,
+		body := map[string]any{"template": "apple", "clientId": idpClient,
 			"apple": map[string]any{"teamId": "TEAM123456", "keyId": "KEY1234567", "privateKey": keyPEM}}
 		// What the secret is made of is checked; a client secret is not taken.
 		withSecret := map[string]any{"template": "apple", "clientId": idpClient, "clientSecret": "x", "apple": body["apple"]}

@@ -49,7 +49,11 @@ export const signinEn: SigninMessages = {
       'This sign-in method is not available right now: it is switched off, or the server cannot reach it. Try again later or ask an administrator.',
     idp_error: 'Single sign-on did not work: the identity provider refused the request, or its answer did not verify.',
     expired: 'This sign-in expired, was already used, or was started in another browser. Please start again.',
-    no_account: 'Nobody has this identity yet. Ask an administrator, or use an invite link to create an account.',
+    no_account: 'No account was made: the first account is made with the setup link, or the organisation is disabled.',
+    invite_required:
+      'Accounts here are made from an invitation. Open the link in yours, or ask an administrator to invite you.',
+    registration_closed: 'Registration is closed here: no account can be made now, not even from an invitation.',
+    people_limit: 'This organisation has reached the number of people it may have. Ask an administrator.',
     not_allowed: 'You are not in an organisation this sign-in method requires, so you cannot sign in.',
     disabled: 'This account is disabled.',
     identity_in_use: 'This identity already belongs to another account.',

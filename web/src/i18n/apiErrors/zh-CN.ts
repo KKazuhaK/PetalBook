@@ -110,10 +110,9 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   already_linked: '你在这个提供方已经关联了一个账号。请先取消关联，再关联另一个。',
   last_method: '这是最后一种登录方式。请先设置密码或关联另一种登录方式。',
   github_app_client: '这个提供方的客户端就是 GitHub 应用的客户端：请在仓库提供方里改应用的设置。',
-  auto_create_needs_org: '自动创建账号需要先指定组织。',
   local_admin_required: '要先有一个能用密码登录的管理员，才能这样设置。',
   last_local_admin: '这个组织要求单点登录：至少要留一位能用密码登录、未停用的组织管理员。',
-  sso_only_with_registration: '关闭密码登录后没人能完成注册，请先关闭开放注册。',
+  sso_only_with_registration: '关闭密码登录后没人能完成组织的注册，请先关闭自助创建组织。',
   sso_provider_required: '请先为这个组织开启单点登录（自己的，或站点提供给它的），否则它的成员无法登录。',
   sso_required: '这个组织的成员要通过单点登录进入，不能用密码注册或登录。',
   provider_unavailable: '提出这个申请时用的登录方式，已不能在这个组织里使用。',
@@ -124,7 +123,9 @@ export const apiErrorsZhCN: ApiErrorTexts = {
 
   // Signing in and accounts.
   local_login_refused: '这个账号不能用密码登录，请通过登录服务进入。',
-  registration_closed: '现在不开放注册。',
+  registration_closed: '这里已关闭注册：现在不能建号，邀请链接也不行。',
+  invite_required: '这里的账号要凭邀请才能建。请打开邀请里的链接，或请管理员邀请你。',
+  people_limit: '这个组织的人数已达上限。',
   password_reset_off: '没有开放重设密码。',
   email_domain_not_allowed: '这个邮箱的域名不在允许的范围内。',
   email_unverified: '这个邮箱还没有验证。',

@@ -561,12 +561,13 @@ id, never the issuer an administrator typed) and the `sub` claim.
 
 The same flow and outcomes as OpenID Connect. The server exchanges the code,
 then reads `GET /user` (and `GET /user/emails` for a verified address, and
-`GET /user/orgs` when the provider names organisations) with the user's token,
+`GET /user/orgs` when the provider's groups are on) with the user's token,
 which it keeps only for the length of the request. The identity is the
 provider's base URL (`https://github.com`, or a GitHub Enterprise Server
 address) and the numeric user id, never the login name, which a GitHub user can
 change. The scopes asked for are `read:user` and `user:email`, plus `read:org`
-when organisations are named.
+only when the provider's groups are on (the organisations are the groups claim;
+they never let anyone in or keep anyone out of an account).
 
 #### SAML: `POST /api/auth/saml/{slug}/acs`
 
@@ -621,9 +622,12 @@ own.
 | `provider_unavailable` | the provider is disabled or unknown, its discovery document or metadata cannot be fetched, or its stored secret cannot be opened with this server's key |
 | `idp_error` | the provider refused, or its answer did not verify (OpenID Connect, GitHub) |
 | `expired` | the attempt is unknown, used, older than 10 minutes, or was started in another browser |
-| `no_account` | nobody has this identity and the provider does not create accounts |
+| `no_account` | nobody has this identity, and no account can be made by a sign-in now: setup is not done (the first account is made with the setup token), or the tenant it would land in is disabled |
+| `invite_required` | nobody has this identity, and the registration mode of the tenant the account would land in is `invite`: the sign-in carries no invitation (see "Registration") |
+| `registration_closed` | the mode is `closed`: no sign-in makes an account, an invitation's included |
+| `people_limit` | the tenant the account would land in is at its `quota.people` |
 | `email_in_use` | from 3.6: nobody has this identity, the sign-in vouches for its address, and another account holds that address verified; sign in to that account and link the provider from its settings |
-| `not_allowed` | GitHub: the person is in none of the organisations the provider requires |
+| `not_allowed` | the account or the tenant may not use this provider (a tenant's provider for another tenant's account, a social provider the tenant does not allow, a site SSO provider not offered to it) or the sign-in is not in `groups.allow` |
 | `disabled` | the account is disabled |
 | `identity_in_use` | `link`: another person has linked this account at this provider |
 | `already_linked` | `link`: the person has an account linked at this provider already (one per provider per person; unlink it first to link another) |
@@ -656,16 +660,23 @@ For `intent: login`, in this order:
    "Signing in by email address") and another account holds that address
    verified: `email_in_use` (the person signs in to that account and links the
    provider from their account settings).
-3. With `autoCreate` on for this provider: a new member account (the
+3. When the registration mode of the tenant the account would land in is
+   `open` (see "Registration"): a new member account (the
    `name` claim; the username from `preferred_username` or the
    part of `email` before `@`, made valid and unique; for SAML, the attributes
    the provider maps). Its `email` is the provider's address, verified (by
    `provider:<slug>`) when the sign-in vouches for it, and then taken from an
    account that holds it unverified; left out when another account keeps it,
    or when it is outside ASCII while `users.emailNonAscii` is off. Never the
-   first account: that is made with the setup token. A GitHub provider can
-   only create accounts when it names organisations.
-4. Otherwise `no_account`.
+   first account: that is made with the setup token (`no_account`). The tenant
+   it would land in is, in this order: the tenant of a verified address on a
+   domain that joins people to one (a site social provider only, see "Joining an
+   organisation"); else the provider's own tenant (a tenant's own provider: that
+   tenant; a site provider: its `tenant`, the default tenant unless set); the
+   default tenant's mode is the site's value. Under `invite` the answer is
+   `invite_required`, under `closed` `registration_closed`, and a tenant at its
+   `quota.people` answers `people_limit`.
+4. Otherwise (the first account, or a disabled tenant) `no_account`.
 
 An address alone never joins accounts: the same address signing in from two
 providers makes two linked accounts, and they are on one account only if the
@@ -2108,7 +2119,6 @@ Every error of a connection has `provider` (the id) next to `error` and
 | `provider_error` | the platform failed or answered something the server could not use |
 | `name_taken` | the owner has a repository of that name |
 | `push_failed` | the repository was made but the first push failed |
-| `auto_create_needs_org` | `autoCreate` on a sign-in provider (2.8) that names no organisation: anyone with an account there could make one |
 | `app_rejected`, `client_rejected`, `key_invalid` | the platform does not accept what the administrator entered |
 | `public_url_needed` | the flow needs `--public-url` |
 | `owner_not_allowed` | the owner is not one of the caller's |
@@ -6720,8 +6730,9 @@ answer as switched off, and no setting can open registration.
   message as a wrong password), their sessions end at their next request, their
   API tokens and OAuth grants answer `401 token_owner_disabled`, and its spaces
   cannot be opened. Nothing is deleted; enabling brings everything back.
-- `features.registration` is the effective value of the setting
-  `features.registration` for this tenant (see "Registration").
+- `registration` is `{"mode": "open" | "invite" | "closed"}`, the effective value
+  of `registration.mode` for this tenant (the site's value for the default
+  tenant: see "Registration").
 - `quota`: the tenant's totals, set by site administrators only; `null` is no
   limit. They are the settings `quota.people`, `.spaces`, `.bytes` and `.pages` of the
   tenant (see "Rules for a tenant") and `quota` here is read only. `usage` is what is measured (see "Quotas"): `measuredAt` is when a space
@@ -6747,8 +6758,9 @@ answer as switched off, and no setting can open registration.
   that signs in decides the tenant.
 - **New accounts**: `POST /api/setup` makes the first site administrator in the
   default tenant; an invite makes the account in the invite's tenant; a
-  provider's `autoCreate` makes it in the provider's `tenant` (below; default
-  the default tenant); registration in the tenant registered for.
+  sign-in of a provider makes it in the tenant it lands in (the provider's
+  `tenant`, below; default the default tenant), when that tenant's registration
+  mode is `open`; registration in the tenant registered for.
 
 ### Data isolation
 
@@ -6937,8 +6949,9 @@ tenants.
   providers: see "Tenant autonomy".)
 - Providers stay the server's (site administrators only) and every tenant's
   sign-in page lists the same ones. A provider gains `tenant` (an id, default
-  the default tenant): where `autoCreate` makes accounts. An identity signs in
-  to its account whatever tenant that is in.
+  the default tenant): where the provider's new accounts land, as that tenant's
+  `registration.mode` allows. An identity signs in to its account whatever
+  tenant that is in.
 - A provider's groups mapping may point to groups of any tenant; at sign-in
   only the entries whose group is in the person's tenant are applied, the rest
   are ignored for that person (not an error, not audited).
@@ -7018,7 +7031,7 @@ The settings of 3.3 (others join this table as they are made):
 
 | Key | Kind | Layers | Site default | Site's `lower` by default |
 |---|---|---|---|---|
-| `features.registration` | boolean | site, tenant | `false` | `lock` |
+| `registration.mode` | choice: `open`, `invite`, `closed` | site, tenant | `invite` | `allow` |
 | `registration.domains` | list of domains (`[]`: any) | site, tenant | `[]` | `allow` |
 | `registration.perHour` | limit, 1 to 10,000 | site, tenant | 50 | `restrict`, `max` 50 |
 | `legal.termsUrl`, `legal.privacyUrl` | an `https` address or `""` | site, tenant | `""` | `allow` |
@@ -7055,14 +7068,15 @@ The settings of 3.3 (others join this table as they are made):
 Site administrators. `GET` answers every setting:
 
 ```json
-{"settings": [{"key": "features.registration", "kind": "boolean", "layers": ["site", "tenant"],
-               "site": {"value": false, "lower": {"mode": "lock"}, "fromFlag": false}}]}
+{"settings": [{"key": "registration.mode", "kind": "choice", "layers": ["site", "tenant"],
+               "choices": ["open", "invite", "closed"],
+               "site": {"value": "invite", "lower": {"mode": "allow"}, "fromFlag": false}}]}
 ```
 
 `PUT` takes `{"value": …, "lower": {…}}`, either or both. `200` with that
 setting. `400 invalid` for a value of the wrong kind or out of range;
 `404 not_found` for an unknown key; `409 conflict` for a setting set by a flag;
-the checks of "Registration" for `features.registration`. A change of `lower` that
+the checks of "Registration" for `features.orgCreation`. A change of `lower` that
 makes tenants' values ineffective answers `affected: n` (how many tenants).
 
 #### `GET /api/admin/tenants/{tenant}/settings`, `PUT /api/admin/tenants/{tenant}/settings/{key}`
@@ -7221,37 +7235,69 @@ mail. At most 10 an hour (`429 rate_limited`). Audit `mail_test`.
 
 ### Registration
 
-A person makes their own account in a tenant. Off unless all of these hold for
-the tenant: the effective `features.registration` is `true`, mail is enabled, and
-the server has `--public-url`. **Opening it is refused** (`PUT` of
-`features.registration: true` at the site or the tenant, or unlocking it while a
-tenant has `true` stored):
+Whether an account is made is the **registration mode**, `registration.mode`
+(site and tenant, `open`, `invite` or `closed`, default `invite`, the site's
+`lower` `allow`):
 
-- `409 mail_not_configured` while mail is not enabled (a registration must
-  verify its address, see below);
-- `409 sso_only_with_registration` while `ssoOnly` is stored on; and from 3.3
-  the reverse check of 2.8 is real: `PUT /api/admin/security` with
-  `ssoOnly: true` answers `400 sso_only_with_registration` while any tenant's
-  effective `features.registration` is `true`.
+- **Two scopes.** The site's value governs the people who belong to no
+  organisation: the default tenant (with tenancy off, everyone). Each
+  organisation (a tenant that is not the default) has its own, set by its
+  administrators; it is **not bounded by the site's**, and still follows the
+  settings machinery (a site administrator may set a rule for one tenant, a
+  plan's rule may carry one). An organisation's mode governs every way an
+  account is made into it: its own SSO, the site's social sign-in that lands in
+  it, invites into it, and its domain joins.
+- `open`: any way may make an account. Password sign-up still needs mail and
+  `--public-url`, and `registration.domains` and `registration.perHour` apply.
+- `invite`: only someone holding a valid invite link makes an account, by
+  password or by any external sign-in; a password sign-up, or a sign-in without
+  an invitation, is refused: `403 invite_required` (`?sso_error=invite_required`).
+  For an organisation, a domain's join mode (`auto` or `request`) is its
+  administrators' own explicit opt-in and keeps working under `invite`.
+- `closed`: nothing makes an account. Invite links stop working too (accepting
+  one answers `403 registration_closed`), the domain joins are off (no automatic
+  join, no new request; a sign-up of such an address is then an ordinary one
+  into the tenant the page names). Requests already pending stay approvable:
+  approving is an administrator's act. The first administrator (`POST
+  /api/setup`, the setup token) and the command line are exempt.
+- **Every way is held to `quota.people`**: an account that would take a tenant
+  over it is refused, `409 people_limit` (`?sso_error=people_limit`), whichever
+  way it is made (accepting an invite, confirming a registration, approving a
+  request, a sign-in). The first account and the administrator of an
+  organisation that is being made are not counted against a limit that is
+  nobody's yet.
+- **Organisation creation is another thing**: `features.orgCreation` (below,
+  default off) lets a person make an organisation with the registration, whatever
+  the mode; the organisation is an ordinary tenant afterwards.
+- There is no per-provider switch: whether a sign-in makes an account is only
+  the mode of the tenant it would land in (see "Which account an identity signs
+  in to"). A tenant that wants its SSO to make accounts and nothing else sets
+  `open` together with `signin.ssoOnly`: password sign-up is then refused
+  (`409 sso_required`) while the SSO creates.
 
-Switching mail off while registration is open is allowed and closes it in
-effect (`GET /api/register` says `open: false`); the setting stays.
-
-Signing up through a provider (`autoCreate`) is not registration: it is the
-provider's decision and is unchanged.
+Password sign-up is possible when the effective mode of the tenant is `open`,
+mail is enabled and the server has `--public-url`. Opening the mode is never
+refused for want of mail (the accounts a sign-in makes need none); only
+`features.orgCreation` is (below). Closing or tightening the mode, switching mail
+off, or deleting the tenant deletes the pending registrations the new state does
+not allow (all of the tenant's under `closed`; those that are not a domain join
+under `invite`), so their links answer `404 not_found`.
 
 #### `GET /api/register?tenant={slug}`
 
 Public. `Cache-Control: no-store`. Answered from memory.
 
 ```json
-{"open": true, "tenant": {"slug": "default", "name": "Default"},
+{"open": true, "mode": "open", "tenant": {"slug": "default", "name": "Default"},
  "domains": ["example.com"], "termsUrl": "https://example.com/terms", "privacyUrl": "",
  "password": {"minLength": 8}}
 ```
 
-When `open`, `orgCreation.open` and `domainJoin` are all `false` the other
-fields are absent. `domainJoin` (3.6 d5) is true when some verified domain
+`open` says whether a person may sign up here with a password (the mode is
+`open` and mail is on); `mode` is the tenant's registration mode, for the words
+to a person who cannot (use the link in your invitation, or ask an
+administrator). When `open`, `orgCreation.open` and `domainJoin` are all `false`
+only those fields are there. `domainJoin` (3.6 d5) is true when some verified domain
 joins people to its organisation at sign-up: an address on it registers there
 even while `open` is false (see "Joining an organisation"). `GET /api/auth/providers`
 gains `register` (this boolean, or `domainJoin`) and `forgot` (see "Password
@@ -7268,9 +7314,11 @@ The server checks, in this order, and stops at the first refusal:
 
 1. The address's requests this minute (the shared allowance of 2.8):
    `429 rate_limited`.
-2. Registration open for the tenant: `403 registration_closed`. An address
+2. The mode of the tenant: `403 invite_required` under `invite`,
+   `403 registration_closed` under `closed` (and while mail is off). An address
    whose domain joins an organisation (3.6 d5) registers in that organisation
-   instead, open or not; see "Joining an organisation".
+   instead, under `open` and `invite`; under `closed` the join is off; see
+   "Joining an organisation".
 3. The `register` captcha context: `400 captcha_failed`.
 4. The fields: `400 invalid` (username form as for a User, name 1 to 80
    characters, the password rule of "Signing in", an address of at most 254
@@ -7314,14 +7362,16 @@ joined by its address's domain adds `"joined": {"slug", "name"}`; one whose
 domain asks for approval makes no account and answers `202 {"request": …}`
 (see "Joining an organisation"). Refusals:
 `404 not_found` for a token unknown, used or expired (a failure of the
-address); `403 registration_closed` when registration was closed since (pending
-registrations are not honoured after closing); `409 exists` when the username
+address); `403 invite_required` or `403 registration_closed` when the mode
+tightened since (pending registrations are not honoured after it: the mode is
+asked again here); `409 people_limit` when the tenant is full; `409 exists` when the username
 was taken in between by an administrator. `registered` goes to the audit log.
 
 #### Organisations people create themselves
 
 `features.orgCreation` (site level only, default **off**) lets a person make an
-organisation of their own with the registration. Turning it on is refused with
+organisation of their own with the registration; the registration mode does not
+govern it. Turning it on is refused with
 `409 needs_tenancy` while `features.tenancy` is off, `409 needs_mail` while mail
 is not enabled, and `409 sso_only_with_registration` while `ssoOnly` is stored
 on; turning off tenancy or mail closes it in effect. The other settings, all
@@ -7755,13 +7805,15 @@ not fill the log).
 | `setting_above_max` | 400 | a site value (or the value of the site's rule for a tenant) above the `max` it is held to |
 | `setting_until_past` | 400 | a rule for a tenant whose `until` has already passed (it would never count) |
 | `setting_rule_needs_max` | 400 | a plan's or billing's rule with a value but no maximum or lock, for a limit the tenant also sets (`quota.*PerPerson`, `files.maxBytes`, `registration.perHour`): it would not cap the tenant |
-| `registration_closed` | 403 | registering or confirming while registration is not open for the tenant |
+| `registration_closed` | 403 | making an account while the tenant's `registration.mode` is `closed` (password registration or its confirmation, accepting an invite, an organisation's creation while it is off), or while password registration needs mail and mail is not enabled |
+| `invite_required` | 403 | registering (or confirming a registration) while the tenant's mode is `invite` and no invitation or domain join applies; the same word is the `?sso_error=` of a sign-in |
+| `people_limit` | 409 | an account that would take its tenant over `quota.people`: accepting an invite, confirming a registration, approving a join request; `?sso_error=people_limit` for a sign-in |
 | `password_reset_off` | 403 | asking for a reset while mail is not enabled |
 | `mail_not_configured` | 409 | opening registration, asking for a verification, or sending a reset while mail is not enabled |
 | `mail_needs_public_url` | 400 | enabling mail without `--public-url` |
 | `mail_insecure` | 400 | `security: "none"` to a host that is not loopback |
 | `mail_from_required` | 400 | enabling mail without `from` |
-| `sso_only_with_registration` | 409 (opening registration), 400 (`PUT /api/admin/security`) | `ssoOnly` and open registration together |
+| `sso_only_with_registration` | 409 (opening `features.orgCreation`), 400 (`PUT /api/admin/security`) | `ssoOnly` and organisations people create together (password sign-up makes them) |
 | `email_domain_not_allowed` | 400 | the address's domain is not in `registration.domains` |
 | `terms_required` | 400 | `acceptTerms` missing while a terms or privacy address is set |
 | `email_verified` | 409 | asking to verify an address that is verified |
@@ -7782,7 +7834,7 @@ quotas follow it.
 - `users`, `spaces`, `groups`, `invites`, `audit_log` gain
   `tenant_id TEXT NOT NULL DEFAULT '0000000000'`; `users` gains `site_admin`;
   `invites` gains `site_admin` (the invited administrator is one of the server);
-  `sign_in_providers` gains `tenant_id` (where `autoCreate` puts accounts).
+  `sign_in_providers` gains `tenant_id` (where the provider's accounts land).
 - Indexes `(tenant_id, created)` on users and spaces, `(tenant_id, id)` on
   the audit log, `(tenant_id)` on invites; groups have the unique index below.
 - Group names unique per tenant: the unique `name_key` becomes unique
@@ -7819,8 +7871,8 @@ invite of `POST /api/admin/tenants` came with the third part, below.
 Done: mail (`/api/admin/mail`, the test message, the queue), registration,
 email verification, password reset, the `register` and `forgot` flags of
 `GET /api/auth/providers`, the captcha contexts `register` and `forgot` (in
-`captcha.contexts`, off by default, like the others), and both directions of
-`sso_only_with_registration`. Details the implementation settled, which refine
+`captcha.contexts`, off by default, like the others), and `sso_only_with_registration` (since reduced to
+organisation creation: see "Registration"). Details the implementation settled, which refine
 the text above:
 
 - **Nothing is sent by default.** Mail is off until `PUT /api/admin/mail` has
@@ -7838,12 +7890,13 @@ the text above:
 - The queue tries a message at once, again after 1 minute and again after 5,
   and drops it after the third failure or 10 minutes, whichever comes first; the
   log says why (never the address or the text, which hold a link).
-- **Closing registration deletes the pending registrations** (a change of
-  `features.registration` or of its `lower` at the site or the tenant, switching mail
-  off, deleting the tenant, and an hourly check), so their links answer
-  `404 not_found`; `403 registration_closed` at `POST /api/register/confirm` is
-  what a link of a registration that is still stored gets when its tenant is not
-  open (for instance the instant between the change and the deletion).
+- **Tightening the registration mode deletes the pending registrations** (a
+  change of `registration.mode` or of its `lower` at the site or the tenant,
+  switching mail off, deleting the tenant, and an hourly check), so their links
+  answer `404 not_found`; `403 registration_closed` or `403 invite_required` at
+  `POST /api/register/confirm` is what a link of a registration that is still
+  stored gets when its tenant's mode does not allow it (for instance the instant
+  between the change and the deletion).
 - **The tenant's hour** of `registration.perHour` counts every `POST
   /api/register` that passes the field checks, whether or not the address has an
   account, and the pending cap of 1,000 is checked the same way, so those answers
@@ -8405,7 +8458,7 @@ All optional. The order, which makes a half-done deletion harmless:
    their pending invites are kept (they still let invited people in). Their
    passkeys and identities stay attached, unusable while deleted, so a
    deleted person signing in by SSO is refused instead of getting a new
-   account by `autoCreate`.
+   account by the registration mode.
 
 `200` with the person's recycle item. The usage of the person moves with the
 spaces (3.3's accounting); the tenant's people count goes down by one.
@@ -8469,8 +8522,8 @@ Their username stays taken while they are in the recycle bin.
 - **Usernames.** A deleted person's username stays taken (the row keeps it, so
   the unique key refuses it, and `GET /api/…` lookups by username do not find
   them). `users.reuseUsernames` is read at invites (when one is made with a
-  username), registration, accepting an invite and `autoCreate`; with `never` and a
-  retired name those answer `409 exists`, and `autoCreate` picks the next free
+  username), registration, accepting an invite and a sign-in that makes an account; with `never` and a
+  retired name those answer `409 exists`, and a sign-in picks the next free
   form. A sign-in by an SSO identity of a deleted person is refused (`disabled`),
   never turned into a new account.
 - The daily sweep deletes a tombstone when no audit row (as actor or subject), no
@@ -8499,7 +8552,7 @@ Their username stays taken while they are in the recycle bin.
   in `retired_usernames` whatever the setting, so switching to `never` later
   also protects the names purged before; with `never`, a retired name answers
   `409 exists` wherever a username is chosen (invites, registration, renames,
-  `autoCreate`, which then picks the next free form as 2.8 does). What is
+  a sign-in, which then picks the next free form as 2.8 does). What is
   stored by id (memberships, authors in the records, audit rows) never follows
   a name; a `@mention` or link written as a username in page text points to the
   new holder.
@@ -9301,8 +9354,7 @@ the **site layer's rule for that tenant** in the layered settings (owner,
   `features.managedAccounts`, `features.idpAdmins` (default off),
   `features.adminView`, `features.auditDownload`, `features.tenantAudit`,
   `features.ownCaptcha`, `features.ownConnections`, `features.ownDaily`, `mail.ownSender` (default
-  **off**), and the settings that already existed, `features.registration` and
-  `features.offline`. A feature is on unless a rule says otherwise. "This
+  **off**), and the setting that already existed, `features.offline`. A feature is on unless a rule says otherwise. "This
   organisation does not have feature X" is X's value `false`, locked, for that
   tenant.
 - **A route declares its feature** (see "Features"): while the caller's tenant
@@ -9576,7 +9628,7 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 
 | Keys | Kind | Layers |
 |---|---|---|
-| `features.tokens`, `features.mcp`, `features.offline`, `features.registration` | boolean | S, T |
+| `features.tokens`, `features.mcp`, `features.offline` | boolean | S, T |
 | `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.tenantAudit`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`, `.githubConnect`; `mail.ownSender` | boolean (features) | S + rule |
 | `features.passkeys`, `features.tenancy` | boolean | S! |
 | `signin.social` | list: provider slugs, or `["*"]` (default) | S, T (3.6 d3) |
@@ -9782,7 +9834,7 @@ Sign-in providers are of two kinds, as consumer products do it.
 - **SSO** (`class: "sso"`): enterprise OpenID Connect or SAML, owned by a
   tenant with `signin.sso` (`/api/admin/providers` in the tenant's scope, the same Provider
   object and refusals as 2.8). It signs people in only to accounts of its
-  tenant, makes accounts only there (`autoCreate`), and maps groups only to the
+  tenant, makes accounts only there (as the tenant's `registration.mode` allows), and maps groups only to the
   tenant's groups. A site administrator may also own SSO providers and offer
   each to all tenants or to a list (`tenants`).
 
@@ -9879,8 +9931,8 @@ being unique on the server):
   `sso_error=not_allowed` for a link started otherwise); it makes no first
   administrator (`setup`), and an invitation it accepts must be of its tenant
   and not a site administrator's;
-- `autoCreate` makes accounts in the provider's tenant only (its `tenant` is
-  its owner), as members;
+- its sign-ins make accounts in the provider's tenant only (its `tenant` is
+  its owner), as members, when that tenant's `registration.mode` is `open`;
 - `groups.map` names the tenant's own groups only (another's is
   `404 group_not_found`, as one that does not exist), and a sign-in never syncs
   anyone into a group that holds a role of the site (the "no site key" check is
@@ -9895,7 +9947,7 @@ being unique on the server):
 class `sso` is `"all"` (the default) or a list of tenant ids (at most 1000;
 `400 invalid` on a social provider, which `signin.social` prunes instead). With
 a list, only the people of those tenants sign in or link through it, and
-`autoCreate` makes no account in a tenant not on it (`sso_error=not_allowed`).
+no account is made in a tenant not on it (`sso_error=not_allowed`).
 A site administrator signs in through the site's own SSO whatever its list
 says: the list cannot lock them out.
 
@@ -9903,7 +9955,7 @@ says: the list cannot lock them out.
 providers the tenant's people may use, or `["*"]` for every one, the default).
 The site's value is the default and its lower rule says whether a tenant
 prunes it; a rule for one tenant may lock it. It is read once a sign-in has
-found its account (or the tenant `autoCreate` would make it in): an identity
+found its account (or the tenant it would make one in): an identity
 of a provider the account's tenant does not allow is `sso_error=not_allowed`.
 
 **Outgoing requests.** A tenant's provider reaches public addresses only (its
@@ -10617,7 +10669,7 @@ From 3.6 the email address is the main way in; the username stays.
   account holds verified, ends in `sso_error=email_in_use` when the sign-in
   vouches for the address (the person signs in to that account and links the
   provider from their account settings); when it does not vouch for it, a new
-  account (`autoCreate`) is made without the address. One held unverified moves
+  account (made by the registration mode) is made without the address. One held unverified moves
   to the new account when the sign-in vouches for it (above), and is left out
   otherwise.
 - **Which sign-ins vouch for an address** (one rule in the server,
@@ -10658,11 +10710,11 @@ Each tenant chooses how people join it; any combination of these may be on:
 | (a) invite | always available (`/api/invites`, as 3.3) | — |
 | (b) an address of a verified domain joins at once | the domain's `join: "auto"` | off |
 | (c) an address of a verified domain asks, an administrator approves | the domain's `join: "request"` | off |
-| (d) signing in through the tenant's own SSO joins at once | the provider's `autoCreate`, with `jit.requireGroups` | as the provider |
+| (d) signing in through the tenant's own SSO joins at once | the tenant's `registration.mode` `open`, with `jit.requireGroups` | `invite` |
 
 (b) and (c) are built in 3.6 d5, **at sign-up only**: 3.6 is one person, one
 tenant, so an existing account never joins another organisation (that is 3.7's
-membership, which keeps these endpoints). A social provider's `autoCreate`
+membership, which keeps these endpoints). A social provider's sign-in
 does not join by domain yet; nor is there a tenant-wide default, a `viewer`
 role of accounts, or `defaultRole` (the joined person is a `member`).
 
@@ -10743,7 +10795,7 @@ for any other value, `admin` included. It is read when the account is made, so
 a change touches no account that exists and no request already approved.
 
 **Social sign-in follows the join mode too.** A new account made by a **site
-social provider's `autoCreate`** with an address the provider vouches for (the
+social provider's sign-in** with an address the provider vouches for (the
 rule "Which sign-ins vouch for an address", the one `trustsEmail` applies) on a domain that joins a tenant is made as the domain's mode
 says, instead of in the provider's own tenant (an address it does not vouch
 for, a subdomain, a domain with mode `off` or a tenant without
@@ -10823,9 +10875,9 @@ password hash) until the daily sweep writes it `expired`; in that window the
 username can be registered again, and the request can no longer be approved
 (`409 join_decided`).
 
-**(d) Joining through the tenant's SSO.** A tenant's SSO provider with
-`autoCreate` makes the account in its tenant at first sign-in (as 2.8 and
-above), with `defaultRole`. The Provider gains:
+**(d) Joining through the tenant's SSO.** A tenant's SSO provider makes the
+account in its tenant at first sign-in when the tenant's `registration.mode` is
+`open` (the mode replaced the provider's `autoCreate`), with `defaultRole`. The Provider gains:
 
 ```json
 "jit": {"requireGroups": ["5f1c…-petalbook-users"]}
@@ -11413,7 +11465,7 @@ a membership to an existing account; the endpoints keep their shapes.
   (`auto`, `request`, `sso`). `POST /api/join-requests` with `{"tenant": id}`
   (signed in) makes a request for an existing account; administrators handle it
   as in 3.6, and approving adds the membership.
-- **Through the organisation's SSO** (`autoCreate`, `jit.requireGroups`): a new
+- **Through the organisation's SSO** (the tenant's `open` mode, `jit.requireGroups`): a new
   identity makes a personal account with the membership. For an existing
   account see the owner's question 1 of 3.7 in docs/design/milestones/phase-3-autonomy-and-providers.md; until it is decided, an
   organisation's provider links an identity to an existing personal account
@@ -12027,7 +12079,7 @@ the write that breaks them (`400` unless stated):
 | `error` | When |
 |---|---|
 | `local_admin_required` | `signin.ssoOnly` to `true`, or `signin.mode` other than `local_only` while `ssoOnly` is on and the stored mode is `local_only`, while no enabled administrator has a password. Creating or enabling a provider while `ssoOnly` is on is refused the same way, and while it is stored (in effect or not) the last enabled administrator with a password cannot be made a member or disabled (`409 conflict`) |
-| `sso_only_with_registration` | `signin.ssoOnly` to `true` while any tenant's registration is open in effect (see "Registration") |
+| `sso_only_with_registration` | `signin.ssoOnly` to `true` while `features.orgCreation` is open (see "Registration") |
 | `captcha_site_key_required` | a context switched on with a third-party provider and no site key, or a change of provider while a context is on (the keys belong to the provider: a new provider has none) |
 | `captcha_secret_required` | a context switched on with a third-party provider and no secret |
 | `captcha_needs_public_url` | a third-party provider without `--public-url` (its host name is what the answer is checked against) |
@@ -12107,7 +12159,7 @@ never returned: `hasSecret` says whether one is stored.
   "id": "company", "owner": "site",
   "slug": "company", "kind": "oidc", "name": "Company SSO", "icon": "preset:microsoft",
   "enabled": true, "order": 0,
-  "autoCreate": false, "mergeVerifiedEmail": false,
+  "mergeVerifiedEmail": false,
   "oidc": {"issuer": "https://login.microsoftonline.com/<tenant>/v2.0", "clientId": "…", "hasSecret": true,
            "scopes": ["profile", "email"],
            "redirectUrl": "https://notes.example.com/api/auth/oidc/company/callback"},
@@ -12129,8 +12181,10 @@ never returned: `hasSecret` says whether one is stored.
   matching it.
 - `name` is 1 to 60 characters; `icon` as in `GET /api/auth/providers`.
 - `order` sorts the buttons (then `name`).
-- `autoCreate`: an identity nobody has makes a member account at its first
-  sign-in (see "Which account an identity signs in to"). Off by default.
+- There is no switch for making accounts at the first sign-in: that is the
+  registration mode of the tenant the sign-in lands in (see "Registration"). The
+  provider's `tenant` is where its accounts land (a tenant's own provider: that
+  tenant).
 - `mergeVerifiedEmail`: from 3.6, "trust this provider's verified email
   addresses": an OpenID Connect provider's address with `email_verified: true`
   counts as verified (see "Which sign-ins vouch for an address"). For
@@ -12179,13 +12233,13 @@ is refused with `saml_no_email` instead of going on with none.
 `github`:
 
 ```json
-{"baseUrl": "https://github.com", "clientId": "…", "hasSecret": true, "organizations": ["KazuhaHub"],
+{"baseUrl": "https://github.com", "clientId": "…", "hasSecret": true,
  "redirectUrl": "https://notes.example.com/api/auth/github/github/callback"}
 ```
 
 `baseUrl` is `https://github.com` or a GitHub Enterprise Server address.
-`organizations`: when not empty, only members of one of them may sign in
-(`sso_error=not_allowed` otherwise).
+Which organisations a person belongs to is read only for the groups claim (see
+"Groups from sign-in"); it never lets anyone in.
 
 `groups` (any kind, from 3.2; absent or `{"enabled": false}` by default): how
 the provider's groups claim maps to synced groups; see "Groups from sign-in".
@@ -12254,7 +12308,6 @@ address.
 | `oidc_issuer_invalid` | 400 | the issuer is not an `https` address |
 | `saml_needs_https` | 400 | SAML without an `https` `--public-url` (the cookie that crosses from the identity provider must be `Secure`) |
 | `saml_metadata_invalid` | 400 | the metadata cannot be parsed, has no signing certificate or no redirect binding for sign-in |
-| `auto_create_needs_org` | 400 | `autoCreate` on a GitHub provider that names no organisation: anyone with a GitHub account could make one |
 | `public_url_required` | 400 | any provider without `--public-url` |
 | `provider_in_use` | 409 | `DELETE` without `force=1`, see above |
 

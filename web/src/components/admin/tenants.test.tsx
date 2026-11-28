@@ -178,14 +178,14 @@ describe('the Settings page', () => {
   })
 
   it('shows the site layer and the tenant layer with the lock source, keeps a value a lock hides and brings it back', async () => {
-    await open('settings')
+    // A setting the site locks for tenants: the tenant layer says so and cannot change it.
+    await open('settings', (d) => void (setting(d, 'registration.mode').site.lower = { mode: 'lock' }))
     await settle(
       () => rowOf('registration.perHour') !== undefined && rowOf('registration.perHour') !== null,
       'the settings',
     )
-    // features.registration is locked for tenants by default: the tenant layer says so and cannot change it.
     await settle(() => document.querySelectorAll('[data-slot="setting-row"]').length >= 16, 'both layers')
-    const rows = [...document.querySelectorAll('[data-slot="setting-row"][data-key="features.registration"]')]
+    const rows = [...document.querySelectorAll('[data-slot="setting-row"][data-key="registration.mode"]')]
     expect(rows).toHaveLength(2)
     expect(rows[1].textContent).toContain(tt.settings.lockedBy.site)
     expect(
@@ -208,10 +208,7 @@ describe('the Settings page', () => {
   })
 
   it("saves a rule at the site, says when it makes tenants' values ineffective, and refuses a bad value in words", async () => {
-    // The server refuses to open registration while mail is not enabled.
-    await open('settings', undefined, (fx) =>
-      fx.fail('PUT', '/api/admin/settings/features.registration', 409, { code: 'mail_not_configured' }),
-    )
+    await open('settings')
     await settle(() => rowOf('registration.perHour') != null, 'the settings')
     // The site layer's perHour row is the first of the two with that key.
     const row = document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="registration.perHour"]')[0]
@@ -222,13 +219,15 @@ describe('the Settings page', () => {
     expect(
       m!.requests.find((r) => r.method === 'PUT' && r.url === '/api/admin/settings/registration.perHour')!.body,
     ).toBe(JSON.stringify({ lower: { mode: 'lock' } }))
-    // Opening registration is refused while mail is not enabled.
-    const open1 = document.querySelectorAll<HTMLElement>(
-      '[data-slot="setting-row"][data-key="features.registration"]',
-    )[0]
-    await click(open1.querySelector('[role="switch"]'))
-    await click(button(tt.settings.save, open1))
-    await settle(() => open1.textContent!.includes(tt.settings.errors.mail_not_configured), 'the refusal')
+    // The registration mode is a choice with its own words; a bad value is refused in words.
+    const open1 = document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="registration.mode"]')[0]
+    const mode = open1.querySelector<HTMLSelectElement>('select')!
+    expect([...mode.options].map((o) => o.textContent)).toEqual([
+      tt.settings.choices['registration.mode'].open,
+      tt.settings.choices['registration.mode'].invite,
+      tt.settings.choices['registration.mode'].closed,
+    ])
+    expect(mode.value).toBe('invite')
   })
 
   it('shows where attachments go (separate by default) and the exemption switch, and writes both at the site', async () => {

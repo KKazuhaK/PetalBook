@@ -166,7 +166,7 @@ func TestALookalikeAddressFromAProviderNeverMerges(t *testing.T) {
 		}
 		for _, key := range []string{"dot", "kel"} {
 			c := a.newClient("")
-			if loc := f.signIn2(t, c, "m", key, map[string]any{}); loc != "/login?sso_error=no_account" {
+			if loc := f.signIn2(t, c, "m", key, map[string]any{}); loc != "/login?sso_error=invite_required" {
 				t.Errorf("%s: %s (signed in as %q)", key, loc, signedInAs(t, c))
 			}
 		}
@@ -268,7 +268,7 @@ func TestATenantAdministratorsMarkGetsNoResetLink(t *testing.T) {
 		srv := fakeMail(t)
 		f := newTenFx(t, a)
 		enableMail(t, f.root, srv)
-		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
+		f.root.do("PUT", "/api/admin/settings/registration.mode", map[string]any{"value": "open"}).want(t, 200, "")
 		f.admA.do("PATCH", "/api/users/"+f.userA, map[string]any{"email": "evil@example.test", "emailVerified": true}).want(t, 200, "")
 		if by, _ := store.EmailVerifiedBy(context.Background(), a.st.Q(), f.userA); by != store.VerifiedByTenantAdmin {
 			t.Fatalf("by %q", by)

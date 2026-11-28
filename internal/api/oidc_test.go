@@ -41,8 +41,8 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 
 // opts is an accounts server with the site provider "sso" (named "Company SSO")
 // that this provider answers for.
-func (f *fakeIDP) opts(autoCreate bool) accOpts {
-	return accOpts{public: testPublic, sso: f, ssoAutoCreate: autoCreate, httpc: f.srv.Client()}
+func (f *fakeIDP) opts(open bool) accOpts {
+	return accOpts{public: testPublic, sso: f, ssoOpen: open, httpc: f.srv.Client()}
 }
 
 // signIn runs the browser's part of a sign-in as the identity-provider user
@@ -231,7 +231,7 @@ func TestOIDCLoginAndAutoCreate(t *testing.T) {
 			c := a.newClient("")
 			loc := f.signIn(t, c, "alice", map[string]any{})
 			if !auto {
-				if loc != "/login?sso_error=no_account" || signedInAs(t, c) != "" {
+				if loc != "/login?sso_error=invite_required" || signedInAs(t, c) != "" {
 					t.Fatalf("auto-create off: %s", loc)
 				}
 				return
@@ -412,7 +412,7 @@ func TestOIDCLinkAndUnlink(t *testing.T) {
 		idn := kazuha.do("GET", "/api/account/links", nil).body["links"].([]any)[0].(map[string]any)["id"].(string)
 		kazuha.do("DELETE", "/api/account/links/"+idn, nil).want(t, 204, "")
 		d := a.newClient("")
-		if loc := f.signIn(t, d, "alice", map[string]any{}); loc != "/login?sso_error=no_account" {
+		if loc := f.signIn(t, d, "alice", map[string]any{}); loc != "/login?sso_error=invite_required" {
 			t.Fatal(loc)
 		}
 	})

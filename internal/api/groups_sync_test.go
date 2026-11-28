@@ -112,12 +112,13 @@ func TestOIDCGroupsSyncAtSignIn(t *testing.T) {
 	t.Parallel()
 	one, two := newIDPFor(t, "one"), newIDPFor(t, "two")
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		admin := a.setup("kazuha", pw)
 		eng, staff, other := admin.mkGroup(t, "Engineering", "synced"), admin.mkGroup(t, "Staff", "synced"), admin.mkGroup(t, "Other", "synced")
 		hand := admin.mkGroup(t, "By hand", "local")
-		admin.do("POST", "/api/admin/providers", one.providerBody("one", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true,
+		admin.do("POST", "/api/admin/providers", one.providerBody("one", map[string]any{"groups": map[string]any{"enabled": true,
 			"map": gmap("5f1c-engineering", eng, "/staff", staff)}})).want(t, 201, "")
-		admin.do("POST", "/api/admin/providers", two.providerBody("two", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true, "claim": "roles",
+		admin.do("POST", "/api/admin/providers", two.providerBody("two", map[string]any{"groups": map[string]any{"enabled": true, "claim": "roles",
 			"map": gmap("dev", eng, "x", other)}})).want(t, 201, "")
 		team := admin.do("POST", "/api/spaces", map[string]any{"name": "Team"}).want(t, 201, "").body["id"].(string)
 		admin.do("POST", spacePath(team)+"/groups", map[string]any{"groupId": eng, "role": "editor"}).want(t, 201, "")
@@ -301,7 +302,8 @@ func TestSAMLGroupsSyncAtSignIn(t *testing.T) {
 	t.Parallel()
 	idp := newFakeSAML(t, false)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
-		admin := samlFixture(t, a, idp, map[string]any{"autoCreate": true})
+		a.setSetting(t, "registration.mode", "open")
+		admin := samlFixture(t, a, idp, nil)
 		eng, staff := admin.mkGroup(t, "Engineering", "synced"), admin.mkGroup(t, "Staff", "synced")
 		// An attribute name is needed to turn it on.
 		admin.do("PATCH", "/api/admin/providers/campus", map[string]any{"groups": map[string]any{"enabled": true}}).want(t, 400, "invalid")
@@ -360,12 +362,12 @@ func TestSAMLGroupsSyncAtSignIn(t *testing.T) {
 func TestGitHubGroupsAreOrganisations(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		gh := newFakeGitHub(t)
 		gh.users["m"] = ghFake{ID: 7, Login: "mona", Email: "mona@example.test", Verified: true, Orgs: []string{"KazuhaHub", "Elsewhere"}}
 		admin := a.setup("kazuha", pw)
 		hub, else_ := admin.mkGroup(t, "Hub", "synced"), admin.mkGroup(t, "Else", "synced")
-		body := gh.body("gh", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true, "map": gmap("KazuhaHub", hub, "Elsewhere", else_)}})
-		body["github"].(map[string]any)["organizations"] = []string{"KazuhaHub"}
+		body := gh.body("gh", map[string]any{"groups": map[string]any{"enabled": true, "map": gmap("KazuhaHub", hub, "Elsewhere", else_)}})
 		admin.do("POST", "/api/admin/providers", body).want(t, 201, "")
 		c := a.newClient("")
 		if end, _ := gh.signIn(t, c, "gh", "m", nil); end != "/" {
@@ -386,11 +388,12 @@ func TestGitHubGroupsAreOrganisations(t *testing.T) {
 	})
 }
 
-// The organisation that lets a person in is on the first page of /user/orgs and
-// a later page fails: the sign-in goes on, with the groups claim missing.
+// The organisations are the groups claim. A later page of /user/orgs fails:
+// the sign-in goes on, with the groups claim missing.
 func TestGitHubOrgsLaterPageFails(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		gh := newFakeGitHub(t)
 		orgs := []string{"KazuhaHub"}
 		for i := 0; i < 150; i++ {
@@ -400,8 +403,7 @@ func TestGitHubOrgsLaterPageFails(t *testing.T) {
 		gh.failOrgsFrom = 2
 		admin := a.setup("kazuha", pw)
 		hub := admin.mkGroup(t, "Hub", "synced")
-		body := gh.body("gh", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true, "map": gmap("KazuhaHub", hub)}})
-		body["github"].(map[string]any)["organizations"] = []string{"KazuhaHub"}
+		body := gh.body("gh", map[string]any{"groups": map[string]any{"enabled": true, "map": gmap("KazuhaHub", hub)}})
 		admin.do("POST", "/api/admin/providers", body).want(t, 201, "")
 		c := a.newClient("")
 		if end, _ := gh.signIn(t, c, "gh", "m", nil); end != "/" {
@@ -413,10 +415,11 @@ func TestGitHubOrgsLaterPageFails(t *testing.T) {
 		if d := lastAudit(t, admin, "groups_claim_missing")["detail"].(map[string]any); d["provider"] != "gh" {
 			t.Fatal(d)
 		}
-		// Without the organisation on a page that was read, a failure still refuses.
-		gh.users["n"] = ghFake{ID: 8, Login: "nemo", Email: "nemo@example.test", Verified: true, Orgs: append(orgs[1:], "KazuhaHub")}
-		if end, _ := gh.signIn(t, a.newClient(""), "gh", "n", nil); end == "/" {
-			t.Fatal("signed in without the organisation being read")
+		// The organisations never let anyone in or keep anyone out: another
+		// person whose later page fails signs in the same way.
+		gh.users["n"] = ghFake{ID: 8, Login: "nemo", Email: "nemo@example.test", Verified: true, Orgs: orgs[1:]}
+		if end, _ := gh.signIn(t, a.newClient(""), "gh", "n", nil); end != "/" {
+			t.Fatal("a failed read of the organisations refused a sign-in")
 		}
 	})
 }

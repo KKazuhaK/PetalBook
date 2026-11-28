@@ -34,32 +34,44 @@ func (g *fakeGitHub) signIn(t *testing.T, c *client, slug, who string, body map[
 	return end, map[string]any{"scope": q.Query().Get("scope"), "challenge": q.Query().Get("code_challenge_method")}
 }
 
-func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
+func TestGitHubSignInCreatesAccountsByTheRegistrationMode(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		gh := newFakeGitHub(t) // one per database: the test changes what GitHub says
 		gh.users["member"] = ghFake{ID: 4711, Login: "Octo-Cat", Name: "Octo Cat", Email: "octo@example.test", Verified: true, Orgs: []string{"kazuhahub", "other"}}
-		gh.users["outsider"] = ghFake{ID: 99, Login: "outsider", Orgs: []string{"somewhere"}}
+		gh.users["anyone"] = ghFake{ID: 99, Login: "anyone", Orgs: []string{"somewhere"}}
 		gh.users["unverified"] = ghFake{ID: 100, Login: "newbie", Email: "n@example.test", Verified: false, Orgs: []string{"KazuhaHub"}}
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "auto_create_needs_org")
 		// The fake is not github.com (an Enterprise server, to the server): its
 		// verified addresses count only with the provider's trust switch.
-		body := gh.body("gh", map[string]any{"autoCreate": true, "mergeVerifiedEmail": true})
-		body["github"].(map[string]any)["organizations"] = []string{"KazuhaHub"}
-		p := admin.do("POST", "/api/admin/providers", body).want(t, 201, "")
+		p := admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"mergeVerifiedEmail": true})).want(t, 201, "")
 		g := p.body["github"].(map[string]any)
-		if g["redirectUrl"] != testPublic+"/api/auth/github/gh/callback" || g["hasSecret"] != true || g["baseUrl"] != gh.srv.URL || strings.Contains(p.raw, "gh-secret") {
+		if g["redirectUrl"] != testPublic+"/api/auth/github/gh/callback" || g["hasSecret"] != true || g["baseUrl"] != gh.srv.URL || strings.Contains(p.raw, "gh-secret") || g["organizations"] != nil {
 			t.Fatal(p.raw)
 		}
-		// A member of the organisation (named in another case) gets an account, named from the login.
+		// By invitation only (the default), nobody is made an account by it; closed, neither.
+		if end, _ := gh.signIn(t, a.newClient(""), "gh", "member", map[string]any{}); end != "/login?sso_error=invite_required" {
+			t.Fatal(end)
+		}
+		admin.putSetting("registration.mode", "closed").want(t, 200, "")
+		if end, _ := gh.signIn(t, a.newClient(""), "gh", "member", map[string]any{}); end != "/login?sso_error=registration_closed" {
+			t.Fatal(end)
+		}
+		// Open: anyone with a GitHub account gets one, named from the login, and
+		// the organisations are not asked for (the scope has no read:org).
+		admin.putSetting("registration.mode", "open").want(t, 200, "")
 		c := a.newClient("")
 		end, q := gh.signIn(t, c, "gh", "member", map[string]any{"return": "/s/x"})
 		if end != "/s/x" || signedInAs(t, c) != "octo-cat" {
 			t.Fatalf("%s %s", end, signedInAs(t, c))
 		}
-		if q["scope"] != "read:user user:email read:org" || q["challenge"] != "S256" {
+		if q["scope"] != "read:user user:email" || q["challenge"] != "S256" {
 			t.Fatalf("%v", q)
+		}
+		for _, p := range gh.seen {
+			if p != "/api/v3/user" && p != "/api/v3/user/emails" {
+				t.Fatalf("GitHub was asked %s", p)
+			}
 		}
 		u := c.do("GET", "/api/session", nil).user()
 		if u["name"] != "Octo Cat" || u["email"] != "octo@example.test" || u["emailVerified"] != true || u["role"] != "member" {
@@ -84,14 +96,6 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 		if end, _ := gh.signIn(t, d, "gh", "member", map[string]any{}); end != "/" || signedInAs(t, d) != "octo-cat" {
 			t.Fatalf("%s %s", end, signedInAs(t, d))
 		}
-		// Someone in none of the organisations is turned away, and nothing was made.
-		e := a.newClient("")
-		if end, _ := gh.signIn(t, e, "gh", "outsider", map[string]any{}); end != "/login?sso_error=not_allowed" || signedInAs(t, e) != "" {
-			t.Fatal(end)
-		}
-		if _, err := store.FindLink(context.Background(), a.st.Q(), "gh", "99"); err == nil {
-			t.Fatal("an identity was made for someone not allowed")
-		}
 		// An address that is not verified is kept as it is, unverified.
 		f := a.newClient("")
 		gh.signIn(t, f, "gh", "unverified", map[string]any{})
@@ -108,7 +112,7 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 		}
 		// The user's token is used for what GitHub says about them and nothing else.
 		for _, p := range gh.seen {
-			if p != "/api/v3/user" && p != "/api/v3/user/emails" && p != "/api/v3/user/orgs" {
+			if p != "/api/v3/user" && p != "/api/v3/user/emails" {
 				t.Fatalf("GitHub was asked %s", p)
 			}
 		}
@@ -121,16 +125,14 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 		if ids := tang.do("GET", "/api/account/links", nil).body["links"].([]any); len(ids) != 1 {
 			t.Fatal(ids)
 		}
-		// A provider that does not create accounts: no_account for someone nobody has.
-		admin.do("PATCH", "/api/admin/providers/gh", map[string]any{"autoCreate": false}).want(t, 200, "")
+		// Turned to invitations only again: someone nobody has is refused, and one who has an account signs in.
+		admin.putSetting("registration.mode", "invite").want(t, 200, "")
 		gh.users["fresh"] = ghFake{ID: 8, Login: "fresh", Orgs: []string{"KazuhaHub"}}
-		if end, _ := gh.signIn(t, a.newClient(""), "gh", "fresh", map[string]any{}); end != "/login?sso_error=no_account" {
+		if end, _ := gh.signIn(t, a.newClient(""), "gh", "fresh", map[string]any{}); end != "/login?sso_error=invite_required" {
 			t.Fatal(end)
 		}
-		// Without an organisation named, anyone with a GitHub account may sign in to an account they have, and none is created.
-		admin.do("PATCH", "/api/admin/providers/gh", map[string]any{"github": map[string]any{"organizations": []string{}}}).want(t, 200, "")
-		if end, q := gh.signIn(t, a.newClient(""), "gh", "member", map[string]any{}); end != "/" || q["scope"] != "read:user user:email" {
-			t.Fatalf("%s %v", end, q)
+		if end, _ := gh.signIn(t, a.newClient(""), "gh", "member", map[string]any{}); end != "/" {
+			t.Fatal(end)
 		}
 	})
 }

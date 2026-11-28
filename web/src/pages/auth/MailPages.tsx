@@ -61,9 +61,18 @@ export function RegisterPage() {
       />
     )
   if (!info.data.open && !info.data.orgCreation.open && !info.data.domainJoin) {
+    // What to tell a person who cannot sign up here follows the tenant's mode: an invitation is the way in, or nobody
+    // is let in at all, or the mode is open but the mail it needs is not set up.
+    const mode = info.data.mode
+    const [intro, help] =
+      mode === 'invite'
+        ? [tm.register.inviteOnly, tm.register.inviteOnlyHelp]
+        : mode === 'open'
+          ? [tm.register.unavailable, tm.register.unavailableHelp]
+          : [tm.register.closed, tm.register.closedHelp]
     return (
-      <AuthLayout title={tm.register.title} intro={tm.register.closed}>
-        <p className="text-sm text-muted-foreground">{tm.register.closedHelp}</p>
+      <AuthLayout title={tm.register.title} intro={intro}>
+        <p className="text-sm text-muted-foreground">{help}</p>
         <Link to="/login" className="text-sm text-brand underline underline-offset-4">
           {tm.links.backToLogin}
         </Link>

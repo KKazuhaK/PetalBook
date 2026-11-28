@@ -22,6 +22,7 @@ import (
 	crewjamsaml "github.com/crewjam/saml"
 	"golang.org/x/oauth2"
 
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -1041,7 +1042,7 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 		u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), ident.UserID) // a link signs in to its account, whatever tenant
 		if errors.Is(err, store.ErrNotFound) {
 			// The person is in the recycle bin (their identities stay attached,
-			// unusable): refused, not made a new account by autoCreate.
+			// unusable): refused, not made a new account by the registration mode.
 			return nil, false, ssoErr("disabled")
 		}
 		if err != nil {
@@ -1076,33 +1077,44 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 			return nil, false, err
 		}
 	}
-	noUsers, _ := s.SetupOpen(ctx)
-	if !rt.row.AutoCreate || noUsers {
-		return nil, false, ssoErr("no_account")
+	if noUsers, _ := s.SetupOpen(ctx); noUsers {
+		return nil, false, ssoErr("no_account") // the first account is the administrator's, by the setup token
 	}
-	if rt.row.Kind == KindGitHub && len(rt.cfg.Organizations) == 0 {
-		return nil, false, ssoErr("no_account")
-	}
-	// An address the sign-in vouches for, on a domain that joins people to a
-	// tenant, makes the account there as that domain's join mode says (3.6 d5);
-	// only the site's social providers, whose accounts are anyone's.
+	// Whether a sign-in makes an account is the registration mode of the tenant
+	// it would land in. An address the sign-in vouches for, on a domain that
+	// joins people to a tenant, lands there and makes the account as that
+	// domain's join mode says (3.6 d5): the organisation's own opt-in, which
+	// works under open and invite, and is off under closed. Only the site's
+	// social providers join, whose accounts are anyone's.
 	if rt.row.Owner == store.ProviderSite && rt.row.Class == ClassSocial && c.emailVerified {
 		if e, err := s.cleanEmailFor(ctx, c.email); err == nil && e != "" {
-			if jt, jd, jm, ok := s.joinOf(ctx, e); ok {
+			if jt, jd, jm, ok := s.joinOf(ctx, e); ok && s.RegistrationMode(ctx, jt) != settings.RegClosed {
 				return s.socialJoin(ctx, rt, c, e, jt, jd, jm, ip)
 			}
 		}
 	}
-	// A tenant's provider makes accounts in its own tenant only.
+	// Else the provider's target tenant: a tenant's own provider lands in that
+	// tenant, a site provider in its jit tenant, or in the default tenant (the
+	// site's value).
 	tenant := rt.row.TenantID
 	if rt.row.Owner != store.ProviderSite {
 		tenant = rt.row.Owner
+	}
+	if tenant == "" {
+		tenant = store.DefaultTenantID
 	}
 	if s.st.TenantDisabled(tenant) { // the provider's tenant was disabled after it was set up
 		return nil, false, ssoErr("no_account")
 	}
 	if !s.tenantMayUse(ctx, rt, tenant) {
 		return nil, false, ssoErr("not_allowed")
+	}
+	switch s.RegistrationMode(ctx, tenant) {
+	case settings.RegOpen:
+	case settings.RegInvite:
+		return nil, false, ssoErr("invite_required")
+	default:
+		return nil, false, ssoErr("registration_closed")
 	}
 	u, err := s.createFromClaims(ctx, c, "member", "", false, tenant, false)
 	return u, true, err
@@ -1135,6 +1147,9 @@ func (s *Service) ssoInvite(ctx context.Context, rt *providerRT, c claimed, toke
 	// tenant.
 	if store.IsSiteAdminRole(inv.Role, inv.SiteAdmin) && rt.row.Owner != store.ProviderSite || !s.tenantMayUse(ctx, rt, inv.TenantID) {
 		return nil, ssoErr("not_allowed")
+	}
+	if s.RegistrationMode(ctx, inv.TenantID) == settings.RegClosed {
+		return nil, ssoErr("registration_closed")
 	}
 	u, err := s.createFromClaims(ctx, c, inv.Role, inv.ID, false, inv.TenantID, inv.SiteAdmin)
 	if errors.As(err, &ae) && ae.Kind == NotFound {
@@ -1231,6 +1246,9 @@ func (s *Service) createFromClaims(ctx context.Context, c claimed, role, inviteI
 	if errors.As(err, &ae) && ae.Kind == Conflict && ae == errInUse {
 		return nil, ssoErr("identity_in_use")
 	}
+	if errors.As(err, &ae) && ae.Code == codePeopleLimit {
+		return nil, ssoErr(codePeopleLimit)
+	}
 	return u, err
 }
 
@@ -1322,8 +1340,8 @@ func githubAPIBase(baseURL string) string {
 
 func (s *Service) githubOAuth(rt *providerRT) *oauth2.Config {
 	scopes := []string{"read:user", "user:email"}
-	if len(rt.cfg.Organizations) > 0 {
-		scopes = append(scopes, "read:org")
+	if _, on := rt.groupsOn(); on {
+		scopes = append(scopes, "read:org") // the groups are the organisations
 	}
 	b := rt.cfg.BaseURL
 	return &oauth2.Config{ClientID: rt.cfg.ClientID, ClientSecret: rt.secret, RedirectURL: s.redirectURL(rt), Scopes: scopes,
@@ -1395,37 +1413,27 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 	}
 	_, wantGroups := rt.groupsOn()
 	var gc groupClaim
-	if len(rt.cfg.Organizations) > 0 || wantGroups {
-		member := len(rt.cfg.Organizations) == 0
-		gc.read, gc.present = wantGroups, true
-		for page := 1; page <= 5 && (!member || wantGroups); page++ {
+	if wantGroups {
+		// The organisations are the groups claim: read when groups are on,
+		// and a failed read leaves the claim missing, not the sign-in cut short.
+		gc.read, gc.present = true, true
+		for page := 1; page <= 5; page++ {
 			var orgs []struct {
 				Login string `json:"login"`
 			}
 			if err := s.ghGet(hctx, tok.AccessToken, api, "/user/orgs?per_page=100&page="+strconv.Itoa(page), &orgs); err != nil {
 				s.log.Warn("could not read the GitHub organisations", "provider", rt.row.Slug)
-				if !member {
-					return claimed{}, "idp_error" // the organisation that lets them in was not read
-				}
-				// Let in already (or no organisation needed): the sign-in goes
-				// on, and the groups claim is missing, not cut short.
 				gc.present = false
 				break
 			}
 			for _, o := range orgs {
-				if wantGroups && len(gc.values) < maxGitHubOrgs {
+				if len(gc.values) < maxGitHubOrgs {
 					gc.add(o.Login)
-				}
-				for _, want := range rt.cfg.Organizations {
-					member = member || strings.EqualFold(o.Login, want)
 				}
 			}
 			if len(orgs) < 100 {
 				break
 			}
-		}
-		if !member {
-			return claimed{}, "not_allowed"
 		}
 	}
 	login := clip(u.Login, 100)
