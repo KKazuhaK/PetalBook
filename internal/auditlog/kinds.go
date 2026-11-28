@@ -45,10 +45,7 @@ var registered = []Kind{
 	{Name: "mail_test", Category: Security, Visibility: Site, AddressFields: []string{"to"}},
 	// An organisation's own sender (3.6): its administrators see them. The
 	// password is never in a row.
-	// (The sender's own addresses are the organisation's, which it sees in the
-	// settings; the address a test went to is whoever typed it, a site
-	// administrator included.)
-	{Name: "tenant_mail_changed", Category: Security},
+	{Name: "tenant_mail_changed", Category: Security, AddressFields: []string{"from", "replyTo"}},
 	{Name: "tenant_mail_test", Category: Security, AddressFields: []string{"to"}},
 	{Name: "secret_changed", Category: Security},
 	// Email domains (3.6 d2): claims, codes, every check by hand, verifying,

@@ -899,6 +899,7 @@ export type ErrorCode =
   | 'slug_reserved'
   | 'org_limit'
   | 'mail_insecure'
+  | 'mail_host_not_public'
   | 'mail_from_required'
   | 'mail_needs_public_url'
   | 'registration_closed'
@@ -1324,6 +1325,14 @@ export interface MailTestResult {
   ok: boolean
   message?: string
 }
+// An organisation's own sender (3.6): the shape of the site's, without the queue and without `none`. `sender` is whose
+// mailer the organisation's messages go by now: its own, the site's, or none (they are not sent).
+export type TenantMailSecurity = Exclude<MailSecurity, 'none'>
+export interface TenantMail extends Omit<MailSettings, 'queue' | 'security'> {
+  security: TenantMailSecurity
+  sender: 'tenant' | 'site' | ''
+}
+export type TenantMailPatch = Omit<MailPatch, 'security'> & { security?: TenantMailSecurity }
 // Who may make an account (registration.mode): `open` any way, `invite` only a holder of an invitation (an
 // organisation's own email-domain join keeps working), `closed` nobody, invitations included.
 export type RegistrationMode = 'open' | 'invite' | 'closed'

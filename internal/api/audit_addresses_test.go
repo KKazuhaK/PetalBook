@@ -29,6 +29,7 @@ func TestAuditAddressKindsAreHiddenFromTenantAdministrators(t *testing.T) {
 			"email_released":        {"email": secret("email_released"), "to": f.userB},
 			"registered":            {"email": secret("registered")},
 			"tenant_mail_test":      {"to": secret("tenant_mail_test"), "ok": true},
+			"tenant_mail_changed":   {"from": secret("tenant_mail_changed"), "replyTo": secret("tenant_mail_changed_rt")},
 			"user_created":          {"email": secret("user_created"), "role": "member"},
 			"user_changed":          {"email": secret("user_changed"), "old": map[string]any{"email": secret("user_changed_old"), "name": "Old"}, "name": "New"},
 		}

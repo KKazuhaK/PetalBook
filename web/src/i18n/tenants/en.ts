@@ -614,6 +614,7 @@ export const tenantsEn: TenantsMessages = {
       plan: 'Plan and rules',
       audit: 'Audit',
       signin: 'Sign-in',
+      mail: 'Mail',
       danger: 'Danger zone',
     },
     overview: {

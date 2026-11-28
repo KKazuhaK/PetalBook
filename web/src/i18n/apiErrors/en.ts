@@ -97,6 +97,8 @@ export const apiErrorsEn: ApiErrorTexts = {
   slug_taken: 'That organisation address is taken. Choose another.',
   org_limit: 'No more organisations can be made.',
   mail_insecure: 'The mail connection is not encrypted. Use an encrypted one.',
+  mail_host_not_public:
+    'The mail server must be at a public address; one on this machine or a private network cannot be used.',
   mail_from_required: 'Give the address mail is sent from.',
   mail_needs_public_url: 'The links in the messages point to the public address. Start the server with --public-url.',
   public_url_required: 'Sign-in providers need the public address. Start the server with --public-url.',

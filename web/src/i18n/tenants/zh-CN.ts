@@ -582,6 +582,7 @@ export const tenantsZhCN = {
       plan: '套餐与规则',
       audit: '审计',
       signin: '登录',
+      mail: '发信',
       danger: '危险操作',
     },
     overview: {

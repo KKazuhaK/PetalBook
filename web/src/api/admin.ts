@@ -42,6 +42,8 @@ import type {
   MailPatch,
   MailSettings,
   MailTestResult,
+  TenantMail,
+  TenantMailPatch,
   CreatedTenant,
   AdminUsageList,
   OwnQuota,
@@ -249,6 +251,17 @@ export const adminApi = {
   putMail: (input: MailPatch) => request<MailSettings>('/admin/mail', { method: 'PUT', body: input }),
   testMail: (to: string, lang?: string) =>
     request<MailTestResult>('/admin/mail/test', { method: 'POST', body: { to, ...(lang ? { lang } : {}) } }),
+  // An organisation's own sender (3.6).
+  tenantMail: (tenant: string, signal?: AbortSignal) =>
+    request<TenantMail>(`/admin/tenants/${enc(tenant)}/mail`, { signal }),
+  putTenantMail: (tenant: string, input: TenantMailPatch) =>
+    request<TenantMail>(`/admin/tenants/${enc(tenant)}/mail`, { method: 'PUT', body: input }),
+  deleteTenantMail: (tenant: string) => request<void>(`/admin/tenants/${enc(tenant)}/mail`, { method: 'DELETE' }),
+  testTenantMail: (tenant: string, to: string, lang?: string) =>
+    request<MailTestResult>(`/admin/tenants/${enc(tenant)}/mail/test`, {
+      method: 'POST',
+      body: { to, ...(lang ? { lang } : {}) },
+    }),
   // A password the administrator typed: the person must replace it at their next sign-in, and their sessions end.
   setTemporaryPassword: (id: string, password: string) =>
     request<void>(`/users/${enc(id)}/password`, { method: 'POST', body: { password } }),
@@ -724,6 +737,37 @@ export function usePutMail() {
       qc.setQueryData(keys.adminMail, data)
       void qc.invalidateQueries({ queryKey: keys.providers })
       void qc.invalidateQueries({ queryKey: keys.tenants })
+    },
+  })
+}
+
+// A tenant's own sender (3.6). The answers of a change are kept in the cache: what the organisation's messages go by
+// shows in the settings and the people's invitations too, so those are read again.
+export function useTenantMail(tenant: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.tenantMail(tenant),
+    queryFn: ({ signal }) => adminApi.tenantMail(tenant, signal),
+    enabled: enabled && tenant !== '',
+    staleTime: 5_000,
+  })
+}
+export function usePutTenantMail(tenant: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: TenantMailPatch) => adminApi.putTenantMail(tenant, input),
+    onSuccess: (data) => {
+      qc.setQueryData(keys.tenantMail(tenant), data)
+      void qc.invalidateQueries({ queryKey: keys.secrets(tenant) })
+    },
+  })
+}
+export function useDeleteTenantMail(tenant: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => adminApi.deleteTenantMail(tenant),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.tenantMail(tenant) })
+      void qc.invalidateQueries({ queryKey: keys.secrets(tenant) })
     },
   })
 }
