@@ -727,9 +727,13 @@ Public. `Cache-Control: no-store`. Counts against the address's requests this
 minute. `account` matters only for `login`; the page asks again when the
 username changes (when the field loses focus, not at every key). `tenant` is
 the organisation the form is opened for (optional, `404` if unknown): for
-`login`, `forgot` and `register` the answer is the settings of that
-organisation's `captcha.contexts`; without `tenant`, and always for `invite`
-and `setup`, the site's.
+`login`, `forgot` and `register` the answer is the stricter of the site's
+settings and that organisation's `captcha.contexts`; without `tenant`, and always
+for `invite` and `setup`, the site's. `provider` and `siteKey` are those of the
+provider that asks: the site's wherever the site's own setting asks, the
+organisation's own provider (3.6, "Captcha: `GET/PUT
+/api/admin/tenants/{tenant}/captcha`") where only the organisation asks and it
+has one in force, else the site's.
 
 ```json
 {"required": true, "provider": "image", "siteKey": "", "id": "…", "image": "data:image/png;base64,…"}
@@ -7597,8 +7601,13 @@ and no audit row holds it (`secret_changed` has the name and `set` or `cleared`)
 
 A site administrator manages the site's; a tenant administrator only their own
 tenant's, and only those the site allows the tenant: `mail.password` needs the
-feature `mail.ownSender` for the tenant, else `403 feature_off` (with `feature`);
-the others are the site's alone for now (`404 not_found` for a tenant).
+feature `mail.ownSender` for the tenant and `captcha.secret` the feature
+`features.ownCaptcha`, else `403 feature_off` (with `feature`); the others are
+the site's alone for now (`404 not_found` for a tenant). A tenant's
+`captcha.secret` is that of its own captcha provider (see "Captcha: `GET/PUT
+/api/admin/tenants/{tenant}/captcha`"): changing it takes effect at once, and
+clearing it is refused (`400 captcha_needed`) while the tenant's forms depend on
+it.
 
 #### `GET /api/admin/secrets`, `GET /api/admin/tenants/{tenant}/secrets`
 
@@ -7968,6 +7977,8 @@ not fill the log).
 | `mail_insecure` | 400 | `security: "none"` to a host that is not loopback (for an organisation's own sender, `none` at all) |
 | `mail_host_not_public` | 400 | an organisation's own mail server named by an address that is not public (loopback, private, link-local) or by a name of this machine (`localhost`, `.local`, `.internal`) |
 | `mail_from_required` | 400 | enabling mail without `from` |
+| `captcha_needed` | 400 | taking away an organisation's own captcha provider (removing it, switching it off or clearing its secret) while the organisation asks a captcha of its own forms and the site's provider has no keys to take over |
+| `captcha_not_configured` | 409 | trying an organisation's own captcha provider before it has a site key and a secret |
 | `sso_only_with_registration` | 409 (opening `features.orgCreation`), 400 (`PUT /api/admin/security`) | `ssoOnly` and organisations people create together (password sign-up makes them) |
 | `email_domain_not_allowed` | 400 | the address's domain is not in `registration.domains` |
 | `terms_required` | 400 | `acceptTerms` missing while a terms or privacy address is set |
@@ -10092,8 +10103,10 @@ The inventory's (a) items, and the reasons that matter for security:
   and which tenant it is in (2.8 counts failures for names nobody has, so that
   nothing tells them apart).
 - **The `login` and `setup` captcha contexts**: the same reason; the sign-in
-  form is the server's. A tenant's captcha keys and contexts apply to the forms
-  that name the tenant (`register`, `forgot`, `invite`).
+  form is the server's. A tenant's captcha contexts apply to the forms that
+  name the tenant (`login`, `register`, `forgot`), the stricter of its and the
+  site's; its own provider serves them only where the site asks nothing (see
+  "Captcha: `GET/PUT /api/admin/tenants/{tenant}/captcha`").
 - **Passkeys on or off**: their relying party is the server's host.
 - **The server itself**: `--listen`, `--public-url`, `--data`, `--database`,
   `--trusted-proxy`, `--allow-origin`, the process limits, the secret key,
@@ -10875,11 +10888,93 @@ refused for its address says "not a public address", never the address.
 
 #### Captcha: `GET/PUT /api/admin/tenants/{tenant}/captcha`
 
-`provider`, `siteKey`, `secret` (write-only) as 2.8, and the tenant's values of
-the contexts `register`, `forgot`, `invite` (within the site's `tighten`). Used
-on the tenant's registration, reset and invite pages; the verification request
-goes to the provider's fixed host and counts against the tenant's outbound
-share.
+An organisation's own captcha provider (3.6). The routes need
+`tenant.captcha.manage` and the feature `features.ownCaptcha` (on by default;
+`403 feature_off` while the site has turned it off for the tenant; a site
+administrator is not bound by it, and may read and change any tenant's).
+`{tenant}` is one the caller may manage (`404 not_found` otherwise).
+
+- `GET` answers `{"enabled", "provider", "siteKey", "hasSecret", "ready"}`.
+  `provider` is `image` (the server's own; no keys), `turnstile`, `recaptcha` or
+  `hcaptcha`, the site's choices. `siteKey` is public (it goes into the page).
+  The secret is never shown. `ready` says the organisation's forms use the
+  provider now: it is enabled, complete, and the feature is on. With no record
+  it is `{"enabled": false, "provider": "image", "siteKey": "", "hasSecret":
+  false, "ready": false}`.
+- `PUT` takes any of `enabled`, `provider`, `siteKey` and `secret` (write-only;
+  absent keeps it, `""` clears it), all checked before anything is stored. The
+  provider and the site key are the tenant's integration record of kind
+  `captcha`; the secret is the tenant's secret `captcha.secret` (setting it as
+  a secret has the same effect at once). A change of `provider` clears both
+  keys, as at the site (they belong to the provider they were made for). `400
+  invalid` for another provider, for keys given with `image`, for a site key
+  over 255 characters or a secret over 1,024 bytes; enabling a third party
+  needs `--public-url` (`400 captcha_needs_public_url`, its host is what the
+  provider's answer is checked against), a site key (`400
+  captcha_site_key_required`) and a secret (`400 captcha_secret_required`).
+- `DELETE` removes the record and the secret (`204`); the forms then use the
+  site's provider.
+- `POST …/captcha/test` `{"token"}` checks a token that the provider's widget
+  gave on the page, with the stored site key and secret (the provider may be
+  off), and answers `200 {"ok": true}` or `{"ok": false, "message"}` (the
+  server's reading of the provider's answer, never a secret). `409
+  captcha_not_configured` without a site key and a secret, `400 invalid` for
+  `image` (it needs no test) and for no token; at most 10 an hour for each
+  tenant (`429 rate_limited`).
+- **Taking it away.** A provider that the organisation's own forms depend on is
+  not taken away (removed, switched off, its secret cleared: `400
+  captcha_needed`) while the organisation asks a captcha of them
+  (`captcha.contexts`) and the site's provider is a third party with no keys:
+  the forms would have nothing to check them with. Without a provider of its own,
+  an organisation that asks a captcha of its forms with a third-party site
+  provider needs the site's keys (`400 captcha_site_key_required`, as before).
+- **Outgoing requests.** The verification request goes to the provider's fixed
+  address (the server knows each; an organisation names no host), so nothing is
+  dialled at an address a tenant chose, and no public-address check is needed. It
+  does not spend the tenant's outbound share (`rate.outboundPerMinute`): anyone
+  may submit a form, and would drain it; the per-address limits bound them, as
+  for a sign-in's calls. A provider that cannot be reached or answers nothing
+  readable fails the form (`captcha_failed`), as the site's.
+- **Memory.** Every provider is kept in memory (its secret in a verifier built
+  from it), read at startup and again for one tenant when it changes, so no form
+  makes a query for it.
+- **Audit.** `tenant_captcha_changed` (the changed fields, the secret as
+  `"changed"` or `"cleared"`, `removed`) and `tenant_captcha_test` (`provider`,
+  `ok`), visible to the tenant's administrators. No row holds a secret.
+
+**Which provider a form uses** (decided 2026-11-28). A form of an organisation
+(`login`, `forgot` and `register` of a request that names it) is asked the
+stricter of the site's setting and the organisation's, as in "The sign-in policy
+of a tenant". Which provider asks, and checks the answer, is a separate
+decision, made by the server for the request and the same for the page
+(`GET /api/captcha`) and for the form:
+
+1. **Where the site's own setting asks a captcha of this request** (always, or
+   after failures that have been counted), **the site's provider** asks and
+   checks it, whatever the organisation has, and whichever organisation the
+   request names.
+2. **Where only the organisation asks** (the site's own setting does not, now),
+   **the organisation's own provider** asks and checks it, if it is in force
+   (`ready`: enabled, complete, the feature on); otherwise the site's.
+
+Why: whoever controls a provider's secret can make it pass for anything. A
+request names an organisation, but sign-in looks accounts up on the whole
+server, so naming an organisation says nothing about whose account is signed
+into: an administrator of one organisation could name theirs, in a sign-in for an
+account outside it, and pass its provider without solving anything. By rule 1
+that never replaces a captcha the site asks; by rule 2 it only ever stands in for
+no captcha at all, which is what the request would have had without naming it.
+The same holds for a registration (the site may ask it to protect its own mail),
+a reset and a sign-in, so it is one rule. Nothing in the choice depends on an
+account, on whether one exists or on its organisation: it depends only on the
+organisation named, the settings and the failures counted for the address and the
+name typed (counted for names nobody has, as now), so the page before the name is
+known, and a refused answer, tell nothing about an account. The invitation and the
+first-run setup are the site's, and a registration that makes a new organisation
+(there is none yet) uses the site's. There is no `captcha.useSite` setting: the
+site's provider is always what an organisation without a provider of its own (or
+with one that is not in force) uses, since the site's own requirement must be
+checked by it anyway.
 
 #### Daily text: `/api/admin/tenants/{tenant}/daily…`
 
@@ -11564,6 +11659,7 @@ held by the built-in site administrator only: no custom role may hold it.
 | `tenant.domains.manage` | tenant | `features.domains` | Claim the organisation's email domains, verify them by DNS, keep others from making organisations on them, and remove them |
 | `tenant.signin.manage` | tenant | `features.ownSso` | Add, change, test and remove the organisation's own single sign-on providers (OpenID Connect and SAML), and route its verified domains to them |
 | `tenant.mail.manage` | tenant | `mail.ownSender` | See, change and remove the organisation's own mail sender (SMTP), and send a test message through it |
+| `tenant.captcha.manage` | tenant | `features.ownCaptcha` | See, set, try and remove the organisation's own captcha provider (Turnstile, reCAPTCHA, hCaptcha or the built-in image) and its keys |
 | `space.read` | space | — | See pages, history, attachments and search |
 | `space.write` | space | — | Create, change, move and delete pages and folders |
 | `space.members.manage` | space | — | Add, change and remove the members of the space |
@@ -11791,7 +11887,7 @@ SQLite and PostgreSQL.
 | `tenant_provider_created`, `…_changed`, `…_deleted` | a tenant's SSO provider changed | as `provider_*`, with `tenant`|
 | `provider_assigned` | a site SSO provider was handed to a tenant | `slug`, `tenant` |
 | `domain_claimed`, `domain_verified`, `domain_lapsed`, `domain_removed`, `domain_assigned` | a domain claim changed | `domain`, `tenant` |
-| `tenant_mail_changed`, `tenant_captcha_changed`, `tenant_daily_changed`, `tenant_connection_changed` | a tenant-owned resource changed | the changed fields, secrets as `"changed"`; `provider` for a connection |
+| `tenant_mail_changed`, `tenant_captcha_changed`, `tenant_daily_changed`, `tenant_connection_changed` (and `tenant_mail_test`, `tenant_captcha_test` for a test) | a tenant-owned resource changed | the changed fields, secrets as `"changed"`; `provider` for a connection |
 | `setting_rule_started`, `setting_rule_ended` | the window of a rule for a tenant started or ended (no actor) | `tenant`, `key`, `source`, `at` |
 | `usage_exported` | a tenant's usage was exported | `tenant`, `from`, `to`, `format`, `rows` |
 | `sso_refused_site_admin` | a tenant's provider tried to sign in a site administrator | `provider`, `user` |
@@ -13045,7 +13141,9 @@ when the site became stricter after it.
   value is used:** a `login` or `GET /api/captcha` that names no tenant, the
   invitation and the first-run setup. So a sign-in without `tenant` is no
   stricter than the site's, and the web app's page for an organisation
-  passes it.
+  passes it. The provider that asks is chosen by the server (the site's
+  wherever the site asks, the organisation's own where only it asks): see
+  "Which provider a form uses".
 - **`signin.mode`.** The mode of the sign-in page opened for the organisation
   (`loginMode` of `GET /api/auth/providers?tenant=`): `local_only` while no
   provider is enabled at all, else the organisation's. It shapes the page and

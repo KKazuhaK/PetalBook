@@ -302,6 +302,13 @@
       "builtInOnly": false
     },
     {
+      "name": "tenant.captcha.manage",
+      "scope": "tenant",
+      "feature": "features.ownCaptcha",
+      "description": "See, set, try and remove the organisation's own captcha provider (Turnstile, reCAPTCHA, hCaptcha or the built-in image) and its keys",
+      "builtInOnly": false
+    },
+    {
       "name": "space.read",
       "scope": "space",
       "feature": "",
@@ -491,6 +498,14 @@
         },
         {
           "name": "sessions_ended",
+          "site": false
+        },
+        {
+          "name": "tenant_captcha_changed",
+          "site": false
+        },
+        {
+          "name": "tenant_captcha_test",
           "site": false
         },
         {

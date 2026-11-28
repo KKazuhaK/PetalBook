@@ -409,6 +409,14 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/admin/tenants/{tenant}/mail/test": {kind: isoParam, body: func(f *tenFx, id string) any {
 		return map[string]any{"to": "evil@example.com"}
 	}},
+	"GET /api/admin/tenants/{tenant}/captcha": {kind: isoParam},
+	"PUT /api/admin/tenants/{tenant}/captcha": {kind: isoParam, body: func(f *tenFx, id string) any {
+		return map[string]any{"provider": "image", "enabled": true}
+	}},
+	"DELETE /api/admin/tenants/{tenant}/captcha": {kind: isoParam},
+	"POST /api/admin/tenants/{tenant}/captcha/test": {kind: isoParam, body: func(f *tenFx, id string) any {
+		return map[string]any{"token": "x"}
+	}},
 	"GET /api/admin/tenants/{tenant}/providers": {kind: isoParam},
 	"POST /api/admin/tenants/{tenant}/providers": {kind: isoParam, body: func(f *tenFx, id string) any {
 		return map[string]any{"slug": "evil-sso", "kind": "oidc", "name": "Evil"}

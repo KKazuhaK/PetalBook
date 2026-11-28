@@ -140,6 +140,9 @@ export const apiErrorsEn: ApiErrorTexts = {
   sso_required: 'This organisation signs its people in with single sign-on, not with a password.',
   provider_unavailable: 'The sign-in this request was made with is not available to this organisation any more.',
   captcha_failed: 'The human check did not pass. Try again.',
+  captcha_needed:
+    "This organisation's forms ask a captcha and the site's service has no keys to take over. Set the site's keys first, or switch those forms off.",
+  captcha_not_configured: 'Save the site key and the secret first.',
   captcha_needs_public_url:
     'A third-party captcha is checked against the public address. Start the server with --public-url.',
   captcha_secret_required: 'Give the secret of the captcha service.',

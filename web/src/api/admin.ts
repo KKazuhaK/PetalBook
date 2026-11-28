@@ -44,6 +44,8 @@ import type {
   MailTestResult,
   TenantMail,
   TenantMailPatch,
+  TenantCaptcha,
+  TenantCaptchaPatch,
   CreatedTenant,
   AdminUsageList,
   OwnQuota,
@@ -262,6 +264,14 @@ export const adminApi = {
       method: 'POST',
       body: { to, ...(lang ? { lang } : {}) },
     }),
+  // An organisation's own captcha provider (3.6).
+  tenantCaptcha: (tenant: string, signal?: AbortSignal) =>
+    request<TenantCaptcha>(`/admin/tenants/${enc(tenant)}/captcha`, { signal }),
+  putTenantCaptcha: (tenant: string, input: TenantCaptchaPatch) =>
+    request<TenantCaptcha>(`/admin/tenants/${enc(tenant)}/captcha`, { method: 'PUT', body: input }),
+  deleteTenantCaptcha: (tenant: string) => request<void>(`/admin/tenants/${enc(tenant)}/captcha`, { method: 'DELETE' }),
+  testTenantCaptcha: (tenant: string, token: string) =>
+    request<MailTestResult>(`/admin/tenants/${enc(tenant)}/captcha/test`, { method: 'POST', body: { token } }),
   // A password the administrator typed: the person must replace it at their next sign-in, and their sessions end.
   setTemporaryPassword: (id: string, password: string) =>
     request<void>(`/users/${enc(id)}/password`, { method: 'POST', body: { password } }),
@@ -767,6 +777,36 @@ export function useDeleteTenantMail(tenant: string) {
     mutationFn: () => adminApi.deleteTenantMail(tenant),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.tenantMail(tenant) })
+      void qc.invalidateQueries({ queryKey: keys.secrets(tenant) })
+    },
+  })
+}
+
+// An organisation's own captcha provider (3.6). A change is kept in the cache; the secrets list is read again.
+export function useTenantCaptcha(tenant: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.tenantCaptcha(tenant),
+    queryFn: ({ signal }) => adminApi.tenantCaptcha(tenant, signal),
+    enabled: enabled && tenant !== '',
+    staleTime: 5_000,
+  })
+}
+export function usePutTenantCaptcha(tenant: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: TenantCaptchaPatch) => adminApi.putTenantCaptcha(tenant, input),
+    onSuccess: (data) => {
+      qc.setQueryData(keys.tenantCaptcha(tenant), data)
+      void qc.invalidateQueries({ queryKey: keys.secrets(tenant) })
+    },
+  })
+}
+export function useDeleteTenantCaptcha(tenant: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => adminApi.deleteTenantCaptcha(tenant),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.tenantCaptcha(tenant) })
       void qc.invalidateQueries({ queryKey: keys.secrets(tenant) })
     },
   })

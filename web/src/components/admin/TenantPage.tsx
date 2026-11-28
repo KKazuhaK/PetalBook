@@ -16,6 +16,7 @@ import { formatUsed, share } from '@/lib/usage'
 import { AdminPageHeader } from './AdminPageHeader'
 import { AdminTabs } from './AdminTabs'
 import { TenantSignin } from './OrgDomains'
+import { TenantCaptcha } from './TenantCaptcha'
 import { TenantMail } from './TenantMail'
 import { SecretsSection } from './SecretsSection'
 import { TenantLayer } from './SettingsPanel'
@@ -38,6 +39,7 @@ export const TENANT_TABS = [
   'audit',
   'signin',
   'mail',
+  'captcha',
   'danger',
 ] as const
 type TenantTab = (typeof TENANT_TABS)[number]
@@ -84,6 +86,8 @@ export function TenantPage({ id, tab }: { id: string; tab?: string }) {
     signin: () => <TenantSignin tenant={tenant.id} />,
     // Its own mail server (3.6) and the switch that lends it the site's.
     mail: () => <TenantMail tenant={tenant.id} />,
+    // Its own captcha provider (3.6).
+    captcha: () => <TenantCaptcha tenant={tenant.id} />,
     danger: () => <TenantEditor tenant={tenant} onGone={() => navigate(adminPath('tenants', 'tenants'))} />,
   }
   return (

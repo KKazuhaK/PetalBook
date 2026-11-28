@@ -107,14 +107,14 @@ describe('the secrets of the site', () => {
 })
 
 describe('the secrets of a tenant', () => {
-  it('holds only the mail password, and not while the site has not allowed the tenant its own sender', async () => {
+  it('holds the mail password and the captcha secret, and not while the site has not allowed the tenant its own sender', async () => {
     m = await open()
     await settle(() => rowOf('mail.password', 'tenant') !== null, 'the tenant secrets')
     const row = rowOf('mail.password', 'tenant')!
     expect(row.textContent).toContain(ts.notSet)
     expect(
       document.querySelectorAll('section[aria-labelledby="secrets-tenant-heading"] [data-slot="secret"]'),
-    ).toHaveLength(1)
+    ).toHaveLength(2)
     // The feature is off for the tenant: the message says so and Replace cannot be used.
     await settle(() => row.querySelector('[data-slot="feature-off"]') !== null, 'the message')
     expect(row.querySelector('[data-slot="feature-off"]')!.textContent).toBe(ts.featureOff)

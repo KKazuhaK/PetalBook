@@ -75,7 +75,12 @@ var routeAccessAdded = map[string][4]string{
 	"PUT /api/admin/tenants/{tenant}/mail":       {"ok", "403 feature_off", "403 feature_off", "403 token_scope"},
 	"DELETE /api/admin/tenants/{tenant}/mail":    {"ok", "403 feature_off", "403 feature_off", "403 token_scope"},
 	"POST /api/admin/tenants/{tenant}/mail/test": {"ok", "403 feature_off", "403 feature_off", "403 token_scope"},
-	"POST /api/auth/oidc/{slug}/callback":        {"ok", "ok", "ok", "403 token_scope"},
+	// An organisation's own captcha provider (3.6): tenant.captcha.manage, with features.ownCaptcha on by default.
+	"GET /api/admin/tenants/{tenant}/captcha":       {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"PUT /api/admin/tenants/{tenant}/captcha":       {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"DELETE /api/admin/tenants/{tenant}/captcha":    {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/tenants/{tenant}/captcha/test": {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/auth/oidc/{slug}/callback":           {"ok", "ok", "ok", "403 token_scope"},
 	// Finding the SSO by an address (3.6 d4): public.
 	"POST /api/auth/discover": {"ok", "ok", "ok", "403 token_scope"},
 	// Joining by email domain (3.6 d5): the waiting page is public; a tenant's

@@ -485,7 +485,10 @@ func (s *Service) checkTenantCaptcha(ctx context.Context, st *secState, tenant s
 	for _, k := range settings.CaptchaTenantContexts {
 		mine[k] = next[k]
 	}
-	if st.Captcha.Provider != CaptchaImage && anyOn(mine) {
+	// The site's provider asks where the site's own setting does, so the keys it
+	// needs are the site's even for a tenant with a provider of its own, unless
+	// that one is what serves the forms (tenantcaptcha.go keeps it from being taken away).
+	if st.Captcha.Provider != CaptchaImage && anyOn(mine) && s.tenantCaptchaFor(ctx, tenant) == nil {
 		if s.cfg.PublicURL == "" {
 			return nil, errNeedsPublicURL()
 		}

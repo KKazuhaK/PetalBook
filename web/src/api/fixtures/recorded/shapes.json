@@ -240,6 +240,11 @@
   "error": "string",
   "message": "string"
  },
+ "DELETE /api/admin/tenants/{}/captcha 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
  "DELETE /api/admin/tenants/{}/mail 403": {
   "error": "string",
   "feature": "string",
@@ -864,11 +869,7 @@
      "newTenant?": "boolean",
      "old?": {
       "disabled?": "boolean",
-      "name?": "string",
-      "remoteExempt?": "boolean",
-      "role?": "string",
-      "siteAdmin?": "boolean",
-      "username?": "string"
+      "remoteExempt?": "boolean"
      },
      "origin?": "string",
      "ownerGroups?": "null",
@@ -878,7 +879,7 @@
      "previous?": [
       "string"
      ],
-     "provider?": "null",
+     "provider?": "null|string",
      "quota?": {
       "$or": [
        "string",
@@ -959,8 +960,10 @@
       ]
      },
      "scope?": "string",
+     "secret?": "string",
      "signIn?": "string",
      "siteAdmin?": "boolean",
+     "siteKey?": "string",
      "slug?": "string",
      "source?": "string",
      "space?": "string",
@@ -972,7 +975,6 @@
        ]
       ]
      },
-     "temporary?": "boolean",
      "tenant?": "string",
      "to?": {
       "$or": [
@@ -2089,6 +2091,18 @@
  "GET /api/admin/tenants/{}/capabilities 404": {
   "error": "string",
   "message": "string"
+ },
+ "GET /api/admin/tenants/{}/captcha 200": {
+  "enabled": "boolean",
+  "hasSecret": "boolean",
+  "provider": "string",
+  "ready": "boolean",
+  "siteKey": "string"
+ },
+ "GET /api/admin/tenants/{}/captcha 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
  },
  "GET /api/admin/tenants/{}/domains 200": {
   "domains": [
@@ -5186,6 +5200,15 @@
   "error": "string",
   "message": "string"
  },
+ "POST /api/admin/tenants/{}/captcha/test 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/tenants/{}/captcha/test 409": {
+  "error": "string",
+  "message": "string"
+ },
  "POST /api/admin/tenants/{}/domains 201": {
   "checkedAt": "null",
   "code": "string",
@@ -6697,6 +6720,22 @@
   "error": "string",
   "message": "string"
  },
+ "PUT /api/admin/tenants/{}/captcha 200": {
+  "enabled": "boolean",
+  "hasSecret": "boolean",
+  "provider": "string",
+  "ready": "boolean",
+  "siteKey": "string"
+ },
+ "PUT /api/admin/tenants/{}/captcha 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/tenants/{}/captcha 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
  "PUT /api/admin/tenants/{}/mail 200": {
   "enabled": "boolean",
   "from": "string",
@@ -6760,7 +6799,7 @@
    {
     "name": "string",
     "set": "boolean",
-    "updatedAt": "string"
+    "updatedAt?": "string"
    }
   ]
  },

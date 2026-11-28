@@ -615,6 +615,7 @@ export const tenantsEn: TenantsMessages = {
       audit: 'Audit',
       signin: 'Sign-in',
       mail: 'Mail',
+      captcha: 'Captcha',
       danger: 'Danger zone',
     },
     overview: {

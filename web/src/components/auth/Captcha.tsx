@@ -148,7 +148,14 @@ export function CaptchaField({ captcha, disabled }: { captcha: CaptchaState; dis
       </div>
     )
   }
-  return <Widget provider={c.provider!} siteKey={c.siteKey ?? ''} resets={captcha.resets} onToken={captcha.setToken} />
+  return (
+    <CaptchaWidget
+      provider={c.provider!}
+      siteKey={c.siteKey ?? ''}
+      resets={captcha.resets}
+      onToken={captcha.setToken}
+    />
+  )
 }
 
 // --- the third-party widgets --------------------------------------------------------------
@@ -188,7 +195,7 @@ function loadScript(src: string): Promise<void> {
 }
 const globalApi = (name: string) => (window as unknown as Record<string, WidgetApi | undefined>)[name]
 
-function Widget({
+export function CaptchaWidget({
   provider,
   siteKey,
   resets,

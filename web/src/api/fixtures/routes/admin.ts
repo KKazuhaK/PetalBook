@@ -30,6 +30,7 @@ import type {
   Tenant,
   TenantDomain,
   TenantMail,
+  TenantCaptcha,
   TenantSetting,
   User,
   UserDeletionPlan,
@@ -242,7 +243,10 @@ function tenantView(c: Ctx, t: Tenant): Tenant {
 
 function secretsOf(c: Ctx, tenant?: string) {
   const rows = tenant
-    ? (A(c).secrets.tenants[tenant] ??= { 'mail.password': { name: 'mail.password', set: false } })
+    ? (A(c).secrets.tenants[tenant] ??= {
+        'mail.password': { name: 'mail.password', set: false },
+        'captcha.secret': { name: 'captcha.secret', set: false },
+      })
     : A(c).secrets.site
   return rows
 }
@@ -266,6 +270,18 @@ function tenantMailOf(c: Ctx): TenantMail {
   const useSite = A(c).tenantRules[c.params.id]?.['mail.useSite']
   const lent = (useSite?.rules?.[0]?.value ?? useSite?.value) !== false
   return { ...base, sender: base.enabled ? 'tenant' : lent && A(c).mail.enabled ? 'site' : '' }
+}
+
+// A tenant's own captcha provider as the server shows it: in force (`ready`) when it is on and complete.
+function tenantCaptchaOf(c: Ctx): TenantCaptcha {
+  const base: TenantCaptcha = A(c).tenantCaptcha[c.params.id] ?? {
+    enabled: false,
+    provider: 'image',
+    siteKey: '',
+    hasSecret: false,
+    ready: false,
+  }
+  return { ...base, ready: base.enabled && (base.provider === 'image' || (base.siteKey !== '' && base.hasSecret)) }
 }
 
 // --- a tenant's own single sign-on (3.6 d3): the same providers, owned by the tenant ---
@@ -1733,6 +1749,54 @@ export const adminRoutes: Route[] = [
       if (!tenantMailOf(c).host) throw new Refusal(409, 'mail_not_configured', 'Set up the mail server first.')
       c.data.sent.mail.push({ to: c.body.to, kind: 'test' })
       return { ok: true }
+    },
+  ],
+
+  // --- a tenant's own captcha provider (3.6) ---
+  ['GET', '/api/admin/tenants/:id/captcha', (c) => tenantCaptchaOf(c)],
+  [
+    'PUT',
+    '/api/admin/tenants/:id/captcha',
+    (c) => {
+      const { secret, ...rest } = c.body
+      const cur = tenantCaptchaOf(c)
+      const next: TenantCaptcha = { ...cur, ...rest }
+      let hasSecret = cur.hasSecret
+      if (rest.provider !== undefined && rest.provider !== cur.provider) {
+        next.siteKey = rest.siteKey ?? ''
+        hasSecret = false
+      }
+      if (secret !== undefined) hasSecret = secret !== ''
+      if (next.provider === 'image' && (next.siteKey || secret))
+        throw new Refusal(400, 'invalid', 'The built-in image has no keys.')
+      if (next.enabled && next.provider !== 'image') {
+        if (!next.siteKey) throw new Refusal(400, 'captcha_site_key_required', 'Give the site key.')
+        if (!hasSecret) throw new Refusal(400, 'captcha_secret_required', 'Give the secret.')
+      }
+      A(c).tenantCaptcha[c.params.id] = { ...next, hasSecret }
+      secretsOf(c, c.params.id)['captcha.secret'] = { name: 'captcha.secret', set: hasSecret }
+      return tenantCaptchaOf(c)
+    },
+  ],
+  [
+    'DELETE',
+    '/api/admin/tenants/:id/captcha',
+    (c) => {
+      delete A(c).tenantCaptcha[c.params.id]
+      secretsOf(c, c.params.id)['captcha.secret'] = { name: 'captcha.secret', set: false }
+    },
+  ],
+  [
+    'POST',
+    '/api/admin/tenants/:id/captcha/test',
+    (c) => {
+      const v = tenantCaptchaOf(c)
+      if (v.provider === 'image') throw new Refusal(400, 'invalid', 'The built-in image needs no test.')
+      if (!v.siteKey || !v.hasSecret)
+        throw new Refusal(409, 'captcha_not_configured', 'Set the site key and the secret first.')
+      return c.body.token === 'good'
+        ? { ok: true }
+        : { ok: false, message: 'the provider did not accept the token or the secret' }
     },
   ],
 

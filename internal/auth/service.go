@@ -156,6 +156,13 @@ type Service struct {
 	capStore     *captcha.MemoryStore
 	capTok       atomic.Pointer[tokenChecker]
 	capSecretErr atomic.Bool
+	// The tenants' own captcha providers (tenantcaptcha.go): kept in memory,
+	// read at startup and again for one tenant when it changes.
+	tenantCaptchaMu    sync.Mutex
+	tenantCaptchaCache struct {
+		sync.RWMutex
+		m map[string]*tenantCaptcha
+	}
 
 	// onNewUser is told whose usage rows a new account reached (its own and its
 	// tenant's people), after it is made; nil: nobody is told.
@@ -347,6 +354,9 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		return set == nil || set.On(context.Background(), tenant, settings.MailOwnSender)
 	})
 	if err := s.loadTenantMail(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.loadTenantCaptcha(ctx); err != nil {
 		return nil, err
 	}
 	if err := s.reloadProviders(ctx); err != nil {

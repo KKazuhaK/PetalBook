@@ -583,6 +583,7 @@ export const tenantsZhCN = {
       audit: '审计',
       signin: '登录',
       mail: '发信',
+      captcha: '验证码',
       danger: '危险操作',
     },
     overview: {

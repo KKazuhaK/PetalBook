@@ -192,7 +192,7 @@ func TestSecretsAreWriteOnlyAndScoped(t *testing.T) {
 
 		// A tenant's own: only for what the site allows it. mail.ownSender is off by default.
 		tpath := "/api/admin/tenants/" + f.tenB + "/secrets"
-		if _, ok := list(f.admB, tpath)["captcha.secret"]; ok {
+		if _, ok := list(f.admB, tpath)["github.appKey"]; ok {
 			t.Fatal("a tenant is offered the site's secrets")
 		}
 		f.admB.do("PUT", tpath+"/mail.password", map[string]any{"value": value}).want(t, 403, "feature_off")
@@ -209,7 +209,7 @@ func TestSecretsAreWriteOnlyAndScoped(t *testing.T) {
 		f.admA.do("PUT", tpath+"/mail.password", map[string]any{"value": "x"}).want(t, 404, "not_found")
 		f.admA.do("DELETE", tpath+"/mail.password", nil).want(t, 404, "not_found")
 		f.memB.do("PUT", tpath+"/mail.password", map[string]any{"value": "x"}).want(t, 403, "forbidden")
-		f.admB.do("PUT", tpath+"/captcha.secret", map[string]any{"value": "x"}).want(t, 404, "not_found")
+		f.admB.do("PUT", tpath+"/github.appKey", map[string]any{"value": "x"}).want(t, 404, "not_found")
 		// The site may take the feature away; the tenant may still remove what it left.
 		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/mail.ownSender", map[string]any{"siteRule": nil}).want(t, 200, "")
 		f.admB.do("PUT", tpath+"/mail.password", map[string]any{"value": "again"}).want(t, 403, "feature_off")

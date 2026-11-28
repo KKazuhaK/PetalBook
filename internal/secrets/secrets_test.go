@@ -108,11 +108,11 @@ func TestWhoMayHoldWhichSecret(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
 		for _, c := range []struct{ tenant, name string }{
-			{ten, secrets.GitHubAppKey},  // the site's alone
-			{ten, secrets.CaptchaSecret}, // the site's alone for now
-			{"", "nothing.at.all"},       // not a secret
-			{ten, "also.not.a.secret"},   // not a secret
-			{ten, ""},                    // no name
+			{ten, secrets.GitHubAppKey},       // the site's alone
+			{ten, secrets.GitHubClientSecret}, // the site's alone
+			{"", "nothing.at.all"},            // not a secret
+			{ten, "also.not.a.secret"},        // not a secret
+			{ten, ""},                         // no name
 		} {
 			err := set(t, s, st, c.tenant, c.name, "x")
 			var se *secrets.Error
@@ -128,7 +128,7 @@ func TestWhoMayHoldWhichSecret(t *testing.T) {
 		}
 		// A tenant lists only the names it may hold.
 		l, err := s.List(ctx, st.Q(), ten)
-		if err != nil || len(l) != 1 || l[0].Name != secrets.MailPassword || l[0].Set {
+		if err != nil || len(l) != 2 || l[0].Name != secrets.MailPassword || l[0].Set || l[1].Name != secrets.CaptchaSecret || l[1].Set {
 			t.Fatalf("%+v %v", l, err)
 		}
 	})

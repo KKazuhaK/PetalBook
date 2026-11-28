@@ -121,6 +121,9 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   sso_required: '这个组织的成员要通过单点登录进入，不能用密码注册或登录。',
   provider_unavailable: '提出这个申请时用的登录方式，已不能在这个组织里使用。',
   captcha_failed: '人机验证没有通过，请再试一次。',
+  captcha_needed:
+    '这个组织的表单要求验证码，而全站的服务没有密钥可以接手。请先设好全站的密钥，或者关掉这些表单的验证码。',
+  captcha_not_configured: '请先保存站点密钥和密钥。',
   captcha_needs_public_url: '第三方验证码按公开地址校验，请用 --public-url 启动服务器。',
   captcha_secret_required: '请填写验证码服务的密钥。',
   captcha_site_key_required: '请填写验证码服务的站点密钥。',

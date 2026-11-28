@@ -973,6 +973,10 @@ export type ErrorCode =
   | 'public_url_needed'
   | 'rate_limited'
   | 'captcha_failed'
+  | 'captcha_needed'
+  | 'captcha_not_configured'
+  | 'captcha_site_key_required'
+  | 'captcha_secret_required'
   | 'local_login_refused'
   | 'last_local_admin'
   | 'passkey_required'
@@ -1333,6 +1337,21 @@ export interface TenantMail extends Omit<MailSettings, 'queue' | 'security'> {
   sender: 'tenant' | 'site' | ''
 }
 export type TenantMailPatch = Omit<MailPatch, 'security'> & { security?: TenantMailSecurity }
+// An organisation's own captcha provider (3.6). `ready`: its forms use it now (enabled, complete, the feature on).
+// The secret is write-only: only `hasSecret` is shown.
+export interface TenantCaptcha {
+  enabled: boolean
+  provider: CaptchaProvider
+  siteKey: string
+  hasSecret: boolean
+  ready: boolean
+}
+export interface TenantCaptchaPatch {
+  enabled?: boolean
+  provider?: CaptchaProvider
+  siteKey?: string
+  secret?: string
+}
 // Who may make an account (registration.mode): `open` any way, `invite` only a holder of an invitation (an
 // organisation's own email-domain join keeps working), `closed` nobody, invitations included.
 export type RegistrationMode = 'open' | 'invite' | 'closed'
