@@ -69,8 +69,13 @@ var routeAccessAdded = map[string][4]string{
 	// The usage export (3.6 limits): a tenant's administrators export their tenant's rows (the handler answers 404 for another).
 	"GET /api/admin/tenants/{tenant}/usage/export": {"ok", "ok", "403 forbidden", "403 token_scope"},
 	// Social sign-in templates and Apple's form_post (3.6 d1).
-	"GET /api/admin/provider-templates":   {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
-	"POST /api/auth/oidc/{slug}/callback": {"ok", "ok", "ok", "403 token_scope"},
+	"GET /api/admin/provider-templates": {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	// An organisation's own sender (3.6): tenant.mail.manage, with mail.ownSender off by default.
+	"GET /api/admin/tenants/{tenant}/mail":       {"ok", "403 feature_off", "403 feature_off", "403 token_scope"},
+	"PUT /api/admin/tenants/{tenant}/mail":       {"ok", "403 feature_off", "403 feature_off", "403 token_scope"},
+	"DELETE /api/admin/tenants/{tenant}/mail":    {"ok", "403 feature_off", "403 feature_off", "403 token_scope"},
+	"POST /api/admin/tenants/{tenant}/mail/test": {"ok", "403 feature_off", "403 feature_off", "403 token_scope"},
+	"POST /api/auth/oidc/{slug}/callback":        {"ok", "ok", "ok", "403 token_scope"},
 	// Finding the SSO by an address (3.6 d4): public.
 	"POST /api/auth/discover": {"ok", "ok", "ok", "403 token_scope"},
 	// Joining by email domain (3.6 d5): the waiting page is public; a tenant's

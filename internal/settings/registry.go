@@ -204,7 +204,8 @@ const (
 	// external interfaces and their allowance (DailyUseSiteAPIs), and the
 	// connections the site configured, such as its GitHub App
 	// (ConnectionsUseSiteApps). Site and tenant; on by default, as the site's
-	// are what is used today. Reserved: nothing reads them yet.
+	// are what is used today. MailUseSite is read (internal/auth/tenantmail.go);
+	// the other two are reserved: nothing reads them yet.
 	MailUseSite            = "mail.useSite"
 	DailyUseSiteAPIs       = "daily.useSiteApis"
 	ConnectionsUseSiteApps = "connections.useSiteApps"
@@ -218,7 +219,7 @@ const (
 	// The outgoing calls made for tenants' own configuration (docs/api.md,
 	// "Outgoing requests made for a tenant"): the cap on every tenant together,
 	// and the share of it one tenant has when its rate.outboundPerMinute rule
-	// says none. Site only. Reserved: nothing reads them yet.
+	// says none. Site only.
 	OutboundPerMinute       = "outbound.perMinute"
 	OutboundTenantPerMinute = "outbound.tenantPerMinute"
 

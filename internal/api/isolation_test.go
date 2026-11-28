@@ -401,6 +401,14 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/admin/tenants/{tenant}/join-requests/{id}/deny": {kind: isoParam, ids: func(f *tenFx) map[string]string {
 		return map[string]string{"tenant": f.tenB, "id": f.joinB}
 	}},
+	"GET /api/admin/tenants/{tenant}/mail": {kind: isoParam},
+	"PUT /api/admin/tenants/{tenant}/mail": {kind: isoParam, body: func(f *tenFx, id string) any {
+		return map[string]any{"host": "smtp.example.com", "from": "evil@example.com"}
+	}},
+	"DELETE /api/admin/tenants/{tenant}/mail": {kind: isoParam},
+	"POST /api/admin/tenants/{tenant}/mail/test": {kind: isoParam, body: func(f *tenFx, id string) any {
+		return map[string]any{"to": "evil@example.com"}
+	}},
 	"GET /api/admin/tenants/{tenant}/providers": {kind: isoParam},
 	"POST /api/admin/tenants/{tenant}/providers": {kind: isoParam, body: func(f *tenFx, id string) any {
 		return map[string]any{"slug": "evil-sso", "kind": "oidc", "name": "Evil"}

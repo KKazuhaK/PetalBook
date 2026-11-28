@@ -82,12 +82,12 @@ func (s *Service) joinOf(ctx context.Context, email string) (tenant, domain, mod
 // address now: mail is on, and a verified domain of a tenant that is not
 // disabled joins people to it. From memory.
 func (s *Service) DomainJoinOpen(ctx context.Context) bool {
-	if s.cfg.JoiningTenants == nil || !s.MailEnabled() {
+	if s.cfg.JoiningTenants == nil {
 		return false
 	}
 	for _, t := range s.cfg.JoiningTenants(ctx) {
 		// Closed turns every join off.
-		if !s.st.TenantDisabled(t) && s.RegistrationMode(ctx, t) != settings.RegClosed {
+		if !s.st.TenantDisabled(t) && s.MailReadyFor(ctx, t) && s.RegistrationMode(ctx, t) != settings.RegClosed {
 			return true
 		}
 	}

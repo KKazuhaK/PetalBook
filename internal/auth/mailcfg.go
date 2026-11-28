@@ -357,13 +357,15 @@ var securityMail = map[string]bool{
 // here, outside any transaction, and only for a tenant that has a limit. The
 // release gives the slot back when the message is not queued after all. A message
 // of no tenant ("") is the site's own and is neither counted nor held.
-func (s *Service) reserveMail(tenant, kind string) (release func(), err error) {
+func (s *Service) reserveMail(tenant, kind string, viaSite bool) (release func(), err error) {
 	m, st := s.meter.Load(), s.settings.Load()
 	if tenant == "" || m == nil {
 		return func() {}, nil
 	}
 	limit, limited := int64(0), false
-	if st != nil && !securityMail[kind] {
+	// rate.mailPerDay holds the site's mailer for the tenant: a message sent by
+	// the tenant's own sender is counted and never held.
+	if st != nil && viaSite && !securityMail[kind] {
 		limit, limited = st.LimitOf(context.Background(), tenant, settings.RateMailPerDay)
 	}
 	if !limited {
@@ -406,11 +408,34 @@ func (s *Service) chargeMail(tenant string) {
 // the site's mailer goes through here, so that it is counted and held to the
 // tenant's limit whichever flow sends it.
 func (s *Service) enqueueFor(tenant, kind string, msg mail.Message) error {
-	release, err := s.reserveMail(tenant, kind)
+	return s.enqueueAs(tenant, tenant, kind, msg)
+}
+
+// enqueueAs is enqueueFor for a message that is sent by one tenant's sender and
+// charged to another's day ("" is none): the sender is chosen by the request,
+// never by what an account or an address turned out to be, so that the choice
+// tells nothing about them. The sender is the tenant's own when it has one in
+// force; else the site's, when mail.useSite is in effect for it; else the message
+// is not sent (mail.ErrNotEnabled), and that is recorded at most once a day
+// (mail_not_sent) without counting anything. The queue remembers the route, so a
+// retry uses the same sender.
+func (s *Service) enqueueAs(sender, charged, kind string, msg mail.Message) error {
+	route, ok := s.mailRoute(context.Background(), sender)
+	if !ok {
+		if sender != "" {
+			s.noSender(sender)
+		}
+		return mail.ErrNotEnabled
+	}
+	viaSite := route == ""
+	release, err := s.reserveMail(charged, kind, viaSite)
 	if err != nil {
 		return err
 	}
-	if err := s.mail.Enqueue(msg); err != nil {
+	if viaSite && msg.FromName == "" {
+		msg.FromName = s.siteFromName(sender)
+	}
+	if err := s.mail.EnqueueVia(route, sender, msg); err != nil {
 		release()
 		return err
 	}
@@ -429,13 +454,19 @@ func (s *Service) OverLimit(tenant, key string, limit int64) {
 // sendMail renders a message and queues it, for a tenant ("" for none): the
 // tenant's mail is held to rate.mailPerDay and counted (see enqueueFor).
 func (s *Service) sendMail(tenant, kind, lang, to string, v mail.Vars) error {
+	return s.sendMailAs(tenant, tenant, kind, lang, to, v)
+}
+
+// sendMailAs is sendMail for a message sent by the sender of one tenant and
+// charged to another ("" for none): see enqueueAs.
+func (s *Service) sendMailAs(sender, charged, kind, lang, to string, v mail.Vars) error {
 	v.Site = s.siteName()
 	m := mail.Render(kind, lang, v)
 	m.To = to
-	switch err := s.enqueueFor(tenant, kind, m); {
+	switch err := s.enqueueAs(sender, charged, kind, m); {
 	case err == nil:
 		return nil
-	case errors.Is(err, mail.ErrQueueFull):
+	case errors.Is(err, mail.ErrQueueFull), errors.Is(err, mail.ErrSenderFull):
 		return coded(503, "unavailable", "The mail queue is full; try again later.")
 	case errors.Is(err, mail.ErrNotEnabled):
 		return coded(409, "mail_not_configured", "Mail is not enabled.")

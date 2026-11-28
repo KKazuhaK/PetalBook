@@ -178,13 +178,17 @@ type Service struct {
 
 	// Mail (see mailcfg.go): the sender, the caps of an hour, and the settings
 	// that say whether registration is open (set by the API's constructor).
-	mail     *mail.Service
-	mailMu   sync.Mutex
-	mailCaps *ratelimit.Window // messages per address and per caller
-	testCaps *ratelimit.Window // test messages
-	regCaps  *ratelimit.Window // registrations per tenant
-	joinCaps *ratelimit.Window // requests to join by domain, per address and day
-	settings atomic.Pointer[settings.Service]
+	mail   *mail.Service
+	mailMu sync.Mutex
+	// tenantMailMu serializes the changes of tenants' senders; tenantMailOpen is
+	// for tests (TrustTenantMailForTests).
+	tenantMailMu   sync.Mutex
+	tenantMailOpen atomic.Bool
+	mailCaps       *ratelimit.Window // messages per address and per caller
+	testCaps       *ratelimit.Window // test messages
+	regCaps        *ratelimit.Window // registrations per tenant
+	joinCaps       *ratelimit.Window // requests to join by domain, per address and day
+	settings       atomic.Pointer[settings.Service]
 	// meter counts the tenants' daily usage: the mail of a tenant is counted
 	// there and held to rate.mailPerDay (mailDayLimit).
 	meter atomic.Pointer[usage.Meter]
@@ -336,6 +340,9 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	s.sec(ctx) // reads the settings, and builds what depends on them
 	if err := s.loadMail(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.loadTenantMail(ctx); err != nil {
 		return nil, err
 	}
 	if err := s.reloadProviders(ctx); err != nil {

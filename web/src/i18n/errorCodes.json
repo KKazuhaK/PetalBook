@@ -68,6 +68,7 @@
   "local_admin_required",
   "local_login_refused",
   "mail_from_required",
+  "mail_host_not_public",
   "mail_insecure",
   "mail_needs_public_url",
   "mail_not_configured",
