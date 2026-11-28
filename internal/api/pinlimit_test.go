@@ -3,7 +3,6 @@ package api_test
 import (
 	"context"
 	"testing"
-
 )
 
 // A tenant's administrators pin only within the tenant's storage.pinnedBytes

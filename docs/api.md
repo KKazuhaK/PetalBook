@@ -7914,7 +7914,7 @@ the site's own kinds):
 | `email_verified` | an address was verified | `email` |
 | `password_set_by_admin` | an administrator gave a person a temporary password | `temporary` |
 | `password_reset_requested`, `password_reset` | a reset link was sent; a password was reset | `by` (`user`, `admin`; `welcome` for the first password of an account an administrator made) |
-| `quota_exceeded` | a person or a tenant went over a quota (once per crossing) | `quota` (`spaces`, `bytes`, `pages`, `people`), `limit`, `used`, `scope` (`person`, `tenant`); the row's `user` is the person, and for a tenant's total the `tenant` is the one |
+| `quota_exceeded` | a person or a tenant went over a quota (once per crossing), or a tenant went over a per-minute or per-day limit (once a day for the tenant and key) | `quota` (`spaces`, `bytes`, `pages`, `people`; for a limit, its key: `rate.apiPerMinute`, `rate.mcpPerMinute`, `rate.mailPerDay`), `limit`, `used` (not for a limit), `scope` (`person`, `tenant`); the row's `user` is the person, and for a tenant's total or limit the `tenant` is the one |
 
 `POST /api/register` writes nothing until it is confirmed (made-up addresses do
 not fill the log).
@@ -9604,10 +9604,62 @@ with `feature`).
 
 #### `GET /api/admin/tenants/{tenant}/usage/export?from=&to=&format=csv|jsonl`
 
-Site administrators, and the tenant's administrators: one row per day and key
-(people, spaces, bytes, pinned bytes, API and MCP requests, mail, outgoing
-calls), from `tenant_usage_daily`, written by the daily recount. At most 366
-days per request; streamed. Audited (`usage_exported`).
+Site administrators (any tenant), and the tenant's administrators (their own
+tenant: another is `404 not_found`, as for one that does not exist): one row per
+day and key (`people`, `spaces`, `bytes`, `pinnedBytes`, `apiRequests`,
+`mcpRequests`, `mail`, `outgoing`), from `tenant_usage_daily`.
+
+- `from` and `to` are days (`2026-11-23`, UTC), both included. `to` is today
+  when left out and `from` is 29 days before `to`. At most 366 days:
+  `400 invalid` otherwise, for a day that is not one, for `from` after `to` and
+  for a `format` that is neither.
+- `format` is `csv` (the default; a header `tenant,day,key,value`, then the
+  rows by day and key; `Content-Type: text/csv`) or `jsonl` (one object
+  `{"tenant", "day", "key", "value"}` a line; `application/x-ndjson`). Both are
+  attachments. Days with nothing counted have no rows, and a range with none
+  is a file with the header only (CSV) or empty (JSON Lines).
+- The counters in memory are written first, so that today's row is current.
+- Audited (`usage_exported`, with the days, the format and the number of rows).
+- The tenant page of the site's administrators (usage) and the usage page of a
+  tenant's console have the days, the format and the download.
+
+#### What a tenant's usage counts
+
+`tenant_usage_daily` has a row for each tenant, day (UTC) and key. Two kinds:
+
+- **Counted as it happens**: `apiRequests` (requests made with an API token),
+  `mcpRequests` (requests to `/mcp`), `mail` (messages the site's mailer queued
+  for the tenant's people; a message with no tenant, such as a refused new
+  organisation's, is not counted) and `outgoing` (reserved: nothing counts it
+  until the outgoing calls limit is built). The counts are kept in memory,
+  never in the database per request, and written in one transaction every
+  minute and when the server stops. **A crash loses at most what was counted
+  since the last write: a minute.** A request refused with `429` is not counted;
+  the requests of the web app's own session cookie are not counted either.
+- **Totals the recount sets**: `people`, `spaces`, `bytes` and `pinnedBytes`
+  (the disk of the pinned spaces: the measured size of the clone, else what the
+  quotas count of it), set from the usage rows and the spaces when the server
+  starts and every hour after, replacing the day's earlier values. The last
+  value of a day is that day's.
+
+#### The per-minute and per-day limits
+
+`rate.apiPerMinute` applies to requests made with an API token, `rate.mcpPerMinute`
+to requests to `/mcp` (an OAuth access token or an API token), for the tenant of
+the token's owner. The web app's own requests (a session cookie) are the
+person's own use and are not held to either. Over the limit the request is
+`429 rate_limited` with `Retry-After` (the seconds until the minute ends); the
+count is one fixed minute per tenant, in memory, so one tenant's requests never
+use another's, and nothing is read from the database for it (the limit comes
+from the settings' cache). `0` allows none; no value is no limit.
+
+`rate.mailPerDay` holds the site's mailer for the tenant's people: a message
+over the day's limit is not queued, and what asked for it answers `429
+rate_limited` with `Retry-After` until the UTC day ends (the flows that never say
+whether an address exists keep saying the same, and log it). The day's count is
+the written value plus the unwritten one, read outside any transaction, and only
+for a tenant that has a limit. Going over a limit writes `quota_exceeded` at most
+once a day for the tenant and key.
 
 ### The billing boundary
 
@@ -9889,7 +9941,13 @@ Notes:
   server's disk, so it is the site's: a tenant administrator may pin up to the
   tenant's `storage.pinnedBytes` (`0` by default, so tenant
   administrators cannot pin until the site allows it):
-  `409 quota_exceeded` with `quota: "pinnedBytes"`. Evicting is open to tenant
+  `409 quota_exceeded` with `quota: "pinnedBytes"`, `limit` and `used` (the
+  disk of the tenant's other pinned spaces plus this one's). The pin is
+  `PUT /api/admin/spaces/{space}/storage` `{"pin": true}`, open to a tenant's
+  administrators for their tenant's spaces (another tenant's space is `404`);
+  `exempt` in the same body is the site's (`403 forbidden` for a tenant's
+  administrator). A site administrator is not held to the limit, and a space
+  already pinned is not counted twice. Evicting is open to tenant
   administrators (it only frees the server's disk).
 - `storage.assets` at the space layer is the owner's choice for their space (a
   record of the state database, as 3.1's per-space values, not `space.yml`).
@@ -11515,14 +11573,15 @@ SQLite and PostgreSQL.
   totals are `quota.people`, `quota.spaces`, `quota.bytes` and `quota.pages`).
 - Settings: `layered_settings.note` (text, at most 200 characters, `''` for
   none), `.set_by`, `.site_lock`.
+- `tenant_usage_daily` has `day` as the UTC date `YYYY-MM-DD` and the keys
+  `people`, `spaces`, `bytes`, `pinnedBytes`, `apiRequests`, `mcpRequests`,
+  `mail` and `outgoing`; the counts are added by one
+  `INSERT … ON CONFLICT DO UPDATE SET value = value + excluded.value`, the totals
+  set (see "What a tenant's usage counts").
 - Shapes reserved ahead of their features (nothing reads them yet):
   `tenant_integrations` (tenant, kind, id, JSON config, updated by, updated;
   primary key `(tenant_id, kind, id)`, deleted with the tenant; the sealed
-  secrets stay in `secrets`); `tenant_usage_daily` with `day` as the UTC date
-  `YYYY-MM-DD` and the keys `people`, `spaces`, `bytes`, `pinnedBytes`,
-  `apiRequests`, `mcpRequests`, `mail` and `outgoing`, counted by one
-  `INSERT … ON CONFLICT DO UPDATE SET value = value + excluded.value`;
-  `storage_targets` with `app`, `prefix`, `state` (`checking`, `ok`, `broken`),
+  secrets stay in `secrets`); `storage_targets` with `app`, `prefix`, `state` (`checking`, `ok`, `broken`),
   `state_error`, `checked_at`, `in_use` and `updated_by`, and
   `storage_target_shares` (target, tenant) for a site target offered to tenants
   (only a target owned by `site` can be shared; `DeleteTenant` refuses while a
@@ -11571,7 +11630,7 @@ SQLite and PostgreSQL.
 | `domain_claimed`, `domain_verified`, `domain_lapsed`, `domain_removed`, `domain_assigned` | a domain claim changed | `domain`, `tenant` |
 | `tenant_mail_changed`, `tenant_captcha_changed`, `tenant_daily_changed`, `tenant_connection_changed` | a tenant-owned resource changed | the changed fields, secrets as `"changed"`; `provider` for a connection |
 | `setting_rule_started`, `setting_rule_ended` | the window of a rule for a tenant started or ended (no actor) | `tenant`, `key`, `source`, `at` |
-| `usage_exported` | a tenant's usage was exported | `tenant`, `from`, `to` |
+| `usage_exported` | a tenant's usage was exported | `tenant`, `from`, `to`, `format`, `rows` |
 | `sso_refused_site_admin` | a tenant's provider tried to sign in a site administrator | `provider`, `user` |
 | `outbound_capped` | a tenant reached its outbound share (once a minute per tenant) | `tenant`, `feature` |
 | `domain_checked` | a manual check of a domain | `domain`, `result`, `seen` |
