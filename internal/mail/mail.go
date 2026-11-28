@@ -263,9 +263,11 @@ func (s *Service) count(q *queued, d int) {
 		s.held["tenants"] += d
 	} else {
 		s.held["site"] += d
-	}
-	if q.owner != "" {
-		s.held["o:"+q.owner] += d
+		// A tenant's use of the site's mailer is counted apart from what waits for
+		// its own sender: a stalled server of its own never takes room from it.
+		if q.owner != "" {
+			s.held["o:"+q.owner] += d
+		}
 	}
 }
 
@@ -315,7 +317,9 @@ func (s *Service) EnqueueVia(route, owner string, security bool, m Message) erro
 		return ErrQueueFull
 	}
 	q := &queued{route: route, owner: owner, msg: m}
-	if route != "" && s.held["r:"+route] >= MaxPerSender || owner != "" && s.held["o:"+owner] >= MaxPerSender {
+	// Each route has its own budget; security mail through the site's is held only
+	// by the site's reserve, so a tenant's ordinary mail cannot crowd it out.
+	if route != "" && s.held["r:"+route] >= MaxPerSender || route == "" && !security && owner != "" && s.held["o:"+owner] >= MaxPerSender {
 		s.mu.Unlock()
 		return ErrSenderFull
 	}
@@ -392,8 +396,10 @@ func (s *Service) note(route string, ok bool, err error, c *Settings) {
 }
 
 // Run delivers the queue until ctx ends. The site's messages are delivered one
-// at a time, on their own; the tenants' by a bounded pool, each tenant at most
-// one at a time, so a sender that stalls holds one place and delays only itself.
+// at a time, on their own; the tenants' own senders' by a pool of
+// MaxTenantDeliveries, each tenant at most one at a time. A sender that stalls
+// holds one place of the pool: other tenants' own-sender mail waits only when
+// every place is held by a stalled one. The site's mail never waits for them.
 func (s *Service) Run(ctx context.Context) {
 	done := make(chan struct{})
 	go func() {

@@ -133,6 +133,11 @@ func (s *Service) tenantSettings(m tenantMailStored, password string) mail.Setti
 // applyTenantMail makes the stored settings and password of a tenant the ones in
 // force. A password this server's key cannot open turns the sender off.
 func (s *Service) applyTenantMail(ctx context.Context, tenant string, m tenantMailStored) {
+	if !m.Enabled {
+		// Off is off: nothing is read, and nothing of the old sender stays in force.
+		s.mail.SetTenant(tenant, nil)
+		return
+	}
 	pw, _, err := s.vault.Open(ctx, s.st.Q(), tenant, secrets.MailPassword)
 	if err != nil {
 		// Not a reason to drop what waits: the sender in force stays as it was (none,
@@ -209,7 +214,7 @@ func (s *Service) siteDomain(domain string) bool {
 	// The domain of the address the site itself sends from.
 	if site, err := s.readMail(context.Background()); err == nil {
 		if i := strings.LastIndex(site.From, "@"); i >= 0 {
-			return d == strings.ToLower(site.From[i+1:])
+			return under(strings.ToLower(site.From[i+1:]))
 		}
 	}
 	return false
@@ -353,7 +358,7 @@ func (s *Service) checkTenantTarget(m tenantMailStored) error {
 		}
 	}
 	if i := strings.LastIndex(m.From, "@"); i >= 0 && s.siteDomain(m.From[i+1:]) {
-		return errf(Invalid, "From may not be an address on the server's own domain or the domain the site sends from.")
+		return errf(Invalid, "From may not be an address on the server's own domain or the domain the site sends from, or under them.")
 	}
 	return nil
 }

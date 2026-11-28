@@ -34,7 +34,7 @@ func (f *tenFx) mailPath() string { return "/api/admin/tenants/" + f.tenB + "/ma
 
 func (f *tenFx) ownSMTP(srv *mailtest.Server, extra map[string]any) map[string]any {
 	body := map[string]any{"enabled": true, "host": srv.Host(), "port": srv.Port(), "security": "starttls", "username": "acme-bot",
-		"password": tenantSMTPPassword, "from": "hello@acme.example.test", "fromName": "Acme Mail", "replyTo": "help@acme.example.test"}
+		"password": tenantSMTPPassword, "from": "hello@acme.example.org", "fromName": "Acme Mail", "replyTo": "help@acme.example.org"}
 	for k, v := range extra {
 		body[k] = v
 	}
@@ -77,7 +77,7 @@ func TestATenantsSMTPSettingsAreItsOwnAndThePasswordIsWriteOnly(t *testing.T) {
 		}
 		put := f.admB.do("PUT", f.mailPath(), f.ownSMTP(srv, nil)).want(t, 200, "")
 		for _, r := range []result{put, f.admB.do("GET", f.mailPath(), nil).want(t, 200, ""), f.root.do("GET", f.mailPath(), nil).want(t, 200, "")} {
-			if strings.Contains(r.raw, tenantSMTPPassword) || r.body["hasPassword"] != true || r.body["host"] != srv.Host() || r.body["from"] != "hello@acme.example.test" ||
+			if strings.Contains(r.raw, tenantSMTPPassword) || r.body["hasPassword"] != true || r.body["host"] != srv.Host() || r.body["from"] != "hello@acme.example.org" ||
 				r.body["enabled"] != true || r.body["sender"] != "tenant" {
 				t.Fatalf("%s", r.raw)
 			}
@@ -143,7 +143,7 @@ func TestATenantsSenderReachesPublicAddressesOverTLSOnly(t *testing.T) {
 		f.allowOwnSender(t)
 		put := func(body map[string]any) result {
 			if _, ok := body["from"]; !ok {
-				body["from"] = "hello@acme.example.test"
+				body["from"] = "hello@acme.example.org"
 			}
 			return f.admB.do("PUT", f.mailPath(), body)
 		}
@@ -155,7 +155,7 @@ func TestATenantsSenderReachesPublicAddressesOverTLSOnly(t *testing.T) {
 		put(map[string]any{"host": "127.0.0.1", "port": 25, "security": "none"}).want(t, 400, "mail_insecure")
 		put(map[string]any{"host": "smtp.example.com", "port": 587, "enabled": true, "from": "x@notes.example.test"}).want(t, 400, "invalid")
 		put(map[string]any{"host": "smtp.example.com", "port": 587, "enabled": true, "from": "x@nope"}).want(t, 200, "")
-		f.admB.do("PUT", f.mailPath(), map[string]any{"enabled": true, "host": "smtp.example.com", "from": "x@acme.example.test", "replyTo": "not an address"}).want(t, 400, "invalid")
+		f.admB.do("PUT", f.mailPath(), map[string]any{"enabled": true, "host": "smtp.example.com", "from": "x@acme.example.org", "replyTo": "not an address"}).want(t, 400, "invalid")
 		// Nothing was stored by the refusals.
 		if r := f.admB.do("GET", f.mailPath(), nil).want(t, 200, ""); r.body["host"] != "smtp.example.com" || r.body["security"] != "starttls" {
 			t.Fatalf("%s", r.raw)
@@ -218,7 +218,7 @@ func TestTheSenderOfATenantsMessagesIsItsOwnThenTheSitesThenNone(t *testing.T) {
 			t.Fatalf("sender %q, mail %q", s, m)
 		}
 		got = lastTo(t, ownSrv, to)
-		if got.Auth != "acme-bot:"+tenantSMTPPassword || !strings.Contains(got.Raw, `From: "Acme Mail" <hello@acme.example.test>`) || !strings.Contains(got.Raw, "Reply-To: help@acme.example.test") {
+		if got.Auth != "acme-bot:"+tenantSMTPPassword || !strings.Contains(got.Raw, `From: "Acme Mail" <hello@acme.example.org>`) || !strings.Contains(got.Raw, "Reply-To: help@acme.example.org") {
 			t.Fatalf("%s", got.Raw)
 		}
 		// Its own with useSite on: still its own, never the site's.
@@ -304,13 +304,12 @@ func TestSecurityMailNeverGoesByATenantsOwnSender(t *testing.T) {
 			}
 		}
 		settle()
-		// What the tenant's server may have is a note with no link or token (the
-		// "an address was added" notice), never anything that proves or lets in.
-		for _, m := range ownSrv.Messages() {
-			if len(m.Tokens()) > 0 || strings.Contains(m.Text, "#") {
-				t.Fatalf("a message with a link went by the tenant's own sender: %s to %s", m.Subject, m.To)
-			}
+		// Nothing of it, the notices of a change to an address included (a tenant
+		// must not be able to hold back "your address was changed").
+		if n := len(ownSrv.Messages()); n != 0 {
+			t.Fatalf("%d security messages went by the tenant's own sender: %s", n, ownSrv.Messages()[0].Subject)
 		}
+		lastTo(t, siteSrv, "unv@example.test")
 		// An invitation into the tenant is ordinary mail: its own server.
 		if s, m := inviteVia(t, f, "invited@example.test"); s != "tenant" || m != "sent" {
 			t.Fatalf("sender %q, mail %q", s, m)
@@ -433,5 +432,28 @@ func TestTheDisplayNameOnTheSitesMailerNamesTheSiteAndNeverAnAddress(t *testing.
 		}
 		// The domain the site sends from is the site's, like its own.
 		f.admB.do("PUT", f.mailPath(), map[string]any{"host": "smtp.example.com", "from": "x@example.test"}).want(t, 400, "invalid")
+		f.admB.do("PUT", f.mailPath(), map[string]any{"host": "smtp.example.com", "from": "x@mail.example.test"}).want(t, 400, "invalid")
+	})
+}
+
+// Switching the sender off takes it out of force without reading its password:
+// a password that cannot be read now cannot keep the old sender running.
+func TestDisablingATenantsSenderDoesNotNeedItsPassword(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		f.allowOwnSender(t)
+		srv := tenantSMTP(t, a)
+		f.admB.do("PUT", f.mailPath(), f.ownSMTP(srv, nil)).want(t, 200, "")
+		if a.auth.MailSender(f.tenB) != "tenant" {
+			t.Fatal("the sender is not in force")
+		}
+		if _, err := a.st.Q().Exec(context.Background(), `UPDATE secrets SET value = ? WHERE tenant_id = ? AND name = 'mail.password'`, []byte{1, 2, 3}, f.tenB); err != nil {
+			t.Fatal(err)
+		}
+		f.admB.do("PUT", f.mailPath(), map[string]any{"enabled": false}).want(t, 200, "")
+		if got := a.auth.MailSender(f.tenB); got == "tenant" {
+			t.Fatalf("the sender stayed in force: %q", got)
+		}
 	})
 }

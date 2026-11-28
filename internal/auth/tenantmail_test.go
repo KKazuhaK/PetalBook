@@ -55,12 +55,13 @@ func TestEveryKindOfMailIsClassifiedAndSecurityMailIsTheSites(t *testing.T) {
 		t.Errorf("mailKinds has %d kinds, mail.Kinds %d", len(mailKinds), len(mail.Kinds))
 	}
 	for _, k := range []string{mail.KindVerify, mail.KindEmailClaim, mail.KindRegister, mail.KindRegisterDup, mail.KindRegisterOrg, mail.KindRegisterJoin,
-		mail.KindReset, mail.KindResetSSO, mail.KindWelcome, mail.KindJoinApproved} {
+		mail.KindReset, mail.KindResetSSO, mail.KindWelcome, mail.KindJoinApproved,
+		mail.KindEmailChanged, mail.KindEmailAdded, mail.KindEmailRemoved, mail.KindEmailPrimary} {
 		if !securityMail(k) {
 			t.Errorf("%s is not security mail", k)
 		}
 	}
-	for _, k := range []string{mail.KindInvite, mail.KindEmailAdded, mail.KindEmailChanged} {
+	for _, k := range []string{mail.KindInvite, mail.KindTest} {
 		if securityMail(k) {
 			t.Errorf("%s is security mail", k)
 		}

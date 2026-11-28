@@ -157,3 +157,36 @@ func TestAnAddressThatIsNotPublicIsRefusedWithoutBeingNamed(t *testing.T) {
 		t.Fatalf("%q", st.Message)
 	}
 }
+
+// A tenant's own route has its budget; what waits for it never takes room from
+// the same tenant's use of the site's mailer, security mail least of all.
+func TestATenantsOwnRouteFullDoesNotBlockItsMailThroughTheSite(t *testing.T) {
+	s := mail.New(mail.Options{})
+	c := mail.Settings{Enabled: true, Host: "127.0.0.1", Port: 1, Security: mail.None, From: "a@example.test"}
+	s.Configure(c)
+	s.SetTenant("TENANT0001", &c)
+	for range mail.MaxPerSender {
+		if err := s.EnqueueVia("TENANT0001", "TENANT0001", false, msg("a@example.test")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.EnqueueVia("TENANT0001", "TENANT0001", false, msg("a@example.test")); !errors.Is(err, mail.ErrSenderFull) {
+		t.Fatal(err)
+	}
+	if err := s.EnqueueVia("", "TENANT0001", true, msg("a@example.test")); err != nil {
+		t.Fatalf("security mail through the site's: %v", err)
+	}
+	if err := s.EnqueueVia("", "TENANT0001", false, msg("a@example.test")); err != nil {
+		t.Fatalf("ordinary mail through the site's: %v", err)
+	}
+	// Ordinary mail through the site's has its own 200 for the tenant, security none.
+	for range mail.MaxPerSender {
+		_ = s.EnqueueVia("", "TENANT0001", false, msg("a@example.test"))
+	}
+	if err := s.EnqueueVia("", "TENANT0001", false, msg("a@example.test")); !errors.Is(err, mail.ErrSenderFull) {
+		t.Fatal(err)
+	}
+	if err := s.EnqueueVia("", "TENANT0001", true, msg("a@example.test")); err != nil {
+		t.Fatalf("security mail held by the tenant's ordinary budget: %v", err)
+	}
+}

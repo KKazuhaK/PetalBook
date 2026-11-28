@@ -382,7 +382,7 @@ func (s *Service) withdrawClaim(ctx context.Context, u store.User, email, ip str
 // caller's: it goes only to the account's own addresses. A note that cannot
 // go is left out.
 func (s *Service) noteAddresses(ctx context.Context, tenant, kind, lang, about string, to ...string) {
-	if !s.MailReadyFor(ctx, tenant) {
+	if !s.MailEnabled() {
 		return
 	}
 	seen := map[string]bool{}

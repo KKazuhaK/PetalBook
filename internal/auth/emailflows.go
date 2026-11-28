@@ -810,7 +810,7 @@ func (s *Service) ConfirmEmail(ctx context.Context, token, ip string) error {
 // was changed. The note has no link; nothing is said when mail is off or the
 // address has had its messages for the hour.
 func (s *Service) NoteEmailChange(old store.User, lang, ip string) {
-	if !s.MailReadyFor(context.Background(), old.TenantID) || old.Email == "" || !s.mailable(context.Background(), old.Email) || !old.EmailVerified {
+	if !s.MailEnabled() || old.Email == "" || !s.mailable(context.Background(), old.Email) || !old.EmailVerified {
 		return
 	}
 	if _, ok := s.mailSlot(old.Email, ip); !ok {

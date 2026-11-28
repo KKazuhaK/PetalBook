@@ -10820,7 +10820,9 @@ may manage (`404 not_found` otherwise).
   and whatever `mail.useSite` says, because the site is the identity provider
   and a tenant's own server must never see what proves an address or lets
   someone in: a registration's confirmation and its "this address already has an
-  account" note, an email verification and an address claim, a password reset
+  account" note, the notices of a change to an account's addresses (changed,
+  added, removed, made primary: a tenant's server cannot hold back the alert), an
+  email verification and an address claim, a password reset
   (`/api/password/forgot` and an administrator's), the set-password link of an
   account an administrator made, the answers to a request to join (and the
   notice of a sign-in with a provider). Such a message is still charged to the
@@ -10829,8 +10831,7 @@ may manage (`404 not_found` otherwise).
   never refused for `mail.useSite`. Its flows need the site's mail on
   (`409 mail_not_configured` or a closed registration otherwise), whatever a
   tenant has of its own.
-- **Ordinary mail** (an invitation into the tenant that sends it, the notes with
-  no link about an account's addresses) goes by the first of: the tenant's own
+- **Ordinary mail** (an invitation into the tenant that sends it, a test) goes by the first of: the tenant's own
   sender, when it is enabled, its password can be opened, and the site allows it
   (`mail.ownSender`; asked again at each delivery, and a message of a tenant that
   lost the feature is dropped and logged, not sent another way); else the
@@ -10849,7 +10850,7 @@ address. On the site's mailer the display name is `<tenant name> via <site
 name>` (the site's own name for the default tenant, and for a tenant name that
 looks like an address or holds `@`, `<` or `>`); the `from` address a tenant's
 own sender may use cannot be on the server's own domain or on the domain of the
-site's own `from` address.
+site's own `from` address, or under either (a subdomain).
 
 **Queues.** A sender that fails does not fall back to another: a message waits
 with the sender it was made for, and is tried again by that one, up to the 3
@@ -10860,9 +10861,16 @@ again for one tenant when it changes; a message makes no query for them. The
 site's queue and the tenants' are separate: the site's holds 1,000, of which the
 last 200 are for security mail only, a tenant has at most 200 waiting (by its own
 sender or by the site's), and all the tenants' own senders together at most 2,000.
-The site's messages are delivered on their own, one at a time; the tenants'
-by a pool of 8 deliveries, a tenant at most one at a time, so a tenant's server
-that stalls delays only that tenant. The error of a test or a delivery that was
+The site's messages are delivered on their own, one at a time, and never wait
+for a tenant's server. The tenants' own senders share a pool of 8 deliveries
+(the constant `MaxTenantDeliveries`), a tenant at most one at a time: a server
+that stalls holds one of the 8 places and delays that tenant; only when 8 tenants
+stall at once does another tenant's own-sender mail wait for a place. Each
+route has its own budget: what waits for a tenant's own sender never takes room
+from the same tenant's use of the site's mailer, and its security mail through
+the site's is held only by the site's reserve. `mail.ownSender` is granted by the
+site (a site setting, off by default): a tenant has an own sender only where the
+site allows it. The error of a test or a delivery that was
 refused for its address says "not a public address", never the address.
 
 #### Captcha: `GET/PUT /api/admin/tenants/{tenant}/captcha`

@@ -359,9 +359,12 @@ var mailKinds = map[string]mailClass{
 	mail.KindRegister: {true, true}, mail.KindRegisterDup: {true, true}, mail.KindRegisterOrg: {true, true}, mail.KindRegisterOrgRefused: {true, true},
 	mail.KindRegisterJoin: {true, true}, mail.KindRegisterJoinRequest: {true, true},
 	mail.KindWelcome: {true, false}, mail.KindJoinApproved: {true, false}, mail.KindJoinDenied: {true, false},
-	// Notes with no link or token, an invitation (its link makes a new account:
-	// an address any account holds cannot be invited) and a test.
-	mail.KindEmailChanged: {}, mail.KindEmailAdded: {}, mail.KindEmailRemoved: {}, mail.KindEmailPrimary: {},
+	// The notices of a change to an account's addresses are security mail too: a
+	// tenant's own server must not be able to hold back the alert that an address
+	// was changed. Held to the allowance as before.
+	mail.KindEmailChanged: {true, false}, mail.KindEmailAdded: {true, false}, mail.KindEmailRemoved: {true, false}, mail.KindEmailPrimary: {true, false},
+	// An invitation (its link makes a new account: an address any account holds
+	// cannot be invited) and a test.
 	mail.KindInvite: {}, mail.KindTest: {},
 }
 
