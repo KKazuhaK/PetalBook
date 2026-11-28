@@ -249,6 +249,7 @@ export const tenantsZhCN = {
       registration: '注册',
       orgCreation: '自己创建的组织',
       tenants: '新组织',
+      domains: '邮箱域名',
       legal: '法律',
       daily: '每日文案',
       mail: '邮件',
@@ -347,6 +348,7 @@ export const tenantsZhCN = {
       'orgCreation.plan': '新组织起步时的计划',
       'features.passkeys': '允许用 passkey 登录',
       'signin.mode': '登录页的方式',
+      'domains.joinRole': '按邮箱域名加入的人的角色',
       'signin.ssoOnly': '只许单点登录',
       'signin.ssoOnlyAdmins': '管理员也必须使用单点登录',
       'signin.passkeyRoles': '必须使用 passkey 的角色',
@@ -406,6 +408,7 @@ export const tenantsZhCN = {
       'quota.pagesPerPerson': '一个人的空间一共有多少页，留空是不限。超出只提醒，不拒绝。',
       'files.maxBytes':
         '一次写入最大能有多大，页面、附件和导入里的每个文件都算，图片也算。站点的值来自 --max-upload，不能在这里改；组织可以设一个不超过它的值。超过时保存会被拒绝，你写的内容会留在原处，不会丢。',
+      'domains.joinRole': '用邮箱域名加入的人得到的角色，直接加入或管理员批准申请后都用它。只提供不是管理员的角色。',
       'signin.ssoOnlyAdmins':
         '默认关。只在“只许单点登录”开着时有用。关：组织的管理员保留密码，身份提供方出故障时还能进来。开：管理员和其他人一样通过单点登录，不再需要任何有密码的管理员。站点管理员始终保留自己的密码。',
       'audit.signins': '默认开。关掉后，这个组织的登录不再写记录。核心类别（安全、管理、数据、系统）不能关。',

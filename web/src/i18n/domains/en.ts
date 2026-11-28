@@ -126,6 +126,14 @@ export const domainsEn: DomainsMessages = {
     badge: { auto: 'Joins automatically', request: 'Approval needed' },
     saved: 'Saved',
   },
+  // The role of a person who joins by domain, automatically or by approval (domains.joinRole).
+  joinRole: {
+    title: 'Role of people who join',
+    help: 'The role given to a person who joins this organization by the domain of their address, at once or when an administrator approves the request. Administrators are never made this way.',
+    label: 'Role at joining',
+    roles: { member: 'Member' } as Record<string, string>,
+    saved: 'Saved',
+  },
   // Turning join off or removing the domain cancels the requests that wait (domain_join_off).
   joinOff: {
     title: (domain: string) => `Cancel the requests waiting on ${domain}?`,

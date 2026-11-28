@@ -843,6 +843,7 @@
     "orgCreation.perHour",
     "orgCreation.plan",
     "domains.checksPerMinute",
+    "domains.joinRole",
     "signin.social",
     "signin.mode",
     "signin.ssoOnly",

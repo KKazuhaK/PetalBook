@@ -221,6 +221,13 @@ export const SETTING_DEFS: SiteSetting[] = [
     site: { value: true, lower: { mode: 'allow' } },
   },
   {
+    key: 'domains.joinRole',
+    kind: 'choice',
+    layers: ['site', 'tenant'],
+    choices: ['member'],
+    site: { value: 'member', lower: { mode: 'allow' } },
+  },
+  {
     key: 'signin.social',
     kind: 'list',
     layers: ['site', 'tenant'],
@@ -444,6 +451,7 @@ export const TENANT_KEYS: string[] = [
   'audit.downloads',
   'audit.api',
   'accounts.multipleEmails',
+  'domains.joinRole',
   'signin.social',
   'signin.ssoOnly',
   'signin.ssoOnlyAdmins',

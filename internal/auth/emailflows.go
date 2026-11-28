@@ -619,6 +619,9 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, lang, ip string) (
 	}
 	p := CreateParams{Username: reg.Username, Name: reg.Name, Email: reg.Email, EmailVerified: true, TakeUnverified: true, Role: "member",
 		PasswordHash: reg.PasswordHash, TenantID: reg.TenantID, RegistrationID: reg.ID, Terms: reg.Terms}
+	if joinMode == store.JoinModeAuto {
+		p.Role = s.joinRole(ctx, reg.TenantID)
+	}
 	if org {
 		p.Role = "admin"
 		p.NewTenant = &NewTenant{Name: reg.OrgName, Slug: reg.OrgSlug, PlanSlug: orules.PlanSlug, MaxPerPerson: orules.PerPerson}

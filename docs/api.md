@@ -632,6 +632,8 @@ own.
 | `setup_invalid` | `setup`: setup is done, or the token is wrong |
 | `rate_limited` | the address made too many requests (SAML ACS, starts) |
 | `sso_required` | from 3.6 d4: the site's social sign-in, for a person whose tenant requires its own single sign-on (`signin.ssoOnly`) |
+| `join_pending` | a social sign-in whose address joins a tenant by request, when it has a request waiting there already |
+| `join_limit` | the same, over the day's requests for the address or the tenant's waiting ones |
 | `saml_destination` | the response has no `Destination`, or another one |
 | `saml_weak_signature` | the response is signed or digested with something weaker than SHA-256 |
 | `saml_encrypted` | the response carries an encrypted assertion, which the provider does not allow |
@@ -9578,6 +9580,7 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.tenantAudit`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`, `.githubConnect`; `mail.ownSender` | boolean (features) | S + rule |
 | `features.passkeys`, `features.tenancy` | boolean | S! |
 | `signin.social` | list: provider slugs, or `["*"]` (default) | S, T (3.6 d3) |
+| `domains.joinRole` | choice: `member` (the account roles that are not administrator's) | S, T (3.6 d5) |
 | `signin.ssoOnly`, `signin.ssoOnlyAdmins` | boolean (`true` is stricter; tenant layer only tightens) | S, T (3.6 d4) |
 | `audit.signins`, `.reads`, `.downloads`, `.api` | boolean | S, T |
 | `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` 0 for no age limit), choice `or`, `and` | S! |
@@ -10702,8 +10705,8 @@ the form while `open` is false; `/api/auth/providers`' `register` is then true.
 
 Following the link (`POST /api/register/confirm`) asks the domain's mode again:
 
-- **(b) `auto`**: the account is made in the tenant as a `member`, with the
-  address verified, and signed in, as any registration: `201` with
+- **(b) `auto`**: the account is made in the tenant with the role of the
+  tenant's `domains.joinRole` (default `member`, see below), with the address verified, and signed in, as any registration: `201` with
   `"joined": {"slug": "acme", "name": "Acme"}`, so the page says which
   organisation it joined. Audited as `registered` and `join_auto`.
 - **(c) `request`**: no account: the registration becomes a **join request**,
@@ -10730,6 +10733,39 @@ Following the link (`POST /api/register/confirm`) asks the domain's mode again:
 `state` is `pending`, `approved`, `denied`, `withdrawn`, `expired` or
 `cancelled`.
 
+**The role of a joiner: `domains.joinRole`** (site and tenant layers, a choice,
+default `member`; `tenant.settings.write`). The role a person gets who joins by
+domain, whether by `auto` (a password sign-up or a social sign-in) or when an
+administrator approves the request without naming a role. The choices are the
+account roles that exist and are not the administrator's (today only `member`;
+a viewer role, when accounts have one, is added to the choices): `400 invalid`
+for any other value, `admin` included. It is read when the account is made, so
+a change touches no account that exists and no request already approved.
+
+**Social sign-in follows the join mode too.** A new account made by a **site
+social provider's `autoCreate`** with an address the provider vouches for (the
+rule "Which sign-ins vouch for an address", the one `trustsEmail` applies) on a domain that joins a tenant is made as the domain's mode
+says, instead of in the provider's own tenant (an address it does not vouch
+for, a subdomain, a domain with mode `off` or a tenant without
+`features.domains` is as before):
+
+- `auto`: the account is made in the tenant (role `domains.joinRole`) linked to
+  the identity, and signed in; audited as `join_auto`.
+- `request`: no account and no session: the identity is kept in a join request
+  (as a password sign-up's request, without a password), and the callback
+  redirects to `/register/waiting#<token>`, the same waiting page; the token is
+  the request's capability. The username comes from the claims, with a number
+  added when taken. Approving makes the account **linked to that identity**
+  (no password; the person signs in through the provider), with
+  `409 provider_unavailable` if the provider is gone or the tenant no longer
+  allows it (`signin.social`, or `ssoOnly`). Asking again while a request waits
+  redirects to `/login?sso_error=join_pending`; over the day's 3 requests or
+  the tenant's 1,000 waiting ones, to `?sso_error=join_limit`.
+- A disabled tenant takes nobody (`?sso_error=no_account`); a tenant that
+  refuses the provider (`signin.social`, its `ssoOnly`) answers
+  `?sso_error=not_allowed`. Mail need not be on: the address is verified by the
+  provider, and only the approval's message is sent when it is.
+
 **The waiting page** (`/register/waiting#<token>`, the registration link's
 token, which stays the request's capability):
 
@@ -10747,9 +10783,11 @@ as for one that does not exist):
 - `GET /api/admin/tenants/{tenant}/join-requests?state=pending|all&cursor=&limit=`
   (1 to 200, 50 by default): `{"items": [JoinRequest], "next": cursor | null}`,
   newest first; `pending` (the default) lists those still waiting.
-- `POST …/join-requests/{id}/approve` (`{"role": "member"}`, optional; `member`
-  is the only role): makes the account in the tenant with the address verified
-  and the password chosen at sign-up, and a personal space, in one transaction
+- `POST …/join-requests/{id}/approve` (`{"role": "member"}`, optional: one of
+  the roles `domains.joinRole` offers, the tenant's `domains.joinRole` when
+  absent; `400 invalid` for another, `admin` included): makes the account in
+  the tenant with the address verified and the password chosen at sign-up (or,
+  for a request made with a social sign-in, linked to that identity), and a personal space, in one transaction
   with the approval; the person is mailed a link to sign in, and the new account
   gets a `join_approved` notification. `200` with the JoinRequest (`user` is the
   account). `409 join_decided` when it is not waiting (decided, withdrawn,

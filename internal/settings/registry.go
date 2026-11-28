@@ -3,7 +3,10 @@ package settings
 import (
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
+
+	"petalbook.app/server/internal/store"
 )
 
 // Keys of the settings of 3.3.
@@ -146,6 +149,12 @@ const (
 	// now"; each tenant has its own hour and each domain its own minute too).
 	DomainsChecksPerMinute = "domains.checksPerMinute"
 
+	// DomainsJoinRole is the role a person gets who joins an organisation by
+	// the domain of their address, automatically or when an administrator
+	// approves the request (3.6 d5): one of store.JoinRoles, never an
+	// administrator's.
+	DomainsJoinRole = "domains.joinRole"
+
 	// SigninSocial is which of the site's social sign-in providers the people
 	// of a tenant may use (3.6 d3): their slugs, or ["*"] for every one. Site
 	// and tenant: the site's value is the default, and its lower rule (or a
@@ -159,7 +168,7 @@ const (
 	SigninMode           = "signin.mode" // dual, sso_first, sso_redirect or local_only
 	SigninSSOOnly        = "signin.ssoOnly"
 	SigninSSOOnlyAdmins  = "signin.ssoOnlyAdmins" // an organisation's ssoOnly holds its administrators too
-	SigninPasskeyRoles   = "signin.passkeyRoles" // the roles that must hold a passkey: admin, member
+	SigninPasskeyRoles   = "signin.passkeyRoles"  // the roles that must hold a passkey: admin, member
 	SigninLockoutEnabled = "signin.lockout.enabled"
 	SigninLockoutMinutes = "signin.lockout.minutes"
 	SigninLockoutScope   = "signin.lockout.scope" // ip_account, ip or account
@@ -277,6 +286,9 @@ func baseDefinitions() []*Def {
 		// The checks of claimed email domains people ask for.
 		{Key: DomainsChecksPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(60), Min: 1, Max: 100000, Lower: Lower{Mode: Allow},
 			ServerWide: "the server's own resolver asks DNS for every tenant"},
+
+		// The role of a person who joins by email domain; the organisation chooses.
+		{Key: DomainsJoinRole, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: store.DefaultJoinRole, Choices: slices.Clone(store.JoinRoles), Lower: Lower{Mode: Allow}},
 
 		// The social providers a tenant's people may use.
 		{Key: SigninSocial, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{"*"}, Lower: Lower{Mode: Allow}, Check: checkSocial},

@@ -3,6 +3,7 @@ import { useSession } from '@/api/hooks'
 import { PageFallback } from '@/components/common'
 import { tsec } from '@/i18n/security'
 import { DomainsSection } from './DomainsSection'
+import { JOIN_ROLE_KEY, JoinRole } from './JoinRole'
 import { JoinRequests } from './JoinRequests'
 import { ProvidersSection } from './ProvidersSection'
 import { useScope } from './TenantScope'
@@ -24,6 +25,7 @@ export function OrgDomains() {
 export function TenantSignin({ tenant }: { tenant: string }) {
   const settings = useTenantSettings(tenant)
   const feature = (key: string) => settings.data?.settings.find((s) => s.key === key)?.effective
+  const joinRole = settings.data?.settings.find((s) => s.key === JOIN_ROLE_KEY)
   const ssoOff = feature('features.ownSso') === false
   const domainsOff = feature('features.domains') === false
   // Both share their cache with the sections' own: no request of their own.
@@ -52,6 +54,7 @@ export function TenantSignin({ tenant }: { tenant: string }) {
         providers={ssoOff ? undefined : providers.data?.providers}
         offered={providers.data?.offered}
       />
+      {joinRole && !domainsOff && verified && <JoinRole tenant={tenant} setting={joinRole} />}
       {settings.isSuccess && !domainsOff && <JoinRequests tenant={tenant} asking={asking} />}
     </div>
   )

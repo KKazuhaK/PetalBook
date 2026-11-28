@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"petalbook.app/server/internal/mail"
 	"petalbook.app/server/internal/notify"
 	"petalbook.app/server/internal/ratelimit"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -51,6 +53,20 @@ func errJoinLimit() *Error {
 
 func errTenantDisabled() *Error {
 	return coded(409, "tenant_disabled", "This organization is disabled: nobody joins it now.")
+}
+
+// joinRole is the role a person who joins the tenant by its domain gets: the
+// organisation's domains.joinRole, or the default when it cannot be read or is
+// no longer a role a joiner may have.
+func (s *Service) joinRole(ctx context.Context, tenant string) string {
+	if st := s.settings.Load(); st != nil {
+		if e, err := st.Get(ctx, tenant, settings.DomainsJoinRole); err == nil {
+			if r, _ := e.Value.(string); slices.Contains(store.JoinRoles, r) {
+				return r
+			}
+		}
+	}
+	return store.DefaultJoinRole
 }
 
 // joinOf is how the domain of an address joins a tenant (Config.JoinDomain):
@@ -126,7 +142,18 @@ func enabledAdmins(ctx context.Context, q store.Q, tenant string) ([]string, err
 // transaction with the registration's end and the administrators' notice. At
 // most JoinRequestsPerDay a day for one address.
 func (s *Service) requestJoin(ctx context.Context, reg *store.Registration, lang, ip string) (*JoinStatus, error) {
-	key, ok := store.EmailKey(reg.Email)
+	r := store.JoinRequest{TenantID: reg.TenantID, Username: reg.Username, Name: reg.Name, Email: reg.Email,
+		Domain: reg.JoinDomain, PasswordHash: reg.PasswordHash, Terms: reg.Terms, Lang: lang, TokenHash: reg.TokenHash}
+	return s.submitJoin(ctx, r, reg.ID, ip)
+}
+
+// submitJoin stores r (its tenant, who, address, domain, token hash and the
+// password hash or identity it will make the account with) as a pending
+// request: the day's cap per address and the tenant's waiting cap apply. A
+// registration it comes from (regID) is used up in the same transaction as
+// the administrators' notice.
+func (s *Service) submitJoin(ctx context.Context, r store.JoinRequest, regID, ip string) (*JoinStatus, error) {
+	key, ok := store.EmailKey(r.Email)
 	if !ok {
 		return nil, errBadLink()
 	}
@@ -135,19 +162,19 @@ func (s *Service) requestJoin(ctx context.Context, reg *store.Registration, lang
 		return nil, retryAfter(wait)
 	}
 	now := s.now().UTC()
-	r := store.JoinRequest{ID: s.newID(), TenantID: reg.TenantID, Username: reg.Username, Name: reg.Name, Email: reg.Email, EmailKey: key,
-		Domain: reg.JoinDomain, PasswordHash: reg.PasswordHash, Terms: reg.Terms, Lang: lang, TokenHash: reg.TokenHash, State: store.JoinPending,
-		Created: now, Expires: now.Add(JoinRequestTTL)}
-	if n, err := store.CountPendingJoins(ctx, s.st.Q(), reg.TenantID, now); err != nil {
+	r.ID, r.EmailKey, r.State, r.Created, r.Expires = s.newID(), key, store.JoinPending, now, now.Add(JoinRequestTTL)
+	if n, err := store.CountPendingJoins(ctx, s.st.Q(), r.TenantID, now); err != nil {
 		return nil, err
 	} else if n >= MaxPendingJoins {
 		return nil, errJoinLimit()
 	}
 	err := s.st.Tx(ctx, func(q store.Q) error {
-		if ok, err := store.DeleteRegistration(ctx, q, reg.ID); err != nil {
-			return err
-		} else if !ok {
-			return errBadLink()
+		if regID != "" {
+			if ok, err := store.DeleteRegistration(ctx, q, regID); err != nil {
+				return err
+			} else if !ok {
+				return errBadLink()
+			}
 		}
 		if err := store.InsertJoinRequest(ctx, q, r, now); err != nil {
 			return err
@@ -172,6 +199,82 @@ func (s *Service) requestJoin(ctx context.Context, reg *store.Registration, lang
 	}
 	s.joinCaps.TakeAll(cost)
 	return s.joinStatus(ctx, r), nil
+}
+
+// ssoWaiting is the end of a social sign-in that became a request to join
+// (finishSSO): nobody is signed in, and the person goes to the waiting page
+// with the request's token.
+type ssoWaiting struct{ token string }
+
+func (e *ssoWaiting) Error() string { return "waiting" }
+
+// socialJoin is a new account of a site social provider's autoCreate whose
+// verified address is on a domain that joins people to a tenant (3.6 d5): the
+// tenant's rules as for a sign-up by password. auto makes the account in the
+// tenant with its join role; request keeps the identity in a pending request
+// and ends in ssoWaiting. The tenant's own rules for the provider apply
+// (signin.social, ssoOnly), and a disabled tenant takes nobody.
+func (s *Service) socialJoin(ctx context.Context, rt *providerRT, c claimed, email, tenant, domain, mode, ip string) (*store.User, bool, error) {
+	if s.st.TenantDisabled(tenant) {
+		return nil, false, ssoErr("no_account")
+	}
+	if !s.tenantMayUse(ctx, rt, tenant) {
+		return nil, false, ssoErr("not_allowed")
+	}
+	if mode != store.JoinModeRequest {
+		u, err := s.createFromClaims(ctx, c, s.joinRole(ctx, tenant), "", false, tenant, false)
+		if err != nil {
+			return nil, false, err
+		}
+		err = notify.WithAudit(ctx, s.st.Q(), notify.JoinAuto, notify.Entry{Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Tenant: tenant, Now: s.now(),
+			Detail: map[string]any{"username": u.Username, "email": email, "domain": domain}})
+		if err != nil {
+			s.log.Warn("could not audit a join", "error", err)
+		}
+		return u, true, nil
+	}
+	tok := randomToken()
+	base := usernameFrom(c)
+	for attempt := 0; ; attempt++ {
+		name := base
+		if attempt > 0 {
+			name = suffixed(base, attempt-1)
+		}
+		if taken, err := s.usernameHeld(ctx, name); err != nil {
+			return nil, false, err
+		} else if taken && attempt < 20 {
+			continue
+		}
+		r := store.JoinRequest{TenantID: tenant, Username: name, Name: nameFrom(c, base), Email: email, Domain: domain, Lang: mail.PickLang("", ""),
+			TokenHash: hashToken(tok), ProviderID: rt.row.ID, Subject: c.subject, IdentityLabel: c.label()}
+		_, err := s.submitJoin(ctx, r, "", ip)
+		var ae *Error
+		switch {
+		case err == nil:
+			return nil, false, &ssoWaiting{token: tok}
+		case errors.As(err, &ae) && ae.Kind == Exists && attempt < 20:
+			continue // the name was taken since it was looked at
+		case errors.As(err, &ae) && ae.Code == "join_pending":
+			return nil, false, ssoErr("join_pending")
+		case errors.As(err, &ae) && (ae.Code == "join_limit" || ae.Kind == RateLimited):
+			return nil, false, ssoErr("join_limit")
+		}
+		return nil, false, err
+	}
+}
+
+// usernameHeld says whether a username is an account's, a retired one, or held
+// by a pending registration or request.
+func (s *Service) usernameHeld(ctx context.Context, username string) (bool, error) {
+	if _, err := store.GetUserByUsername(ctx, s.st.Q(), username); err == nil {
+		return true, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return false, err
+	}
+	if barred, err := s.retiredName(ctx, s.st.Q(), username); err != nil || barred {
+		return barred, err
+	}
+	return store.PendingUsername(ctx, s.st.Q(), username, s.now())
 }
 
 // findJoin is the request of a registration link's token, for the waiting page.
@@ -247,16 +350,17 @@ func (s *Service) pendingJoin(ctx context.Context, tenant, id string) (store.Joi
 // ApproveJoinRequest is a tenant administrator approving a request: the
 // account is made in the tenant as a member, with the address verified and
 // the password chosen at sign-up, in one transaction with the request's
-// approval; the account is told, and the address is mailed. role is
-// "member" ("" for it): an organisation's viewer role is not yet a role of
-// accounts. The tenant requiring its single sign-on makes no password
-// account: 409 sso_required.
+// approval; the account is told, and the address is mailed. role is one of
+// store.JoinRoles ("" for the organisation's domains.joinRole). A request made
+// with a social sign-in makes the account with that identity and no password.
+// The tenant requiring its single sign-on makes no password account:
+// 409 sso_required.
 func (s *Service) ApproveJoinRequest(ctx context.Context, actor store.User, tenant, id, role, ip string) (store.JoinRequest, *store.User, error) {
 	if role == "" {
-		role = "member"
+		role = s.joinRole(ctx, tenant)
 	}
-	if role != "member" {
-		return store.JoinRequest{}, nil, errf(Invalid, "Role is member.")
+	if !slices.Contains(store.JoinRoles, role) {
+		return store.JoinRequest{}, nil, errf(Invalid, "Role is one of: %s.", strings.Join(store.JoinRoles, ", "))
 	}
 	r, err := s.pendingJoin(ctx, tenant, id)
 	if err != nil {
@@ -265,14 +369,29 @@ func (s *Service) ApproveJoinRequest(ctx context.Context, actor store.User, tena
 	if s.st.TenantDisabled(tenant) {
 		return r, nil, errTenantDisabled()
 	}
-	if s.ssoOnlyInEffect(s.sec(ctx)) {
-		return r, nil, errLocalRefused()
+	// A request made with a social sign-in makes no password account: only the
+	// password ones are held to ssoOnly (the social one is asked below).
+	if r.ProviderID == "" {
+		if s.ssoOnlyInEffect(s.sec(ctx)) {
+			return r, nil, errLocalRefused()
+		}
+		if s.tenantSSOOnly(ctx, tenant) {
+			return r, nil, s.ssoRequiredOf(ctx, r.Email)
+		}
 	}
-	if s.tenantSSOOnly(ctx, tenant) {
-		return r, nil, s.ssoRequiredOf(ctx, r.Email)
+	p := CreateParams{Username: r.Username, Name: r.Name, Email: r.Email, EmailVerified: true, TakeUnverified: true, Role: role,
+		PasswordHash: r.PasswordHash, TenantID: tenant, Terms: r.Terms, JoinRequestID: r.ID, JoinDecidedBy: actor.ID}
+	if r.ProviderID != "" {
+		// Made with a social sign-in: the account is that identity's, with no password.
+		p.Identity = &IdentityParams{ProviderID: r.ProviderID, Subject: r.Subject, Label: r.IdentityLabel, Email: r.Email, EmailTrusted: true}
+		rt := s.provs.getID(r.ProviderID)
+		if rt == nil || !s.tenantMayUse(ctx, rt, tenant) {
+			return r, nil, coded(409, "provider_unavailable", "The sign-in this request was made with is not available to this organization any more.")
+		}
+		p.VerifiedBy = store.VerifiedByProvider(rt.row.Slug)
+		p.RetryUsername = true
 	}
-	u, err := s.CreateUser(ctx, CreateParams{Username: r.Username, Name: r.Name, Email: r.Email, EmailVerified: true, TakeUnverified: true, Role: role,
-		PasswordHash: r.PasswordHash, TenantID: tenant, Terms: r.Terms, JoinRequestID: r.ID, JoinDecidedBy: actor.ID})
+	u, err := s.CreateUser(ctx, p)
 	if err != nil {
 		return r, nil, err
 	}

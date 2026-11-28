@@ -120,6 +120,14 @@ export const domainsZhCN = {
     badge: { auto: '自动加入', request: '需批准' },
     saved: '已保存',
   },
+  // 按邮箱域名加入的人得到的角色（domains.joinRole），自动加入和批准申请都用它。
+  joinRole: {
+    title: '加入者的角色',
+    help: '用邮箱域名加入本组织的人得到的角色，无论是直接加入，还是管理员批准申请之后。这样加入的人不会成为管理员。',
+    label: '加入时的角色',
+    roles: { member: '成员' } as Record<string, string>,
+    saved: '已保存',
+  },
   // 关闭加入方式或移除域名会取消正在等待的申请（domain_join_off）。
   joinOff: {
     title: (domain: string) => `取消 ${domain} 上等待中的申请？`,

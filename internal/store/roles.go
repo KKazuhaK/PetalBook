@@ -76,6 +76,17 @@ func roleKeys(scope, tenantID string, names []string) ([]string, error) {
 	return out, nil
 }
 
+// JoinRoles are the account roles a person joining an organisation by the
+// domain of their address may be given (auto, or when an administrator
+// approves the request): the roles that exist and are not the administrator's.
+// A role added to accounts later (a viewer) is added here, and the
+// organisation's setting domains.joinRole offers it. DefaultJoinRole is what a
+// joiner gets until the organisation chooses.
+var JoinRoles = []string{"member"}
+
+// DefaultJoinRole is the role a person who joins by domain gets by default.
+const DefaultJoinRole = "member"
+
 // IsAdminRole reports whether an account role is the administrator's. The
 // rules about an account itself (an invitation's role, a person signing in)
 // ask this; what a caller may do is asked of their keys (internal/authz).

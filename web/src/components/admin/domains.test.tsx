@@ -234,6 +234,22 @@ describe("a tenant's email domains", () => {
     expect(m!.fx.data.admin.joinRequests[tenant].map((r) => r.state)).toEqual(['approved', 'denied'])
   })
 
+  it("offers the role of people who join by domain: only roles that are not the administrator's", async () => {
+    await open(
+      (id) => `/admin/tenants/${id}/signin`,
+      (d, id) => {
+        d.admin.domains[id] = [
+          { ...newDomain('acme.example', at, at), state: 'verified', verifiedAt: at, join: 'auto' },
+        ]
+      },
+    )
+    await settle(() => document.querySelector('[data-slot="join-role"]') !== null, 'the role setting')
+    const select = document.querySelector<HTMLSelectElement>('[data-slot="join-role"] select')!
+    expect([...select.options].map((o) => o.value)).toEqual(['member'])
+    expect(select.value).toBe('member')
+    expect(document.body.textContent).toContain(tdom.joinRole.title)
+  })
+
   it("the site's list warns of a mixed-script domain, there and in the transfer, which moves it", async () => {
     let beta = ''
     await open(
