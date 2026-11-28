@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -190,7 +191,7 @@ func TestTheSenderOfATenantsMessagesIsItsOwnThenTheSitesThenNone(t *testing.T) {
 			t.Fatalf("sender %q, mail %q", s, m)
 		}
 		got := lastTo(t, siteSrv, to)
-		if !strings.Contains(got.Raw, `From: "Acme" <notes@example.test>`) {
+		if !strings.Contains(got.Raw, `From: "Acme via Notes" <notes@example.test>`) {
 			t.Fatalf("%s", got.Raw)
 		}
 		// useSite locked off, no sender of its own: not sent, recorded once a day, and answered as with mail off.
@@ -199,15 +200,16 @@ func TestTheSenderOfATenantsMessagesIsItsOwnThenTheSitesThenNone(t *testing.T) {
 			t.Fatalf("sender %q, mail %q", s, m)
 		}
 		verifiedTenantUser(t, a, f, "emb", "emb@example.test")
-		f.admB.do("POST", "/api/users/"+mustUserID(t, a, "emb")+"/password-reset", nil).want(t, 409, "mail_not_configured")
-		f.admB.do("POST", "/api/users/"+mustUserID(t, a, "emb")+"/password-reset", nil).want(t, 409, "mail_not_configured")
+		// A reset is security mail: the site's sender, whatever mail.useSite says.
+		f.admB.do("POST", "/api/users/"+mustUserID(t, a, "emb")+"/password-reset", nil).want(t, 202, "")
+		lastTo(t, siteSrv, "emb@example.test")
 		a.auth.FlushAudit(ctx)
 		if n := len(auditKinds(t, f.root, "mail_not_sent")); n != 1 {
 			t.Fatalf("%d mail_not_sent rows", n)
 		}
 		settle()
-		if len(siteSrv.Messages()) != 1 {
-			t.Fatalf("a message went by the site's mailer though the tenant may not use it: %d", len(siteSrv.Messages()))
+		if len(siteSrv.Messages()) != 2 { // the invitation of the previous step, and the reset
+			t.Fatalf("an ordinary message went by the site's mailer though the tenant may not use it: %d", len(siteSrv.Messages()))
 		}
 		// Its own sender, with useSite off: its own server, its own display name and reply address.
 		f.admB.do("PUT", f.mailPath(), f.ownSMTP(ownSrv, nil)).want(t, 200, "")
@@ -253,10 +255,12 @@ func verifiedTenantUser(t *testing.T, a *acc, f *tenFx, username, email string) 
 	}
 }
 
-// A request that names a tenant is sent by that tenant's sender whether or not
-// the address has an account, so which sender was used tells nothing; a reset
-// request (charged to no tenant) is the site's whoever the account is.
-func TestWhichSenderAnAnonymousMessageUsesTellsNothingAboutTheAddress(t *testing.T) {
+// Security mail (a message that proves an address, or lets someone in or resets
+// access) always goes by the SITE's sender, never a tenant's own, whatever
+// mail.useSite says: registration (a new address, and the note that one has an
+// account), verification, an address claim, a reset, an administrator's welcome
+// link. Only ordinary mail, an invitation, goes by the tenant's server.
+func TestSecurityMailNeverGoesByATenantsOwnSender(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		f := newTenFx(t, a)
@@ -264,36 +268,61 @@ func TestWhichSenderAnAnonymousMessageUsesTellsNothingAboutTheAddress(t *testing
 		siteSrv, ownSrv := fakeMail(t), tenantSMTP(t, a)
 		enableMail(t, f.root, siteSrv)
 		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/registration.mode", map[string]any{"value": "open"}).want(t, 200, "")
+		f.root.putSetting("accounts.multipleEmails", true).want(t, 200, "")
 		f.admB.do("PUT", f.mailPath(), f.ownSMTP(ownSrv, nil)).want(t, 200, "")
 		verifiedTenantUser(t, a, f, "emb", "emb@example.test")
-		anon := a.newClient("")
-		reg := func(user, email string) {
-			t.Helper()
-			anon.do("POST", "/api/register", map[string]any{"tenant": "acme", "username": user, "name": user, "email": email, "password": pw, "acceptTerms": true}).want(t, 202, "")
+		if _, err := a.auth.CreateUser(context.Background(), auth.CreateParams{Username: "unv", Role: "member", Password: pw, Email: "unv@example.test", TenantID: f.tenB}); err != nil {
+			t.Fatal(err)
 		}
-		reg("fresh", "fresh@example.test") // a new address
-		reg("other", "emb@example.test")   // an address that has an account (the "already registered" note)
-		for _, to := range []string{"fresh@example.test", "emb@example.test"} {
-			lastTo(t, ownSrv, to)
+		n := 0
+		anyIP := func() *client { n++; return a.newClient(fmt.Sprintf("198.51.100.%d", n)) }
+		for _, useSiteOn := range []bool{true, false} {
+			f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/mail.useSite", map[string]any{"siteRule": map[string]any{"value": useSiteOn}}).want(t, 200, "")
+			tag := "-off"
+			if useSiteOn {
+				tag = "-on"
+			}
+			reg := func(user, email string) {
+				t.Helper()
+				anyIP().do("POST", "/api/register", map[string]any{"tenant": "acme", "username": user, "name": user, "email": email, "password": pw, "acceptTerms": true}).want(t, 202, "")
+			}
+			reg("fresh"+tag, "fresh"+tag+"@example.test") // a new address
+			reg("other"+tag, "emb@example.test")          // an address that has an account: the "already registered" note
+			anyIP().do("POST", "/api/password/forgot", map[string]any{"tenant": "acme", "login": "emb"}).want(t, 202, "")
+			// Verification and a claim of another address, by a signed-in person of the tenant.
+			p := a.newClient("")
+			p.do("POST", "/api/login", map[string]any{"identifier": "unv", "password": pw}).want(t, 200, "")
+			p.do("POST", "/api/account/email/verify", map[string]any{}).want(t, 202, "")
+			p.do("POST", "/api/account/emails", map[string]any{"email": "claim" + tag + "@example.test"}).want(t, 202, "")
+			// An administrator's new account, with its set-password link mailed.
+			made := f.admB.do("POST", "/api/admin/users", map[string]any{"username": "made" + tag, "name": "Made", "email": "made" + tag + "@example.test", "role": "member"}).want(t, 201, "")
+			if made.body["mail"] != "sent" {
+				t.Fatalf("%s", made.raw)
+			}
+			for _, to := range []string{"fresh" + tag + "@example.test", "emb@example.test", "unv@example.test", "claim" + tag + "@example.test", "made" + tag + "@example.test"} {
+				lastTo(t, siteSrv, to)
+			}
 		}
 		settle()
-		if len(siteSrv.Messages()) != 0 {
-			t.Fatalf("a registration for the tenant went by the site's mailer: %d", len(siteSrv.Messages()))
+		// What the tenant's server may have is a note with no link or token (the
+		// "an address was added" notice), never anything that proves or lets in.
+		for _, m := range ownSrv.Messages() {
+			if len(m.Tokens()) > 0 || strings.Contains(m.Text, "#") {
+				t.Fatalf("a message with a link went by the tenant's own sender: %s to %s", m.Subject, m.To)
+			}
 		}
-		// A reset is the site's, whoever has the account.
-		anon.do("POST", "/api/password/forgot", map[string]any{"tenant": "acme", "login": "emb"}).want(t, 202, "")
-		lastTo(t, siteSrv, "emb@example.test")
-		anon.do("POST", "/api/password/forgot", map[string]any{"tenant": "acme", "login": "nobody-here"}).want(t, 202, "")
-		settle()
-		if n := countTo(ownSrv, "emb@example.test"); n != 2-1 {
-			t.Fatalf("a reset went by the tenant's sender: %d messages to the account", n)
+		// An invitation into the tenant is ordinary mail: its own server.
+		if s, m := inviteVia(t, f, "invited@example.test"); s != "tenant" || m != "sent" {
+			t.Fatalf("sender %q, mail %q", s, m)
 		}
-		// With the tenant's sender gone, and the site's not for it, its registration is closed the same for every address.
+		lastTo(t, ownSrv, "invited@example.test")
+		if countTo(siteSrv, "invited@example.test") != 0 {
+			t.Fatal("an invitation went by the site's sender")
+		}
+		// With neither the tenant's sender nor mail.useSite, security mail still goes by the site's.
 		f.admB.do("DELETE", f.mailPath(), nil).want(t, 204, "")
-		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/mail.useSite", map[string]any{"siteRule": map[string]any{"value": false}}).want(t, 200, "")
-		for _, email := range []string{"fresh2@example.test", "emb@example.test"} {
-			anon.do("POST", "/api/register", map[string]any{"tenant": "acme", "username": "u" + email[:3], "name": "x", "email": email, "password": pw, "acceptTerms": true}).want(t, 403, "registration_closed")
-		}
+		anyIP().do("POST", "/api/register", map[string]any{"tenant": "acme", "username": "fresh3", "name": "x", "email": "fresh3@example.test", "password": pw, "acceptTerms": true}).want(t, 202, "")
+		lastTo(t, siteSrv, "fresh3@example.test")
 	})
 }
 
@@ -379,5 +408,30 @@ func TestATenantsSenderSurvivesARestart(t *testing.T) {
 		if got := a.auth.MailSender(f.tenB); got != "tenant" {
 			t.Fatalf("%q", got)
 		}
+	})
+}
+
+// On the site's mailer the display name is "<tenant> via <site>"; a name that
+// looks like an address is never put there, and a sender may not use the
+// domain the site itself sends from.
+func TestTheDisplayNameOnTheSitesMailerNamesTheSiteAndNeverAnAddress(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		f.allowOwnSender(t)
+		siteSrv := fakeMail(t)
+		enableMail(t, f.root, siteSrv)
+		_, _ = inviteVia(t, f, "named@example.test")
+		if got := lastTo(t, siteSrv, "named@example.test"); !strings.Contains(got.Raw, `From: "Acme via Notes" <notes@example.test>`) {
+			t.Fatalf("%s", got.Raw)
+		}
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"name": "ceo@victim.example"}).want(t, 200, "")
+		_, _ = inviteVia(t, f, "unnamed@example.test")
+		got := lastTo(t, siteSrv, "unnamed@example.test")
+		if strings.Contains(got.Raw, "victim.example") || !strings.Contains(got.Raw, `From: "Notes" <notes@example.test>`) {
+			t.Fatalf("%s", got.Raw)
+		}
+		// The domain the site sends from is the site's, like its own.
+		f.admB.do("PUT", f.mailPath(), map[string]any{"host": "smtp.example.com", "from": "x@example.test"}).want(t, 400, "invalid")
 	})
 }

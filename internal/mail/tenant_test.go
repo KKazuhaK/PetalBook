@@ -26,7 +26,7 @@ func TestATenantsMessageGoesByItsRouteAndARetryKeepsIt(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go s.Run(ctx)
-	if err := s.EnqueueVia("TENANT0001", "TENANT0001", msg("a@example.test")); err != nil {
+	if err := s.EnqueueVia("TENANT0001", "TENANT0001", false, msg("a@example.test")); err != nil {
 		t.Fatal(err)
 	}
 	for ten.Connections() < 1 {
@@ -57,7 +57,7 @@ func TestTakingATenantsSenderAwayDropsItsMessagesOnly(t *testing.T) {
 	c := mail.Settings{Enabled: true, Host: "127.0.0.1", Port: 1, Security: mail.None, From: "a@example.test"}
 	s.Configure(c)
 	s.SetTenant("TENANT0001", &c)
-	if err := s.EnqueueVia("TENANT0001", "TENANT0001", msg("a@example.test")); err != nil {
+	if err := s.EnqueueVia("TENANT0001", "TENANT0001", false, msg("a@example.test")); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Enqueue(msg("b@example.test")); err != nil {
@@ -67,12 +67,12 @@ func TestTakingATenantsSenderAwayDropsItsMessagesOnly(t *testing.T) {
 	if s.Waiting() != 1 || s.TenantEnabled("TENANT0001") {
 		t.Fatalf("waiting %d", s.Waiting())
 	}
-	if err := s.EnqueueVia("TENANT0001", "", msg("c@example.test")); !errors.Is(err, mail.ErrNotEnabled) {
+	if err := s.EnqueueVia("TENANT0001", "", false, msg("c@example.test")); !errors.Is(err, mail.ErrNotEnabled) {
 		t.Fatal(err)
 	}
 	// The site off does not touch a tenant's own sender.
 	s.SetTenant("TENANT0001", &c)
-	if err := s.EnqueueVia("TENANT0001", "", msg("d@example.test")); err != nil {
+	if err := s.EnqueueVia("TENANT0001", "", false, msg("d@example.test")); err != nil {
 		t.Fatal(err)
 	}
 	s.Configure(mail.Settings{})
@@ -87,23 +87,23 @@ func TestATenantHasAtMostTwoHundredWaiting(t *testing.T) {
 	s.Configure(c)
 	s.SetTenant("TENANT0001", &c)
 	for range mail.MaxPerSender {
-		if err := s.EnqueueVia("TENANT0001", "TENANT0001", msg("a@example.test")); err != nil {
+		if err := s.EnqueueVia("TENANT0001", "TENANT0001", false, msg("a@example.test")); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.EnqueueVia("TENANT0001", "TENANT0001", msg("a@example.test")); !errors.Is(err, mail.ErrSenderFull) {
+	if err := s.EnqueueVia("TENANT0001", "TENANT0001", false, msg("a@example.test")); !errors.Is(err, mail.ErrSenderFull) {
 		t.Fatal(err)
 	}
 	// Nor may its use of the site's mailer pass 200, and another tenant is not held up.
 	for range mail.MaxPerSender {
-		if err := s.EnqueueVia("", "TENANT0002", msg("a@example.test")); err != nil {
+		if err := s.EnqueueVia("", "TENANT0002", false, msg("a@example.test")); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.EnqueueVia("", "TENANT0002", msg("a@example.test")); !errors.Is(err, mail.ErrSenderFull) {
+	if err := s.EnqueueVia("", "TENANT0002", false, msg("a@example.test")); !errors.Is(err, mail.ErrSenderFull) {
 		t.Fatal(err)
 	}
-	if err := s.EnqueueVia("", "TENANT0003", msg("a@example.test")); err != nil {
+	if err := s.EnqueueVia("", "TENANT0003", false, msg("a@example.test")); err != nil {
 		t.Fatal(err)
 	}
 }

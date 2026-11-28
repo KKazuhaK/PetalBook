@@ -176,7 +176,7 @@ func errNoSuchEmail() *Error { return errf(NotFound, "This account has no such e
 // when the link is followed (ConfirmEmail); one another account holds is 409
 // email_taken. The answer is the same for the two first cases.
 func (s *Service) AddEmail(ctx context.Context, u store.User, email, lang, ip string) error {
-	if err := s.needMailFor(ctx, u.TenantID); err != nil {
+	if err := s.needMail(); err != nil {
 		return err
 	}
 	e, err := s.cleanEmailFor(ctx, email)
@@ -247,7 +247,7 @@ func (s *Service) AddEmail(ctx context.Context, u store.User, email, lang, ip st
 // RequestEmailVerify's; another address is 409 email_verified when the person
 // already holds it.
 func (s *Service) ResendEmailVerify(ctx context.Context, u store.User, email, lang, ip string) error {
-	if err := s.needMailFor(ctx, u.TenantID); err != nil {
+	if err := s.needMail(); err != nil {
 		return err
 	}
 	rows, err := store.UserEmails(ctx, s.st.Q(), u.ID)

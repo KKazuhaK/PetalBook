@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -118,7 +119,13 @@ func (s *Service) tenantSettings(m tenantMailStored, password string) mail.Setti
 	cfg := mail.Settings{Enabled: m.Enabled && s.cfg.PublicURL != "", Host: m.Host, Port: m.Port, Security: m.Security, Username: m.Username,
 		Password: password, From: m.From, FromName: m.FromName, ReplyTo: m.ReplyTo}
 	if !s.tenantMailOpen.Load() {
-		cfg.Control = dailyfetch.RefuseAddrs(func(ip netip.Addr) bool { return !dailyfetch.Public(ip) })
+		refuse := dailyfetch.RefuseAddrs(func(ip netip.Addr) bool { return !dailyfetch.Public(ip) })
+		cfg.Control = func(network, address string, c syscall.RawConn) error {
+			if refuse(network, address, c) != nil {
+				return mail.ErrNotPublic // the address is not told
+			}
+			return nil
+		}
 	}
 	return cfg
 }
@@ -128,8 +135,9 @@ func (s *Service) tenantSettings(m tenantMailStored, password string) mail.Setti
 func (s *Service) applyTenantMail(ctx context.Context, tenant string, m tenantMailStored) {
 	pw, _, err := s.vault.Open(ctx, s.st.Q(), tenant, secrets.MailPassword)
 	if err != nil {
-		s.log.Warn("a tenant's stored mail password cannot be opened with this server's key; its own sender is off", "tenant", tenant)
-		s.mail.SetTenant(tenant, nil)
+		// Not a reason to drop what waits: the sender in force stays as it was (none,
+		// at startup) and the next change or restart reads the password again.
+		s.log.Warn("a tenant's stored mail password cannot be read now; its sender in force is left as it was", "tenant", tenant, "error", err)
 		return
 	}
 	cfg := s.tenantSettings(m, pw)
@@ -189,12 +197,22 @@ func validPublicHostName(h string) bool {
 // siteDomain says whether a domain is the server's own (or under it): a tenant
 // may not send as the site.
 func (s *Service) siteDomain(domain string) bool {
+	d := strings.ToLower(domain)
+	under := func(h string) bool { return h != "" && (d == h || strings.HasSuffix(d, "."+h)) }
 	h := strings.ToLower(s.publicHost())
 	if i := strings.LastIndex(h, ":"); i >= 0 && !strings.Contains(h, "]") {
 		h = h[:i]
 	}
-	d := strings.ToLower(domain)
-	return h != "" && (d == h || strings.HasSuffix(d, "."+h))
+	if under(h) {
+		return true
+	}
+	// The domain of the address the site itself sends from.
+	if site, err := s.readMail(context.Background()); err == nil {
+		if i := strings.LastIndex(site.From, "@"); i >= 0 {
+			return d == strings.ToLower(site.From[i+1:])
+		}
+	}
+	return false
 }
 
 // UpdateTenantMail applies a patch to a tenant's sender. Everything is checked
@@ -335,7 +353,7 @@ func (s *Service) checkTenantTarget(m tenantMailStored) error {
 		}
 	}
 	if i := strings.LastIndex(m.From, "@"); i >= 0 && s.siteDomain(m.From[i+1:]) {
-		return errf(Invalid, "From is an address of the organisation's own domain; the server's own domain is the site's.")
+		return errf(Invalid, "From may not be an address on the server's own domain or the domain the site sends from.")
 	}
 	return nil
 }
@@ -470,7 +488,9 @@ func (s *Service) noSender(tenant string) {
 }
 
 // siteFromName is the display name of a message the site's mailer sends for a
-// tenant: the tenant's name (none for the default tenant, which is the site's own).
+// tenant: "<tenant name> via <site name>" (the site's own name for the default
+// tenant, and for a name that looks like an address or has characters a display
+// name must not).
 func (s *Service) siteFromName(tenant string) string {
 	if tenant == "" || tenant == store.DefaultTenantID {
 		return ""
@@ -481,8 +501,15 @@ func (s *Service) siteFromName(tenant string) string {
 		}
 		return r
 	}, strings.TrimSpace(s.tenantName(tenant)))
+	if n == "" || strings.ContainsAny(n, "@<>\"") {
+		return ""
+	}
 	if utf8.RuneCountInString(n) > maxTenantSenderName {
 		n = string([]rune(n)[:maxTenantSenderName])
 	}
-	return n
+	site := s.mail.SiteFromName()
+	if site == "" {
+		site = s.siteName()
+	}
+	return n + " via " + site
 }

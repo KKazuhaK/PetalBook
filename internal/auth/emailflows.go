@@ -93,7 +93,7 @@ func (s *Service) Registration(ctx context.Context, tenant string) (RegRules, er
 	}
 	var r RegRules
 	r.Mode = s.RegistrationMode(ctx, tenant)
-	r.PasswordOpen = r.Mode == settings.RegOpen && s.MailReadyFor(ctx, tenant) && !s.st.TenantDisabled(tenant)
+	r.PasswordOpen = r.Mode == settings.RegOpen && s.MailEnabled() && !s.st.TenantDisabled(tenant)
 	r.Domains = stringList(eff[settings.RegistrationDomains].Value)
 	r.TermsURL, _ = eff[settings.LegalTermsURL].Value.(string)
 	r.PrivacyURL, _ = eff[settings.LegalPrivacyURL].Value.(string)
@@ -162,13 +162,10 @@ func (s *Service) CancelClosedRegistrations(ctx context.Context) error {
 	return nil
 }
 
-// needMailFor is what every flow that sends a message of a tenant's person asks first: the tenant's own
-// sender, or the site's when mail.useSite is in effect for it.
-func (s *Service) needMailFor(ctx context.Context, tenant string) error {
-	if !s.MailReadyFor(ctx, tenant) {
-		if tenant != "" {
-			s.noSender(tenant)
-		}
+// needMail is what every flow that sends security mail asks first: those
+// messages go by the site's sender (see mailKinds), so the site's mail must be on.
+func (s *Service) needMail() error {
+	if !s.MailEnabled() {
 		return coded(409, "mail_not_configured", "Mail is not enabled.")
 	}
 	return nil
@@ -255,7 +252,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 			return closedErr()
 		}
 	} else if joining {
-		if !s.MailReadyFor(ctx, p.TenantID) || s.st.TenantDisabled(p.TenantID) {
+		if !s.MailEnabled() || s.st.TenantDisabled(p.TenantID) {
 			return closedErr()
 		}
 	} else if rules.Mode != settings.RegOpen {
@@ -385,20 +382,13 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	if !org {
 		s.chargeMail(p.TenantID)
 	}
-	// The sender is the requested tenant's (the domain's tenant, for a join), and
-	// the site's for an organisation of the person's own: chosen by the request,
-	// never by whether the address has an account.
-	sender := p.TenantID
-	if org {
-		sender = ""
-	}
 	if capped {
 		// Nothing is held: not the username, not the slug.
 		if exists != nil {
-			return s.mailExisting(ctx, *exists, lang, p.IP, sender)
+			return s.mailExisting(ctx, *exists, lang, p.IP)
 		}
 		if !decoy {
-			if err := s.sendMailAs(sender, "", mail.KindRegisterOrgRefused, lang, email, mail.Vars{Org: orgName}); err != nil {
+			if err := s.sendMail("", mail.KindRegisterOrgRefused, lang, email, mail.Vars{Org: orgName}); err != nil {
 				s.log.Warn("could not queue a message", "reason", err.Error())
 			}
 		}
@@ -433,7 +423,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		return err
 	}
 	if exists != nil {
-		return s.mailExisting(ctx, *exists, lang, p.IP, sender)
+		return s.mailExisting(ctx, *exists, lang, p.IP)
 	}
 	if decoy {
 		return nil
@@ -447,7 +437,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	case joining:
 		kind, orgName = mail.KindRegisterJoin, s.tenantName(p.TenantID)
 	}
-	if err := s.sendMailAs(sender, "", kind, lang, email, mail.Vars{Username: username, Org: orgName, Link: s.link("/register/confirm", tok), Hours: 24}); err != nil {
+	if err := s.sendMail("", kind, lang, email, mail.Vars{Username: username, Org: orgName, Link: s.link("/register/confirm", tok), Hours: 24}); err != nil {
 		s.log.Warn("could not queue a registration message", "reason", err.Error())
 	}
 	return nil
@@ -558,18 +548,18 @@ func (s *Service) emailReleased(ctx context.Context, r store.Released, to store.
 // sign in with the provider). The caller has spent the address's allowance.
 //
 // It sends without counting: Register has charged the request already.
-func (s *Service) mailExisting(ctx context.Context, u store.User, lang, ip, sender string) error {
+func (s *Service) mailExisting(ctx context.Context, u store.User, lang, ip string) error {
 	email := u.Email
 	links, sso, err := s.resetLinks(ctx, []store.User{u}, "user", "", ip)
 	if err != nil {
 		return err
 	}
 	if len(links) > 0 {
-		if err := s.sendMailAs(sender, "", mail.KindRegisterDup, lang, email, mail.Vars{Link: links[0].URL, Hours: 1}); err != nil {
+		if err := s.sendMail("", mail.KindRegisterDup, lang, email, mail.Vars{Link: links[0].URL, Hours: 1}); err != nil {
 			s.log.Warn("could not queue a message", "reason", err.Error())
 		}
 	} else if sso != nil {
-		if err := s.sendMailAs(sender, "", mail.KindResetSSO, lang, email, mail.Vars{Provider: s.providerNameFor(ctx, *sso)}); err != nil {
+		if err := s.sendMail("", mail.KindResetSSO, lang, email, mail.Vars{Provider: s.providerNameFor(ctx, *sso)}); err != nil {
 			s.log.Warn("could not queue a message", "reason", err.Error())
 		}
 	}
@@ -625,7 +615,7 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, lang, ip string) (
 	// now decides (off falls back to the tenant's own registration).
 	joinMode := ""
 	if !org && reg.JoinDomain != "" {
-		if t, d, m, ok := s.joinOf(ctx, reg.Email); ok && t == reg.TenantID && d == reg.JoinDomain && s.MailReadyFor(ctx, t) && !s.st.TenantDisabled(t) && s.RegistrationMode(ctx, t) != settings.RegClosed {
+		if t, d, m, ok := s.joinOf(ctx, reg.Email); ok && t == reg.TenantID && d == reg.JoinDomain && s.MailEnabled() && !s.st.TenantDisabled(t) && s.RegistrationMode(ctx, t) != settings.RegClosed {
 			joinMode = m
 		}
 	}
@@ -726,7 +716,7 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, lang, ip string) (
 
 // RequestEmailVerify sends the signed-in person a link to confirm their address.
 func (s *Service) RequestEmailVerify(ctx context.Context, u store.User, lang, ip string) error {
-	if err := s.needMailFor(ctx, u.TenantID); err != nil {
+	if err := s.needMail(); err != nil {
 		return err
 	}
 	if u.Email == "" {
@@ -1148,7 +1138,7 @@ func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, acce
 	if u.IsSiteAdmin() && !access.Can(authz.SiteAdminsManage, "") {
 		return errf(Forbidden, "Only a site administrator may reset a site administrator's password.")
 	}
-	if err := s.needMailFor(ctx, u.TenantID); err != nil {
+	if err := s.needMail(); err != nil {
 		return err
 	}
 	if ok, err := s.resetAddressOK(ctx, *u); err != nil {

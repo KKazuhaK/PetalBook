@@ -121,7 +121,7 @@ func (s *Service) AdminCreateUser(ctx context.Context, actor store.User, access 
 		return out, nil
 	}
 	out.Link, out.Expires = s.link("/reset-password", tok), s.now().Add(welcomeTTL).UTC()
-	if u.Email != "" && s.MailReadyFor(ctx, u.TenantID) {
+	if u.Email != "" && s.MailEnabled() {
 		out.Mail = s.mailWelcome(ctx, *u, p.Lang)
 	}
 	return out, nil

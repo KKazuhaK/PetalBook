@@ -253,7 +253,7 @@ export const mailEn: MailMessages = {
   org: {
     tab: 'Mail',
     title: "The organisation's own mail server",
-    help: "The organisation's messages (invitations, verification, resets, notices) go through the SMTP server set here. With none, the setting below decides. The server makes the connection, so only public addresses can be used, and always over an encrypted connection.",
+    help: "The organisation's invitations and notices go through the SMTP server set here; with none, the setting below decides. Messages that verify an address or let someone in (registration, verification, password reset, welcome links) are always sent by the site. The server makes the connection, so only public addresses can be used, and always over an encrypted connection.",
     notAllowed:
       'The site has not turned on a mail server of its own for this organisation, so it cannot be set up here.',
     loadFailed: 'Could not load the mail settings',
@@ -305,7 +305,7 @@ export const mailEn: MailMessages = {
     useSite: {
       title: "Borrow the site's mail",
       label: "With no mail server of its own, send through the site's",
-      help: 'Off: the organisation sends no mail until it has a server of its own.',
+      help: 'Off: the organisation sends no invitations or notices until it has a server of its own. Verification and password reset mail is not affected.',
       lockedOn: 'The site has locked this on; it cannot be turned off.',
       lockedOff: 'The site has locked this off; it cannot be turned on.',
       onlyOff: 'The site only lets this be turned off, not on.',

@@ -10765,13 +10765,13 @@ tenant with a rule, as for any key.
 #### Mail: `GET/PUT /api/admin/tenants/{tenant}/mail`, `POST …/mail/test`
 
 The shape of `/api/admin/mail` (3.3), without `security: "none"`, under the
-outgoing rules above. A tenant's mail (verification, reset, registration,
-notices) is sent with the tenant's SMTP when it has one enabled; otherwise with
-the site's if `mail.useSite` is in effect (the site's `from` address, the
-tenant's name as the display name), otherwise not at all (the tenant's
-registration and reset then answer as with mail off). The 3.3 caps stay
-site-wide (1,000 waiting on the server, 3 an hour to one address); each tenant
-has at most 200 waiting.
+outgoing rules above. Only a tenant's ordinary mail (invitations, notices) may
+go by its own SMTP, or by the site's while `mail.useSite` is in effect (the
+site's `from` address, `<tenant name> via <site name>` as the display name);
+mail that proves an address or lets someone in (verification, claim, reset,
+registration, a welcome link) always goes by the site's sender (see "Which
+sender a message uses" below). The 3.3 caps stay (3 an hour to one address); each
+tenant has at most 200 waiting.
 
 Built (3.6). The routes need `tenant.mail.manage` and the feature
 `mail.ownSender` (off by default: `403 feature_off`; a site administrator is not
@@ -10813,40 +10813,57 @@ may manage (`404 not_found` otherwise).
   `"changed"`, or `removed: true`) and `tenant_mail_test` (`to`, `ok`), in the
   tenant's own rows; never the password.
 
-**Which sender a message uses.** One rule for every message of a tenant (an
-invitation, a verification, an administrator's reset, a notice, an approval):
+**Which sender a message uses.** Every kind of message is classified once
+(`mailKinds`, `internal/auth/mailcfg.go`):
 
-1. the tenant's own sender, when it is enabled, its password can be opened and
-   the site allows it (`mail.ownSender`); a message that went by it is counted
-   in the tenant's day but not held to `rate.mailPerDay`, which holds the
-   site's mailer for the tenant;
-2. else the site's, when the site's mail is on and `mail.useSite` is in effect
-   for the tenant: from the site's `from` address, with the tenant's name as
-   the display name (the default tenant keeps the site's name);
-3. else the message is not sent: the call answers `409 mail_not_configured` (an
-   invitation hands its link over, `mail: "none"`), nothing is counted, and
-   `mail_not_sent` is written, at most once a day for the tenant. An off
-   `mail.useSite` forces this only while it is locked (the site's lock or a
-   rule for the tenant); an off that is not locked can be turned back on by the
-   tenant.
+- **Security mail ALWAYS goes by the site's sender**, whatever the tenant has
+  and whatever `mail.useSite` says, because the site is the identity provider
+  and a tenant's own server must never see what proves an address or lets
+  someone in: a registration's confirmation and its "this address already has an
+  account" note, an email verification and an address claim, a password reset
+  (`/api/password/forgot` and an administrator's), the set-password link of an
+  account an administrator made, the answers to a request to join (and the
+  notice of a sign-in with a provider). Such a message is still charged to the
+  tenant it is about as before (counted, never held to `rate.mailPerDay`),
+  displayed as `<tenant name> via <site name>` when it is about a tenant, and is
+  never refused for `mail.useSite`. Its flows need the site's mail on
+  (`409 mail_not_configured` or a closed registration otherwise), whatever a
+  tenant has of its own.
+- **Ordinary mail** (an invitation into the tenant that sends it, the notes with
+  no link about an account's addresses) goes by the first of: the tenant's own
+  sender, when it is enabled, its password can be opened, and the site allows it
+  (`mail.ownSender`; asked again at each delivery, and a message of a tenant that
+  lost the feature is dropped and logged, not sent another way); else the
+  site's, when the site's mail is on and `mail.useSite` is in effect for the
+  tenant; else it is not sent: the call answers `409 mail_not_configured` (an
+  invitation hands its link over, `mail: "none"`), nothing is counted, and
+  `mail_not_sent` is written, at most once a day for the tenant. `mail.useSite`
+  governs only these, and an off forces this only while it is locked (the site's
+  lock or a rule for the tenant). An invitation's link only makes a new account
+  (an address any account holds cannot be invited), which is why it is ordinary.
+  A message that goes by the tenant's own sender is counted in the tenant's day
+  but not held to `rate.mailPerDay`, which holds the site's mailer for the tenant.
 
-A sender that fails does not fall back to another: a message waits in the queue
+The choice depends on the kind and the tenant, never on an account or an
+address. On the site's mailer the display name is `<tenant name> via <site
+name>` (the site's own name for the default tenant, and for a tenant name that
+looks like an address or holds `@`, `<` or `>`); the `from` address a tenant's
+own sender may use cannot be on the server's own domain or on the domain of the
+site's own `from` address.
+
+**Queues.** A sender that fails does not fall back to another: a message waits
 with the sender it was made for, and is tried again by that one, up to the 3
-tries. Taking the sender away (disabling or removing it) drops what waited for
-it. The settings of every enabled sender are in memory, read at startup and
-again for one tenant when it changes; a message makes no query for them. Each
-tenant has at most 200 messages waiting, by its own sender and by the site's.
-
-**Anonymous mail and the choice of sender.** The choice never depends on
-whether an address has an account. A registration (and the note that an address
-already has an account) is sent by the sender of the tenant the request names
-(the tenant of the domain, when the address joins by its domain), whether the
-address is new or not; an organisation of the person's own, and every request to
-reset a password (`/api/password/forgot`, charged to no tenant), are the site's.
-A tenant whose messages cannot be sent has its registration closed
-(`403 registration_closed`) for every address alike, and a tenant with only its
-own sender but no site mail has no self-service reset: its administrators send
-resets from the people page.
+tries. Disabling or removing a tenant's sender drops what waited for it (the
+number is logged); a failed read of its password leaves the sender in force as
+it was. The settings of every enabled sender are in memory, read at startup and
+again for one tenant when it changes; a message makes no query for them. The
+site's queue and the tenants' are separate: the site's holds 1,000, of which the
+last 200 are for security mail only, a tenant has at most 200 waiting (by its own
+sender or by the site's), and all the tenants' own senders together at most 2,000.
+The site's messages are delivered on their own, one at a time; the tenants'
+by a pool of 8 deliveries, a tenant at most one at a time, so a tenant's server
+that stalls delays only that tenant. The error of a test or a delivery that was
+refused for its address says "not a public address", never the address.
 
 #### Captcha: `GET/PUT /api/admin/tenants/{tenant}/captcha`
 

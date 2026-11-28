@@ -2,6 +2,8 @@ package auth
 
 import (
 	"testing"
+
+	"petalbook.app/server/internal/mail"
 )
 
 // A tenant's sender is dialled with a check on the address each name resolves
@@ -37,5 +39,33 @@ func TestTheNamesOfThisMachineAreNotPublicMailServers(t *testing.T) {
 		if got := validPublicHostName(h); got != want {
 			t.Errorf("%s: %v", h, got)
 		}
+	}
+}
+
+// Every kind of message is classified, and what proves an address or lets
+// someone in goes by the site's sender only.
+func TestEveryKindOfMailIsClassifiedAndSecurityMailIsTheSites(t *testing.T) {
+	t.Parallel()
+	for _, k := range mail.Kinds {
+		if _, ok := mailKinds[k]; !ok {
+			t.Errorf("the kind %q is not in mailKinds", k)
+		}
+	}
+	if len(mailKinds) != len(mail.Kinds) {
+		t.Errorf("mailKinds has %d kinds, mail.Kinds %d", len(mailKinds), len(mail.Kinds))
+	}
+	for _, k := range []string{mail.KindVerify, mail.KindEmailClaim, mail.KindRegister, mail.KindRegisterDup, mail.KindRegisterOrg, mail.KindRegisterJoin,
+		mail.KindReset, mail.KindResetSSO, mail.KindWelcome, mail.KindJoinApproved} {
+		if !securityMail(k) {
+			t.Errorf("%s is not security mail", k)
+		}
+	}
+	for _, k := range []string{mail.KindInvite, mail.KindEmailAdded, mail.KindEmailChanged} {
+		if securityMail(k) {
+			t.Errorf("%s is security mail", k)
+		}
+	}
+	if !securityMail("a-kind-nobody-classified") {
+		t.Error("an unclassified kind is not security mail")
 	}
 }

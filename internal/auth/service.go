@@ -342,6 +342,10 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if err := s.loadMail(ctx); err != nil {
 		return nil, err
 	}
+	s.mail.SetRouteAllowed(func(tenant string) bool {
+		set := s.settings.Load()
+		return set == nil || set.On(context.Background(), tenant, settings.MailOwnSender)
+	})
 	if err := s.loadTenantMail(ctx); err != nil {
 		return nil, err
 	}

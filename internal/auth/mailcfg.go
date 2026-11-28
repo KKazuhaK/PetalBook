@@ -341,14 +341,35 @@ func (s *Service) mailSlot(email, ip string) (time.Duration, bool) {
 // UseUsage gives the service the meter that counts the mail of each tenant.
 func (s *Service) UseUsage(m *usage.Meter) { s.meter.Store(m) }
 
-// securityMail is mail a person needs to get into or keep their account: a
-// verification, a reset, a registration's confirmation. It is counted but never
-// held to rate.mailPerDay, so that anonymous requests cannot use up a tenant's
-// allowance and with it lock people out of their passwords.
-var securityMail = map[string]bool{
-	mail.KindVerify: true, mail.KindEmailClaim: true, mail.KindReset: true, mail.KindResetSSO: true,
-	mail.KindRegister: true, mail.KindRegisterDup: true, mail.KindRegisterOrg: true, mail.KindRegisterOrgRefused: true,
-	mail.KindRegisterJoin: true, mail.KindRegisterJoinRequest: true,
+// mailClass says what a kind of message is. security: it proves an address or
+// carries a link or a notice that lets someone into an account or lets them
+// reset access (a verification, a claim, a reset, a registration's confirmation
+// or its "already registered" note, an administrator's welcome link, an answer to a
+// request to join). Security mail ALWAYS goes by the site's sender, whatever
+// mail.useSite says and whatever sender the tenant has: the site is the identity
+// provider, and a tenant's own server must never see what lets anyone in.
+// Only ordinary mail (a notice, an invitation into the tenant that sends it)
+// may go by a tenant's own sender; mail.useSite governs only that. unheld: not
+// held to rate.mailPerDay (counted all the same), so that anonymous requests
+// cannot use up a tenant's allowance and lock its people out of their passwords.
+type mailClass struct{ security, unheld bool }
+
+var mailKinds = map[string]mailClass{
+	mail.KindVerify: {true, true}, mail.KindEmailClaim: {true, true}, mail.KindReset: {true, true}, mail.KindResetSSO: {true, true},
+	mail.KindRegister: {true, true}, mail.KindRegisterDup: {true, true}, mail.KindRegisterOrg: {true, true}, mail.KindRegisterOrgRefused: {true, true},
+	mail.KindRegisterJoin: {true, true}, mail.KindRegisterJoinRequest: {true, true},
+	mail.KindWelcome: {true, false}, mail.KindJoinApproved: {true, false}, mail.KindJoinDenied: {true, false},
+	// Notes with no link or token, an invitation (its link makes a new account:
+	// an address any account holds cannot be invited) and a test.
+	mail.KindEmailChanged: {}, mail.KindEmailAdded: {}, mail.KindEmailRemoved: {}, mail.KindEmailPrimary: {},
+	mail.KindInvite: {}, mail.KindTest: {},
+}
+
+// securityMail says whether a kind is security mail (mailKinds). A kind nobody
+// classified is, to be safe.
+func securityMail(kind string) bool {
+	c, ok := mailKinds[kind]
+	return c.security || !ok
 }
 
 // reserveMail takes a message of the tenant's day: counted, and, unless it is
@@ -365,7 +386,7 @@ func (s *Service) reserveMail(tenant, kind string, viaSite bool) (release func()
 	limit, limited := int64(0), false
 	// rate.mailPerDay holds the site's mailer for the tenant: a message sent by
 	// the tenant's own sender is counted and never held.
-	if st != nil && viaSite && !securityMail[kind] {
+	if st != nil && viaSite && !mailKinds[kind].unheld {
 		limit, limited = st.LimitOf(context.Background(), tenant, settings.RateMailPerDay)
 	}
 	if !limited {
@@ -411,20 +432,24 @@ func (s *Service) enqueueFor(tenant, kind string, msg mail.Message) error {
 	return s.enqueueAs(tenant, tenant, kind, msg)
 }
 
-// enqueueAs is enqueueFor for a message that is sent by one tenant's sender and
-// charged to another's day ("" is none): the sender is chosen by the request,
-// never by what an account or an address turned out to be, so that the choice
-// tells nothing about them. The sender is the tenant's own when it has one in
-// force; else the site's, when mail.useSite is in effect for it; else the message
-// is not sent (mail.ErrNotEnabled), and that is recorded at most once a day
-// (mail_not_sent) without counting anything. The queue remembers the route, so a
-// retry uses the same sender.
+// enqueueAs is enqueueFor for a message of one tenant's sender charged to
+// another's day ("" is none). Security mail (mailKinds) always goes by the site's
+// sender. Ordinary mail goes by the tenant's own sender when it has one in force;
+// else by the site's, when mail.useSite is in effect for it; else it is not sent
+// (mail.ErrNotEnabled), and that is recorded at most once a day (mail_not_sent)
+// without counting anything. The choice depends on the kind and the tenant,
+// never on an account or an address. The queue remembers the route, so a retry
+// uses the same sender.
 func (s *Service) enqueueAs(sender, charged, kind string, msg mail.Message) error {
-	route, ok := s.mailRoute(context.Background(), sender)
+	var route string
+	var ok bool
+	if securityMail(kind) {
+		// The site's, whatever the tenant has or mail.useSite says.
+		ok = s.MailEnabled()
+	} else if route, ok = s.mailRoute(context.Background(), sender); !ok && sender != "" {
+		s.noSender(sender)
+	}
 	if !ok {
-		if sender != "" {
-			s.noSender(sender)
-		}
 		return mail.ErrNotEnabled
 	}
 	viaSite := route == ""
@@ -435,7 +460,7 @@ func (s *Service) enqueueAs(sender, charged, kind string, msg mail.Message) erro
 	if viaSite && msg.FromName == "" {
 		msg.FromName = s.siteFromName(sender)
 	}
-	if err := s.mail.EnqueueVia(route, sender, msg); err != nil {
+	if err := s.mail.EnqueueVia(route, sender, securityMail(kind), msg); err != nil {
 		release()
 		return err
 	}
@@ -454,16 +479,10 @@ func (s *Service) OverLimit(tenant, key string, limit int64) {
 // sendMail renders a message and queues it, for a tenant ("" for none): the
 // tenant's mail is held to rate.mailPerDay and counted (see enqueueFor).
 func (s *Service) sendMail(tenant, kind, lang, to string, v mail.Vars) error {
-	return s.sendMailAs(tenant, tenant, kind, lang, to, v)
-}
-
-// sendMailAs is sendMail for a message sent by the sender of one tenant and
-// charged to another ("" for none): see enqueueAs.
-func (s *Service) sendMailAs(sender, charged, kind, lang, to string, v mail.Vars) error {
 	v.Site = s.siteName()
 	m := mail.Render(kind, lang, v)
 	m.To = to
-	switch err := s.enqueueAs(sender, charged, kind, m); {
+	switch err := s.enqueueAs(tenant, tenant, kind, m); {
 	case err == nil:
 		return nil
 	case errors.Is(err, mail.ErrQueueFull), errors.Is(err, mail.ErrSenderFull):
