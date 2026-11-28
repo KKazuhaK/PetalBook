@@ -377,16 +377,22 @@ export function SiteRow({
           )}
         </Cell>
         <Cell label={ts.rule}>
-          <RuleEditor
-            kind={s.kind}
-            lower={lower}
-            disabled={put.isPending}
-            label={`${name}: ${ts.rule}`}
-            choices={s.choices}
-            words={ts.choices[s.key]}
-            strictness={s.strictness}
-            onChange={changeLower}
-          />
+          {s.ownPeopleOnly ? (
+            <p className="text-xs text-muted-foreground" data-slot="own-people-only">
+              {ts.ownPeopleOnly}
+            </p>
+          ) : (
+            <RuleEditor
+              kind={s.kind}
+              lower={lower}
+              disabled={put.isPending}
+              label={`${name}: ${ts.rule}`}
+              choices={s.choices}
+              words={ts.choices[s.key]}
+              strictness={s.layers.includes('tenant') ? s.strictness : undefined}
+              onChange={changeLower}
+            />
+          )}
         </Cell>
         <Cell label="">
           <Button
@@ -467,7 +473,7 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
   }
   const kept = mine && mine.value != null && !mine.inEffect
   // What the layer above says: its rule for this tenant, with its note ("why can I not change this").
-  const reason = s.reason ?? (s.site.lower.mode === 'allow' ? undefined : s.site.lower)
+  const reason = s.reason
   const tightened = reason?.mode === 'tighten'
   const floor = s.reason?.floor
   const looser = tightened ? (v: unknown) => isLooser(s.strictness, s.kind, s.choices, v, floor) : undefined
@@ -476,7 +482,7 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{name}</span>
-          <RuleText lower={reason ?? s.site.lower} kind={s.kind} />
+          {reason && <RuleText lower={reason} kind={s.kind} />}
           {forcedForTenant && <Badge variant="secondary">{ts.siteLockedByYou}</Badge>}
           {kept && (
             <Badge variant="outline" data-slot="not-in-effect" title={ts.keptHint}>

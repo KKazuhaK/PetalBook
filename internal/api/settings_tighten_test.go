@@ -48,7 +48,7 @@ func TestTightenAndRuleNotesOverTheAPI(t *testing.T) {
 		if rules := r.body["tenant"].(map[string]any)["rules"].([]any); rules[0].(map[string]any)["lower"].(map[string]any)["note"] != "Trial." {
 			t.Fatal(r.raw)
 		}
-		if rs := r.body["reason"].(map[string]any); rs["note"] != "Trial." || rs["floor"] != float64(3) {
+		if rs := r.body["reason"].(map[string]any); rs["by"] != "rule" || rs["note"] != "Trial." || rs["floor"] != float64(3) {
 			t.Fatal(r.raw)
 		}
 		// Audited.

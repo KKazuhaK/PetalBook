@@ -220,6 +220,7 @@ export const tenantsZhCN = {
     lockedBy: { site: '全站锁定了这一项', tenant: '租户锁定了这一项' },
     restrictedBy: (what: string) => `全站限制了这一项：${what}`,
     none: '无限制',
+    ownPeopleOnly: '全站自己的值只管全站自己的人；要约束某个租户，请给那个租户单独设规则。',
     tightenedBy: '全站设了最低要求',
     tightenHelp: '下面各层可以设成这个值，或比它更严。',
     stricterThan: (what: string) => `至少和 ${what} 一样严`,

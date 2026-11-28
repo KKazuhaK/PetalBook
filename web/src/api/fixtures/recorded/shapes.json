@@ -1592,6 +1592,7 @@
     "layers": [
      "string"
     ],
+    "ownPeopleOnly?": "boolean",
     "serverWide?": "string",
     "site": {
      "fromFlag?": "boolean",

@@ -361,6 +361,9 @@ type Effective struct {
 	// for this tenant. Under Above.Mode tighten the tenant's value is in effect
 	// only while it is not looser than Floor.
 	Floor any
+	// ByRule says Above and Floor come from the site's rule for this tenant
+	// (in effect), not from the site's own layer.
+	ByRule bool
 }
 
 // For returns every setting as the tenant sees it ("" for the site alone). It
@@ -668,6 +671,9 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 		if err != nil {
 			return 0, err
 		}
+		if d.TenantDefault != nil && l.Mode != Allow {
+			return 0, bad("%s: the site's own value governs the site's own people only and holds no organisation; set a rule for the organisation instead", key)
+		}
 		lower = &l
 	}
 	if ch.HasLower {
@@ -878,7 +884,7 @@ func (s *Service) affected(ctx context.Context, q store.Q, d *Def, lower *Lower)
 		if err != nil {
 			return 0, err
 		}
-		floor = sv.Value
+		_, floor, _ = d.heldTo(sv, nil)
 	}
 	rows, err := store.LayeredOfKey(ctx, q, string(Tenant), d.Key)
 	if err != nil {

@@ -179,13 +179,13 @@ describe('the Settings page', () => {
 
   it('shows the site layer and the tenant layer with the lock source, keeps a value a lock hides and brings it back', async () => {
     // A setting the site locks for tenants: the tenant layer says so and cannot change it.
-    await open('settings', (d) => void (setting(d, 'registration.mode').site.lower = { mode: 'lock' }))
+    await open('settings', (d) => void (setting(d, 'legal.termsUrl').site.lower = { mode: 'lock' }))
     await settle(
       () => rowOf('registration.perHour') !== undefined && rowOf('registration.perHour') !== null,
       'the settings',
     )
     await settle(() => document.querySelectorAll('[data-slot="setting-row"]').length >= 16, 'both layers')
-    const rows = [...document.querySelectorAll('[data-slot="setting-row"][data-key="registration.mode"]')]
+    const rows = [...document.querySelectorAll('[data-slot="setting-row"][data-key="legal.termsUrl"]')]
     expect(rows).toHaveLength(2)
     expect(rows[1].textContent).toContain(tt.settings.lockedBy.site)
     expect(

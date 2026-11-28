@@ -234,6 +234,7 @@ export const tenantsEn: TenantsMessages = {
     lockedBy: { site: 'Locked by the site', tenant: 'Locked by the tenant' },
     restrictedBy: (what: string) => `Restricted by the site: ${what}`,
     none: 'No limit',
+    ownPeopleOnly: "The site's own value is for the site's own people only; a rule for one tenant holds that tenant.",
     tightenedBy: 'A minimum set by the site',
     tightenHelp: 'The layers below may set this value or a stricter one.',
     stricterThan: (what: string) => `At least as strict as ${what}`,

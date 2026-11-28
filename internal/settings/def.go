@@ -190,7 +190,11 @@ func (d *Def) looser(v, above any) bool {
 	case StrictOrder:
 		a, ok1 := above.(string)
 		b, ok2 := v.(string)
-		return ok1 && ok2 && slices.Index(d.Choices, b) < slices.Index(d.Choices, a)
+		if !ok1 || !ok2 || a == b {
+			return false
+		}
+		// A floor that is not one of the choices holds nothing open: it is the strictest.
+		return slices.Index(d.Choices, a) < 0 || slices.Index(d.Choices, b) < slices.Index(d.Choices, a)
 	case StrictSubset:
 		a, ok1 := toStrings(above)
 		b, ok2 := toStrings(v)
@@ -207,6 +211,30 @@ func (d *Def) looser(v, above any) bool {
 		}
 	}
 	return false
+}
+
+// heldTo is what the layer below the site is held to and sits on: the rule
+// the site's layer lays on it and the value above it. That is the site's own
+// layer, unless a rule for this tenant is in effect (rule, nil for none):
+// its value and its lower replace the site's, each only when it gives one.
+// A key with a TenantDefault is not held by the site's own layer at all (its
+// value governs the site's own people): the rule is then allow and the value
+// TenantDefault, and only a rule for the tenant holds it. byRule says the rule
+// for the tenant is what holds it.
+func (d *Def) heldTo(site SiteView, rule *RuleView) (above Lower, floor any, byRule bool) {
+	above, floor = site.Lower, site.Value
+	if d.TenantDefault != nil {
+		above, floor = Lower{Mode: Allow}, d.TenantDefault
+	}
+	if rule != nil && rule.InEffect {
+		if rule.Value != nil {
+			floor = rule.Value
+		}
+		if rule.Lower != nil {
+			above, byRule = *rule.Lower, true
+		}
+	}
+	return above, floor, byRule
 }
 
 // Has reports whether the setting exists in layer l.
@@ -352,6 +380,9 @@ func (d *Def) CheckLower(l Lower) (Lower, error) {
 	case Tighten:
 		if d.Strict == "" {
 			return Lower{}, bad("%s has no order of strictness, so it cannot be tightened", d.Key)
+		}
+		if !d.Has(Tenant) {
+			return Lower{}, bad("%s has no layer below to tighten", d.Key)
 		}
 		return Lower{Mode: Tighten}, nil
 	case Restrict:

@@ -9,6 +9,7 @@ const DEFS: SiteSetting[] = [
   {
     key: 'registration.mode',
     kind: 'choice',
+    ownPeopleOnly: true,
     layers: ['site', 'tenant'],
     choices: ['open', 'invite', 'closed'],
     site: { value: 'invite', lower: { mode: 'allow' } },

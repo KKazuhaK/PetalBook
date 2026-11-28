@@ -271,7 +271,8 @@ func tenantEffective(d *Def, site SiteView, rules []*RuleView, tv *TenantView, n
 		tv = &TenantView{InEffect: true}
 	}
 	if d.TenantDefault != nil {
-		site.Value = d.TenantDefault
+		// The site's own value governs its own people only: it holds no tenant.
+		site.Value, site.Lower = d.TenantDefault, Lower{Mode: Allow}
 	}
 	e := &Effective{Def: d, Site: site, Value: site.Value, Above: site.Lower, Source: Site, Tenant: tv}
 	views, chosen, next := ruleOf(rules, site.Lower.Mode == Lock, now)
@@ -284,16 +285,11 @@ func tenantEffective(d *Def, site SiteView, rules []*RuleView, tv *TenantView, n
 	if chosen != nil {
 		tv.SiteRule = chosen
 		tv.SiteLocked = chosen.Lower != nil && chosen.Lower.Mode == Lock
-		if chosen.InEffect {
-			if chosen.Value != nil {
-				e.Value = chosen.Value
-			}
-			if chosen.Lower != nil {
-				e.Above = *chosen.Lower
-			}
-		}
 	}
-	e.Floor = e.Value
+	// The one place that says what the tenant's layer is held to and sits on:
+	// the read, the write check and the count of affected tenants all use it.
+	e.Above, e.Floor, e.ByRule = d.heldTo(site, chosen)
+	e.Value = e.Floor
 	if tv.Value != nil {
 		tv.InEffect = e.Above.AllowsOver(d, tv.Value, e.Floor)
 		if tv.InEffect {

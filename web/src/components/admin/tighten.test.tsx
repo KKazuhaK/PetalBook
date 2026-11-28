@@ -47,8 +47,8 @@ async function open(scene?: (d: FixtureData) => unknown) {
 describe('a minimum from the site', () => {
   it('offers the mode only where the key has an order, and sends the note with the rule', async () => {
     await open()
-    // registration.mode has an order (open, invite, closed) and allows everything to begin with.
-    const [site] = rows('registration.mode')
+    // storage.partial.unsupported has an order (allow, refuse) and allows everything to begin with.
+    const [site] = rows('storage.partial.unsupported')
     const rule = site.querySelector<HTMLSelectElement>(`select[aria-label$="${tt.settings.rule}"]`)!
     expect([...rule.options].map((o) => o.value)).toContain('tighten')
     const [daily] = rows('daily.own')
@@ -63,7 +63,8 @@ describe('a minimum from the site', () => {
     await settle(() => site.textContent!.includes(tt.settings.saved), 'saved')
     expect(
       JSON.parse(
-        m!.requests.find((r) => r.method === 'PUT' && r.url === '/api/admin/settings/registration.mode')!.body!,
+        m!.requests.find((r) => r.method === 'PUT' && r.url === '/api/admin/settings/storage.partial.unsupported')!
+          .body!,
       ),
     ).toEqual({ lower: { mode: 'tighten', note: 'Company policy' } })
   })
@@ -71,7 +72,7 @@ describe('a minimum from the site', () => {
   it('shows a tenant the note and the floor, and greys out the looser choices and numbers', async () => {
     await open((d) => {
       setSite(d, 'registration.perHour', 20, { mode: 'tighten', note: 'Company policy: at most 20.' })
-      setSite(d, 'registration.mode', 'invite', { mode: 'tighten' })
+      setSite(d, 'storage.partial.unsupported', 'refuse', { mode: 'tighten' })
     })
     const [, perHour] = rows('registration.perHour')
     expect(perHour.textContent).toContain(tt.settings.tightenedBy)
@@ -80,18 +81,17 @@ describe('a minimum from the site', () => {
     await click(perHour.querySelector('[role="switch"][aria-label$="' + tt.settings.follow + '"]'))
     await settle(() => perHour.querySelector('input[type="number"]') !== null, 'the number')
     expect(perHour.querySelector('input[type="number"]')!.getAttribute('max')).toBe('20')
-    const [, mode] = rows('registration.mode')
+    const [, mode] = rows('storage.partial.unsupported')
     await click(mode.querySelector('[role="switch"][aria-label$="' + tt.settings.follow + '"]'))
     await settle(() => mode.querySelector('select') !== null, 'the choice')
     const options = [
       ...mode.querySelectorAll<HTMLOptionElement>(
-        `select[aria-label="${tt.settings.names['registration.mode']}"] option`,
+        `select[aria-label="${tt.settings.names['storage.partial.unsupported']}"] option`,
       ),
     ]
     expect(options.map((o) => [o.value, o.disabled])).toEqual([
-      ['open', true],
-      ['invite', false],
-      ['closed', false],
+      ['allow', true],
+      ['refuse', false],
     ])
   })
 
@@ -105,5 +105,28 @@ describe('a minimum from the site', () => {
     const [, perHour] = rows('registration.perHour')
     await settle(() => perHour.querySelector('[data-slot="not-in-effect"]') !== null, 'marked')
     expect(perHour.textContent).toContain(tt.settings.overriddenBySite)
+  })
+
+  it("takes no rule at the site for a key that governs the site's own people, and shows no badge under an allowing rule", async () => {
+    await open((d) => {
+      // The site's own layer holds nobody for it; a rule for this tenant that allows everything holds nobody either.
+      setSite(d, 'registration.mode', 'closed', { mode: 'lock' })
+      d.admin.tenantRules['0000000000'] = {
+        'registration.perHour': {
+          value: null,
+          lower: null,
+          inEffect: true,
+          siteLocked: false,
+          rules: [{ source: 'manual', value: null, lower: { mode: 'allow' }, inEffect: true }],
+        },
+      }
+      setSite(d, 'registration.perHour', 20, { mode: 'tighten' })
+    })
+    const [site, tenant] = rows('registration.mode')
+    expect(site.querySelector('[data-slot="own-people-only"]')).not.toBeNull()
+    expect(site.querySelector(`select[aria-label$="${tt.settings.rule}"]`)).toBeNull()
+    expect(tenant.textContent).not.toContain(tt.settings.lockedBy.site)
+    const [, perHour] = rows('registration.perHour')
+    expect(perHour.textContent).not.toContain(tt.settings.tightenedBy)
   })
 })

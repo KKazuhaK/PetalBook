@@ -9690,7 +9690,9 @@ applies to every layered (b) key of the inventory:
   - `subset`: a list is stricter when it keeps fewer of the entries above it,
     `["*"]` (everything) being the loosest (`signin.social`, `storage.hosts`).
 
-  A key without an order cannot be `tighten`ed (`400 invalid`). The orders of
+  A key without an order, or without a tenant layer below the site, cannot be
+  `tighten`ed (`400 invalid`); a floor that is not one of an `order` key's
+  choices holds everything open to none (it counts as the strictest). The orders of
   the keys are in `settingStrictness` of the generated
   `web/src/api/generated/registries.json`.
 - The site's value the minimum is held to is the site's own, or its rule's
@@ -9702,6 +9704,20 @@ applies to every layered (b) key of the inventory:
   counts again when the floor allows it. A write of a looser value is
   `409 setting_restricted`. `affected` of a site change to `tighten` counts the
   tenants whose own value is looser than the site's value now.
+- **A key whose site value is for the site's own people.** The site's own
+  value of `registration.mode` governs personal accounts only and never
+  constrains an organisation (decision of 2026-11-27): an organisation is held
+  by a rule written for that tenant alone. So the site's layer of such a key
+  (`ownPeopleOnly: true` in `GET /api/admin/settings`) takes no lower mode but
+  `allow` (`400 invalid` for `tighten`, `restrict` or `lock`, telling the
+  administrator to use a rule for the tenant), and a tenant that has no rule
+  sits on the key's tenant default (`invite`), not on the site's value. A rule
+  for the tenant with `tighten` holds the tenant to that rule's value.
+- One function decides what a tenant's layer is held to and sits on (`Def.heldTo`:
+  the site's layer, or the site's rule for the tenant when one is in effect,
+  its value and its lower each replacing the site's when it has one). The read
+  (`inEffect`), the write check (`409 setting_restricted`), the count of
+  `affected` and `reason` all use it, so they cannot differ.
 - The default rule of `signin.ssoOnly` and `signin.ssoOnlyAdmins` is
   `tighten` (3.6 d4 made them tenant layers that only tighten; the site may
   now choose `allow` for them too).
@@ -9747,7 +9763,10 @@ take about 30 MB. There is no cap on the number of tenants cached.
   `siteLock`, or when a rule for the tenant leaves it nothing to choose).
 - `setBy`: who wrote the tenant layer's value, `site` or `tenant`.
 - `allowed` is what the site's rule and the rule for the tenant both leave.
-- `forced`: the site locks it. `reason` is then `{"by": "site", "mode": "lock", "note": "…"}`;
+- `forced`: the site locks it. `reason` is then `{"by": "site", "mode": "lock", "note": "…"}`
+  (`by` is `site` when the site's own layer holds the tenant and `rule` when the
+  site's rule for this tenant does; a rule that allows everything gives no
+  `reason`, and the page shows no badge for it);
   for `tighten` and `restrict` the reason says so as well: it is the rule the
   tenant's layer is held to (the site's, or its rule for this tenant), with
   `options` or `max` for a restriction and, for `tighten`, `floor`, the value

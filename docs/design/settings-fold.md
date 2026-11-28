@@ -648,6 +648,15 @@ have.
   clamps to the site's, the tenant view says "overridden by the site's value",
   and it counts again when the floor allows it. `affected` counts the tenants
   whose value is looser than the site's value after a change *of the rule*.
+- **Keys with a `TenantDefault`** (`registration.mode`): the site's own value
+  governs its own people only (2026-11-27), so the site's layer takes only
+  `allow` for them (the others are `400 invalid`), and `Def.heldTo` ignores it
+  anyway. Only a rule for the tenant holds one; `Def.heldTo(site, rule)` is the
+  single answer to "what is this tenant held to, and what does it sit on",
+  used by `tenantEffective`, the write check and `affected`. `reason.by` is
+  `rule` when the rule for the tenant holds it. `tighten` needs a tenant layer
+  (`400 invalid` otherwise), and a floor outside an `order` key's choices
+  counts as the strictest.
 - **The default rule of the two `ssoOnly` keys is `tighten`** (it was `allow`
   plus a hard-wired boolean). A site administrator may now pick `allow` for
   them; a tenant could then switch the site's `ssoOnly` off for itself.

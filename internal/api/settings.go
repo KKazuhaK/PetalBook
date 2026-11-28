@@ -50,6 +50,10 @@ type siteSettingResp struct {
 	// Strictness says what stricter means for the key (higher, lower, order,
 	// subset), which the lower mode tighten needs; none: it cannot be tightened.
 	Strictness settings.Strictness `json:"strictness,omitempty"`
+	// OwnPeopleOnly: the site's own value governs the site's own people and
+	// holds no organisation, so the site's layer takes no rule (only allow); a
+	// rule for one tenant holds it.
+	OwnPeopleOnly bool `json:"ownPeopleOnly,omitempty"`
 }
 
 type tenantSettingResp struct {
@@ -72,6 +76,8 @@ type tenantSettingResp struct {
 // who made it, its mode, options or max and note, and under tighten the floor,
 // the value the tenant's own must be at least as strict as.
 type reasonView struct {
+	// By is "site" when the site's own layer holds the tenant, "rule" when the
+	// site's rule for this tenant does.
 	By string `json:"by"`
 	settings.Lower
 	Floor any `json:"floor,omitempty"`
@@ -95,6 +101,9 @@ func tenantSettingOf(e *settings.Effective, showSetBy bool) tenantSettingResp {
 	var reason *reasonView
 	if e.Above.Mode != settings.Allow {
 		reason = &reasonView{By: "site", Lower: e.Above}
+		if e.ByRule {
+			reason.By = "rule"
+		}
 		if e.Above.Mode == settings.Tighten {
 			reason.Floor = e.Floor
 		}
@@ -118,7 +127,7 @@ func (s *server) adminGetSettings(c *call) {
 	out := []siteSettingResp{}
 	for _, d := range s.settings.Defs() {
 		e := eff[d.Key]
-		out = append(out, siteSettingResp{d.Key, d.Kind, d.Layers, e.Site, d.Choices, d.ForTenant, d.ServerWide, d.Strict})
+		out = append(out, siteSettingResp{d.Key, d.Kind, d.Layers, e.Site, d.Choices, d.ForTenant, d.ServerWide, d.Strict, d.TenantDefault != nil})
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Settings []siteSettingResp `json:"settings"`
@@ -281,7 +290,7 @@ func (s *server) adminPutSetting(c *call) {
 		// Remotes is how many spaces the requirement of a remote now asks
 		// something of, with a change of storage.remotes.*.
 		Remotes *spaces.Affected `json:"remotes,omitempty"`
-	}{siteSettingResp: siteSettingResp{d.Key, d.Kind, d.Layers, after.Site, d.Choices, d.ForTenant, d.ServerWide, d.Strict}}
+	}{siteSettingResp: siteSettingResp{d.Key, d.Kind, d.Layers, after.Site, d.Choices, d.ForTenant, d.ServerWide, d.Strict, d.TenantDefault != nil}}
 	if ch.HasLower {
 		out.Affected = &affected
 	}

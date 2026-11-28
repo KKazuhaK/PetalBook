@@ -173,7 +173,11 @@ const siteOf = (c: Ctx, key: string): SiteSetting => find(A(c).settings, (s) => 
 // The rule the tenant's layer is held to: the site's rule for this tenant when it has one in effect, else the site's.
 function aboveOf(def: SiteSetting, own: TenantSetting['tenant']) {
   const rule = own?.rules?.find((r) => r.inEffect)
-  return { lower: rule?.lower ?? def.site.lower, floor: rule?.value ?? def.site.value }
+  // A key that governs the site's own people holds no tenant by its site layer (the server's TenantDefault).
+  const site = def.ownPeopleOnly
+    ? { lower: { mode: 'allow' } as SettingLower, floor: 'invite' }
+    : { lower: def.site.lower, floor: def.site.value }
+  return { lower: rule?.lower ?? site.lower, floor: rule?.value ?? site.floor, byRule: !!rule?.lower }
 }
 
 function tenantSetting(c: Ctx, tenant: string, def: SiteSetting): TenantSetting {
@@ -194,7 +198,7 @@ function tenantSetting(c: Ctx, tenant: string, def: SiteSetting): TenantSetting 
       ? {}
       : {
           reason: {
-            by: 'site' as const,
+            by: above.byRule ? ('rule' as const) : ('site' as const),
             ...above.lower,
             ...(above.lower.mode === 'tighten' ? { floor: above.floor } : {}),
           },
@@ -1470,6 +1474,8 @@ export const adminRoutes: Route[] = [
       const s = siteOf(c, c.params.key)
       if ('value' in c.body) s.site.value = c.body.value
       if ('lower' in c.body) {
+        if (s.ownPeopleOnly && c.body.lower && c.body.lower.mode !== 'allow')
+          throw new Refusal(400, 'invalid', `${s.key} governs the site's own people only: set a rule for the tenant`)
         if (c.body.lower?.mode === 'tighten' && !s.strictness)
           throw new Refusal(400, 'invalid', `${s.key} has no order of strictness, so it cannot be tightened`)
         s.site.lower = ruleWritten(c.body.lower, s.site.lower)

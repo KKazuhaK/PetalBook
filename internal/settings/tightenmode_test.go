@@ -120,14 +120,10 @@ func TestTightenHoldsATenantToTheSitesValue(t *testing.T) {
 func TestTightenOfAChoiceAndOfATenantsRule(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
-		// open < invite < closed.
-		if _, err := s.SetSite(ctx, settings.RegistrationMode, settings.Change{HasValue: true, Value: settings.RegInvite, HasLower: true, Lower: lower(settings.Tighten)}); err != nil {
-			t.Fatal(err)
-		}
-		if err := s.SetTenant(ctx, ten, settings.RegistrationMode, settings.Change{HasValue: true, Value: settings.RegOpen}); code(err) != settings.CodeRestricted {
-			t.Fatalf("%v", err)
-		}
-		if err := s.SetTenant(ctx, ten, settings.RegistrationMode, settings.Change{HasValue: true, Value: settings.RegClosed}); err != nil {
+		// open < invite < closed. The site's own value of this key governs its
+		// own people only, so a tenant's value is free until a rule for the
+		// tenant holds it.
+		if err := s.SetTenant(ctx, ten, settings.RegistrationMode, settings.Change{HasValue: true, Value: settings.RegOpen}); err != nil {
 			t.Fatal(err)
 		}
 		// The site's rule for this tenant has its own value and its own minimum:
@@ -140,6 +136,9 @@ func TestTightenOfAChoiceAndOfATenantsRule(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 		e, _ := s.Get(ctx, ten, settings.RegistrationMode)
+		if !e.ByRule || e.Tenant.InEffect {
+			t.Fatalf("the open value stays, not in effect: %+v %+v", e, e.Tenant)
+		}
 		if e.Floor != settings.RegClosed || e.Above.Mode != settings.Tighten || e.Above.Note != "Closed for this tenant." || e.Value != settings.RegClosed {
 			t.Fatalf("%+v", e)
 		}

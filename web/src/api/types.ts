@@ -2334,7 +2334,8 @@ export interface SettingLower {
 export type Strictness = 'higher' | 'lower' | 'order' | 'subset'
 // The rule a tenant's layer is held to, as the tenant is shown it. floor: under tighten, the value the tenant's own
 // must be at least as strict as.
-export type SettingReason = SettingLower & { by: 'site'; floor?: unknown }
+// by: the site's own layer (site) or its rule for this tenant (rule).
+export type SettingReason = SettingLower & { by: 'site' | 'rule'; floor?: unknown }
 export interface SiteSetting {
   key: string
   kind: SettingKind
@@ -2343,6 +2344,9 @@ export interface SiteSetting {
   choices?: string[]
   site: { value: unknown; lower: SettingLower; fromFlag?: boolean }
   strictness?: Strictness
+  // The site's own value governs its own people only and holds no organisation: the site's layer takes no rule, only
+  // a rule for one tenant holds it.
+  ownPeopleOnly?: boolean
   // The server's own, with no tenant layer: the reason, in words.
   serverWide?: string
   // Set by PUT when the new rule makes this many tenants' values ineffective.
