@@ -10795,7 +10795,13 @@ as for one that does not exist):
   `409 sso_required` while the tenant requires its
   single sign-on (no password account is made: deny it, and the person signs in
   through the SSO); `409 exists` or `409 email_taken` when the username or the
-  address was taken meanwhile. Audited as `join_approved`.
+  address was taken meanwhile. For a request made with a social sign-in:
+  `409 conflict` ("That account is linked to another person.") when its identity
+  has meanwhile been linked to another account (the request stays waiting; deny
+  it), and `409 provider_unavailable` when the provider is gone or the tenant
+  no longer allows it. The account's username takes a number when the one asked
+  for was taken meanwhile, and the mail names the account made, in the language
+  of the sign-in's `Accept-Language`. Audited as `join_approved`.
 - `POST …/join-requests/{id}/deny`: the username is free again, and the person
   is mailed that it was not approved. `200` with the JoinRequest. Audited as
   `join_denied`.

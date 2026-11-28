@@ -165,7 +165,13 @@ func (s *Service) tenantSSOOnlyAdmins(ctx context.Context, tenant string) bool {
 		return false
 	}
 	e, err := st.Get(ctx, tenant, settings.SigninSSOOnlyAdmins)
-	return err == nil && e.Value == true
+	if err != nil || e.Tenant == nil {
+		return false
+	}
+	// As tenantSSOOnlyOn: the tenant's own layer, or the site's rule for it; the site's own layer holds no tenant's administrators.
+	tv := e.Tenant
+	return tv.Value == true && tv.InEffect ||
+		tv.SiteRule != nil && tv.SiteRule.InEffect && tv.SiteRule.Value == true
 }
 
 // errLastLocalAdmin refuses taking away a tenant's last enabled administrator

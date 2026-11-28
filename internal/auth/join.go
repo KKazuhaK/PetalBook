@@ -201,6 +201,20 @@ func (s *Service) submitJoin(ctx context.Context, r store.JoinRequest, regID, ip
 	return s.joinStatus(ctx, r), nil
 }
 
+type langKey struct{}
+
+// WithAcceptLanguage carries the Accept-Language of a sign-in callback to the
+// code that may mail the person (a social request to join), as the password
+// path takes the language of its own request.
+func WithAcceptLanguage(ctx context.Context, header string) context.Context {
+	return context.WithValue(ctx, langKey{}, header)
+}
+
+func acceptLanguage(ctx context.Context) string {
+	h, _ := ctx.Value(langKey{}).(string)
+	return h
+}
+
 // ssoWaiting is the end of a social sign-in that became a request to join
 // (finishSSO): nobody is signed in, and the person goes to the waiting page
 // with the request's token.
@@ -245,7 +259,7 @@ func (s *Service) socialJoin(ctx context.Context, rt *providerRT, c claimed, ema
 		} else if taken && attempt < 20 {
 			continue
 		}
-		r := store.JoinRequest{TenantID: tenant, Username: name, Name: nameFrom(c, base), Email: email, Domain: domain, Lang: mail.PickLang("", ""),
+		r := store.JoinRequest{TenantID: tenant, Username: name, Name: nameFrom(c, base), Email: email, Domain: domain, Lang: mail.PickLang("", acceptLanguage(ctx)),
 			TokenHash: hashToken(tok), ProviderID: rt.row.ID, Subject: c.subject, IdentityLabel: c.label()}
 		_, err := s.submitJoin(ctx, r, "", ip)
 		var ae *Error
@@ -405,7 +419,7 @@ func (s *Service) ApproveJoinRequest(ctx context.Context, actor store.User, tena
 	if err != nil {
 		s.log.Warn("could not write a notification", "error", err)
 	}
-	if err := s.sendMail(mail.KindJoinApproved, r.Lang, r.Email, mail.Vars{Username: r.Username, Org: ref.Name, Link: strings.TrimRight(s.cfg.PublicURL, "/") + "/login"}); err != nil {
+	if err := s.sendMail(mail.KindJoinApproved, r.Lang, r.Email, mail.Vars{Username: u.Username, Org: ref.Name, Link: strings.TrimRight(s.cfg.PublicURL, "/") + "/login"}); err != nil {
 		s.log.Warn("could not queue a message", "reason", err.Error())
 	}
 	r.State, r.DecidedAt, r.DecidedBy, r.MadeUser, r.PasswordHash = store.JoinApproved, now, actor.ID, u.ID, ""

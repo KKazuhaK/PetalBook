@@ -255,7 +255,7 @@ func (s *server) oidcSlugCallback(c *call) {
 	if ck, err := c.r.Cookie(s.auth.SessionCookieName()); err == nil {
 		sessionTok = ck.Value
 	}
-	out := s.auth.OIDCComplete(c.r.Context(), slug, binding, sessionTok, c.r.URL.Query(), s.auth.ClientAddr(c.r))
+	out := s.auth.OIDCComplete(auth.WithAcceptLanguage(c.r.Context(), c.r.Header.Get("Accept-Language")), slug, binding, sessionTok, c.r.URL.Query(), s.auth.ClientAddr(c.r))
 	s.finishOutcome(c, out)
 }
 
@@ -315,7 +315,7 @@ func (s *server) samlACS(c *call) {
 	if ck, err := c.r.Cookie(s.auth.SessionCookieName()); err == nil {
 		sessionTok = ck.Value
 	}
-	out := s.auth.SAMLComplete(c.r.Context(), c.r.PathValue("slug"), c.r, sessionTok, s.auth.ClientAddr(c.r))
+	out := s.auth.SAMLComplete(auth.WithAcceptLanguage(c.r.Context(), c.r.Header.Get("Accept-Language")), c.r.PathValue("slug"), c.r, sessionTok, s.auth.ClientAddr(c.r))
 	s.finishOutcome(c, out)
 }
 
