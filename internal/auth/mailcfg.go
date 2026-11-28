@@ -13,7 +13,9 @@ import (
 	"petalbook.app/server/internal/mail"
 	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/secrets"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/usage"
 )
 
 // Mail settings (docs/api.md, "Mail"): one sender for the whole server, in a
@@ -336,13 +338,59 @@ func (s *Service) mailSlot(email, ip string) (time.Duration, bool) {
 	return s.mailCaps.TakeAll(to, ratelimit.Cost{Key: "by:" + ip, Limit: mailCapPerCaller})
 }
 
-// sendMail renders a message and queues it.
-func (s *Service) sendMail(kind, lang, to string, v mail.Vars) error {
+// UseUsage gives the service the meter that counts the mail of each tenant.
+func (s *Service) UseUsage(m *usage.Meter) { s.meter.Store(m) }
+
+// mailDayLimit refuses a message for a tenant that has sent rate.mailPerDay
+// messages today. The sum is what the database has of today (read here, outside
+// any transaction, and only when the tenant has a limit) plus what the meter
+// holds and has not written yet. A message that is the site's own (tenant "")
+// is not counted.
+func (s *Service) mailDayLimit(tenant string) error {
+	st, m := s.settings.Load(), s.meter.Load()
+	if tenant == "" || st == nil || m == nil {
+		return nil
+	}
+	limit, ok := st.LimitOf(context.Background(), tenant, settings.RateMailPerDay)
+	if !ok {
+		return nil
+	}
+	now := s.now().UTC()
+	pending := m.Pending(tenant, usage.Mail) // before the day's row: see Pending
+	sent, err := store.UsageDailyValue(context.Background(), s.st.Q(), tenant, store.UsageDay(now), store.UsageKeyMail)
+	if err != nil {
+		return err
+	}
+	if sent+pending < limit {
+		return nil
+	}
+	s.OverLimit(tenant, settings.RateMailPerDay, limit)
+	return retryAfter(now.Truncate(24 * time.Hour).Add(24 * time.Hour).Sub(now))
+}
+
+// OverLimit writes quota_exceeded, at most once a day for a tenant and key.
+func (s *Service) OverLimit(tenant, key string, limit int64) {
+	day := store.UsageDay(s.now())
+	if prev, loaded := s.overDay.Swap(tenant+"/"+key, day); loaded && prev == day {
+		return
+	}
+	s.Audit(AuditEvent{Kind: "quota_exceeded", Tenant: tenant, Detail: map[string]any{"quota": key, "limit": limit, "scope": "tenant"}})
+}
+
+// sendMail renders a message and queues it, for a tenant ("" for none): the
+// tenant's mail is held to rate.mailPerDay and counted.
+func (s *Service) sendMail(tenant, kind, lang, to string, v mail.Vars) error {
+	if err := s.mailDayLimit(tenant); err != nil {
+		return err
+	}
 	v.Site = s.siteName()
 	m := mail.Render(kind, lang, v)
 	m.To = to
 	switch err := s.mail.Enqueue(m); {
 	case err == nil:
+		if meter := s.meter.Load(); meter != nil && tenant != "" {
+			meter.Add(tenant, usage.Mail, 1)
+		}
 		return nil
 	case errors.Is(err, mail.ErrQueueFull):
 		return coded(503, "unavailable", "The mail queue is full; try again later.")

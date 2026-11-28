@@ -379,7 +379,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 			return s.mailExisting(ctx, *exists, lang, p.IP)
 		}
 		if !decoy {
-			if err := s.sendMail(mail.KindRegisterOrgRefused, lang, email, mail.Vars{Org: orgName}); err != nil {
+			if err := s.sendMail("", mail.KindRegisterOrgRefused, lang, email, mail.Vars{Org: orgName}); err != nil {
 				s.log.Warn("could not queue a message", "reason", err.Error())
 			}
 		}
@@ -428,7 +428,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	case joining:
 		kind, orgName = mail.KindRegisterJoin, s.tenantName(p.TenantID)
 	}
-	if err := s.sendMail(kind, lang, email, mail.Vars{Username: username, Org: orgName, Link: s.link("/register/confirm", tok), Hours: 24}); err != nil {
+	if err := s.sendMail(p.TenantID, kind, lang, email, mail.Vars{Username: username, Org: orgName, Link: s.link("/register/confirm", tok), Hours: 24}); err != nil {
 		s.log.Warn("could not queue a registration message", "reason", err.Error())
 	}
 	return nil
@@ -544,11 +544,11 @@ func (s *Service) mailExisting(ctx context.Context, u store.User, lang, ip strin
 		return err
 	}
 	if len(links) > 0 {
-		if err := s.sendMail(mail.KindRegisterDup, lang, email, mail.Vars{Link: links[0].URL, Hours: 1}); err != nil {
+		if err := s.sendMail(u.TenantID, mail.KindRegisterDup, lang, email, mail.Vars{Link: links[0].URL, Hours: 1}); err != nil {
 			s.log.Warn("could not queue a message", "reason", err.Error())
 		}
 	} else if sso != nil {
-		if err := s.sendMail(mail.KindResetSSO, lang, email, mail.Vars{Provider: s.providerNameFor(ctx, *sso)}); err != nil {
+		if err := s.sendMail(u.TenantID, mail.KindResetSSO, lang, email, mail.Vars{Provider: s.providerNameFor(ctx, *sso)}); err != nil {
 			s.log.Warn("could not queue a message", "reason", err.Error())
 		}
 	}
@@ -739,7 +739,7 @@ func (s *Service) RequestEmailVerify(ctx context.Context, u store.User, lang, ip
 	if err != nil {
 		return err
 	}
-	return s.sendMail(mail.KindVerify, mail.PickLang(lang, ""), u.Email, mail.Vars{Name: u.Name, Username: u.Username, Email: u.Email, Link: s.link("/verify-email", tok), Hours: 24})
+	return s.sendMail(u.TenantID, mail.KindVerify, mail.PickLang(lang, ""), u.Email, mail.Vars{Name: u.Name, Username: u.Username, Email: u.Email, Link: s.link("/verify-email", tok), Hours: 24})
 }
 
 // ConfirmEmail marks the address a link was sent to as verified, by the person
@@ -805,7 +805,7 @@ func (s *Service) NoteEmailChange(old store.User, lang, ip string) {
 	if _, ok := s.mailSlot(old.Email, ip); !ok {
 		return
 	}
-	if err := s.sendMail(mail.KindEmailChanged, mail.PickLang(lang, ""), old.Email, mail.Vars{}); err != nil {
+	if err := s.sendMail(old.TenantID, mail.KindEmailChanged, mail.PickLang(lang, ""), old.Email, mail.Vars{}); err != nil {
 		s.log.Warn("could not queue a message", "reason", err.Error())
 	}
 }
@@ -890,14 +890,14 @@ func (s *Service) Forgot(ctx context.Context, p ForgotParams) error {
 	case len(links) > 1:
 		v.Links = links
 	case sso != nil:
-		if err := s.sendMail(mail.KindResetSSO, lang, to, mail.Vars{Provider: s.providerNameFor(ctx, *sso)}); err != nil {
+		if err := s.sendMail(accounts[0].TenantID, mail.KindResetSSO, lang, to, mail.Vars{Provider: s.providerNameFor(ctx, *sso)}); err != nil {
 			s.log.Warn("could not queue a message", "reason", err.Error())
 		}
 		return nil
 	default:
 		return nil
 	}
-	if err := s.sendMail(mail.KindReset, lang, to, v); err != nil {
+	if err := s.sendMail(accounts[0].TenantID, mail.KindReset, lang, to, v); err != nil {
 		s.log.Warn("could not queue a message", "reason", err.Error())
 	}
 	return nil
@@ -1149,7 +1149,7 @@ func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, acce
 	if err != nil {
 		return err
 	}
-	return s.sendMail(mail.KindReset, mail.PickLang(lang, ""), u.Email, mail.Vars{Link: links[0].URL, Hours: 1})
+	return s.sendMail(u.TenantID, mail.KindReset, mail.PickLang(lang, ""), u.Email, mail.Vars{Link: links[0].URL, Hours: 1})
 }
 
 // codePeopleLimit is the refusal of an account that would take a tenant over

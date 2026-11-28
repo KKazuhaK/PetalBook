@@ -157,6 +157,9 @@ func (s *server) serveMCP(w http.ResponseWriter, r *http.Request, sdk http.Handl
 		writeError(w, http.StatusNotFound, "not_found", "No such endpoint.")
 		return
 	}
+	if !s.meterRequest(w, p.User.TenantID, true) {
+		return
+	}
 	// The request is read here, so that one that is too large answers 413 in
 	// the API's shape and the SDK sees a body it can read.
 	raw, err := io.ReadAll(io.LimitReader(r.Body, mcpMaxRequest+1))

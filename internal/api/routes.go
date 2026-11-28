@@ -548,6 +548,9 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				writeError(w, http.StatusForbidden, "token_scope", "This token is read only.")
 				return
 			}
+			if !s.meterRequest(w, p.User.TenantID, false) {
+				return
+			}
 			c.p = p
 			c.r = r.WithContext(space.ContextWithVia(r.Context(), space.ViaToken))
 			// The api category: the call is recorded when it is over, if its
