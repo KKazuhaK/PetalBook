@@ -2670,6 +2670,8 @@ export interface CapabilityPlanLine {
   // features.domains: the requests to join by a domain that wait (3.6 d5).
   requests?: number
   providers?: number
+  // features.ownCaptcha: the organisation's own provider in force.
+  captcha?: string
   enabled?: number
 }
 // One line of a confirmation's plan: the preview of a deletion, or what an action does to one thing.

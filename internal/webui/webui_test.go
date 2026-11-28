@@ -245,7 +245,7 @@ func TestCSPAllowsTheConfiguredCaptchaOnly(t *testing.T) {
 	}
 	for _, provider := range []string{"", "image", "turnstile", "recaptcha", "hcaptcha", "unknown"} {
 		calls := 0
-		h := New(app(), WithCaptcha(func(*http.Request) string { calls++; return provider }))
+		h := New(app(), WithCaptcha(func(*http.Request) []string { calls++; return []string{provider} }))
 		csp := do(h, "GET", "/").Header().Get("Content-Security-Policy")
 		if calls != 1 {
 			t.Errorf("%q: provider asked %d times", provider, calls)
@@ -273,6 +273,20 @@ func TestCSPAllowsTheConfiguredCaptchaOnly(t *testing.T) {
 		if calls != 1 {
 			t.Errorf("%q: provider asked for a file", provider)
 		}
+	}
+}
+
+// With several providers in force (the site's and organisations' own) the page lets every one load, and no other.
+func TestCSPAllowsEveryProviderInForce(t *testing.T) {
+	h := New(app(), WithCaptcha(func(*http.Request) []string { return []string{"hcaptcha", "turnstile", "image", "evil"} }))
+	csp := do(h, "GET", "/").Header().Get("Content-Security-Policy")
+	for _, want := range []string{"https://challenges.cloudflare.com", "https://*.hcaptcha.com"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("%s missing: %q", want, csp)
+		}
+	}
+	if strings.Contains(csp, "recaptcha") || strings.Contains(csp, "evil") {
+		t.Errorf("a provider that is not in force: %q", csp)
 	}
 }
 

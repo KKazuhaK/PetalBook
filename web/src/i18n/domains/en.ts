@@ -183,6 +183,7 @@ export const domainsEn: DomainsMessages = {
     requestsLine: (n: number) => `${n} ${n === 1 ? 'request' : 'requests'} to join waiting`,
     providersLine: (providers: number, enabled: number) =>
       `${providers} sign-in ${providers === 1 ? 'provider' : 'providers'}, ${enabled} on`,
+    captchaLine: (provider: string) => `own captcha provider: ${provider}`,
     typeLabel: (n: number) => `Type ${n} to confirm`,
     confirm: 'Turn off',
     cancel: 'Cancel',

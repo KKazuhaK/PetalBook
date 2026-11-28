@@ -141,7 +141,7 @@ func (s *Service) applyTenantCaptcha(ctx context.Context, tenant string, c tenan
 		secret, ok, err := s.vault.Open(ctx, s.st.Q(), tenant, secrets.CaptchaSecret)
 		switch {
 		case err != nil:
-			s.log.Warn("a tenant's stored captcha secret cannot be read; its provider is not used", "tenant", tenant)
+			s.log.Error("a tenant's stored captcha secret cannot be opened with this server's key; its forms use the site's captcha provider until the secret is set again", "tenant", tenant, "error", err)
 		case ok:
 			if v, err := s.newVerifier(c.Provider, secret); err != nil {
 				s.log.Warn("could not set up a tenant's captcha check", "tenant", tenant, "reason", err.Error())
@@ -158,12 +158,42 @@ func (s *Service) tenantCaptchaSet(tenant string, t *tenantCaptcha) {
 	defer s.tenantCaptchaCache.Unlock()
 	if t == nil {
 		delete(s.tenantCaptchaCache.m, tenant)
-		return
+	} else {
+		if s.tenantCaptchaCache.m == nil {
+			s.tenantCaptchaCache.m = map[string]*tenantCaptcha{}
+		}
+		s.tenantCaptchaCache.m[tenant] = t
 	}
-	if s.tenantCaptchaCache.m == nil {
-		s.tenantCaptchaCache.m = map[string]*tenantCaptcha{}
+	// The third parties in force for any tenant, for the page's policy.
+	var in []string
+	for _, c := range s.tenantCaptchaCache.m {
+		if c.usable() && c.Provider != CaptchaImage && !slices.Contains(in, c.Provider) {
+			in = append(in, c.Provider)
+		}
 	}
-	s.tenantCaptchaCache.m[tenant] = t
+	slices.Sort(in)
+	s.tenantCaptchaProviders.Store(&in)
+}
+
+// CaptchaProviders are the third-party captcha providers any page of the server
+// may show: the site's, and every organisation's own that is in force. The web
+// app's page policy lets those widgets load (a fixed table of origins per
+// provider; nothing a tenant supplies reaches it). From memory only. A provider
+// whose organisation's feature is off may still be listed: only fixed origins
+// are allowed for it.
+func (s *Service) CaptchaProviders(ctx context.Context) []string {
+	var out []string
+	if p := s.sec(ctx).Captcha.Provider; p != CaptchaImage {
+		out = append(out, p)
+	}
+	if t := s.tenantCaptchaProviders.Load(); t != nil {
+		for _, p := range *t {
+			if !slices.Contains(out, p) {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
 
 // tenantCaptchaFor is the provider the forms of the tenant may use: its own, in
@@ -473,4 +503,18 @@ func (s *Service) TestTenantCaptcha(ctx context.Context, actorID, ip, tenant, to
 	}
 	s.AuditIn(ctx, AuditEvent{Kind: "tenant_captcha_test", Actor: actorID, IP: ip, Tenant: tenant, Detail: map[string]any{"provider": c.Provider, "ok": res.OK}})
 	return res, nil
+}
+
+// CaptchaUse says which tenants have an own captcha provider in force and
+// which: what switching features.ownCaptcha off stops. From memory.
+func (s *Service) CaptchaUse() map[string]string {
+	out := map[string]string{}
+	s.tenantCaptchaCache.RLock()
+	defer s.tenantCaptchaCache.RUnlock()
+	for id, c := range s.tenantCaptchaCache.m {
+		if c.usable() {
+			out[id] = c.Provider
+		}
+	}
+	return out
 }

@@ -718,8 +718,12 @@ switched on by itself:
 
 Each context asks for a captcha either `always` or `after_failures` (the
 default, after 3): once the address, or for `login` the username, has that many
-failures in the current window. Passkey sign-in and single sign-on have no
-captcha.
+failures in the current window. The `login` count is by the identifier as typed
+(trimmed and lower-cased; an address counts as an address), whether it is a
+username, an address that belongs to an account or one that belongs to nobody,
+so what `GET /api/captcha?account=` answers never tells which is which. It is
+separate from the lockout, which counts by account. Passkey sign-in and single
+sign-on have no captcha.
 
 #### `GET /api/captcha?ctx={context}&account={username}&tenant={slug}`
 
@@ -8753,13 +8757,15 @@ it is in use: `{"action": "change_capabilities", "key": "features.domains",
 "tenant": "01JDT3NANT"}` (`tenant` for a site administrator's rule for one
 tenant; without it, the site's value). Only who may make that change gets it
 (`404 not_found` otherwise); a feature with no count of its use is `400
-invalid` (today `features.domains` and, from 3.6 d3, `features.ownSso` have
-one). `plan` has one line per tenant that has the feature now and uses it:
+invalid` (today `features.domains`, from 3.6 d3 `features.ownSso` and
+`features.ownCaptcha` have one). `plan` has one line per tenant that has the feature now and uses it:
 `{"tenant", "slug", "name", "feature", "domains", "verified"}` for
 `features.domains` (its claims, how many are verified, and from 3.6 d5
 `requests`, its requests to join that wait), `{"tenant",
 "slug", "name", "feature", "providers", "enabled"}` for `features.ownSso` (its
-own sign-in providers, and how many are on). The token is
+own sign-in providers, and how many are on) and `{"tenant", "slug", "name",
+"feature", "captcha"}` for `features.ownCaptcha` (the tenant's own captcha
+provider in force). The token is
 not a bulk action's (`POST /api/admin/bulk` refuses it): it goes as `confirm`
 with the change itself, `PUT /api/admin/settings/{key}` or
 `PUT /api/admin/tenants/{tenant}/settings/{key}` (`{"value": false, "confirm":
@@ -10976,6 +10982,31 @@ site's provider is always what an organisation without a provider of its own (or
 with one that is not in force) uses, since the site's own requirement must be
 checked by it anyway.
 
+For a registration the tenant is the one the request named, the one the page's
+`GET /api/captcha` was asked for, before any rerouting by the address's domain
+(an address of a domain that joins another organisation is asked the named
+organisation's captcha, which is the one the page showed).
+
+**The page's policy.** The page's `Content-Security-Policy` lets the widget of a
+provider load if that provider is in force anywhere on the server: the site's,
+and every organisation's own that is enabled and complete. Each provider's
+origins are a fixed table in the server (Turnstile: `challenges.cloudflare.com`;
+reCAPTCHA: `www.google.com/recaptcha/`, `www.gstatic.com/recaptcha/`,
+`recaptcha.google.com/recaptcha/`; hCaptcha: `hcaptcha.com` and its
+subdomains), so nothing an organisation supplies reaches the policy. The set is
+kept in memory and refreshed when an organisation's provider or the site's
+changes; a page makes no query for it. The same policy is sent for every page of
+the app, so an organisation's own provider is allowed on the other organisations'
+pages too, which exposes nothing but the fixed origins.
+
+**Turning the feature off.** `features.ownCaptcha` is counted like
+`features.domains` and `features.ownSso`: switching it off (the site's value, a
+rule, a plan) while an organisation's own provider is in force is `409
+confirm_required` with a preview, and needs the confirmation of
+`change_capabilities`. Nothing is deleted; the organisation's forms use the
+site's provider again. A secret that this server's key cannot open is logged
+and leaves the organisation's forms on the site's provider.
+
 #### Daily text: `/api/admin/tenants/{tenant}/daily…`
 
 `GET/PUT …/daily`, `PUT/DELETE …/daily/apis/{id}`, `POST …/daily/try`,
@@ -11976,7 +12007,7 @@ exist, a `before` that is not a time, or a `dry_run` that is not a boolean.
 | `email_not_ascii` | 400 | an address with characters outside ASCII while `users.emailNonAscii` is off; also asking to verify such a stored address then |
 | `feature_off` | 403 | the tenant does not have the feature (`features.*`) what was asked needs; with `feature` (and `permission`, the key, when a route's key needs it); the message is a capitalised sentence naming it ("The API tokens feature is turned off for this organization.") |
 | `takeover_required` | 403 | an administrator who is not a member of the space asked for what only taking it over gives (see "Taking over a space") |
-| `confirm_required` | 409 | a change of a feature, a plan or its assignment that stops something in use (`features.domains`, `features.ownSso`), now or at a later start or end of a rule, without the confirmation of `change_capabilities`; turning a domain's join off, or removing the domain, while requests to join by it wait, without the confirmation of `domain_join_off`; with `plan` |
+| `confirm_required` | 409 | a change of a feature, a plan or its assignment that stops something in use (`features.domains`, `features.ownSso`, `features.ownCaptcha`), now or at a later start or end of a rule, without the confirmation of `change_capabilities`; turning a domain's join off, or removing the domain, while requests to join by it wait, without the confirmation of `domain_join_off`; with `plan` |
 | `plan_in_use` | 409 | deleting a plan that tenants use; with `tenants` |
 | `partial_unsupported` | 409 | connecting a space to a host that cannot sync partially while `storage.partial.unsupported` is `refuse`; with `host` and `provider` |
 | `no_storage_target` | 409 | making a space in `tenant` mode when the organisation has no usable storage target |

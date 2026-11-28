@@ -170,7 +170,7 @@ func TestATenantsCaptchaConfigurationIsItsOwnAndTheSecretIsWriteOnly(t *testing.
 		f.root.do("GET", tcPath(fakeID), nil).want(t, 404, "not_found")
 		// The feature is the site's to grant: off, a tenant's own writes are refused, and what was configured is not in force.
 		f.own(t, f.admB, f.tenB, "turnstile", tcPicky).want(t, 200, "")
-		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.ownCaptcha", map[string]any{"siteRule": map[string]any{"value": false}}).want(t, 200, "")
+		f.ownCaptchaOff(t, f.tenB)
 		f.admB.do("GET", tcPath(f.tenB), nil).want(t, 403, "feature_off")
 		f.admB.do("PUT", tcPath(f.tenB), map[string]any{"enabled": false}).want(t, 403, "feature_off")
 		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/secrets/captcha.secret", map[string]any{"value": "x"}).want(t, 403, "feature_off")
@@ -293,7 +293,7 @@ func TestATenantsOwnProviderServesItsFormsWhereOnlyItAsks(t *testing.T) {
 			t.Fatalf("the secret set as a secret is in force at once: %v", b)
 		}
 		// What the site no longer grants is not in force.
-		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.ownCaptcha", map[string]any{"siteRule": map[string]any{"value": false}}).want(t, 200, "")
+		f.ownCaptchaOff(t, f.tenB)
 		if b := tcAsk(c, "login", "acme", ""); b["provider"] != "image" {
 			t.Fatalf("the feature is off: %v", b)
 		}

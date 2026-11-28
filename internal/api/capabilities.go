@@ -27,6 +27,17 @@ import (
 var capabilityUse = map[string]func(s *server, ctx context.Context) (map[string]capabilityCount, error){
 	settings.FeatureDomains: (*server).domainUse,
 	settings.FeatureOwnSSO:  (*server).ownSSOUse,
+	// features.ownCaptcha (3.6): the tenants whose own captcha provider is in force.
+	settings.FeatureOwnCaptcha: (*server).ownCaptchaUse,
+}
+
+// ownCaptchaUse lists the tenants that have an own captcha provider in force, from memory.
+func (s *server) ownCaptchaUse(ctx context.Context) (map[string]capabilityCount, error) {
+	out := map[string]capabilityCount{}
+	for t, p := range s.auth.CaptchaUse() {
+		out[t] = capabilityCount{Captcha: p}
+	}
+	return out, nil
 }
 
 // capabilityCount is what one tenant would lose: of features.domains its
@@ -35,6 +46,8 @@ var capabilityUse = map[string]func(s *server, ctx context.Context) (map[string]
 type capabilityCount struct {
 	Claims, Verified  int
 	Providers, Active int
+	// Captcha is features.ownCaptcha's provider in force.
+	Captcha string
 	// Requests are features.domains' pending requests to join by a domain
 	// (3.6 d5): turning the feature off leaves them waiting, without effect.
 	Requests int
@@ -115,12 +128,15 @@ type capabilityItem struct {
 	Providers *int   `json:"providers,omitempty"`
 	Enabled   *int   `json:"enabled,omitempty"`
 	Requests  *int   `json:"requests,omitempty"`
+	Captcha   string `json:"captcha,omitempty"`
 }
 
 // itemOf is the preview's line of a tenant's count of the feature key.
 func itemOf(ref store.TenantRef, key string, n capabilityCount) capabilityItem {
 	it := capabilityItem{Tenant: ref.ID, Slug: ref.Slug, Name: ref.Name, Feature: key}
-	if key == settings.FeatureOwnSSO {
+	if key == settings.FeatureOwnCaptcha {
+		it.Captcha = n.Captcha
+	} else if key == settings.FeatureOwnSSO {
 		it.Providers, it.Enabled = &n.Providers, &n.Active
 	} else {
 		it.Claims, it.Verified, it.Requests = &n.Claims, &n.Verified, &n.Requests
@@ -158,7 +174,7 @@ func (s *server) capabilityPlan(ctx context.Context, key, tenant string) (confir
 			continue
 		}
 		plan = append(plan, itemOf(ref, key, n))
-		parts = append(parts, ref.ID, strconv.Itoa(n.Claims), strconv.Itoa(n.Verified), strconv.Itoa(n.Providers), strconv.Itoa(n.Active), strconv.Itoa(n.Requests))
+		parts = append(parts, ref.ID, strconv.Itoa(n.Claims), strconv.Itoa(n.Verified), strconv.Itoa(n.Providers), strconv.Itoa(n.Active), strconv.Itoa(n.Requests), n.Captcha)
 	}
 	return confirmPlan{Plan: plan, Hash: hashOf(append([]string{key, tenant}, parts...)...)}, nil
 }

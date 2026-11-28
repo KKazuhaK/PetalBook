@@ -229,6 +229,12 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	if org {
 		p.TenantID = store.DefaultTenantID
 	}
+	// The captcha is the one the page asked for: the tenant the request named,
+	// before any rerouting by the address's domain.
+	capTenant := p.TenantID
+	if org {
+		capTenant = "" // an organisation of the person's own does not exist yet: the site's
+	}
 	joinTenant, joinDomain, joinMode, joining := "", "", "", false
 	if !org {
 		// A domain that joins its tenant is the organisation's own opt-in, and
@@ -262,11 +268,6 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	}
 	// 3. the captcha
 	st := s.sec(ctx)
-	// An organisation of the person's own does not exist yet: the site's captcha.
-	capTenant := p.TenantID
-	if p.Org != nil {
-		capTenant = ""
-	}
 	if err := s.checkCaptcha(ctx, st, capTenant, CtxRegister, "", p.IP, p.Captcha); err != nil {
 		return err
 	}

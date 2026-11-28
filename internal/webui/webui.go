@@ -15,6 +15,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,11 +41,11 @@ func Handler(opts ...Option) (h http.Handler, built bool) {
 // Option changes how New serves the app.
 type Option func(*handler)
 
-// WithCaptcha names the captcha provider in force for a request ("" or
-// "image" for none from a third party), so the page's policy lets that
-// provider's widget load. It is called once per page served and must be
-// cheap: the policies themselves are built once, here.
-func WithCaptcha(provider func(*http.Request) string) Option {
+// WithCaptcha names the third-party captcha providers in force for a request
+// (the site's, and every organisation's own), so the page's policy lets their
+// widgets load. It is called once per page served and must be cheap (memory
+// only): the policies themselves are built once per set of providers.
+func WithCaptcha(provider func(*http.Request) []string) Option {
 	return func(h *handler) { h.captcha = provider }
 }
 
@@ -63,29 +64,64 @@ func Built(fsys fs.FS) bool {
 const indexCSP = "default-src 'self'; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'; " +
 	"font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 
-// captchaCSP is the page's policy while a third-party captcha is configured:
-// indexCSP plus that provider's script, frame and (where it calls out from
-// the page) connect sources, from each provider's own CSP documentation.
+// captchaParts are the sources each third-party captcha provider needs, from
+// each provider's own CSP documentation: script, frame and (where it calls out
+// from the page) connect and style. They are a fixed table: nothing a tenant
+// supplies reaches the policy, only which of these providers is in force.
 // web/src/components/auth/Captcha.tsx loads the scripts named here.
-var captchaCSP = func() map[string]string {
-	policy := func(script, frame, connect, style string) string {
-		return "default-src 'self'; script-src 'self' " + script + "; frame-src " + frame +
-			"; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'" + style +
-			"; font-src 'self' data:; connect-src 'self'" + connect + "; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+var captchaParts = map[string]struct{ script, frame, connect, style string }{
+	// Cloudflare: script and frame from challenges.cloudflare.com.
+	"turnstile": {"https://challenges.cloudflare.com", "https://challenges.cloudflare.com", "", ""},
+	// Google's reCAPTCHA FAQ: scripts under www.google.com/recaptcha/ and
+	// www.gstatic.com/recaptcha/, frames from www.google.com/recaptcha/ and
+	// recaptcha.google.com/recaptcha/.
+	"recaptcha": {"https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/",
+		"https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/", "", ""},
+	// hCaptcha: script, frame, style and connect from hcaptcha.com and its subdomains.
+	"hcaptcha": {"https://hcaptcha.com https://*.hcaptcha.com", "https://hcaptcha.com https://*.hcaptcha.com",
+		"https://hcaptcha.com https://*.hcaptcha.com", "https://hcaptcha.com https://*.hcaptcha.com"},
+}
+
+// captchaOrder fixes the order of the sources in a policy.
+var captchaOrder = []string{"turnstile", "recaptcha", "hcaptcha"}
+
+// captchaPolicies keeps the policies built for each set of providers.
+var captchaPolicies sync.Map // "turnstile,hcaptcha" -> policy
+
+// captchaCSP is the page's policy while third-party captcha providers are in
+// force: indexCSP plus those providers' sources (unknown names are ignored).
+func captchaCSP(providers []string) string {
+	var in []string
+	for _, p := range captchaOrder {
+		if slices.Contains(providers, p) {
+			in = append(in, p)
+		}
 	}
-	const hc = "https://hcaptcha.com https://*.hcaptcha.com"
-	return map[string]string{
-		// Cloudflare: script and frame from challenges.cloudflare.com.
-		"turnstile": policy("https://challenges.cloudflare.com", "https://challenges.cloudflare.com", "", ""),
-		// Google's reCAPTCHA FAQ: scripts under www.google.com/recaptcha/ and
-		// www.gstatic.com/recaptcha/, frames from www.google.com/recaptcha/
-		// and recaptcha.google.com/recaptcha/.
-		"recaptcha": policy("https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/",
-			"https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/", "", ""),
-		// hCaptcha: script, frame, style and connect from hcaptcha.com and its subdomains.
-		"hcaptcha": policy(hc, hc, " "+hc, " "+hc),
+	if len(in) == 0 {
+		return indexCSP
 	}
-}()
+	key := strings.Join(in, ",")
+	if v, ok := captchaPolicies.Load(key); ok {
+		return v.(string)
+	}
+	var script, frame, connect, style string
+	for _, p := range in {
+		c := captchaParts[p]
+		script += " " + c.script
+		frame += " " + c.frame
+		if c.connect != "" {
+			connect += " " + c.connect
+		}
+		if c.style != "" {
+			style += " " + c.style
+		}
+	}
+	pol := "default-src 'self'; script-src 'self'" + script + "; frame-src" + frame +
+		"; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'" + style +
+		"; font-src 'self' data:; connect-src 'self'" + connect + "; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+	captchaPolicies.Store(key, pol)
+	return pol
+}
 
 const notBuiltText = `PetalBook is running, but the web app is not built into this binary.
 
@@ -102,7 +138,7 @@ var clientRoutes = map[string]bool{"s": true, "f": true, "t": true, "p": true}
 type handler struct {
 	fsys fs.FS // nil or without index.html: not built
 
-	captcha func(*http.Request) string
+	captcha func(*http.Request) []string
 
 	mu    sync.Mutex
 	etags map[string]string
@@ -125,9 +161,7 @@ func New(fsys fs.FS, opts ...Option) http.Handler {
 // csp is the page's policy for this request.
 func (h *handler) csp(r *http.Request) string {
 	if h.captcha != nil {
-		if p, ok := captchaCSP[h.captcha(r)]; ok {
-			return p
-		}
+		return captchaCSP(h.captcha(r))
 	}
 	return indexCSP
 }

@@ -174,6 +174,7 @@ export const domainsZhCN = {
     line: (domains: number, verified: number) => `${domains} 个域名，其中 ${verified} 个已验证`,
     requestsLine: (n: number) => `${n} 份加入申请在等待`,
     providersLine: (providers: number, enabled: number) => `${providers} 个登录提供方，其中 ${enabled} 个已启用`,
+    captchaLine: (provider: string) => `自己的验证码服务：${provider}`,
     typeLabel: (n: number) => `输入 ${n} 以确认`,
     confirm: '关闭',
     cancel: '取消',

@@ -475,8 +475,8 @@ func runServe(ctx context.Context, c serveConfig) error {
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log, Domains: dom})
 	var webOpts []webui.Option
 	if svc != nil {
-		// The page's policy lets the configured captcha provider's widget load.
-		webOpts = append(webOpts, webui.WithCaptcha(func(r *http.Request) string { return svc.CaptchaProvider(r.Context()) }))
+		// The page's policy lets the widget of every captcha provider in force load (the site's and the organisations').
+		webOpts = append(webOpts, webui.WithCaptcha(func(r *http.Request) []string { return svc.CaptchaProviders(r.Context()) }))
 	}
 	webApp, webBuilt := webui.Handler(webOpts...)
 	if !webBuilt {

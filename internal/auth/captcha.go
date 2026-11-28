@@ -90,7 +90,7 @@ func (s *Service) needs(st *secState, c CaptchaCtx, ctxName, ip, username string
 	if s.failIP.Count("ip:"+ip, st.window) >= c.Failures {
 		return true
 	}
-	return ctxName == CtxLogin && username != "" && s.failUser.Count(userKey(username), st.window) >= c.Failures
+	return ctxName == CtxLogin && username != "" && s.failTyped.Count(userKey(username), st.window) >= c.Failures
 }
 
 // capPlan is what a form is asked, for a request scoped to a tenant (tenant "":

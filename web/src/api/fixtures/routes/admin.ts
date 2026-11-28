@@ -416,7 +416,7 @@ function spacePreview(c: Ctx, s: SpaceData): SpaceDeletionPreview {
 
 // The features whose use is counted: switching one off while a tenant uses it needs change_capabilities'
 // confirmation first (features.domains: its claims; features.ownSso: its own sign-in providers, 3.6 d3).
-const COUNTED = ['features.domains', 'features.ownSso']
+const COUNTED = ['features.domains', 'features.ownSso', 'features.ownCaptcha']
 
 // Switching a counted feature off while tenants use it needs change_capabilities' confirmation first.
 function capabilityRefusal(c: Ctx, tenant?: string) {
@@ -441,6 +441,14 @@ function refuseOff(_c: Ctx, lines: CapabilityPlanLine[]) {
   if (lines.length) throw new Refusal(409, 'confirm_required', 'The feature is in use', { plan: lines })
 }
 function capabilityLines(c: Ctx, tenant?: string, key = 'features.domains'): CapabilityPlanLine[] {
+  if (key === 'features.ownCaptcha') {
+    return Object.entries(A(c).tenantCaptcha)
+      .filter(([id, v]) => v.enabled && (!tenant || id === tenant))
+      .map(([id, v]) => {
+        const t = A(c).tenants.find((x) => x.id === id)
+        return { tenant: id, slug: t?.slug ?? id, name: t?.name ?? id, feature: key, captcha: v.provider }
+      })
+  }
   if (key === 'features.ownSso') {
     const by = new Map<string, AuthProvider[]>()
     for (const p of A(c).providers)

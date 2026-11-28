@@ -175,6 +175,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 	}
 	// The password is right: what stands against the name is forgiven.
 	s.failUser.Reset(ukey)
+	s.failTyped.Reset(userKey(p.Identifier))
 	s.failPair.Reset(pkey)
 	s.refundIP(ip)
 	reserved = false
@@ -250,6 +251,7 @@ func (s *Service) wrongPassword(st *secState, p LoginParams, ukey, pkey, reason 
 			}
 		}
 	}
+	s.failTyped.Fail(userKey(p.Identifier), st.Limits.MaxFailures, st.window, 0)
 	resU := s.failUser.Fail(ukey, st.Limits.MaxFailures, st.window, lockUser)
 	resP := s.failPair.Fail(pkey, st.Limits.MaxFailures, st.window, lockPair)
 	s.Audit(AuditEvent{Kind: "login_failed", Username: p.Identifier, IP: ip, Detail: map[string]any{"method": "password", "reason": reason}})

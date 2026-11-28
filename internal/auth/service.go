@@ -140,7 +140,11 @@ type Service struct {
 	perMin                     *ratelimit.Window
 	auditIP                    *ratelimit.Window // auditThrottled: one row per address, reason and minute
 	failIP, failUser, failPair *ratelimit.Lockout
-	starts                     *ratelimit.Bucket
+	// failTyped counts failed sign-ins by the identifier as typed (folded), whether it is a
+	// username, an address or nobody's, so that the captcha that asks after failures
+	// cannot tell them apart. The lockout counts above are by account and are separate.
+	failTyped *ratelimit.Lockout
+	starts    *ratelimit.Bucket
 
 	// The security settings in force (see security.go), the audit log, the
 	// providers, passkeys and captcha.
@@ -158,8 +162,9 @@ type Service struct {
 	capSecretErr atomic.Bool
 	// The tenants' own captcha providers (tenantcaptcha.go): kept in memory,
 	// read at startup and again for one tenant when it changes.
-	tenantCaptchaMu    sync.Mutex
-	tenantCaptchaCache struct {
+	tenantCaptchaMu        sync.Mutex
+	tenantCaptchaProviders atomic.Pointer[[]string]
+	tenantCaptchaCache     struct {
 		sync.RWMutex
 		m map[string]*tenantCaptcha
 	}
