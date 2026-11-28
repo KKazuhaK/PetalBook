@@ -403,7 +403,7 @@ func TestOIDCLinkAndUnlink(t *testing.T) {
 		}
 		at = f.begin(t, wen, "bob", map[string]any{"intent": "link"})
 		swap := a.newClient("")
-		swap.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		swap.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
 		swap.cookies["__Host-petalbook_oidc"] = wen.cookies["__Host-petalbook_oidc"] // the same browser binding, another account's session
 		if loc, _ := finish(t, swap, at.cb); loc != "/settings?sso_error=expired" {
 			t.Fatal(loc)
@@ -533,7 +533,7 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 		}
 		// A refusal during a link goes back to settings.
 		k := a.newClient("")
-		k.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
+		k.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 200, "")
 		at = f.begin(t, k, "bob", map[string]any{"intent": "link"})
 		if loc, _ := finish(t, k, "/api/auth/oidc/sso/callback?error=access_denied&state="+at.state); loc != "/settings?sso_error=idp_error" {
 			t.Fatal(loc)

@@ -276,7 +276,7 @@ function suite(target: Target) {
     admin = browser()
     globalThis.fetch = admin.fetch
     if (accounts) {
-      await api.login({ username: CONTRACT_USER!, password: CONTRACT_PASSWORD! })
+      await api.login({ identifier: CONTRACT_USER!, password: CONTRACT_PASSWORD! })
       {
         // The suite signs in far more often than ten times a minute from one
         // address, and makes more failures from it (wrong passwords, bad
@@ -419,7 +419,7 @@ function suite(target: Target) {
   describe.skipIf(accounts)('single-user server only (skipped on an accounts server): no accounts', () => {
     it('the sign-in, account, user, invite and space-management endpoints answer 404', async () => {
       const probes: [string, string, unknown?][] = [
-        ['POST', '/api/login', { username: 'a', password: 'b' }],
+        ['POST', '/api/login', { identifier: 'a', password: 'b' }],
         ['POST', '/api/setup', { token: 'x', username: 'ab', password: 'password1' }],
         ['GET', '/api/auth/providers'],
         ['POST', '/api/auth/discover', { email: 'a@example.test' }],
@@ -531,8 +531,8 @@ function suite(target: Target) {
       it('login: wrong credentials are 401 with the same message whether or not the user exists', async () => {
         const m = await newMember(uniq('lg'))
         const b = browser()
-        const unknown = await call(b, 'POST', '/api/login', { username: uniq('nobody'), password: 'whatever-it-is' })
-        const wrong = await call(b, 'POST', '/api/login', { username: m.user.username, password: 'not-the-password' })
+        const unknown = await call(b, 'POST', '/api/login', { identifier: uniq('nobody'), password: 'whatever-it-is' })
+        const wrong = await call(b, 'POST', '/api/login', { identifier: m.user.username, password: 'not-the-password' })
         expect([unknown.status, unknown.json.error]).toEqual([401, 'unauthenticated'])
         expect([wrong.status, wrong.json.error]).toEqual([401, 'unauthenticated'])
         expect(wrong.json.message).toBe(unknown.json.message)
@@ -542,7 +542,10 @@ function suite(target: Target) {
       it('login with the right password: 200 with the user and a session cookie (HttpOnly, SameSite=Lax); upper case in the username is folded', async () => {
         const m = await newMember(uniq('up'))
         const b = browser()
-        const r = await call(b, 'POST', '/api/login', { username: m.user.username.toUpperCase(), password: m.password })
+        const r = await call(b, 'POST', '/api/login', {
+          identifier: m.user.username.toUpperCase(),
+          password: m.password,
+        })
         expect(r.status).toBe(200)
         expect(r.json.user).toMatchObject({ id: m.user.id, username: m.user.username, role: 'member', disabled: false })
         const cookie = r.res.headers.getSetCookie().join('\n')
@@ -654,7 +657,7 @@ function suite(target: Target) {
           const m = await newMember(uniq('pw'))
           const other = browser()
           expect(
-            (await call(other, 'POST', '/api/login', { username: m.user.username, password: m.password })).status,
+            (await call(other, 'POST', '/api/login', { identifier: m.user.username, password: m.password })).status,
           ).toBe(200)
           const wrong = await call(m.browser, 'POST', '/api/account/password', {
             current: 'not-the-one',
@@ -672,10 +675,10 @@ function suite(target: Target) {
           expect((await call(other, 'GET', '/api/account')).status).toBe(401)
           const fresh = browser()
           expect(
-            (await call(fresh, 'POST', '/api/login', { username: m.user.username, password: m.password })).status,
+            (await call(fresh, 'POST', '/api/login', { identifier: m.user.username, password: m.password })).status,
           ).toBe(401)
           expect(
-            (await call(fresh, 'POST', '/api/login', { username: m.user.username, password: 'another-password' }))
+            (await call(fresh, 'POST', '/api/login', { identifier: m.user.username, password: 'another-password' }))
               .status,
           ).toBe(200)
         })
@@ -804,7 +807,7 @@ function suite(target: Target) {
           // Their session ended; signing in with the temporary password works but is held.
           expect((await call(p.browser, 'GET', '/api/spaces')).status).toBe(401)
           const again = browser()
-          expect((await call(again, 'POST', '/api/login', { username: name, password: temp })).status).toBe(200)
+          expect((await call(again, 'POST', '/api/login', { identifier: name, password: temp })).status).toBe(200)
           expect((await call(again, 'GET', '/api/session')).json.hold).toBe('password')
           const held = await call(again, 'GET', '/api/spaces')
           expect([held.status, held.json.error]).toEqual([403, 'password_change_required'])
@@ -914,7 +917,7 @@ function suite(target: Target) {
           const m = await newMember(uniq('se'))
           const second = browser()
           expect(
-            (await call(second, 'POST', '/api/login', { username: m.user.username, password: m.password })).status,
+            (await call(second, 'POST', '/api/login', { identifier: m.user.username, password: m.password })).status,
           ).toBe(200)
           const { sessions } = await as(admin, () => adminApi.userSessions(m.user.id))
           expect(sessions.length).toBeGreaterThanOrEqual(2)
@@ -950,7 +953,7 @@ function suite(target: Target) {
           expect([none.status, none.json.error]).toEqual([404, 'not_found'])
           // A member of any kind is refused, and a person who does not exist is none.
           const again = browser()
-          await call(again, 'POST', '/api/login', { username: m.user.username, password: m.password })
+          await call(again, 'POST', '/api/login', { identifier: m.user.username, password: m.password })
           for (const [method, path] of [
             ['GET', `/api/users/${m.user.id}/sessions`],
             ['DELETE', `/api/users/${m.user.id}/sessions`],
@@ -994,11 +997,14 @@ function suite(target: Target) {
           const off = await as(admin, () => adminApi.updateUser(m.user.id, { disabled: true }))
           expect(off.user.disabled).toBe(true)
           expect((await call(m.browser, 'GET', '/api/account')).status).toBe(401)
-          const again = await call(browser(), 'POST', '/api/login', { username: m.user.username, password: m.password })
+          const again = await call(browser(), 'POST', '/api/login', {
+            identifier: m.user.username,
+            password: m.password,
+          })
           expect([again.status, again.json.error]).toEqual([401, 'unauthenticated'])
           await as(admin, () => adminApi.updateUser(m.user.id, { disabled: false }))
           expect(
-            (await call(browser(), 'POST', '/api/login', { username: m.user.username, password: m.password })).status,
+            (await call(browser(), 'POST', '/api/login', { identifier: m.user.username, password: m.password })).status,
           ).toBe(200)
         })
 
@@ -1123,7 +1129,7 @@ function suite(target: Target) {
           expect((await call(b, 'POST', '/api/password/reset', { token, password: 'another-long-one' })).status).toBe(
             404,
           )
-          const login = await call(b, 'POST', '/api/login', { username: name, password: 'a-long-password' })
+          const login = await call(b, 'POST', '/api/login', { identifier: name, password: 'a-long-password' })
           expect(login.status).toBe(200)
           expect(login.json.user.emailVerified).toBe(false)
         })

@@ -28,7 +28,7 @@ func TestSecurityResetBringsPasswordSignInBack(t *testing.T) {
 	// Lock things up as an administrator would, in a running server.
 	srv := start(t, serveConfig{data: data, commitIdle: time.Hour, commitMax: time.Hour})
 	b := &browser{t: t, base: srv.base}
-	if code, _ := b.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw1}); code != 200 {
+	if code, _ := b.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw1}); code != 200 {
 		t.Fatal("cannot sign in")
 	}
 	for _, w := range []struct {
@@ -59,11 +59,11 @@ func TestSecurityResetBringsPasswordSignInBack(t *testing.T) {
 	}
 	srv = start(t, serveConfig{data: data, commitIdle: time.Hour, commitMax: time.Hour})
 	b = &browser{t: t, base: srv.base}
-	if code, _ := b.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw1}); code != 200 {
+	if code, _ := b.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw1}); code != 200 {
 		t.Fatal("the reset did not let people in")
 	}
 	b2 := &browser{t: t, base: srv.base}
-	b2.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw1})
+	b2.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw1})
 	code, list := b2.do("GET", "/api/admin/settings", nil)
 	if code != 200 {
 		t.Fatalf("%d %v", code, list)

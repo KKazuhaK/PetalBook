@@ -32,7 +32,7 @@ func (c *client) audit(t *testing.T, kind string) []map[string]any {
 }
 
 func bad(user string) map[string]any {
-	return map[string]any{"username": user, "password": "wrong password here"}
+	return map[string]any{"identifier": user, "password": "wrong password here"}
 }
 
-func good(user string) map[string]any { return map[string]any{"username": user, "password": pw} }
+func good(user string) map[string]any { return map[string]any{"identifier": user, "password": pw} }

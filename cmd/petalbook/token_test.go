@@ -168,7 +168,7 @@ func TestTokenCommandsWithAccounts(t *testing.T) {
 	}
 	srv := start(t, serveConfig{data: data, committer: "Svc <svc@example.test>", commitIdle: time.Hour, commitMax: time.Hour})
 	b := &browser{t: t, base: srv.base}
-	if code, r := b.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": password}); code != 200 {
+	if code, r := b.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": password}); code != 200 {
 		t.Fatal(code, r)
 	}
 	_, r := b.do("GET", "/api/spaces", nil)

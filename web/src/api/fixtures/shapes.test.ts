@@ -162,7 +162,7 @@ function probes(fx: FixtureServer): Call[] {
     ],
     ['POST', '/api/spaces/default/reindex'],
     // signing in
-    ['POST', '/api/login', { username: 'admin', password: 'x' }],
+    ['POST', '/api/login', { identifier: 'admin', password: 'x' }],
     ['POST', '/api/logout'],
     ['POST', '/api/setup', { token: 't', username: 'first', password: 'a-long-password' }],
     ['POST', '/api/invites/check', { token: 'inv' }],
@@ -236,7 +236,7 @@ function probes(fx: FixtureServer): Call[] {
     ['POST', '/api/admin/providers/gl/check', {}],
     ['DELETE', '/api/admin/providers/gl'],
     // the person's own account (as the administrator, who the probes above may have signed out)
-    ['POST', '/api/login', { username: 'admin', password: 'x' }],
+    ['POST', '/api/login', { identifier: 'admin', password: 'x' }],
     ['PATCH', '/api/account', { name: '新名字' }],
     ['POST', '/api/account/password', { current: 'x', new: 'a-long-password' }],
     ['DELETE', '/api/account/links/id1'],
@@ -453,6 +453,10 @@ describe('the fixtures against the recorded shapes', () => {
       // The contract server has no platform set up: of a provider's App and connection only the null is recorded.
       if (key === 'GET /api/account/links 200')
         for (const p of answer.providers) Object.assign(p, { app: null, connection: null })
+      // The contract server's account has a password and nothing else: of the list of sign-in methods only the
+      // password row is recorded (the other kinds are checked against the server in the Go tests).
+      if (key === 'GET /api/account 200')
+        answer.methods = answer.methods.filter((x: { type: string }) => x.type === 'password')
       const [s, v] = pruned(shape, answer)
       for (const m of misfits(v, s)) problems.push(`${key}: ${m}`)
     }

@@ -295,11 +295,11 @@ func TestOneLoopRenewsAGitHubAndAGiteaLinkDueInTheSamePass(t *testing.T) {
 		// account is connected late, so that both are due at once.
 		a.clock.Advance(140 * 24 * time.Hour)
 		tang = a.newClient("") // the session ended meanwhile
-		tang.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		tang.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
 		connectForge(t, a, tang, "gitea", a.gt, "tang-h")
 		a.clock.Advance(28 * 24 * time.Hour)
 		tang = a.newClient("")
-		tang.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		tang.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
 		ghOld, gtOld := a.fake.RefreshTokenOf("tang-gh"), a.gt.RefreshTokenOf("tang-h")
 		ghCalls, gtCalls := a.fake.Count("POST", "/login/oauth/access_token"), a.gt.Count("POST", "/")
 		if n := a.linkTokens.RenewDue(context.Background()); n != 2 {

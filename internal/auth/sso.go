@@ -984,6 +984,7 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 	c.emailVerified = trustsEmail(s.trustSource(ctx, rt, c.src, c.email))
 	var user *store.User
 	var created bool
+	var link *store.Link // the link that signed in, to record its use
 	var err error
 	// The groups allowlist is asked at every sign-in, not only when an
 	// account is made: who the identity provider takes out of the groups
@@ -993,7 +994,7 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 	}
 	switch e.intent {
 	case "login":
-		user, created, err = s.ssoLogin(ctx, rt, c, ip)
+		user, created, link, err = s.ssoLogin(ctx, rt, c, ip)
 	case "setup":
 		user, err = s.ssoSetup(ctx, c, e.token)
 		created = true
@@ -1051,43 +1052,47 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 		return s.ssoFail(kind, slug, e.intent, "internal", ip, clear...)
 	}
 	out.Session = tok
+	// The use is recorded once the sign-in is through every check: a refused one leaves the time alone.
+	if link != nil {
+		if err := store.TouchLink(ctx, s.st.Q(), link, c.email, c.emailVerified, c.label(), s.now()); err != nil {
+			s.log.Warn("could not record the sign-in on its linked account", "provider", slug, "error", err)
+		}
+	}
 	s.log.Info("signed in", "user", user.ID, "method", kind, "provider", slug)
 	s.Audit(AuditEvent{Kind: "login", Tenant: user.TenantID, User: user.ID, Username: user.Username, IP: ip, Detail: map[string]any{"method": kind, "provider": slug, "created": created}})
 	return out
 }
 
-func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip string) (*store.User, bool, error) {
+// ssoLogin finds the account of the identity (or makes one); link is the link used, when there was one.
+func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip string) (*store.User, bool, *store.Link, error) {
 	ident, err := store.FindLink(ctx, s.st.Q(), rt.row.ID, c.subject)
 	switch {
 	case err == nil && !ident.SignIn:
 		// The account is connected for repositories only: signing in with it was
 		// never turned on, by the person, for this link ("use to sign in").
-		return nil, false, ssoErr("not_for_signin")
+		return nil, false, nil, ssoErr("not_for_signin")
 	case err == nil:
 		u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), ident.UserID) // a link signs in to its account, whatever tenant
 		if errors.Is(err, store.ErrNotFound) {
 			// The person is in the recycle bin (their identities stay attached,
 			// unusable): refused, not made a new account by the registration mode.
-			return nil, false, ssoErr("disabled")
+			return nil, false, nil, ssoErr("disabled")
 		}
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 		if u.Disabled || s.st.TenantDisabled(u.TenantID) {
-			return nil, false, ssoErr("disabled")
+			return nil, false, nil, ssoErr("disabled")
 		}
 		// The link row is not trusted to keep to the provider's tenant: the
 		// account it names is asked again (a row written across tenants
 		// signs nobody in), as is everything else the provider may reach.
 		if err := s.mayUse(ctx, rt, *u); err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
-		if err := store.TouchLink(ctx, s.st.Q(), ident, c.email, c.emailVerified, c.label(), s.now()); err != nil {
-			s.log.Warn("could not record the sign-in on its linked account", "provider", rt.row.Slug, "error", err)
-		}
-		return u, false, nil
+		return u, false, ident, nil
 	case !errors.Is(err, store.ErrNotFound):
-		return nil, false, err
+		return nil, false, nil, err
 	}
 	// Nobody has this identity. It is never attached to an account by its
 	// address: an address the sign-in vouches for that another account holds
@@ -1104,28 +1109,28 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 			// address is never taken from it, nor made a second account's:
 			// whoever else vouches for it signs in to that account instead.
 			if u, ok, err := s.claimWaiting(ctx, rt, c, e, row, ip); err != nil {
-				return nil, false, err
+				return nil, false, nil, err
 			} else if ok {
-				return u, false, nil
+				return u, false, nil, nil
 			}
 			if row.Holds() {
-				return nil, false, ssoErr("email_in_use")
+				return nil, false, nil, ssoErr("email_in_use")
 			}
 			// Kept for a waiting account only while its own tenant can still
 			// vouch for the address (a verified domain of it, or routed to it):
 			// once the domain lapses or moves, it is an ordinary unverified
 			// holder's, and the address must not stay locked for nothing.
 			if tenant, err := store.AwaitingSSO(ctx, s.st.Q(), row.UserID); err != nil {
-				return nil, false, err
+				return nil, false, nil, err
 			} else if tenant != "" && s.ssoCanVouch(ctx, tenant, e) {
-				return nil, false, ssoErr("email_in_use")
+				return nil, false, nil, ssoErr("email_in_use")
 			}
 		case !errors.Is(err, store.ErrNotFound):
-			return nil, false, err
+			return nil, false, nil, err
 		}
 	}
 	if noUsers, _ := s.SetupOpen(ctx); noUsers {
-		return nil, false, ssoErr("no_account") // the first account is the administrator's, by the setup token
+		return nil, false, nil, ssoErr("no_account") // the first account is the administrator's, by the setup token
 	}
 	// Whether a sign-in makes an account is the registration mode of the tenant
 	// it would land in. An address the sign-in vouches for, on a domain that
@@ -1136,7 +1141,8 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	if rt.row.Owner == store.ProviderSite && rt.row.Class == ClassSocial && c.emailVerified {
 		if e, err := s.cleanEmailFor(ctx, c.email); err == nil && e != "" {
 			if jt, jd, jm, ok := s.joinOf(ctx, e); ok && s.RegistrationMode(ctx, jt) != settings.RegClosed {
-				return s.socialJoin(ctx, rt, c, e, jt, jd, jm, ip)
+				u, created, err := s.socialJoin(ctx, rt, c, e, jt, jd, jm, ip)
+				return u, created, nil, err
 			}
 		}
 	}
@@ -1151,20 +1157,20 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 		tenant = store.DefaultTenantID
 	}
 	if s.st.TenantDisabled(tenant) { // the provider's tenant was disabled after it was set up
-		return nil, false, ssoErr("no_account")
+		return nil, false, nil, ssoErr("no_account")
 	}
 	if !s.tenantMayUse(ctx, rt, tenant) {
-		return nil, false, ssoErr("not_allowed")
+		return nil, false, nil, ssoErr("not_allowed")
 	}
 	switch s.RegistrationMode(ctx, tenant) {
 	case settings.RegOpen:
 	case settings.RegInvite:
-		return nil, false, ssoErr("invite_required")
+		return nil, false, nil, ssoErr("invite_required")
 	default:
-		return nil, false, ssoErr("registration_closed")
+		return nil, false, nil, ssoErr("registration_closed")
 	}
 	u, err := s.createFromClaims(ctx, c, "member", "", false, tenant, false)
-	return u, true, err
+	return u, true, nil, err
 }
 
 func (s *Service) ssoSetup(ctx context.Context, c claimed, token string) (*store.User, error) {

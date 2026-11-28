@@ -89,7 +89,7 @@ func TestAPlanThatRequiresSSOIsCheckedPerTenant(t *testing.T) {
 		f.root.do("PUT", "/api/admin/tenants/"+f.tenC+"/plan", map[string]any{"plan": nil}).want(t, 200, "")
 		f.root.do("PATCH", "/api/admin/plans/strict", map[string]any{"rules": on}).want(t, 200, "")
 		// In effect for B: its member is refused a password.
-		a.newClient("203.0.113.80").do("POST", "/api/login", map[string]any{"username": "bm", "password": pw}).want(t, 403, "local_login_refused")
+		a.newClient("203.0.113.80").do("POST", "/api/login", map[string]any{"identifier": "bm", "password": pw}).want(t, 403, "local_login_refused")
 		// Giving C the plan now is refused as well.
 		f.root.do("PUT", "/api/admin/tenants/"+f.tenC+"/plan", map[string]any{"plan": "strict"}).want(t, 400, "sso_provider_required")
 	})
@@ -168,7 +168,7 @@ func TestSSOOnlyAdminsHoldsAdministratorsToSSOToo(t *testing.T) {
 			return f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/"+key, map[string]any{"value": v})
 		}
 		login := func(ip, user string) result {
-			return a.newClient(ip).do("POST", "/api/login", map[string]any{"username": user, "password": pw})
+			return a.newClient(ip).do("POST", "/api/login", map[string]any{"identifier": user, "password": pw})
 		}
 		put("signin.ssoOnly", true).want(t, 200, "")
 		// Off by default: the administrator keeps the password, and is the last one.

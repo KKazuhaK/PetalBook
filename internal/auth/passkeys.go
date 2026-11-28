@@ -205,7 +205,8 @@ func (d *dbCreds) UpdateSignCount(ctx context.Context, id []byte, cred webauthn.
 	if err != nil {
 		return err
 	}
-	return store.PasskeyUse(ctx, d.s.st.Q(), credID(id), string(raw), cred.Flags.BackupState, usedAt)
+	// The use is written once the sign-in is accepted (PasskeyFinish).
+	return store.PasskeyCounter(ctx, d.s.st.Q(), credID(id), string(raw), cred.Flags.BackupState)
 }
 
 // --- ceremonies of one user ----------------------------------------------------------
@@ -393,6 +394,9 @@ func (s *Service) PasskeyFinish(ctx context.Context, ceremony, ip string, r *htt
 	if err != nil {
 		return nil, err
 	}
+	if err := store.PasskeyTouch(ctx, s.st.Q(), credID(res.Credential.ID), s.now()); err != nil {
+		s.log.Warn("could not record the sign-in on its passkey", "error", err)
+	}
 	s.Audit(AuditEvent{Kind: "login", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "passkey"}})
 	return &LoginResult{User: u, Token: tok, Held: held, HeldBy: holdBy}, nil
 }
@@ -561,16 +565,13 @@ func (s *Service) DeletePasskey(ctx context.Context, actor *Principal, userID, i
 	s.credMu.Lock()
 	defer s.credMu.Unlock()
 	if by == "user" {
-		rows, err := store.ListPasskeys(ctx, s.st.Q(), userID)
+		// A way must remain: the rule of unlinking, and of the account's list.
+		ways, err := s.loadWays(ctx, s.st.Q(), userID)
 		if err != nil {
 			return err
 		}
-		if len(rows) == 1 && rows[0].ID == id {
-			if ok, err := s.hasOtherWay(ctx, userID); err != nil {
-				return err
-			} else if !ok {
-				return errf(Conflict, "This is the only way you can sign in; set a password first.")
-			}
+		if !ways.removable(wayPasskey, id) {
+			return errf(Conflict, "This is the only way you can sign in; set a password first.")
 		}
 	}
 	if err := store.DeletePasskey(ctx, s.st.Q(), id, userID); err != nil {
@@ -586,16 +587,4 @@ func (s *Service) DeletePasskey(ctx context.Context, actor *Principal, userID, i
 	}
 	s.AuditIn(ctx, ev)
 	return nil
-}
-
-// hasOtherWay says whether the user could sign in without a passkey, with a
-// password or an identity.
-func (s *Service) hasOtherWay(ctx context.Context, userID string) (bool, error) {
-	if _, err := store.GetPasswordHash(ctx, s.st.Q(), userID); err == nil {
-		return true, nil
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return false, err
-	}
-	ids, err := store.ListLinks(ctx, s.st.Q(), userID)
-	return len(ids) > 0, err
 }

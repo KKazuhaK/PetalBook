@@ -125,13 +125,10 @@ func DeleteLink(ctx context.Context, q Q, id, userID, require string, now time.T
 }
 
 // TouchLink records a sign-in through a link: the time, and the address the
-// provider gave (and whether it passed the trust rules). It writes only when
-// something changed or the last use is over a day old, so an ordinary sign-in
-// costs no write.
+// provider gave (and whether it passed the trust rules). It is one UPDATE per
+// sign-in, so the account's list of sign-in methods says when each was last
+// used.
 func TouchLink(ctx context.Context, q Q, l *Link, email string, trusted bool, label string, now time.Time) error {
-	if l.Email == email && l.EmailTrusted == trusted && l.Label == label && now.Sub(l.LastUsed) < 24*time.Hour {
-		return nil
-	}
 	_, err := q.Exec(ctx, `UPDATE linked_accounts SET email = ?, email_trusted = ?, label = ?, last_used = ?, updated = ? WHERE id = ?`,
 		email, b2i(trusted), label, ms(now), ms(now), l.ID)
 	return err

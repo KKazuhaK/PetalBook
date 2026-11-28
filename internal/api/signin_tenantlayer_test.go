@@ -209,9 +209,9 @@ func TestATenantsCaptchaAppliesToItsRequests(t *testing.T) {
 		}
 		c.do("GET", "/api/captcha?ctx=login&tenant=nowhere", nil).want(t, 404, "")
 		// Signing in, and asking for a reset, are checked by the tenant the request names.
-		c.do("POST", "/api/login", map[string]any{"username": "mb", "password": pw, "tenant": "acme"}).want(t, 400, "captcha_failed")
-		c.do("POST", "/api/login", map[string]any{"username": "mc", "password": pw, "tenant": "beta"}).want(t, 200, "")
-		c.do("POST", "/api/login", map[string]any{"username": "md", "password": pw}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "mb", "password": pw, "tenant": "acme"}).want(t, 400, "captcha_failed")
+		c.do("POST", "/api/login", map[string]any{"identifier": "mc", "password": pw, "tenant": "beta"}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "md", "password": pw}).want(t, 200, "")
 		forgot(c, "mb", "tenant", "acme").want(t, 400, "captcha_failed")
 		forgot(c, "mc", "tenant", "beta").want(t, 202, "")
 		// The tenant is the request's, never worked out from the username: acme's person
@@ -220,7 +220,7 @@ func TestATenantsCaptchaAppliesToItsRequests(t *testing.T) {
 		// With the captcha, acme's login passes.
 		r := c.do("GET", "/api/captcha?ctx=login&tenant=acme", nil).want(t, 200, "")
 		id := r.body["id"].(string)
-		c.do("POST", "/api/login", map[string]any{"username": "mb", "password": pw, "tenant": "acme",
+		c.do("POST", "/api/login", map[string]any{"identifier": "mb", "password": pw, "tenant": "acme",
 			"captcha": map[string]any{"id": id, "answer": auth.CaptchaSolution(a.auth, id)}}).want(t, 200, "")
 
 		// With no tenant named, the site's own value is used (the site asks login always).
@@ -302,7 +302,7 @@ func TestANamedTenantNeverWeakensTheSitesCaptcha(t *testing.T) {
 		if c.do("GET", "/api/captcha?ctx=login&tenant=beta", nil).want(t, 200, "").body["required"] != true {
 			t.Fatal("beta's looser value reached the form")
 		}
-		c.do("POST", "/api/login", map[string]any{"username": "root", "password": pw, "tenant": "beta"}).want(t, 400, "captcha_failed")
+		c.do("POST", "/api/login", map[string]any{"identifier": "root", "password": pw, "tenant": "beta"}).want(t, 400, "captcha_failed")
 		// Stricter than the site's still holds: the tenant asks always where the site asks after failures.
 		f.root.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": true, "when": "after_failures", "failures": 5}}).want(t, 200, "")
 		f.tset(f.admB, f.tenB, "captcha.contexts", map[string]any{"login": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
@@ -385,7 +385,7 @@ func TestAnUnknownTenantIsCountedBeforeItIsRefused(t *testing.T) {
 		d := a.newClient("203.0.113.44")
 		limited = false
 		for range 15 {
-			if d.do("POST", "/api/login", map[string]any{"username": "x", "password": pw, "tenant": "nowhere"}).code == 429 {
+			if d.do("POST", "/api/login", map[string]any{"identifier": "x", "password": pw, "tenant": "nowhere"}).code == 429 {
 				limited = true
 			}
 		}

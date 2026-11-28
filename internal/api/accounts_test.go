@@ -151,11 +151,11 @@ func TestLogin(t *testing.T) {
 
 		c := a.newClient("")
 		cases := []map[string]any{
-			{"username": "tang", "password": "wrong password here"},
-			{"username": "nobody", "password": pw},
-			{"username": "off", "password": pw}, // disabled
-			{"username": "", "password": ""},
-			{"username": "tang", "password": strings.Repeat("x", 5000)},
+			{"identifier": "tang", "password": "wrong password here"},
+			{"identifier": "nobody", "password": pw},
+			{"identifier": "off", "password": pw}, // disabled
+			{"identifier": "", "password": ""},
+			{"identifier": "tang", "password": strings.Repeat("x", 5000)},
 		}
 		var first string
 		for i, body := range cases {
@@ -170,11 +170,18 @@ func TestLogin(t *testing.T) {
 			t.Fatal("a failed sign-in set a cookie")
 		}
 		// Case in the username is folded.
-		r := c.do("POST", "/api/login", map[string]any{"username": "TANG", "password": pw}).want(t, 200, "")
+		r := c.do("POST", "/api/login", map[string]any{"identifier": "TANG", "password": pw}).want(t, 200, "")
 		if r.user()["username"] != "tang" {
 			t.Fatal(r.raw)
 		}
 		c.do("GET", "/api/account", nil).want(t, 200, "")
+		// The field is `identifier`; the 2.8 `username` is an unknown field, which
+		// the API ignores, so it is a sign-in with nobody named: 401, no cookie.
+		old := a.newClient("")
+		old.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 401, "unauthenticated")
+		if len(old.cookies) != 0 {
+			t.Fatal("the old field signed in")
+		}
 	})
 }
 
@@ -210,7 +217,7 @@ func TestSessionLifetimeAndRevocation(t *testing.T) {
 		c.do("GET", "/api/account", nil).want(t, 401, "unauthenticated")
 
 		c = a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 200, "")
 		a.clock.Advance(31 * 24 * time.Hour)
 		c.do("GET", "/api/account", nil).want(t, 401, "unauthenticated")
 		// The expired session row is gone, not just ignored.
@@ -273,7 +280,7 @@ func TestPasswordChangeEndsOtherSessions(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		one := a.setup("kazuha", pw)
 		two := a.newClient("")
-		two.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
+		two.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 200, "")
 		two.do("GET", "/api/account", nil).want(t, 200, "")
 
 		one.do("POST", "/api/account/password", map[string]any{"current": "not it at all", "new": "a brand new password"}).want(t, 403, "forbidden")
@@ -284,8 +291,8 @@ func TestPasswordChangeEndsOtherSessions(t *testing.T) {
 		one.do("GET", "/api/account", nil).want(t, 200, "") // the one that asked stays signed in
 		two.do("GET", "/api/account", nil).want(t, 401, "unauthenticated")
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 401, "")
-		c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": "a brand new password"}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 401, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": "a brand new password"}).want(t, 200, "")
 	})
 }
 
@@ -478,9 +485,9 @@ func TestUsersAdministration(t *testing.T) {
 		admin.do("GET", "/api/account", nil).want(t, 401, "unauthenticated") // disabling ends sessions at once
 		tang.do("PATCH", "/api/users/"+ids["tang"], map[string]any{"role": "member"}).want(t, 409, "conflict")
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 401, "unauthenticated")
+		c.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 401, "unauthenticated")
 		tang.do("PATCH", "/api/users/"+ids["kazuha"], map[string]any{"disabled": false}).want(t, 200, "")
-		c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 200, "")
 	})
 }
 
@@ -546,7 +553,7 @@ func TestIdentityUnlinkRefusedWhenItIsTheOnlyWayIn(t *testing.T) {
 		c.do("DELETE", path, nil).want(t, 409, "last_method")
 		// Someone else's identity id is not found.
 		pwc := a.newClient("")
-		pwc.do("POST", "/api/login", map[string]any{"username": "pw", "password": pw}).want(t, 200, "")
+		pwc.do("POST", "/api/login", map[string]any{"identifier": "pw", "password": pw}).want(t, 200, "")
 		pwc.do("DELETE", path, nil).want(t, 404, "not_found")
 		// With a password set (no current needed: there is none) it can go.
 		c.do("POST", "/api/account/password", map[string]any{"current": "x", "new": "a first password"}).want(t, 400, "invalid")

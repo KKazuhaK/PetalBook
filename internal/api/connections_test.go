@@ -514,7 +514,7 @@ func TestAHeldSessionCannotUseGitHub(t *testing.T) {
 		admin.putSetting("signin.passkeyRoles", []string{"member"}).want(t, 200, "")
 
 		held := a.newClient("")
-		held.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		held.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
 		if s := held.do("GET", "/api/session", nil).want(t, 200, ""); s.body["hold"] != "passkey" {
 			t.Fatal(s.raw)
 		}

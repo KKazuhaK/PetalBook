@@ -340,10 +340,16 @@ func CountPasskeysForRP(ctx context.Context, q Q, userID, rpID string) (n int, e
 	return
 }
 
-// PasskeyUse records a sign-in with a passkey: the credential (with its new
-// counter) and the time.
-func PasskeyUse(ctx context.Context, q Q, credID, credential string, synced bool, at time.Time) error {
-	res, err := q.Exec(ctx, `UPDATE passkeys SET credential = ?, synced = ?, last_used = ? WHERE credential_id = ?`, credential, b2i(synced), ms(at), credID)
+// PasskeyCounter stores the credential with its new counter, which a sign-in
+// moves before it is accepted.
+func PasskeyCounter(ctx context.Context, q Q, credID, credential string, synced bool) error {
+	res, err := q.Exec(ctx, `UPDATE passkeys SET credential = ?, synced = ? WHERE credential_id = ?`, credential, b2i(synced), credID)
+	return oneRow(res, err)
+}
+
+// PasskeyTouch records the time of an accepted sign-in with a passkey.
+func PasskeyTouch(ctx context.Context, q Q, credID string, at time.Time) error {
+	res, err := q.Exec(ctx, `UPDATE passkeys SET last_used = ? WHERE credential_id = ?`, ms(at), credID)
 	return oneRow(res, err)
 }
 

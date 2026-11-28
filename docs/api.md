@@ -323,10 +323,11 @@ only when the `setup` context asks for one (see "Captcha"). `201` with
 ### `POST /api/login`
 
 ```json
-{"username": "kazuha", "password": "…", "captcha": {"id": "…", "answer": "…"}}
+{"identifier": "kazuha", "password": "…", "captcha": {"id": "…", "answer": "…"}}
 ```
 
-`captcha` is `{"id", "answer"}` for the self-hosted image, `{"token"}` for a
+`identifier` is a username or an email address (it contains `@`; see "Signing
+in by email address" under "Tenant autonomy"). `captcha` is `{"id", "answer"}` for the self-hosted image, `{"token"}` for a
 third-party one, and left out when `GET /api/captcha` said none is required.
 `tenant` (a slug, optional) names the organisation the sign-in page was opened
 for (`?tenant=`): the captcha asked is then that organisation's (see "The
@@ -334,8 +335,11 @@ sign-in policy of a tenant"); without it, the site's. It is never worked out
 from the username, which would tell which organisation it is in. An unknown or
 disabled `tenant` is `404`, counted against the address's requests first.
 
-From 3.6 the field is `identifier`, an email address or a username, in place
-of `username` (see "Signing in by email address" under "Tenant autonomy").
+The field is `identifier`, in place of 2.8's `username`, which is gone with no
+alias. The API ignores a field it does not know, so a body that still sends
+`username` has an empty identifier: it is answered as a wrong username is
+(`401`, no cookie), not as a `400`. The audit rows of a failed sign-in keep
+the identifier as typed in their `username`, as before.
 
 `200` with `{"user": {…}}` and a session cookie. The server checks, in this
 order, and stops at the first refusal:
@@ -905,9 +909,27 @@ Accounts mode, signed in.
   "user": {…},
   "hasPassword": true,
   "passkeys": [{"id": "01JD3N7X2B", "name": "MacBook", "created": "2026-11-21T08:30:00Z", "lastUsed": "2026-11-22T09:10:00Z", "synced": true}],
-  "emails": [{"email": "kazuha@example.com", "primary": true, "verified": true, "created": "2026-11-21T08:30:00Z"}]
+  "emails": [{"email": "kazuha@example.com", "primary": true, "verified": true, "created": "2026-11-21T08:30:00Z"}],
+  "methods": [{"type": "password", "added": "2026-11-21T08:30:00Z", "lastUsed": "2026-11-23T08:00:00Z", "removable": false},
+              {"type": "identity", "id": "01JD3M2A4C", "provider": "Google", "providerSlug": "google", "kind": "oidc",
+               "class": "social", "label": "kazuha@example.com", "added": "2026-11-22T08:00:00Z", "lastUsed": null, "removable": true},
+              {"type": "passkey", "id": "01JD3N7X2B", "name": "MacBook", "synced": true,
+               "added": "2026-11-21T08:30:00Z", "lastUsed": "2026-11-22T09:10:00Z", "removable": true}],
+  "canUnlink": true
 }
 ```
+
+`methods` is the one list the account page shows as "Sign-in methods": the
+password (when there is one), each linked account that signs the person in,
+and each passkey, in that order. `added` is when it was made (for the
+password, when it was last set); `lastUsed` is when it last signed the person
+in, `null` for never. The time is written at each sign-in (one `UPDATE`), after
+every check has passed: a refused attempt (wrong password, disabled account,
+`local_login_refused`, a provider's refusal) writes nothing. `removable` is whether the row may be removed
+now: removing a link or a passkey must leave a way that works now (the password, a passkey while passkeys are on, a link whose provider is on; one count, shared by these guards and by `removable`), otherwise it is
+`409 last_method` (an identity) or `409 conflict` (the last passkey), so the
+page can say why; the password is never removed, only changed. `canUnlink` is
+whether at least two ways work now. `passkeys` stays as above.
 
 `emails` are the account's addresses, the primary first (see "More than one
 email address"): its primary alone while the tenant's
@@ -10292,7 +10314,9 @@ way to sign in), and an account without a password adds one with
   ```
 
   `passkeys` and `hasPassword` stay. `canUnlink` is whether
-  removing one method would still leave one.
+  removing one method would still leave one. Each row also has `added` and
+  `removable`, and an identity its `provider` (the display name); see
+  `GET /api/account`.
 - **Templates.** `GET /api/admin/provider-templates` (site
   administrators): the presets shipped with the server (`google`, `microsoft`,
   `apple`, `github`, `gitlab-com`), each with its `kind`, issuer or addresses,

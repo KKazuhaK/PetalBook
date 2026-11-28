@@ -282,7 +282,7 @@ function LoginForm({
     const sent = captcha.value()
     try {
       const answer = await api.login({
-        username: username.trim(),
+        identifier: username.trim(),
         password: pass,
         ...(sent ? { captcha: sent } : {}),
         ...(tenant ? { tenant } : {}),

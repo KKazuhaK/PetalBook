@@ -245,6 +245,22 @@ describe('signing in with a password', () => {
     await settle(() => locationText() === '/s/abc', 'the return path')
   })
 
+  it('sends what was typed as `identifier` (an email address or a username), trimmed', async () => {
+    await open('/login')
+    await settle(() => passwordForm() !== null, 'the form')
+    await submit(`  ${MOCK_ADMIN.username}  `)
+    await settle(() => locationText() === '/', 'signed in')
+    const body = JSON.parse(m!.requests.find((r) => r.url === '/api/login')!.body!)
+    expect(body).toEqual({ identifier: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+  })
+
+  it('signs in with the email address of the account as the identifier', async () => {
+    await open('/login')
+    await settle(() => passwordForm() !== null, 'the form')
+    await submit('ADMIN@example.test')
+    await settle(() => locationText() === '/', 'signed in')
+  })
+
   it('makes no second session request: the answer carries the permissions the app asks', async () => {
     await open('/login')
     await settle(() => passwordForm() !== null, 'the form')

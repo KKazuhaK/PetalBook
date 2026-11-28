@@ -489,7 +489,7 @@ func TestAGrantNotRefreshedFor90DaysEnds(t *testing.T) {
 		a.clock.Advance(91 * 24 * time.Hour)
 		// (The person's own session is long over; the list is what an
 		// administrator would see.)
-		tm.owner.do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 200, "")
+		tm.owner.do("POST", "/api/login", map[string]any{"identifier": "olive", "password": pw}).want(t, 200, "")
 		if l := tm.owner.do("GET", "/api/account/grants", nil).want(t, 200, "").body["grants"].([]any); len(l) != 0 {
 			t.Fatalf("an idle grant is still listed: %v", l)
 		}

@@ -247,7 +247,7 @@ describe('403 forbidden', () => {
 
   it('shows the text of the code, not the server English, and fills in what the answer says it is about', async () => {
     globalThis.fetch = answer(401, { error: 'unauthenticated', message: 'wrong username or password' })
-    expect((await accountApi.login({ username: 'a', password: 'b' }).catch((e) => e)).message).toBe(
+    expect((await accountApi.login({ identifier: 'a', password: 'b' }).catch((e) => e)).message).toBe(
       '用户名或密码不对，或者登录已失效。',
     )
     globalThis.fetch = answer(413, {
@@ -374,7 +374,7 @@ describe('being signed out', () => {
     ]) {
       markSignedIn()
       globalThis.fetch = noting(fx)
-      await accountApi.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+      await accountApi.login({ identifier: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
       // The server answers the cookie of a session that ended with its reason.
       globalThis.fetch = async () =>
         new Response(JSON.stringify({ error: 'unauthenticated', message: 'sign in', ...(reason ? { reason } : {}) }), {
@@ -398,14 +398,14 @@ describe('being signed out', () => {
     expect(calls.length).toBe(before)
     // The sign-in calls still go out.
     await accountApi.session()
-    await accountApi.login({ username: 'nobody', password: 'x' }).catch(() => undefined)
+    await accountApi.login({ identifier: 'nobody', password: 'x' }).catch(() => undefined)
     expect(calls.length).toBe(before + 2)
   })
 
   it('a wrong password is an answer to the login, not a lost session', async () => {
     let told = 0
     const off = onSignedOut(() => told++)
-    const e = await accountApi.login({ username: 'nobody', password: 'wrong-one' }).catch((x) => x)
+    const e = await accountApi.login({ identifier: 'nobody', password: 'wrong-one' }).catch((x) => x)
     off()
     expect(e).toMatchObject({ status: 401, code: 'unauthenticated' })
     expect(told).toBe(0)
@@ -417,7 +417,7 @@ describe('being signed out', () => {
     expect(isSignedOut()).toBe(true)
     // Signing in: the server answers a session now.
     fx.clear()
-    await accountApi.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+    await accountApi.login({ identifier: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
     expect(isSignedOut()).toBe(false)
     const spaceId = (await accountApi.spaces()).spaces[0].id
     expect(await spaceApi(spaceId).tags()).toEqual({ tags: [] })
@@ -429,7 +429,7 @@ describe('being signed out', () => {
     expect(isSignedOut()).toBe(true)
     markSignedIn()
     fx.clear()
-    await accountApi.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+    await accountApi.login({ identifier: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
     await spaceApi(spaceId)
       .tags()
       .catch(() => undefined)
@@ -447,7 +447,7 @@ describe('429 and 403 that are not about the origin', () => {
           headers: { 'Retry-After': '42' },
         }),
       )) as typeof fetch
-    const e = await accountApi.login({ username: 'a', password: 'b' }).catch((x) => x)
+    const e = await accountApi.login({ identifier: 'a', password: 'b' }).catch((x) => x)
     expect(e).toMatchObject({
       status: 429,
       code: 'rate_limited',

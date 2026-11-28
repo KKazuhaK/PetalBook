@@ -532,7 +532,7 @@ func TestSignInWithApple(t *testing.T) {
 
 		// A post for a provider that did not ask for form_post is not taken.
 		admin = a.newClient("")
-		admin.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
+		admin.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 200, "")
 		admin.do("POST", "/api/admin/providers", map[string]any{"template": "google", "clientId": "g", "clientSecret": "s"}).want(t, 201, "")
 		g := a.newClient("").do("POST", "/api/auth/oidc/google/callback", "code=x&state=y", "Content-Type", "application/x-www-form-urlencoded")
 		if g.code != 303 || g.resp.Header.Get("Location") != "/login?sso_error=provider_unavailable" {

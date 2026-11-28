@@ -220,7 +220,7 @@ func TestADeletedPersonIsInvisibleDisabledFirstAndTheirSpacesAreHandled(t *testi
 		// Their access ended at once: the session, the token.
 		f.owner.do("GET", "/api/spaces", nil).want(t, 401, "unauthenticated")
 		tok.do("GET", "/api/spaces", nil).want(t, 401, "")
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 401, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "olive", "password": pw}).want(t, 401, "")
 		// Invisible: not in the lists, the pickers, the members, the groups; their id is no one's.
 		for _, p := range []string{"/api/users", "/api/users?q=olive"} {
 			if strings.Contains(f.admin.do("GET", p, nil).want(t, 200, "").raw, `"olive"`) {
@@ -326,7 +326,7 @@ func TestRestoringAPersonBringsBackWhatCanBeAndListsWhatIsNot(t *testing.T) {
 		}
 		// Back as they were: enabled, in their group, with their own spaces.
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "olive", "password": pw}).want(t, 200, "")
 		if !hasID(idsOf(c.do("GET", "/api/spaces", nil).want(t, 200, "").body["spaces"], "id"), personal) || !hasID(idsOf(c.do("GET", "/api/spaces", nil).body["spaces"], "id"), f.alone) {
 			t.Fatal("their spaces did not come back")
 		}
@@ -825,7 +825,7 @@ func TestPurgingAStaleItemOfAPersonLeavesALaterDeletionWhole(t *testing.T) {
 			if err := a.mgr.FinishRecycle(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			f.owner.do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 200, "")
+			f.owner.do("POST", "/api/login", map[string]any{"identifier": "olive", "password": pw}).want(t, 200, "")
 			return item
 		}
 
@@ -865,7 +865,7 @@ func TestPurgingAStaleItemOfAPersonLeavesALaterDeletionWhole(t *testing.T) {
 			t.Fatal("purging a stale item deleted the data of a later deletion")
 		}
 		f.admin.do("POST", "/api/admin/recycle/"+i3+"/restore", map[string]any{}).want(t, 200, "")
-		f.owner.do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 200, "")
+		f.owner.do("POST", "/api/login", map[string]any{"identifier": "olive", "password": pw}).want(t, 200, "")
 	})
 }
 
@@ -898,7 +898,7 @@ func TestADeletionAskedAgainKeepsWhatTheFirstAttemptKnew(t *testing.T) {
 		if lv := idsOf(r.body["left"], "space"); !hasID(lv, f.joint) || !hasID(lv, f.sid) {
 			t.Fatalf("left %s", r.raw)
 		}
-		f.owner.do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 200, "")
+		f.owner.do("POST", "/api/login", map[string]any{"identifier": "olive", "password": pw}).want(t, 200, "")
 		if n := a.countRows(t, `SELECT COUNT(*) FROM users WHERE id = '`+f.ownerID+`' AND disabled = 0`); n != 1 {
 			t.Fatal("came back disabled")
 		}

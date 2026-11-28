@@ -257,7 +257,7 @@ func TestASiteAdministratorIsRefusedThroughATenantProvider(t *testing.T) {
 		refusedAudit(t, a, f.admB, "boss")
 		// Nor does the site administrator link it.
 		boss := a.newClient("")
-		boss.do("POST", "/api/login", map[string]any{"username": "boss", "password": pw}).want(t, 200, "")
+		boss.do("POST", "/api/login", map[string]any{"identifier": "boss", "password": pw}).want(t, 200, "")
 		boss.do("POST", "/api/account/links/"+id+"/start", map[string]any{"return": "/settings"}).want(t, 404, "not_found")
 	})
 }

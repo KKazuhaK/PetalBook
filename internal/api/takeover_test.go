@@ -20,7 +20,7 @@ func TestATenantAdministratorTakesASpaceOverOnlyExplicitly(t *testing.T) {
 			t.Fatal(err)
 		}
 		adm := a.newClient("")
-		adm.do("POST", "/api/login", map[string]any{"username": "adm", "password": pw}).want(t, 200, "")
+		adm.do("POST", "/api/login", map[string]any{"identifier": "adm", "password": pw}).want(t, 200, "")
 		own := a.addUser("own", pw, "member")
 		mem := a.addUser("mem", pw, "member")
 		a.addUser("ed", pw, "member")

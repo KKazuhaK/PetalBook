@@ -226,7 +226,7 @@ func TestARequestIsApprovedOrDenied(t *testing.T) {
 		if u.TenantID != f.tenB || u.Role != "member" || !u.EmailVerified {
 			t.Fatalf("%+v", u)
 		}
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "bob", "password": pw}).want(t, 200, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "bob", "password": pw}).want(t, 200, "")
 		if !strings.Contains(m.Subject+m.Text, "Acme") || !strings.Contains(m.Text, "/login") {
 			t.Fatalf("the approval mail: %+v", m)
 		}

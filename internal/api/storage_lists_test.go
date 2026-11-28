@@ -88,7 +88,7 @@ func TestAdminSpaceListSortsFiltersAndRefusesWhatItDoesNotKnow(t *testing.T) {
 		want("/api/admin/spaces?pinned=1&remote=offline" + own)
 		// idleDays: used (a space is used when it is made) at most n days ago leaves out.
 		a.clock.Advance(40 * 24 * time.Hour)
-		admin.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "") // the session ended with the weeks
+		admin.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 200, "") // the session ended with the weeks
 		want("/api/admin/spaces?idleDays=30&sort=name"+own, "Alpha", "Bravo", "Charlie", "Delta")
 		want("/api/admin/spaces?idleDays=60&sort=name" + own)
 

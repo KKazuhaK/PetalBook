@@ -171,7 +171,7 @@ func TestViewAsAPersonReadsTheirOrganisationsSpacesOnly(t *testing.T) {
 
 		// Bound to the session that opened it: another session, a token, two ids.
 		other := a.newClient("")
-		other.do("POST", "/api/login", map[string]any{"username": "adm-a", "password": pw}).want(t, 200, "")
+		other.do("POST", "/api/login", map[string]any{"identifier": "adm-a", "password": pw}).want(t, 200, "")
 		other.do("GET", "/api/spaces", nil, as...).want(t, 403, "view_as_ended")
 		_, secret := mkToken(t, f.admA, "read", nil, f.spaceA)
 		a.bearer(secret, "").do("GET", "/api/spaces", nil, as...).want(t, 403, "token_scope")

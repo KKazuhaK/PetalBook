@@ -123,7 +123,7 @@ func TestAnAdministratorSeesWhetherTheyHaveAViewOpen(t *testing.T) {
 		}
 		// It is the session's: another session of the same person, and another administrator, have none.
 		other := a.newClient("")
-		other.do("POST", "/api/login", map[string]any{"username": "adm-a", "password": pw}).want(t, 200, "")
+		other.do("POST", "/api/login", map[string]any{"identifier": "adm-a", "password": pw}).want(t, 200, "")
 		if get(other) != nil || get(f.root) != nil {
 			t.Fatal("a view showed in another session")
 		}

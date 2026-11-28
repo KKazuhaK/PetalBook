@@ -42,7 +42,7 @@ func TestImageCaptchaIsCheckedBeforeTheHashAndUsedOnce(t *testing.T) {
 		// Missing, wrong and unknown answers: 400 and no password work, and not counted as a wrong password.
 		c.do("POST", "/api/login", good("kazuha")).want(t, 400, "captcha_failed")
 		login := func(id, ans string) result {
-			return c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw, "captcha": map[string]any{"id": id, "answer": ans}})
+			return c.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw, "captcha": map[string]any{"id": id, "answer": ans}})
 		}
 		login(body["id"].(string), "00000").want(t, 400, "captcha_failed")
 		login("nope", answer).want(t, 400, "captcha_failed")
@@ -58,7 +58,7 @@ func TestImageCaptchaIsCheckedBeforeTheHashAndUsedOnce(t *testing.T) {
 		// Failures of the password were not counted by the failed captchas: ten are still free.
 		for range 9 {
 			b, ans := c.challenge(t, "login", "kazuha")
-			c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": "wrong password here", "captcha": map[string]any{"id": b["id"], "answer": ans}}).want(t, 401, "")
+			c.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": "wrong password here", "captcha": map[string]any{"id": b["id"], "answer": ans}}).want(t, 401, "")
 		}
 		if n := auth.CaptchaHeld(a.auth); n > 10_000 {
 			t.Fatalf("%d challenges held", n)
@@ -205,7 +205,7 @@ func TestThirdPartyCaptcha(t *testing.T) {
 			t.Fatal(ch.raw)
 		}
 		login := func(tok string) result {
-			return c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw, "captcha": map[string]any{"token": tok}})
+			return c.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw, "captcha": map[string]any{"token": tok}})
 		}
 		login("").want(t, 400, "captcha_failed")
 		login("rejected").want(t, 400, "captcha_failed")

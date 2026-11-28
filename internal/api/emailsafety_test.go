@@ -215,7 +215,7 @@ func TestAnAddressChangeMakesResetLinksUnusable(t *testing.T) {
 		uid := mustUserID(t, a, "tang")
 		anon := a.newClient("")
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
 		n := 0
 		seen := map[string]bool{}
 		fresh := func() string {

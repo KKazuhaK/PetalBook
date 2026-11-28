@@ -235,8 +235,19 @@ func (s *server) setup(c *call) {
 	writeJSON(c.w, http.StatusCreated, signInAnswer{User: user, Hold: hold})
 }
 
+// loginRequest is POST /api/login. The sign-in field is `identifier`, an email
+// address or a username. A body that still sends `username` is not an error
+// (like any unknown field here): the field is ignored, so the identifier is
+// empty and the answer is the one of a wrong username.
+type loginRequest struct {
+	Tenant     string              `json:"tenant"`
+	Identifier string              `json:"identifier"`
+	Password   string              `json:"password"`
+	Captcha    *auth.CaptchaAnswer `json:"captcha"`
+}
+
 func (s *server) login(c *call) {
-	var req credentials
+	var req loginRequest
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
@@ -247,7 +258,7 @@ func (s *server) login(c *call) {
 			return
 		}
 	}
-	res, err := s.auth.Login(c.r.Context(), auth.LoginParams{Username: req.Username, Password: req.Password, IP: s.auth.ClientAddr(c.r), Captcha: req.Captcha, TenantID: tenant})
+	res, err := s.auth.Login(c.r.Context(), auth.LoginParams{Identifier: req.Identifier, Password: req.Password, IP: s.auth.ClientAddr(c.r), Captcha: req.Captcha, TenantID: tenant})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -327,6 +338,39 @@ func toPasskeys(in []auth.PasskeyView) []passkeyResp {
 	return out
 }
 
+// methodResp is one row of the account's list of sign-in methods.
+type methodResp struct {
+	Type         string  `json:"type"`
+	ID           string  `json:"id,omitempty"`
+	Added        string  `json:"added"`
+	LastUsed     *string `json:"lastUsed"`
+	Removable    bool    `json:"removable"`
+	Provider     string  `json:"provider,omitempty"`
+	ProviderSlug string  `json:"providerSlug,omitempty"`
+	Kind         string  `json:"kind,omitempty"`
+	Class        string  `json:"class,omitempty"`
+	Label        string  `json:"label,omitempty"`
+	Name         string  `json:"name,omitempty"`
+	Synced       *bool   `json:"synced,omitempty"`
+}
+
+func toMethods(in []auth.MethodView) []methodResp {
+	out := make([]methodResp, len(in))
+	for i, m := range in {
+		out[i] = methodResp{Type: m.Type, ID: m.ID, Added: rfc3339(m.Added), Removable: m.Removable, Provider: m.Provider, ProviderSlug: m.ProviderSlug,
+			Kind: m.Kind, Class: m.Class, Label: m.Label, Name: m.Name}
+		if m.Type == auth.MethodPasskey {
+			synced := m.Synced
+			out[i].Synced = &synced
+		}
+		if !m.LastUsed.IsZero() {
+			t := rfc3339(m.LastUsed)
+			out[i].LastUsed = &t
+		}
+	}
+	return out
+}
+
 func (s *server) getAccount(c *call) {
 	v, err := s.auth.Account(c.r.Context(), c.user())
 	if err != nil {
@@ -354,7 +398,9 @@ func (s *server) getAccount(c *call) {
 		Passkeys    []passkeyResp `json:"passkeys"`
 		Groups      []groupRef    `json:"groups"`
 		Emails      []emailResp   `json:"emails"`
-	}{s.toUser(v.User), v.HasPassword, toPasskeys(v.Passkeys), toGroupRefs(groups), withClaims(toEmails(emails), claims)})
+		Methods     []methodResp  `json:"methods"`
+		CanUnlink   bool          `json:"canUnlink"`
+	}{s.toUser(v.User), v.HasPassword, toPasskeys(v.Passkeys), toGroupRefs(groups), withClaims(toEmails(emails), claims), toMethods(v.Methods), v.CanUnlink})
 }
 
 func (s *server) patchAccount(c *call) {

@@ -95,7 +95,7 @@ func TestDiscoverCountsAgainstTheAddressesMinute(t *testing.T) {
 		c := a.newClient("203.0.113.40")
 		discover(c, "x@acme.example").want(t, 200, "")
 		discover(c, "y@acme.example").want(t, 200, "")
-		c.do("POST", "/api/login", map[string]any{"username": "adm-b", "password": pw}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "adm-b", "password": pw}).want(t, 200, "")
 		r := discover(c, "z@acme.example").want(t, 429, "rate_limited")
 		if r.resp.Header.Get("Retry-After") == "" {
 			t.Fatal("no Retry-After")
@@ -191,7 +191,7 @@ func TestATenantsSSOOnlyIsItsOwn(t *testing.T) {
 			t.Fatal(d)
 		}
 		login := func(ip, user string) result {
-			return a.newClient(ip).do("POST", "/api/login", map[string]any{"username": user, "password": pw})
+			return a.newClient(ip).do("POST", "/api/login", map[string]any{"identifier": user, "password": pw})
 		}
 		login("203.0.113.60", "bm").want(t, 403, "local_login_refused")
 		login("203.0.113.61", "adm-b").want(t, 200, "") // the back door

@@ -106,7 +106,7 @@ func TestASecondAddressSignsInOnceConfirmed(t *testing.T) {
 			t.Fatalf("%v", got)
 		}
 		// Unverified: it does not sign in, and the answer is a wrong password's.
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "second@example.test", "password": pw}).want(t, 401, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "second@example.test", "password": pw}).want(t, 401, "")
 		// Adding it again, in any spelling, is refused.
 		c.do("POST", "/api/account/emails", map[string]any{"email": "SECOND@example.test"}).want(t, 409, "exists")
 		a.newClient("").do("POST", "/api/email/confirm", map[string]any{"token": link.Token(t)}).want(t, 204, "")
@@ -114,13 +114,13 @@ func TestASecondAddressSignsInOnceConfirmed(t *testing.T) {
 			t.Fatalf("%v", got)
 		}
 		in := a.newClient("")
-		in.do("POST", "/api/login", map[string]any{"username": "second@EXAMPLE.test", "password": pw}).want(t, 200, "")
+		in.do("POST", "/api/login", map[string]any{"identifier": "second@EXAMPLE.test", "password": pw}).want(t, 200, "")
 		if in.do("GET", "/api/account", nil).user()["username"] != "tang" {
 			t.Fatal("signed in to another account")
 		}
 		// The primary signs in by address too; a wrong password by address is a wrong password.
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "tang@example.test", "password": pw}).want(t, 200, "")
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "second@example.test", "password": "not the password at all"}).want(t, 401, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "tang@example.test", "password": pw}).want(t, 200, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "second@example.test", "password": "not the password at all"}).want(t, 401, "")
 		// A reset asked for by the second address goes to it, and works.
 		n := len(srv.Messages())
 		a.newClient("").do("POST", "/api/password/forgot", map[string]any{"login": "second@example.test"}).want(t, 202, "")
@@ -234,7 +234,7 @@ func TestPrimaryNeedsAVerifiedAddressAndCannotBeRemoved(t *testing.T) {
 		if _, ok := emailsOf(t, c)["tang@example.test"]; ok {
 			t.Fatal("not removed")
 		}
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "tang@example.test", "password": pw}).want(t, 401, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "tang@example.test", "password": pw}).want(t, 401, "")
 		c.do("DELETE", "/api/account/emails/"+url.PathEscape("tang@example.test"), nil).want(t, 404, "not_found")
 		for _, k := range []string{"email_primary_changed", "email_removed"} {
 			if len(root.audit(t, k)) != 1 {
@@ -258,7 +258,7 @@ func TestTurningTheSwitchOffKeepsTheExtraAddressesUnused(t *testing.T) {
 		if rowCount(t, a, `SELECT COUNT(*) FROM user_emails WHERE email = 'second@example.test'`) != 1 {
 			t.Fatal("the address was dropped")
 		}
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "second@example.test", "password": pw}).want(t, 401, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "second@example.test", "password": pw}).want(t, 401, "")
 		n := len(srv.Messages())
 		a.newClient("").do("POST", "/api/password/forgot", map[string]any{"login": "second@example.test"}).want(t, 202, "")
 		// The primary's reset goes out; the second's did not, before it.
@@ -275,7 +275,7 @@ func TestTurningTheSwitchOffKeepsTheExtraAddressesUnused(t *testing.T) {
 		if got := emailsOf(t, c); len(got) != 2 {
 			t.Fatalf("%v", got)
 		}
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "second@example.test", "password": pw}).want(t, 200, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "second@example.test", "password": pw}).want(t, 200, "")
 		if l, _ := root.do("GET", "/api/users/"+uid, nil).want(t, 200, "").user()["emails"].([]any); len(l) != 2 {
 			t.Fatalf("%v", l)
 		}

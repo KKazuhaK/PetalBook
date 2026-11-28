@@ -154,7 +154,7 @@ describe('the last way of signing in is offered again', () => {
     await click(document.querySelector('form button[type="submit"]'))
     await settle(() => locationText() === '/s/abc/p/1?x=2', 'back on the page')
     expect(JSON.parse(m!.requests.filter((r) => r.url === '/api/login').at(-1)!.body!)).toEqual({
-      username: admin.username,
+      identifier: admin.username,
       password: MOCK_ADMIN.password,
     })
     // A wrong password stays on the page, with the account.

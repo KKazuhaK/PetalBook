@@ -85,7 +85,7 @@ func TestARuleOlderThanTheGracePeriodDoesNotMakeSpacesOverdueAtStart(t *testing.
 		start := a.clock.Now()
 		a.clock.Advance(40 * day)
 		a.restart(t)
-		admin.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "") // the session is 40 days old
+		admin.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 200, "") // the session is 40 days old
 		writeLocal(admin).want(t, 201, "")
 		since, err := time.Parse(time.RFC3339, sinceOf(t, admin))
 		if err != nil || since.Before(start.Add(39*day)) {

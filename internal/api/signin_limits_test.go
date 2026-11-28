@@ -310,14 +310,14 @@ func TestMadeUpFailuresDoNotFloodTheAuditLog(t *testing.T) {
 		admin.putSetting("signin.perMinute", 100).want(t, 200, "")
 		c := a.newClient("203.0.113.100")
 		for range 5 {
-			c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw, "captcha": map[string]any{"id": "made-up", "answer": "1"}}).want(t, 400, "captcha_failed")
+			c.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw, "captcha": map[string]any{"id": "made-up", "answer": "1"}}).want(t, 400, "captcha_failed")
 		}
 		if n := failedReasons(t, admin)["password:captcha_failed"]; n != 1 {
 			t.Fatalf("%d captcha rows from one address in a minute", n)
 		}
-		a.newClient("203.0.113.101").do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 400, "captcha_failed")
+		a.newClient("203.0.113.101").do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 400, "captcha_failed")
 		a.clock.Advance(time.Minute)
-		c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 400, "captcha_failed")
+		c.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw}).want(t, 400, "captcha_failed")
 		if n := failedReasons(t, admin)["password:captcha_failed"]; n != 3 {
 			t.Fatalf("%d captcha rows, want one per address and minute", n)
 		}

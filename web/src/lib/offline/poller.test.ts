@@ -14,7 +14,7 @@ let net: Net
 let me = ''
 beforeEach(async () => {
   net = network({ mode: 'accounts' })
-  me = (await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).user.id
+  me = (await api.login({ identifier: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).user.id
 })
 afterEach(() => net.restore())
 

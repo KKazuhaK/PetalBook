@@ -297,7 +297,7 @@ func TestGroupsInSpaces(t *testing.T) {
 		}
 		admin.do("PATCH", "/api/users/"+annID, map[string]any{"disabled": false}).want(t, 200, "")
 		ann = a.newClient("")
-		ann.do("POST", "/api/login", map[string]any{"username": "ann", "password": pw}).want(t, 200, "")
+		ann.do("POST", "/api/login", map[string]any{"identifier": "ann", "password": pw}).want(t, 200, "")
 
 		// Changing the role, the next request.
 		tm.owner.do("PATCH", base+"/groups/"+eng, map[string]any{"role": "viewer"}).want(t, 200, "")

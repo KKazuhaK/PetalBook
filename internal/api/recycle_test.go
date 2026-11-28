@@ -244,7 +244,7 @@ func TestAnAdministratorReadsASpaceOnlyInAnAuditedViewAndNeverWrites(t *testing.
 		}
 		// The view is this session's alone: another session of the same person has none.
 		other := a.newClient("")
-		other.do("POST", "/api/login", map[string]any{"username": "adm-a", "password": pw}).want(t, 200, "")
+		other.do("POST", "/api/login", map[string]any{"identifier": "adm-a", "password": pw}).want(t, 200, "")
 		other.do("GET", base+"/pages/"+id, nil).want(t, 403, "no_permission")
 		// A token of the same person never gets one.
 		_, secret := mkToken(t, f.admA, "read", nil, f.spaceA)
@@ -658,7 +658,7 @@ func TestEveryPurgeIsAuditedEvenWhenTheRowIsGoneOrNobodyAsked(t *testing.T) {
 		}
 		a.auth.FlushAudit(ctx)
 		root = a.newClient("") // the session ended with the days
-		root.do("POST", "/api/login", map[string]any{"username": "root", "password": pw}).want(t, 200, "")
+		root.do("POST", "/api/login", map[string]any{"identifier": "root", "password": pw}).want(t, 200, "")
 		var sys map[string]any
 		for _, r := range root.audit(t, "space_purged") {
 			if r["detail"].(map[string]any)["item"] == item {

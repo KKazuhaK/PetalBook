@@ -37,7 +37,7 @@ func TestAnAdministratorJoiningAGroupOfASpaceDoesItExplicitly(t *testing.T) {
 			t.Fatal(err)
 		}
 		adm := a.newClient("")
-		adm.do("POST", "/api/login", map[string]any{"username": "adm", "password": pw}).want(t, 200, "")
+		adm.do("POST", "/api/login", map[string]any{"identifier": "adm", "password": pw}).want(t, 200, "")
 		own := a.addUser("own", pw, "member")
 		a.addUser("gm", pw, "member")
 		admID, gmID := mustUserID(t, a, "adm"), mustUserID(t, a, "gm")
@@ -171,7 +171,7 @@ func TestAHandlerAsksTheKeyNotTheRole(t *testing.T) {
 			t.Fatal(err)
 		}
 		adm := a.newClient("")
-		adm.do("POST", "/api/login", map[string]any{"username": "adm", "password": pw}).want(t, 200, "")
+		adm.do("POST", "/api/login", map[string]any{"identifier": "adm", "password": pw}).want(t, 200, "")
 		rootID := mustUserID(t, a, "root")
 		adm.do("PATCH", "/api/users/"+rootID, map[string]any{"passkeyRequired": false}).want(t, 403, "forbidden")
 
@@ -215,7 +215,7 @@ func TestARoleHeldThroughAGroup(t *testing.T) {
 			t.Fatal(err)
 		}
 		adm := a.newClient("")
-		adm.do("POST", "/api/login", map[string]any{"username": "adm", "password": pw}).want(t, 200, "")
+		adm.do("POST", "/api/login", map[string]any{"identifier": "adm", "password": pw}).want(t, 200, "")
 		mod := a.addUser("mod", pw, "member")
 		modID, admID := mustUserID(t, a, "mod"), mustUserID(t, a, "adm")
 		g := root.mkGroup(t, "Auditors", "local")

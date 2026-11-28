@@ -1,36 +1,22 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { KeyRound, Trash2 } from 'lucide-react'
+import { KeyRound } from 'lucide-react'
 import { useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
-import { keys, useAccount, useAccountLinks, useAuthProviders, useSession } from '@/api/hooks'
-import type { AccountInfo, Link, Provider, PublicProvider } from '@/api/types'
-import { ProviderIcon } from '@/components/auth/ProviderIcon'
+import { keys, useAccount, useSession } from '@/api/hooks'
+import type { AccountInfo } from '@/api/types'
 import { ssoErrorMessage } from '@/pages/auth/LoginPage'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { ts } from '@/i18n/signin'
-import { PasskeysSection } from './PasskeysSection'
-import { SettingsRow, SettingsRows, SettingsSection } from './SettingsParts'
+import { SignInMethods } from './SignInMethods'
 
-// Security: the password and the linked sign-ins (accounts mode only). Moved
-// from the Profile panel; the password form and the link and unlink calls are
-// as they were, the form now opening from a button.
+// Security (accounts mode only): the account's one list of sign-in methods, with the password form opening from
+// its password row.
 export function SecurityPanel() {
   const session = useSession()
   const account = useAccount(session.data?.mode === 'accounts' && !!session.data.user)
@@ -51,6 +37,8 @@ export function SecurityPanel() {
 
 function Sections({ account }: { account: AccountInfo }) {
   const [params, setParams] = useSearchParams()
+  const [passwordOpen, setPasswordOpen] = useState(false)
+  const has = account.hasPassword
   // `?sso_error=` from a link that failed at the provider: shown once, then taken out of the address.
   const [linkError] = useState(() => ssoErrorMessage(params.get('sso_error')))
   useEffect(() => {
@@ -75,27 +63,8 @@ function Sections({ account }: { account: AccountInfo }) {
       {linkError && (
         <FormMessage focusRef={messageRef}>{t.fmt.labelled(ts.identities.linkFailed, linkError)}</FormMessage>
       )}
-      <PasswordSection account={account} />
-      <PasskeysSection account={account} />
-      <Links />
-    </>
-  )
-}
-
-function PasswordSection({ account }: { account: AccountInfo }) {
-  const has = account.hasPassword
-  const [open, setOpen] = useState(false)
-  return (
-    <SettingsSection title={t.settings.password}>
-      <SettingsRows>
-        <SettingsRow title={t.settings.password} help={has ? t.settings.passwordIsSet : t.settings.setHelp}>
-          <Button type="button" variant="outline" onClick={() => setOpen(true)}>
-            <KeyRound aria-hidden="true" />
-            {has ? t.settings.changePassword : t.settings.setPassword}
-          </Button>
-        </SettingsRow>
-      </SettingsRows>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <SignInMethods account={account} onPassword={() => setPasswordOpen(true)} />
+      <Dialog open={passwordOpen} onOpenChange={setPasswordOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{has ? t.settings.changePassword : t.settings.setPassword}</DialogTitle>
@@ -106,13 +75,13 @@ function PasswordSection({ account }: { account: AccountInfo }) {
           <PasswordForm
             account={account}
             onDone={(message) => {
-              setOpen(false)
+              setPasswordOpen(false)
               toast.success(message)
             }}
           />
         </DialogContent>
       </Dialog>
-    </SettingsSection>
+    </>
   )
 }
 
@@ -193,117 +162,5 @@ export function PasswordForm({ account, onDone }: { account: AccountInfo; onDone
         </Button>
       </div>
     </form>
-  )
-}
-
-function Links() {
-  const qc = useQueryClient()
-  const providers = useAuthProviders()
-  const linksQuery = useAccountLinks()
-  const [removing, setRemoving] = useState<Link | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  // The methods are the links that sign the person in: one that only holds repositories is the connections' (and "link"
-  // below turns it into a sign-in on the same account).
-  const links = (linksQuery.data?.links ?? []).filter((l) => l.signin)
-  // A button for each enabled provider the person has no linked account at: one per provider.
-  const linked = new Set(links.map((l) => l.providerId))
-  const linkable = (providers.data?.providers ?? []).filter((p) => !linked.has(p.slug))
-
-  const link = async (p: PublicProvider) => {
-    setError('')
-    try {
-      const { url } = await api.startLink(p.slug, '/settings')
-      window.location.assign(url)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t.auth.failed)
-    }
-  }
-
-  const remove = async () => {
-    if (!removing) return
-    setBusy(true)
-    try {
-      await api.removeLink(removing.id)
-      qc.setQueryData<{ links: Link[]; providers: Provider[] }>(
-        keys.accountLinks,
-        (prev) => prev && { ...prev, links: prev.links.filter((l) => l.id !== removing.id) },
-      )
-      void qc.invalidateQueries({ queryKey: keys.accountLinks })
-      setRemoving(null)
-    } catch (err) {
-      setRemoving(null)
-      // 409: it is the only way in.
-      if (err instanceof ApiError && err.code === 'last_method') setError(t.settings.onlyWay)
-      else toast.error(err instanceof ApiError ? err.message : t.auth.failed)
-    }
-    setBusy(false)
-  }
-
-  // Nothing to show where no provider is set up and nothing is linked.
-  if (linkable.length === 0 && links.length === 0) return null
-  return (
-    <SettingsSection title={t.settings.identities}>
-      <SettingsRows>
-        {linkable.length > 0 && (
-          <SettingsRow
-            title={ts.identities.linkTo}
-            help={links.length === 0 ? t.settings.noIdentities : t.settings.identitiesHelp}
-          >
-            <div className="grid grid-cols-1 gap-2">
-              {linkable.map((p) => (
-                <Button
-                  key={`${p.kind}/${p.slug}`}
-                  type="button"
-                  variant="outline"
-                  className="w-full min-w-0 justify-start gap-2"
-                  onClick={() => void link(p)}
-                >
-                  <ProviderIcon icon={p.icon} />
-                  <span className="min-w-0 truncate">{ts.identities.link(p.name)}</span>
-                </Button>
-              ))}
-            </div>
-          </SettingsRow>
-        )}
-        {links.map((i) => (
-          <SettingsRow
-            key={i.id}
-            title={i.provider}
-            help={`${i.label} · ${t.settings.linkedOn(absoluteTime(i.created))}`}
-          >
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setError('')
-                setRemoving(i)
-              }}
-            >
-              <Trash2 aria-hidden="true" />
-              {t.settings.remove}
-            </Button>
-          </SettingsRow>
-        ))}
-      </SettingsRows>
-      <FormMessage>{error}</FormMessage>
-      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t.settings.removeTitle}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {removing ? t.settings.removeHelp(removing.label || removing.provider) : ''}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t.settings.cancel}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" disabled={busy} onClick={() => void remove()}>
-              {t.settings.removeConfirm}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SettingsSection>
   )
 }

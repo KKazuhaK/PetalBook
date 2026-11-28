@@ -274,6 +274,30 @@ func GetPasswordHash(ctx context.Context, q Q, userID string) (string, error) {
 	return h, err
 }
 
+// PasswordInfo says when the password was set and when it last signed the
+// person in (zero: never), or ErrNotFound when there is none.
+func PasswordInfo(ctx context.Context, q Q, userID string) (set, lastUsed time.Time, err error) {
+	var u, l int64
+	err = q.QueryRow(ctx, `SELECT updated, last_used FROM passwords WHERE user_id = ?`, userID).Scan(&u, &l)
+	if errors.Is(err, sql.ErrNoRows) {
+		return set, lastUsed, ErrNotFound
+	}
+	if err != nil {
+		return set, lastUsed, err
+	}
+	set = fromMS(u)
+	if l != 0 {
+		lastUsed = fromMS(l)
+	}
+	return set, lastUsed, nil
+}
+
+// TouchPassword records a sign-in with the password: one UPDATE per sign-in.
+func TouchPassword(ctx context.Context, q Q, userID string, at time.Time) error {
+	_, err := q.Exec(ctx, `UPDATE passwords SET last_used = ? WHERE user_id = ?`, ms(at), userID)
+	return err
+}
+
 // SetPasswordHash stores or replaces a user's password hash.
 func SetPasswordHash(ctx context.Context, q Q, userID, hash string, now time.Time) error {
 	_, err := q.Exec(ctx, `INSERT INTO passwords(user_id, hash, updated, must_change) VALUES (?, ?, ?, 0)

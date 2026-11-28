@@ -54,7 +54,9 @@ export const authRoutes: Route[] = [
     '/api/login',
     (c) => {
       const a = c.data.auth
-      const u = a.users.find((x) => x.username === c.body.username)
+      const id = String(c.body.identifier ?? '').toLowerCase()
+      // An address (it has an @) finds the account by its email, a name by its username.
+      const u = a.users.find((x) => (id.includes('@') ? x.email.toLowerCase() === id : x.username === id))
       if (!u) throw new Refusal(401, 'unauthenticated', 'wrong username or password')
       return signIn(a, u)
     },
