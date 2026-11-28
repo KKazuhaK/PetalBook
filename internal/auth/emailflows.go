@@ -15,6 +15,7 @@ import (
 	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/usage"
 )
 
 // Registration, email verification and password reset (docs/api.md,
@@ -376,7 +377,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	if capped {
 		// Nothing is held: not the username, not the slug.
 		if exists != nil {
-			return s.mailExisting(ctx, *exists, lang, p.IP)
+			return s.mailExisting(ctx, *exists, p.TenantID, lang, p.IP)
 		}
 		if !decoy {
 			if err := s.sendMail("", mail.KindRegisterOrgRefused, lang, email, mail.Vars{Org: orgName}); err != nil {
@@ -414,7 +415,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		return err
 	}
 	if exists != nil {
-		return s.mailExisting(ctx, *exists, lang, p.IP)
+		return s.mailExisting(ctx, *exists, p.TenantID, lang, p.IP)
 	}
 	if decoy {
 		return nil
@@ -537,20 +538,27 @@ func (s *Service) emailReleased(ctx context.Context, r store.Released, to store.
 // mailExisting tells an account's stored address, never the address typed,
 // that it already has an account, with a link to reset the password (or to
 // sign in with the provider). The caller has spent the address's allowance.
-func (s *Service) mailExisting(ctx context.Context, u store.User, lang, ip string) error {
+//
+// It is charged to the tenant the registration asked for, as the message of a
+// new address is, and counted even when nothing can be sent: what an
+// organisation's usage shows must not tell whether an address has an account
+// elsewhere.
+func (s *Service) mailExisting(ctx context.Context, u store.User, tenant, lang, ip string) error {
 	email := u.Email
 	links, sso, err := s.resetLinks(ctx, []store.User{u}, "user", "", ip)
 	if err != nil {
 		return err
 	}
 	if len(links) > 0 {
-		if err := s.sendMail(u.TenantID, mail.KindRegisterDup, lang, email, mail.Vars{Link: links[0].URL, Hours: 1}); err != nil {
+		if err := s.sendMail(tenant, mail.KindRegisterDup, lang, email, mail.Vars{Link: links[0].URL, Hours: 1}); err != nil {
 			s.log.Warn("could not queue a message", "reason", err.Error())
 		}
 	} else if sso != nil {
-		if err := s.sendMail(u.TenantID, mail.KindResetSSO, lang, email, mail.Vars{Provider: s.providerNameFor(ctx, *sso)}); err != nil {
+		if err := s.sendMail(tenant, mail.KindResetSSO, lang, email, mail.Vars{Provider: s.providerNameFor(ctx, *sso)}); err != nil {
 			s.log.Warn("could not queue a message", "reason", err.Error())
 		}
+	} else if m := s.meter.Load(); m != nil && tenant != "" {
+		m.Add(tenant, usage.Mail, 1) // nothing to send: charged the same
 	}
 	return nil
 }
@@ -890,14 +898,14 @@ func (s *Service) Forgot(ctx context.Context, p ForgotParams) error {
 	case len(links) > 1:
 		v.Links = links
 	case sso != nil:
-		if err := s.sendMail(accounts[0].TenantID, mail.KindResetSSO, lang, to, mail.Vars{Provider: s.providerNameFor(ctx, *sso)}); err != nil {
+		if err := s.sendMail("", mail.KindResetSSO, lang, to, mail.Vars{Provider: s.providerNameFor(ctx, *sso)}); err != nil {
 			s.log.Warn("could not queue a message", "reason", err.Error())
 		}
 		return nil
 	default:
 		return nil
 	}
-	if err := s.sendMail(accounts[0].TenantID, mail.KindReset, lang, to, v); err != nil {
+	if err := s.sendMail("", mail.KindReset, lang, to, v); err != nil {
 		s.log.Warn("could not queue a message", "reason", err.Error())
 	}
 	return nil

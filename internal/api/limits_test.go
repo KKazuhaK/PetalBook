@@ -178,9 +178,9 @@ func TestRequestsCostNoQueryForLimitsOrUsage(t *testing.T) {
 }
 
 // rate.mailPerDay holds the site's mailer for a tenant: over it the message is
-// refused (429 with Retry-After), what was sent is counted as mail, and the
-// next day starts again. The count survives a flush: the sum is what is
-// written plus what is in memory.
+// not sent (an invitation says "limited" and hands over its link), what was sent
+// is counted as mail, a refused one is not, and the next day starts again. The
+// count survives a flush: the sum is what is written plus what is in memory.
 func TestAMailLimitPerDayHoldsTheSiteMailerForATenant(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
@@ -189,24 +189,22 @@ func TestAMailLimitPerDayHoldsTheSiteMailerForATenant(t *testing.T) {
 		f := newLimitFx(t, a)
 		enableMail(t, f.root, srv)
 		f.rule(t, f.tenA, "rate.mailPerDay", 2)
-		c := f.cookA
-		c.do("PATCH", "/api/account", map[string]any{"email": "mem@example.test"}).want(t, 200, "")
-		verify := func(code int) result {
+		invite := func(addr string) string {
 			t.Helper()
-			r := c.do("POST", "/api/account/email/verify", map[string]any{})
-			if r.code != code {
-				t.Fatalf("want %d, got %d %s", code, r.code, r.raw)
-			}
-			return r
+			r := f.root.do("POST", "/api/admin/members/batch", map[string]any{"tenant": f.tenA, "rows": []map[string]any{{"user": addr, "role": "member"}}}).want(t, 200, "")
+			return r.body["results"].([]any)[0].(map[string]any)["mail"].(string)
 		}
-		verify(202)
+		if got := invite("one@example.test"); got != "sent" {
+			t.Fatalf("%s", got)
+		}
 		if err := a.h.FlushUsage(ctx); err != nil { // one written, one in memory
 			t.Fatal(err)
 		}
-		verify(202)
-		r := verify(429)
-		if r.body["error"] != "rate_limited" || r.resp.Header.Get("Retry-After") == "" {
-			t.Fatalf("%s", r.raw)
+		if got := invite("two@example.test"); got != "sent" {
+			t.Fatalf("%s", got)
+		}
+		if got := invite("three@example.test"); got != "limited" {
+			t.Fatalf("%s", got)
 		}
 		if err := a.h.FlushUsage(ctx); err != nil {
 			t.Fatal(err)
@@ -221,7 +219,9 @@ func TestAMailLimitPerDayHoldsTheSiteMailerForATenant(t *testing.T) {
 		if got := auditKinds(t, f.root, "quota_exceeded"); len(got) != 1 {
 			t.Fatalf("quota_exceeded rows: %d", len(got))
 		}
-		a.clock.Advance(25 * 3600e9) // the next day, and the address's hour is over
-		verify(202)
+		a.clock.Advance(25 * 3600e9) // the next day
+		if got := invite("four@example.test"); got != "sent" {
+			t.Fatalf("%s", got)
+		}
 	})
 }

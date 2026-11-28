@@ -341,31 +341,70 @@ func (s *Service) mailSlot(email, ip string) (time.Duration, bool) {
 // UseUsage gives the service the meter that counts the mail of each tenant.
 func (s *Service) UseUsage(m *usage.Meter) { s.meter.Store(m) }
 
-// mailDayLimit refuses a message for a tenant that has sent rate.mailPerDay
-// messages today. The sum is what the database has of today (read here, outside
-// any transaction, and only when the tenant has a limit) plus what the meter
-// holds and has not written yet. A message that is the site's own (tenant "")
-// is not counted.
-func (s *Service) mailDayLimit(tenant string) error {
-	st, m := s.settings.Load(), s.meter.Load()
-	if tenant == "" || st == nil || m == nil {
-		return nil
+// securityMail is mail a person needs to get into or keep their account: a
+// verification, a reset, a registration's confirmation. It is counted but never
+// held to rate.mailPerDay, so that anonymous requests cannot use up a tenant's
+// allowance and with it lock people out of their passwords.
+var securityMail = map[string]bool{
+	mail.KindVerify: true, mail.KindEmailClaim: true, mail.KindReset: true, mail.KindResetSSO: true,
+	mail.KindRegister: true, mail.KindRegisterDup: true, mail.KindRegisterOrg: true, mail.KindRegisterOrgRefused: true,
+	mail.KindRegisterJoin: true, mail.KindRegisterJoinRequest: true,
+}
+
+// reserveMail takes a message of the tenant's day: counted, and, unless it is
+// security mail, within rate.mailPerDay. The slot is taken in memory in one step
+// (the meter's lock), on top of what the database has of today, which is read
+// here, outside any transaction, and only for a tenant that has a limit. The
+// release gives the slot back when the message is not queued after all. A message
+// of no tenant ("") is the site's own and is neither counted nor held.
+func (s *Service) reserveMail(tenant, kind string) (release func(), err error) {
+	m, st := s.meter.Load(), s.settings.Load()
+	if tenant == "" || m == nil {
+		return func() {}, nil
 	}
-	limit, ok := st.LimitOf(context.Background(), tenant, settings.RateMailPerDay)
-	if !ok {
-		return nil
+	release = func() { m.Add(tenant, usage.Mail, -1) }
+	limit, limited := int64(0), false
+	if st != nil && !securityMail[kind] {
+		limit, limited = st.LimitOf(context.Background(), tenant, settings.RateMailPerDay)
+	}
+	if !limited {
+		m.Add(tenant, usage.Mail, 1)
+		return release, nil
 	}
 	now := s.now().UTC()
-	pending := m.Pending(tenant, usage.Mail) // before the day's row: see Pending
-	sent, err := store.UsageDailyValue(context.Background(), s.st.Q(), tenant, store.UsageDay(now), store.UsageKeyMail)
+	for range 3 {
+		gen := m.Gen() // before the day's row is read
+		sent, err := store.UsageDailyValue(context.Background(), s.st.Q(), tenant, store.UsageDay(now), store.UsageKeyMail)
+		if err != nil {
+			return nil, err
+		}
+		ok, stale := m.Reserve(tenant, usage.Mail, 1, sent, limit, gen)
+		if stale {
+			continue
+		}
+		if ok {
+			return release, nil
+		}
+		s.OverLimit(tenant, settings.RateMailPerDay, limit)
+		return nil, retryAfter(now.Truncate(24 * time.Hour).Add(24 * time.Hour).Sub(now))
+	}
+	// A flush ended each time we looked: hold the message back rather than guess.
+	return nil, retryAfter(time.Second)
+}
+
+// enqueueFor queues a message for a tenant's account of the day: every message of
+// the site's mailer goes through here, so that it is counted and held to the
+// tenant's limit whichever flow sends it.
+func (s *Service) enqueueFor(tenant, kind string, msg mail.Message) error {
+	release, err := s.reserveMail(tenant, kind)
 	if err != nil {
 		return err
 	}
-	if sent+pending < limit {
-		return nil
+	if err := s.mail.Enqueue(msg); err != nil {
+		release()
+		return err
 	}
-	s.OverLimit(tenant, settings.RateMailPerDay, limit)
-	return retryAfter(now.Truncate(24 * time.Hour).Add(24 * time.Hour).Sub(now))
+	return nil
 }
 
 // OverLimit writes quota_exceeded, at most once a day for a tenant and key.
@@ -378,19 +417,13 @@ func (s *Service) OverLimit(tenant, key string, limit int64) {
 }
 
 // sendMail renders a message and queues it, for a tenant ("" for none): the
-// tenant's mail is held to rate.mailPerDay and counted.
+// tenant's mail is held to rate.mailPerDay and counted (see enqueueFor).
 func (s *Service) sendMail(tenant, kind, lang, to string, v mail.Vars) error {
-	if err := s.mailDayLimit(tenant); err != nil {
-		return err
-	}
 	v.Site = s.siteName()
 	m := mail.Render(kind, lang, v)
 	m.To = to
-	switch err := s.mail.Enqueue(m); {
+	switch err := s.enqueueFor(tenant, kind, m); {
 	case err == nil:
-		if meter := s.meter.Load(); meter != nil && tenant != "" {
-			meter.Add(tenant, usage.Mail, 1)
-		}
 		return nil
 	case errors.Is(err, mail.ErrQueueFull):
 		return coded(503, "unavailable", "The mail queue is full; try again later.")

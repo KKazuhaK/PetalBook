@@ -185,9 +185,16 @@ func TestRecountFillsTheTotals(t *testing.T) {
 			t.Fatal(err)
 		}
 		now := time.Date(2026, 3, 5, 12, 0, 0, 0, time.UTC)
-		for range 2 { // twice: set, not added
-			if err := usage.Recount(ctx, st, now); err != nil {
-				t.Fatal(err)
+		var rc usage.Recounter
+		first, err := rc.Run(ctx, st, now)
+		if err != nil || first != 8 { // four totals of two tenants
+			t.Fatalf("first run wrote %d: %v", first, err)
+		}
+		// Nothing changed: nothing is written, and a recounter that starts again
+		// (a restart) learns what is there from the rows of the day.
+		for _, r := range []*usage.Recounter{&rc, {}} {
+			if n, err := r.Run(ctx, st, now); err != nil || n != 0 {
+				t.Fatalf("a run with nothing changed wrote %d: %v", n, err)
 			}
 		}
 		day := "2026-03-05"
@@ -207,11 +214,15 @@ func TestRecountFillsTheTotals(t *testing.T) {
 		if err := store.SetSpacePinned(ctx, q, "S2", true); err != nil {
 			t.Fatal(err)
 		}
-		if err := usage.Recount(ctx, st, now); err != nil {
-			t.Fatal(err)
+		if n, err := rc.Run(ctx, st, now); err != nil || n != 1 {
+			t.Fatalf("one value changed, %d written: %v", n, err)
 		}
 		if got := value(t, st, store.DefaultTenantID, day, store.UsageKeyPinnedBytes); got != 140 {
 			t.Fatalf("pinned %d", got)
+		}
+		// A new day writes the day's rows again.
+		if n, err := rc.Run(ctx, st, now.Add(24*time.Hour)); err != nil || n != 8 {
+			t.Fatalf("a new day wrote %d: %v", n, err)
 		}
 	})
 }
@@ -246,4 +257,55 @@ func TestAddDoesNotAllocate(t *testing.T) {
 	if n := testing.AllocsPerRun(100, func() { m.Add("t", usage.APIRequests, 1) }); n != 0 {
 		t.Fatalf("%v allocations", n)
 	}
+}
+
+// The last message of a limit goes to one caller only, whatever the number of
+// callers at once; a reservation can be undone; a flush that ended since the
+// row was read makes the reservation ask for the row again.
+func TestReserveTakesTheLastSlotOnce(t *testing.T) {
+	m := usage.NewMeter(nil)
+	var wg sync.WaitGroup
+	var took atomic.Int64
+	gen := m.Gen()
+	for range 64 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ok, _ := m.Reserve("t", usage.Mail, 1, 4, 10, gen); ok { // 4 are written already
+				took.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if took.Load() != 6 {
+		t.Fatalf("%d reservations, 6 slots were left", took.Load())
+	}
+	m.Add("t", usage.Mail, -1) // undone
+	if ok, _ := m.Reserve("t", usage.Mail, 1, 4, 10, gen); !ok {
+		t.Fatal("the undone slot was not free")
+	}
+	if ok, stale := m.Reserve("t", usage.Mail, 1, 4, 10, gen+1); ok || !stale {
+		t.Fatal("a stale row was taken as current")
+	}
+}
+
+// FlushTenant writes one tenant's counts and leaves the others for their own flush.
+func TestFlushTenantWritesOnlyThatTenant(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Date(2026, 3, 5, 12, 0, 0, 0, time.UTC)
+		m := usage.NewMeter(func() time.Time { return now })
+		makeTenant(t, st, "T000000014")
+		m.Add(store.DefaultTenantID, usage.APIRequests, 3)
+		m.Add("T000000014", usage.APIRequests, 4)
+		if err := m.FlushTenant(ctx, st, "T000000014"); err != nil {
+			t.Fatal(err)
+		}
+		if value(t, st, "T000000014", "2026-03-05", store.UsageKeyAPIRequests) != 4 || value(t, st, store.DefaultTenantID, "2026-03-05", store.UsageKeyAPIRequests) != 0 {
+			t.Fatal("one tenant's flush wrote another's")
+		}
+		if m.Pending(store.DefaultTenantID, usage.APIRequests) != 3 {
+			t.Fatal("the other tenant's count was taken")
+		}
+	})
 }

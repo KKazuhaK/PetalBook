@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -163,4 +164,51 @@ func UsageDailyValue(ctx context.Context, q Q, tenantID, day, key string) (int64
 		return 0, nil
 	}
 	return n, err
+}
+
+// UsageDailyOfTenants returns the rows of one day of the given tenants (an
+// index range of the primary key for each), as tenant -> key -> value.
+func UsageDailyOfTenants(ctx context.Context, q Q, day string, ids []string) (map[string]map[string]int64, error) {
+	out := map[string]map[string]int64{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ")
+	args := []any{day}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := q.Query(ctx, `SELECT tenant_id, key, value FROM tenant_usage_daily WHERE day = ? AND tenant_id IN (`+marks+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t, k string
+		var v int64
+		if err := rows.Scan(&t, &k, &v); err != nil {
+			return nil, err
+		}
+		if out[t] == nil {
+			out[t] = map[string]int64{}
+		}
+		out[t][k] = v
+	}
+	return out, rows.Err()
+}
+
+// SetTenantTotalKeys sets some of the totals of a tenant's day: only the keys
+// of vals.
+func SetTenantTotalKeys(ctx context.Context, q Q, tenantID, day string, vals map[string]int64) error {
+	for k, v := range vals {
+		if err := SetUsageDaily(ctx, q, tenantID, day, k, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Values are the totals of a tenant as key -> value.
+func (t TenantTotals) Values() map[string]int64 {
+	return map[string]int64{UsageKeyPeople: t.People, UsageKeySpaces: t.Spaces, UsageKeyBytes: t.Bytes, UsageKeyPinnedBytes: t.PinnedBytes}
 }
