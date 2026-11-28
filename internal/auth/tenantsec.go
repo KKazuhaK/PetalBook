@@ -38,12 +38,7 @@ func (s *Service) tenantValue(ctx context.Context, tenant, key string) (any, boo
 // tenantOfPerson is the tenant whose sign-in policy applies to a person: their
 // own, except for a site administrator, who always follows the site's (as for
 // ssoOnly): "".
-func tenantOfPerson(u *store.User) string {
-	if u.SiteAdmin {
-		return ""
-	}
-	return u.TenantID
-}
+func tenantOfPerson(u *store.User) string { return u.PolicyTenant() }
 
 func days(n int64) time.Duration { return time.Duration(n) * 24 * time.Hour }
 
