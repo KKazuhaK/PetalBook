@@ -2,10 +2,10 @@
 
 Status: plan, 2026-11-26, on main f379e41. PR 1 (section 6) is built; PRs 2 and 3 are not.
 Open question 2 is decided (owner, 2026-11-26): a change of plan clears **every**
-manual rule of the tenant, dated or not, and leaves billing's (and, added with
-`features.tenantAudit`, that key's own manual rule: the site's decision about the
-tenant, which a plan change must not undo); the answer lists `cleared` only. One
-place: `store.DeleteManualRules`, which takes the keys to keep. Round 1 of the review also
+manual rule of the tenant, dated or not, and leaves billing's; the answer lists
+`cleared` only. This includes the manual rule of `features.tenantAudit` (the
+owner dropped an earlier exception on 2026-11-27). One place:
+`store.DeleteManualRules`. Round 1 of the review also
 took the tenant layer off `quota.*` (section 3.1).
 
 Owner decisions this plan implements (2026-11-25/26, approved):
@@ -210,9 +210,8 @@ tenant default > site default > space owner) is this same order.
   the plan's shared map (built once per plan, site generation and plan
   generation), just as tenants with no rows share the site's `follow` map today.
 - `PUT …/tenants/{t}/plan` sets `plan_id` and clears every manual rule of the
-  tenant, an undated adjustment and a dated grant alike (billing's stay, and so does
-  the manual rule of `features.tenantAudit`: the site's decision about the tenant,
-  not an adjustment to a plan, so a plan change cannot turn the audit on), and
+  tenant, an undated adjustment and a dated grant alike (billing's stay; the rule of
+  `features.tenantAudit` is cleared like any other, owner, 2026-11-27), and
   lists them in the answer as `cleared` (open question 2, decided). It bumps
   that tenant's generation. A grant that should outlive the change is set again
   after it.
@@ -585,9 +584,9 @@ run on SQLite and PostgreSQL (`PETALBOOK_TEST_POSTGRES`).
 2. **Changing a tenant's plan clears its manual rules.** Decided (owner,
    2026-11-26): every manual rule goes, undated and dated alike; billing's
    rules stay; the answer lists `cleared` only. (The recommendation had been
-   to keep the dated grants; it was not taken.) One exception, added with
-   `features.tenantAudit`: that key's manual rule stays, because it is the
-   site's decision about the tenant and not an adjustment to a plan.
+   to keep the dated grants; it was not taken.) (An exception for
+   `features.tenantAudit` was added and then dropped, owner, 2026-11-27: that
+   rule is cleared too.)
 
 ## 9. Review round 1 (2026-11-26)
 

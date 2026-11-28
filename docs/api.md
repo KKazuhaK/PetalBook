@@ -9388,10 +9388,8 @@ internal billing module's unit; the site's administrators define them.
 - `PUT /api/admin/tenants/{tenant}/plan` `{"plan": "slug"|null}` gives a tenant a
   plan. It clears **every** manual rule of the tenant, undated adjustments and
   dated grants alike (a grant that should outlive the change is set again
-  after it), except the rule of `features.tenantAudit`: that one is the site's
-  decision about the tenant (stamped when the tenant was made, or set by a site
-  administrator), not an adjustment to a plan, and clearing it would turn the
-  audit log on for a tenant the site withheld it from. Billing's rules stay. The answer is `{"plan", "cleared": [...]}`,
+  after it), the rule of `features.tenantAudit` included (a site administrator
+  sets it again after the change). Billing's rules stay. The answer is `{"plan", "cleared": [...]}`,
   each rule with its `key`.
 - Plans are held in memory as one snapshot with its own generation; a plan
   change recomputes the tenants lazily at their next read.
@@ -11143,7 +11141,7 @@ SQLite and PostgreSQL.
 | `role_from_idp` | `groups.admins` promoted or demoted a person, or skipped a demotion | `user`, `provider`, `from`, `to`, `skipped` |
 | `email_released` | an unverified address moved to the account that confirmed it | `user` (the one cleared), `to` |
 | `plan_created`, `plan_changed`, `plan_deleted` | a plan | `plan`, `rules`, `affected`; `plan_changed` also `from` and `to` (each key's rule before and after, `null` for none) |
-| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (the manual rules, dated or not, except `features.tenantAudit`'s, each `{key, value, lower, from, until}`) |
+| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (the manual rules, dated or not, each `{key, value, lower, from, until}`) |
 | `storage_target_changed` | a tenant's storage target made, changed or removed | `tenant`, `kind`, `owner` or `host` and `namespace`, secrets as `"changed"` |
 | `storage_repository_created` | a repository made at a tenant's target for a space | `space`, `repository` |
 | `space_storage_moved` | a space moved between modes or targets | `space`, `from`, `to`, `job` |

@@ -573,6 +573,32 @@ func TestAPlanChangeClearsEveryManualRuleAndLeavesBilling(t *testing.T) {
 	})
 }
 
+// The audit switch is a manual rule like any other: a change of plan clears it.
+func TestAPlanChangeClearsTheTenantAuditRuleToo(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s, _ := withClock(t, st)
+		if err := store.InsertPlan(ctx, st.Q(), store.Plan{ID: "P1", Slug: "team", Name: "Team"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetTenant(ctx, ten, settings.FeatureTenantAudit, settings.Change{Site: true, HasSiteLock: true, SiteLock: true, HasValue: true, Value: false}); err != nil {
+			t.Fatal(err)
+		}
+		if s.On(ctx, ten, settings.FeatureTenantAudit) {
+			t.Fatal("the rule turns the audit off")
+		}
+		cleared, err := s.SetTenantPlan(ctx, ten, "P1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cleared) != 1 || cleared[0].Key != settings.FeatureTenantAudit {
+			t.Fatalf("cleared %+v", cleared)
+		}
+		if !s.On(ctx, ten, settings.FeatureTenantAudit) {
+			t.Fatal("the rule is gone with the plan change")
+		}
+	})
+}
+
 func TestAFeatureIsOnUnlessARuleTurnsItOffForOneTenant(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s, _ := withClock(t, st)
