@@ -2322,10 +2322,19 @@ export type SettingLayer = 'site' | 'tenant' | 'space' | 'person'
 export type SettingKind = 'boolean' | 'choice' | 'limit' | 'list' | 'text' | 'doc'
 // What a layer lets the layers below it do.
 export interface SettingLower {
-  mode: 'allow' | 'restrict' | 'lock'
+  mode: 'allow' | 'tighten' | 'restrict' | 'lock'
   options?: (string | boolean)[]
   max?: number
+  // Why the rule is there, at most 200 characters, shown to the layers below beside the setting. On a write, a rule
+  // without one keeps the stored note; an empty one clears it.
+  note?: string
 }
+// What stricter means for a key, which the lower mode tighten needs; a key without one cannot be tightened.
+// higher/lower: a larger/smaller number (or true/false); order: later in the choices; subset: fewer entries.
+export type Strictness = 'higher' | 'lower' | 'order' | 'subset'
+// The rule a tenant's layer is held to, as the tenant is shown it. floor: under tighten, the value the tenant's own
+// must be at least as strict as.
+export type SettingReason = SettingLower & { by: 'site'; floor?: unknown }
 export interface SiteSetting {
   key: string
   kind: SettingKind
@@ -2333,6 +2342,7 @@ export interface SiteSetting {
   // The values of a choice setting, loosest first.
   choices?: string[]
   site: { value: unknown; lower: SettingLower; fromFlag?: boolean }
+  strictness?: Strictness
   // The server's own, with no tenant layer: the reason, in words.
   serverWide?: string
   // Set by PUT when the new rule makes this many tenants' values ineffective.
@@ -2366,6 +2376,10 @@ export interface TenantSetting {
   layers: SettingLayer[]
   site: { value: unknown; lower: SettingLower }
   choices?: string[]
+  strictness?: Strictness
+  // The rule the tenant's layer is held to (the site's, or its rule for this tenant) with its note; absent when the
+  // site allows everything.
+  reason?: SettingReason
   // value and lower are the tenant's own. rules are the rules for this one tenant, strongest first (at most one per
   // source): a value in place of the site's, and the rule the tenant's layer is held to (a lock forces the value, a
   // restriction bounds the tenant's), each with the window it counts in. siteLocked says the rule in effect is a lock.

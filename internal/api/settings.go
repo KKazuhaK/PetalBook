@@ -47,6 +47,9 @@ type siteSettingResp struct {
 	// tenant's settings); ServerWide, why it is the same for every tenant.
 	ForTenant  bool   `json:"forTenant,omitempty"`
 	ServerWide string `json:"serverWide,omitempty"`
+	// Strictness says what stricter means for the key (higher, lower, order,
+	// subset), which the lower mode tighten needs; none: it cannot be tightened.
+	Strictness settings.Strictness `json:"strictness,omitempty"`
 }
 
 type tenantSettingResp struct {
@@ -57,7 +60,21 @@ type tenantSettingResp struct {
 	Tenant    *settings.TenantView `json:"tenant"`
 	Effective any                  `json:"effective"`
 	// Choices are the values of a choice setting, loosest first.
-	Choices []string `json:"choices,omitempty"`
+	Choices    []string            `json:"choices,omitempty"`
+	Strictness settings.Strictness `json:"strictness,omitempty"`
+	// Reason says why the tenant's layer cannot be set freely: the rule it is
+	// held to (the site's, or its rule for this tenant) with the site's note;
+	// absent when the site allows everything.
+	Reason *reasonView `json:"reason,omitempty"`
+}
+
+// reasonView is the rule above a tenant's layer as the tenant is shown it:
+// who made it, its mode, options or max and note, and under tighten the floor,
+// the value the tenant's own must be at least as strict as.
+type reasonView struct {
+	By string `json:"by"`
+	settings.Lower
+	Floor any `json:"floor,omitempty"`
 }
 
 // tenantSettingOf is a setting as the API shows it for a tenant. Who set a rule
@@ -75,7 +92,14 @@ func tenantSettingOf(e *settings.Effective, showSetBy bool) tenantSettingResp {
 		cp.SiteRule = nil
 		tv = &cp
 	}
-	return tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{e.Site.Value, e.Site.Lower}, tv, e.Value, d.Choices}
+	var reason *reasonView
+	if e.Above.Mode != settings.Allow {
+		reason = &reasonView{By: "site", Lower: e.Above}
+		if e.Above.Mode == settings.Tighten {
+			reason.Floor = e.Floor
+		}
+	}
+	return tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{e.Site.Value, e.Site.Lower}, tv, e.Value, d.Choices, d.Strict, reason}
 }
 
 // tenantSiteView is what a tenant is shown of the site's layer: the value and
@@ -94,7 +118,7 @@ func (s *server) adminGetSettings(c *call) {
 	out := []siteSettingResp{}
 	for _, d := range s.settings.Defs() {
 		e := eff[d.Key]
-		out = append(out, siteSettingResp{d.Key, d.Kind, d.Layers, e.Site, d.Choices, d.ForTenant, d.ServerWide})
+		out = append(out, siteSettingResp{d.Key, d.Kind, d.Layers, e.Site, d.Choices, d.ForTenant, d.ServerWide, d.Strict})
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Settings []siteSettingResp `json:"settings"`
@@ -249,7 +273,7 @@ func (s *server) adminPutSetting(c *call) {
 		return
 	}
 	s.audit(c, auth.AuditEvent{Kind: "setting_changed", Actor: c.user().ID, Tenant: "-",
-		Detail: map[string]any{"key": key, "layer": "site", "source": "manual", "from": before.Site, "to": after.Site}})
+		Detail: noted(map[string]any{"key": key, "layer": "site", "source": "manual", "from": before.Site, "to": after.Site}, ch.Lower, ch.HasLower)})
 	d, _ := s.settings.Def(key)
 	out := struct {
 		siteSettingResp
@@ -257,7 +281,7 @@ func (s *server) adminPutSetting(c *call) {
 		// Remotes is how many spaces the requirement of a remote now asks
 		// something of, with a change of storage.remotes.*.
 		Remotes *spaces.Affected `json:"remotes,omitempty"`
-	}{siteSettingResp: siteSettingResp{d.Key, d.Kind, d.Layers, after.Site, d.Choices, d.ForTenant, d.ServerWide}}
+	}{siteSettingResp: siteSettingResp{d.Key, d.Kind, d.Layers, after.Site, d.Choices, d.ForTenant, d.ServerWide, d.Strict}}
 	if ch.HasLower {
 		out.Affected = &affected
 	}
@@ -352,6 +376,11 @@ func (s *server) adminPutTenantSetting(c *call) {
 			detail["window"] = map[string]any{"from": optTime(r.From), "until": optTime(r.Until)}
 		}
 	}
+	if ch.HasSiteRule && ch.SiteRule != nil {
+		noted(detail, ch.SiteRule.Lower, true)
+	} else {
+		noted(detail, ch.Lower, ch.HasLower)
+	}
 	s.audit(c, auth.AuditEvent{Kind: "setting_changed", Actor: c.user().ID, Tenant: t.ID, Detail: detail})
 	out := struct {
 		tenantSettingResp
@@ -362,6 +391,15 @@ func (s *server) adminPutTenantSetting(c *call) {
 			"There is one manual rule for each setting. A dated rule replaced the undated one: when its window ends, the value is not the undated one but what is below it (billing, the plan, the site)."}
 	}
 	writeJSON(c.w, http.StatusOK, out)
+}
+
+// noted adds the note a change sent with its rule to the audit detail (the
+// rule itself, note included, is in from and to).
+func noted(detail map[string]any, l *settings.Lower, given bool) map[string]any {
+	if given && l != nil && l.NoteSet {
+		detail["note"] = l.Note
+	}
+	return detail
 }
 
 // warningResp is a warning that comes with a change that went through.

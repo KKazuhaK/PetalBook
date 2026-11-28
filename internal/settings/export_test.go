@@ -15,3 +15,6 @@ func (s *Service) SetAfterPlanRows(f func()) { s.afterPlanRows = f }
 // SetBoundaryFault makes the timer's reads of the boundaries fail while f
 // answers true.
 func (s *Service) SetBoundaryFault(f func() bool) { s.boundaryFault = f }
+
+// Looser is whether v is looser than above under d's strictness.
+func Looser(d *Def, v, above any) bool { return d.looser(v, above) }

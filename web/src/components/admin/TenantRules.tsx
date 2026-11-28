@@ -62,6 +62,7 @@ const SOURCE_VARIANT: Record<Source, 'default' | 'secondary' | 'outline'> = {
 export function lowerText(s: Pick<TenantSetting, 'key' | 'kind'>, l: SettingLower | null): string {
   if (!l || l.mode === 'allow') return ''
   if (l.mode === 'lock') return tx.locked
+  if (l.mode === 'tighten') return tx.minimum
   if (l.max !== undefined) return tx.atMost(showValue(s, l.max))
   return tx.restricted((l.options ?? []).map(String).join(', '))
 }

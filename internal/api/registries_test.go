@@ -48,7 +48,10 @@ func registriesJSON(t *testing.T) []byte {
 		Permissions     []perm     `json:"permissions"`
 		AuditCategories []category `json:"auditCategories"`
 		SettingKeys     []string   `json:"settingKeys"`
-	}{Permissions: []perm{}, AuditCategories: []category{}, SettingKeys: []string{}}
+		// SettingStrictness is what stricter means for each key that can be
+		// tightened (the lower mode tighten); the other keys are left out.
+		SettingStrictness map[string]string `json:"settingStrictness"`
+	}{Permissions: []perm{}, AuditCategories: []category{}, SettingKeys: []string{}, SettingStrictness: map[string]string{}}
 	for _, in := range authz.All() {
 		out.Permissions = append(out.Permissions, perm{in.Name, in.Scope.String(), in.Feature, in.Description, in.BuiltInOnly})
 	}
@@ -68,6 +71,9 @@ func registriesJSON(t *testing.T) []byte {
 	}
 	for _, d := range settings.Definitions() {
 		out.SettingKeys = append(out.SettingKeys, d.Key)
+		if d.Strict != "" {
+			out.SettingStrictness[d.Key] = string(d.Strict)
+		}
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

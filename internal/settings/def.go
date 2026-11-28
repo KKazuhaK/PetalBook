@@ -17,6 +17,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
+
+	"petalbook.app/server/internal/store"
 )
 
 // Layer is one level of the hierarchy.
@@ -45,10 +48,35 @@ const (
 
 // Modes of a Lower.
 const (
-	Allow    = "allow"
+	Allow = "allow"
+	// Tighten lets a lower layer set a value at least as strict as the value
+	// above it (the site's own value, or its value for the tenant); the key's
+	// Strict says what stricter means. Between Allow and Restrict.
+	Tighten  = "tighten"
 	Restrict = "restrict"
 	Lock     = "lock"
 )
+
+// Strictness says which of two values of a key is the stricter, which a
+// tighten rule needs. A key without one cannot be tightened.
+type Strictness string
+
+// The orders of strictness.
+const (
+	// StrictHigher: a larger number is stricter, or true for a boolean.
+	StrictHigher Strictness = "higher"
+	// StrictLower: a smaller number is stricter, or false for a boolean. For a
+	// number, null (no limit) is the loosest.
+	StrictLower Strictness = "lower"
+	// StrictOrder: a choice is the stricter the later it is in Choices.
+	StrictOrder Strictness = "order"
+	// StrictSubset: a list is stricter when it holds fewer of the entries
+	// allowed above ("*", the entry for all, is the loosest of all).
+	StrictSubset Strictness = "subset"
+)
+
+// MaxNote is the most characters of a rule's note.
+const MaxNote = store.MaxLayeredNote
 
 // Lower says what the layers below may do.
 type Lower struct {
@@ -58,6 +86,29 @@ type Lower struct {
 	Options []any `json:"options,omitempty"`
 	// Max is the largest number a lower layer may set (restrict, limit settings).
 	Max *int64 `json:"max,omitempty"`
+	// Note is the reason the rule is shown with, at most MaxNote characters. It
+	// is stored in the note column of the row, never in the rule's JSON, and
+	// read back into the views. NoteSet says a writer sent one (an empty note
+	// clears it); a writer that sends none keeps the one stored.
+	Note    string `json:"note,omitempty"`
+	NoteSet bool   `json:"-"`
+}
+
+// UnmarshalJSON reads a rule and remembers whether it carried a note.
+func (l *Lower) UnmarshalJSON(b []byte) error {
+	type plain Lower
+	aux := struct {
+		*plain
+		Note *string `json:"note"`
+	}{plain: (*plain)(l)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	l.Note, l.NoteSet = "", aux.Note != nil
+	if aux.Note != nil {
+		l.Note = *aux.Note
+	}
+	return nil
 }
 
 // Def defines a setting.
@@ -94,12 +145,11 @@ type Def struct {
 	// (profile.go) switch every such setting off, and their test fails for one
 	// that is not listed.
 	Outward bool
-	// TightenOnly is a tenant layer that may only make the setting stricter
-	// than the value above it (docs/api.md, the lower mode `tighten`): a
-	// boolean where true is the stricter, such as signin.ssoOnly. A looser
-	// value is refused when the tenant writes it; one stored before the value
-	// above became stricter is kept, not in effect.
-	TightenOnly bool
+	// Strict says which of two values is the stricter, so that a site (or its rule
+	// for a tenant) may set the lower mode tighten: a layer below then holds a
+	// value at least as strict as the one above (docs/api.md, "Forced,
+	// minimum, default"). "" means the key cannot be tightened.
+	Strict Strictness
 	// TenantDefault, when set, is the value of a tenant that neither sets the
 	// setting nor has a rule for it: the site's own value is then for the
 	// site's own people (the default tenant) only and never flows into a
@@ -107,9 +157,56 @@ type Def struct {
 	TenantDefault any
 }
 
-// looser reports whether v is looser than above under TightenOnly.
+// looser reports whether v is looser than above under the key's strictness;
+// false for a key without one.
 func (d *Def) looser(v, above any) bool {
-	return d.TightenOnly && d.Kind == Bool && v == false && above == true
+	switch d.Strict {
+	case StrictHigher, StrictLower:
+		switch d.Kind {
+		case Bool:
+			a, ok1 := above.(bool)
+			b, ok2 := v.(bool)
+			if !ok1 || !ok2 || a == b {
+				return false
+			}
+			return b == (d.Strict == StrictLower) // the stricter value is above's
+		case Limit:
+			if above == nil {
+				return false
+			}
+			if v == nil {
+				return true
+			}
+			a, ok1 := toInt(above)
+			b, ok2 := toInt(v)
+			if !ok1 || !ok2 {
+				return false
+			}
+			if d.Strict == StrictLower {
+				return b > a
+			}
+			return b < a
+		}
+	case StrictOrder:
+		a, ok1 := above.(string)
+		b, ok2 := v.(string)
+		return ok1 && ok2 && slices.Index(d.Choices, b) < slices.Index(d.Choices, a)
+	case StrictSubset:
+		a, ok1 := toStrings(above)
+		b, ok2 := toStrings(v)
+		if !ok1 || !ok2 || slices.Contains(a, "*") {
+			return false
+		}
+		if slices.Contains(b, "*") {
+			return true
+		}
+		for _, x := range b {
+			if !slices.Contains(a, x) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Has reports whether the setting exists in layer l.
@@ -252,9 +349,14 @@ func (d *Def) CheckLower(l Lower) (Lower, error) {
 	switch l.Mode {
 	case Allow, Lock:
 		return Lower{Mode: l.Mode}, nil
+	case Tighten:
+		if d.Strict == "" {
+			return Lower{}, bad("%s has no order of strictness, so it cannot be tightened", d.Key)
+		}
+		return Lower{Mode: Tighten}, nil
 	case Restrict:
 	default:
-		return Lower{}, bad("lower.mode is allow, restrict or lock")
+		return Lower{}, bad("lower.mode is allow, tighten, restrict or lock")
 	}
 	switch d.Kind {
 	case Bool:
@@ -308,6 +410,15 @@ func (l Lower) Allows(d *Def, v any) bool {
 		return false
 	}
 	return true
+}
+
+// AllowsOver is Allows for a layer whose value sits on base, the value above
+// it: under tighten a value is allowed when it is not looser than base.
+func (l Lower) AllowsOver(d *Def, v, base any) bool {
+	if l.Mode == Tighten {
+		return !d.looser(v, base)
+	}
+	return l.Allows(d, v)
 }
 
 // Nearest is v when the Lower allows it, else the value it allows nearest to
@@ -385,6 +496,8 @@ func (l Lower) Tightens(d *Def, above Lower) bool {
 			}
 		}
 		return false
+	case Tighten:
+		return l.Mode != Allow
 	}
 	return true
 }
@@ -405,4 +518,23 @@ func decode(raw string) (any, error) {
 		return nil, err
 	}
 	return v, nil
+}
+
+// noteOf checks the note of a rule a writer sends: the note to store, whether
+// to replace the stored one (a note sent, or a rule that no longer limits
+// anything has none), and a refusal. l is nil when the rule is removed.
+func noteOf(l *Lower) (note string, set bool, err error) {
+	switch {
+	case l == nil:
+		return "", true, nil
+	case l.NoteSet:
+		if n := utf8.RuneCountInString(l.Note); n > MaxNote {
+			return "", false, bad("note is at most %d characters", MaxNote)
+		}
+		if l.Mode == Allow && l.Note != "" {
+			return "", false, bad("a rule that allows everything has no note")
+		}
+		return l.Note, true, nil
+	}
+	return "", l.Mode == Allow, nil
 }

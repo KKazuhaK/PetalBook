@@ -1642,7 +1642,8 @@
        }
       ]
      }
-    }
+    },
+    "strictness?": "string"
    }
   ]
  },
@@ -2153,6 +2154,12 @@
     "layers": [
      "string"
     ],
+    "reason?": {
+     "by": "string",
+     "floor?": "boolean",
+     "max?": "number",
+     "mode": "string"
+    },
     "site": {
      "lower": {
       "max?": "number",
@@ -2167,6 +2174,7 @@
       ]
      }
     },
+    "strictness?": "string",
     "tenant": {
      "inEffect": "boolean",
      "lower": "null",
@@ -6487,7 +6495,8 @@
      }
     ]
    }
-  }
+  },
+  "strictness?": "string"
  },
  "PUT /api/admin/settings/{} 400": {
   "error": "string",
@@ -6606,6 +6615,11 @@
   "layers": [
    "string"
   ],
+  "reason?": {
+   "by": "string",
+   "max?": "number",
+   "mode": "string"
+  },
   "site": {
    "lower": {
     "max?": "number",
@@ -6613,6 +6627,7 @@
    },
    "value": "boolean|null|number|string"
   },
+  "strictness?": "string",
   "tenant": {
    "inEffect": "boolean",
    "lower": "null",

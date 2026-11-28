@@ -919,5 +919,24 @@
     "audit.keepDays.reads",
     "audit.keepDays.downloads",
     "audit.keepDays.api"
-  ]
+  ],
+  "settingStrictness": {
+    "files.maxBytes": "lower",
+    "registration.mode": "order",
+    "registration.perHour": "lower",
+    "sessions.idleDays": "lower",
+    "sessions.maxDays": "lower",
+    "signin.lockout.enabled": "higher",
+    "signin.lockout.minutes": "higher",
+    "signin.maxFailures": "lower",
+    "signin.perMinute": "lower",
+    "signin.social": "subset",
+    "signin.ssoOnly": "higher",
+    "signin.ssoOnlyAdmins": "higher",
+    "storage.hosts": "subset",
+    "storage.localSpaces.maxBytes": "lower",
+    "storage.partial.unsupported": "order",
+    "storage.remotes.graceDays": "lower",
+    "storage.remotes.scope": "order"
+  }
 }

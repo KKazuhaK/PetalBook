@@ -459,7 +459,13 @@ function PlanRuleDialog({
     <RuleDialog
       // The form starts again for another setting.
       key={s.key}
-      setting={{ key: s.key, kind: s.kind, choices: s.choices, tenantSets: s.layers.includes('tenant') }}
+      setting={{
+        key: s.key,
+        kind: s.kind,
+        choices: s.choices,
+        strictness: s.strictness,
+        tenantSets: s.layers.includes('tenant'),
+      }}
       title={adding ? tp.addRuleTitle : undefined}
       rule={rule}
       start={s.site.value}

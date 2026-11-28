@@ -51,6 +51,9 @@ func ruleView(d *Def, r *store.LayeredRow) (*RuleView, error) {
 		if err := json.Unmarshal([]byte(r.Lower), &l); err != nil {
 			return nil, err
 		}
+		if l.Mode != Allow {
+			l.Note = r.Note
+		}
 		rv.Lower = &l
 	}
 	return rv, nil
@@ -120,6 +123,9 @@ func tenantViewOf(d *Def, r *store.LayeredRow) (*TenantView, error) {
 		var l Lower
 		if err := json.Unmarshal([]byte(r.Lower), &l); err != nil {
 			return nil, err
+		}
+		if l.Mode != Allow {
+			l.Note = r.Note
 		}
 		tv.Lower = &l
 	}
@@ -287,8 +293,9 @@ func tenantEffective(d *Def, site SiteView, rules []*RuleView, tv *TenantView, n
 			}
 		}
 	}
+	e.Floor = e.Value
 	if tv.Value != nil {
-		tv.InEffect = e.Above.Allows(d, tv.Value) && !d.looser(tv.Value, e.Value)
+		tv.InEffect = e.Above.AllowsOver(d, tv.Value, e.Floor)
 		if tv.InEffect {
 			e.Value, e.Source = tv.Value, Tenant
 		}
@@ -360,8 +367,16 @@ func (s *Service) ruleRow(ctx context.Context, d *Def, layer, layerID, tenant, s
 		if err != nil {
 			return nil, err
 		}
+		note, set, err := noteOf(r.Lower)
+		if err != nil {
+			return nil, err
+		}
 		raw, _ := json.Marshal(l)
 		row.Lower = string(raw)
+		row.Note, row.NoteSet = note, set
+	} else {
+		// A rule without a lower has no note to show.
+		row.NoteSet = true
 	}
 	return row, nil
 }
@@ -462,19 +477,8 @@ func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, 
 	// The tenant's own layer, held to the rule above it as it will be.
 	above := eff.Above
 	// aboveValue is the value the tenant's layer sits on (the site's, or its
-	// rule's for the tenant): what a TightenOnly value may not be looser than.
-	var aboveValue any
-	if d.TightenOnly && !ch.HasSiteRule {
-		var views []*RuleView
-		if eff.Tenant != nil {
-			for i := range eff.Tenant.Rules {
-				r := eff.Tenant.Rules[i]
-				views = append(views, &r)
-			}
-		}
-		e, _ := tenantEffective(d, eff.Site, views, nil, s.now())
-		aboveValue = e.Value
-	}
+	// rule's for the tenant): what a tighten rule holds a value to.
+	aboveValue := eff.Floor
 	if ch.HasSiteRule {
 		var nv *RuleView
 		if ruleRow.Value != "" || ruleRow.Lower != "" {
@@ -484,7 +488,7 @@ func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, 
 		}
 		views := append([]*RuleView{nv}, others...)
 		e, _ := tenantEffective(d, eff.Site, views, nil, s.now())
-		above, aboveValue = e.Above, e.Value
+		above, aboveValue = e.Above, e.Floor
 		// The rule's value is held to the restriction it sets for the tenant.
 		if nv != nil && nv.Value != nil {
 			lim := above
@@ -496,7 +500,8 @@ func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, 
 			}
 		}
 	}
-	var rawValue, rawLower string
+	var rawValue, rawLower, rowNote string
+	var rowNoteSet bool
 	if ch.HasValue && ch.Value != nil {
 		if above.Mode == Lock {
 			return res, nil, &Error{Code: CodeLocked, Msg: key + " is locked by the site's administrators"}
@@ -505,11 +510,8 @@ func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, 
 		if err != nil {
 			return res, nil, err
 		}
-		if !above.Allows(d, val) {
+		if !above.AllowsOver(d, val, aboveValue) {
 			return res, nil, &Error{Code: CodeRestricted, Msg: key + ": " + describe(d, above)}
-		}
-		if d.looser(val, aboveValue) {
-			return res, nil, &Error{Code: CodeRestricted, Msg: key + ": an organisation may make it stricter than the site's, never looser"}
 		}
 		raw, err := json.Marshal(val)
 		if err != nil {
@@ -528,8 +530,13 @@ func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, 
 		if !l.Tightens(d, above) {
 			return res, nil, &Error{Code: CodeRestricted, Msg: key + ": the tenant's rule must be at least as strict as the site's"}
 		}
+		if rowNote, rowNoteSet, err = noteOf(ch.Lower); err != nil {
+			return res, nil, err
+		}
 		raw, _ := json.Marshal(l)
 		rawLower = string(raw)
+	} else if ch.HasLower {
+		rowNote, rowNoteSet = "", true
 	}
 
 	if preview {
@@ -583,7 +590,7 @@ func (s *Service) setTenant(ctx context.Context, tenant, key string, ch Change, 
 			// The tenant's row and the site's rule are separate rows: a write of
 			// one never changes the other, whatever the cache said.
 			if err := store.PutLayeredFields(ctx, q, store.LayeredRow{Layer: string(Tenant), LayerID: tenant, Key: key,
-				Value: rawValue, Lower: rawLower, SetBy: ch.By, Updated: s.now()}, ch.HasValue, ch.HasLower); err != nil {
+				Value: rawValue, Lower: rawLower, SetBy: ch.By, Updated: s.now(), Note: rowNote, NoteSet: rowNoteSet}, ch.HasValue, ch.HasLower); err != nil {
 				return err
 			}
 		}

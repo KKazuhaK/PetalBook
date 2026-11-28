@@ -4,7 +4,7 @@ import { ApiError } from '@/api/client'
 import { useSession } from '@/api/hooks'
 import { useAcrossSite, useScope } from './TenantScope'
 import { usePutSetting, useSiteSettings, useTenancy, useTenant, useTenants, useTenantSettings } from '@/api/admin'
-import type { SettingLower, SiteSetting, TenantSetting } from '@/api/types'
+import type { SettingKind, SettingLower, SiteSetting, Strictness, TenantSetting } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -19,6 +19,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { tt } from '@/i18n/tenants'
 import { SecretsSection } from './SecretsSection'
 import { needsCapabilityConfirm, useCapabilityConfirm } from './CapabilityConfirm'
+import { isLooser } from '@/api/strictness'
 
 const ts = tt.settings
 
@@ -33,10 +34,14 @@ export function settingError(e: unknown): string {
 
 const nameOf = (key: string) => ts.names[key] ?? key
 
+// The most characters of a rule's note.
+export const NOTE_MAX = 200
+
 // What a lock or a restriction says, in words: the site's rule for the layer below it, as that layer sees it.
 function RuleText({ lower, kind }: { lower: SettingLower; kind: string }) {
   if (lower.mode === 'allow') return null
   if (lower.mode === 'lock') return <Badge variant="secondary">{ts.lockedBy.site}</Badge>
+  if (lower.mode === 'tighten') return <Badge variant="secondary">{ts.tightenedBy}</Badge>
   const what =
     kind === 'limit' && lower.max !== undefined
       ? ts.atMost(lower.max)
@@ -54,6 +59,9 @@ function ValueEditor({
   label,
   choices,
   words,
+  looser,
+  floor,
+  strictness,
   onChange,
 }: {
   kind: string
@@ -62,6 +70,11 @@ function ValueEditor({
   label: string
   choices?: string[]
   words?: Record<string, string>
+  // Under a minimum from the site (tighten): whether a value would be looser than it, so that the control can grey
+  // out what the server would refuse; floor and strictness bound a number.
+  looser?: (v: unknown) => boolean
+  floor?: unknown
+  strictness?: Strictness
   onChange: (v: unknown) => void
 }) {
   switch (kind) {
@@ -75,7 +88,12 @@ function ValueEditor({
           onChange={(e) => onChange(e.target.value)}
         >
           {(choices ?? []).map((c) => (
-            <option key={c} value={c}>
+            <option
+              key={c}
+              value={c}
+              disabled={looser?.(c) === true}
+              title={looser?.(c) ? ts.looserBlocked : undefined}
+            >
               {words?.[c] ?? c}
             </option>
           ))}
@@ -86,7 +104,8 @@ function ValueEditor({
         <Switch
           className={HIT}
           checked={value === true}
-          disabled={disabled}
+          // The control moves to the other value: greyed out when that one is looser than the minimum.
+          disabled={disabled || looser?.(value !== true) === true}
           aria-label={label}
           onCheckedChange={onChange}
         />
@@ -99,6 +118,9 @@ function ValueEditor({
           className="h-10 w-full lg:h-8"
           aria-label={label}
           disabled={disabled}
+          {...(typeof floor === 'number' && strictness === 'lower' ? { max: floor } : {})}
+          {...(typeof floor === 'number' && strictness === 'higher' ? { min: floor } : {})}
+          aria-invalid={looser?.(value) ? true : undefined}
           value={typeof value === 'number' ? String(value) : ''}
           onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
         />
@@ -145,6 +167,9 @@ export function RuleEditor({
   label,
   choices,
   words,
+  strictness,
+  noteLabel = ts.noteLabel,
+  notePlaceholder = ts.notePlaceholder,
   onChange,
 }: {
   kind: string
@@ -153,20 +178,33 @@ export function RuleEditor({
   label: string
   choices?: string[]
   words?: Record<string, string>
+  // What stricter means for the key: with it the rule may be a minimum (tighten).
+  strictness?: Strictness
+  // The words of the note field, where the caller has its own.
+  noteLabel?: string
+  notePlaceholder?: string
   onChange: (l: SettingLower) => void
 }) {
   const canRestrict = kind === 'boolean' || kind === 'limit' || kind === 'choice'
+  // The note goes with the rule through a change of mode; allowing everything has none.
+  const keep = lower.note !== undefined ? { note: lower.note } : {}
   const set = (mode: string) => {
     if (mode === 'restrict')
       onChange(
         kind === 'boolean'
-          ? { mode: 'restrict', options: [false] }
+          ? { mode: 'restrict', options: [false], ...keep }
           : kind === 'limit'
-            ? { mode: 'restrict', max: lower.max ?? 1 }
-            : { mode: 'restrict', options: lower.options?.length ? lower.options : (choices ?? []).slice(0, 1) },
+            ? { mode: 'restrict', max: lower.max ?? 1, ...keep }
+            : {
+                mode: 'restrict',
+                options: lower.options?.length ? lower.options : (choices ?? []).slice(0, 1),
+                ...keep,
+              },
       )
-    else onChange({ mode: mode as SettingLower['mode'] })
+    else onChange({ mode: mode as SettingLower['mode'], ...(mode === 'allow' ? {} : keep) })
   }
+  // Without a note the field starts empty; emptying it sends "" so that a stored note is cleared.
+  const withNote = (n: string) => onChange({ ...lower, note: n })
   return (
     <div className="grid gap-2">
       <NativeSelect
@@ -177,6 +215,7 @@ export function RuleEditor({
         onChange={(e) => set(e.target.value)}
       >
         <option value="allow">{ts.modes.allow}</option>
+        {strictness && <option value="tighten">{ts.modes.tighten}</option>}
         {canRestrict && <option value="restrict">{ts.modes.restrict}</option>}
         <option value="lock">{ts.modes.lock}</option>
       </NativeSelect>
@@ -189,7 +228,7 @@ export function RuleEditor({
             aria-label={`${label}: ${ts.maxLabel}`}
             disabled={disabled}
             value={lower.max ?? ''}
-            onChange={(e) => onChange({ mode: 'restrict', max: Number(e.target.value) })}
+            onChange={(e) => onChange({ mode: 'restrict', max: Number(e.target.value), ...keep })}
           />
         </div>
       )}
@@ -205,7 +244,7 @@ export function RuleEditor({
                 onChange={(e) => {
                   const on = e.target.checked
                   const next = (choices ?? []).filter((x) => (x === c ? on : (lower.options ?? []).includes(x)))
-                  if (next.length > 0) onChange({ mode: 'restrict', options: next })
+                  if (next.length > 0) onChange({ mode: 'restrict', options: next, ...keep })
                 }}
               />
               {words?.[c] ?? c}
@@ -215,6 +254,18 @@ export function RuleEditor({
       )}
       {lower.mode === 'restrict' && kind === 'boolean' && (
         <span className="text-xs text-muted-foreground">{ts.onlyOff}</span>
+      )}
+      {lower.mode === 'tighten' && <span className="text-xs text-muted-foreground">{ts.tightenHelp}</span>}
+      {lower.mode !== 'allow' && (
+        <Input
+          className="h-10 w-full lg:h-8"
+          aria-label={`${label}: ${noteLabel}`}
+          placeholder={notePlaceholder}
+          maxLength={NOTE_MAX}
+          disabled={disabled}
+          value={lower.note ?? ''}
+          onChange={(e) => withNote(e.target.value)}
+        />
       )}
     </div>
   )
@@ -237,6 +288,9 @@ function Cell({ label, children }: { label: string; children?: ReactNode }) {
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+// A rule with no note and one with an empty note are the same rule.
+const sameRule = (a: SettingLower | null, b: SettingLower | null) =>
+  same(a && { ...a, note: a.note || undefined }, b && { ...b, note: b.note || undefined })
 
 // One setting at the site layer: its value and the rule for everything below. Another page may show one with its own
 // words (title, help, the label of the value); with lockWhenOff, switching a feature off makes the rule a lock (off for
@@ -281,7 +335,7 @@ export function SiteRow({
   }
   const doc = s.kind === 'doc'
   const dirtyValue = !doc && !s.site.fromFlag && !same(value, s.site.value)
-  const dirtyLower = !same(lower, s.site.lower)
+  const dirtyLower = !sameRule(lower, s.site.lower)
   // A feature in use is switched off only after its preview and a second confirmation.
   const capability = useCapabilityConfirm(() => setMessage({ tone: 'info', text: ts.saved }))
   const save = () => {
@@ -330,6 +384,7 @@ export function SiteRow({
             label={`${name}: ${ts.rule}`}
             choices={s.choices}
             words={ts.choices[s.key]}
+            strictness={s.strictness}
             onChange={changeLower}
           />
         </Cell>
@@ -348,6 +403,14 @@ export function SiteRow({
       </div>
     </li>
   )
+}
+
+// A value in words, for "at least as strict as …".
+function floorText(s: { key: string; kind: SettingKind }, v: unknown): string {
+  if (v === null || v === undefined) return ts.none
+  if (typeof v === 'boolean') return v ? ts.on : ts.off
+  if (Array.isArray(v)) return v.join(', ')
+  return ts.choices[s.key]?.[String(v)] ?? String(v)
 }
 
 // One setting at a tenant's layer, with what the site above says about it.
@@ -374,7 +437,7 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
   const canForce = isSite && !doc
   const dirtySiteLock = canForce && siteLock !== forcedForTenant
   const dirtyValue = !doc && !same(follow ? null : value, start)
-  const dirtyLower = !same(lower, mine?.lower ?? { mode: 'allow' })
+  const dirtyLower = !sameRule(lower, mine?.lower ?? { mode: 'allow' })
   // A lock always names a value: following, while forced, forces the value in effect, never null.
   const forcing = canForce && siteLock
   const sent = follow ? (forcing ? s.effective : null) : value
@@ -403,12 +466,17 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
     })
   }
   const kept = mine && mine.value != null && !mine.inEffect
+  // What the layer above says: its rule for this tenant, with its note ("why can I not change this").
+  const reason = s.reason ?? (s.site.lower.mode === 'allow' ? undefined : s.site.lower)
+  const tightened = reason?.mode === 'tighten'
+  const floor = s.reason?.floor
+  const looser = tightened ? (v: unknown) => isLooser(s.strictness, s.kind, s.choices, v, floor) : undefined
   return (
     <li className={ROW} data-slot="setting-row" data-key={s.key}>
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{name}</span>
-          <RuleText lower={s.site.lower} kind={s.kind} />
+          <RuleText lower={reason ?? s.site.lower} kind={s.kind} />
           {forcedForTenant && <Badge variant="secondary">{ts.siteLockedByYou}</Badge>}
           {kept && (
             <Badge variant="outline" data-slot="not-in-effect" title={ts.keptHint}>
@@ -417,7 +485,7 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
           )}
         </div>
         {ts.helps[s.key] && <p className="text-xs text-muted-foreground">{ts.helps[s.key]}</p>}
-        {kept && <p className="text-xs text-muted-foreground">{ts.keptHint}</p>}
+        {kept && <p className="text-xs text-muted-foreground">{tightened ? ts.overriddenBySite : ts.keptHint}</p>}
         {capability.dialog}
         {canForce && (
           <div className="pt-1">
@@ -458,8 +526,21 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
                   label={name}
                   choices={s.choices}
                   words={ts.choices[s.key]}
+                  looser={looser}
+                  floor={floor}
+                  strictness={s.strictness}
                   onChange={setValue}
                 />
+              )}
+              {tightened && floor !== undefined && s.kind !== 'doc' && (
+                <p className="text-xs text-muted-foreground" data-slot="rule-floor">
+                  {ts.stricterThan(floorText(s, floor))}
+                </p>
+              )}
+              {reason?.note && (
+                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="rule-note">
+                  {ts.noteOf(reason.note)}
+                </p>
               )}
             </div>
           )}
@@ -472,6 +553,7 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
             label={`${name}: ${ts.rule}`}
             choices={s.choices}
             words={ts.choices[s.key]}
+            strictness={s.strictness}
             onChange={setLower}
           />
         </Cell>
