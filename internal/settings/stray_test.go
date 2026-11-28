@@ -14,15 +14,17 @@ import (
 // The stray site settings (sign-in policy, storage policy, machine access,
 // tenancy, the daily text's switches) are ordinary keys: a site value, no
 // tenant layer where the policy is the server's.
-// (signin.ssoOnly is the exception: an organisation may require its own SSO.)
+// (signin.ssoOnly, signin.mode, signin.passkeyRoles, sessions.* and
+// captcha.contexts are the exceptions: an organisation decides inside what the
+// site allows; see TestTheSigninKeysHaveATenantLayer.)
 func TestTheStraySettingsAreSiteWideKeys(t *testing.T) {
 	t.Parallel()
 	s := settings.New(nil)
 	for _, k := range []string{
-		settings.FeatureTenancy, settings.FeaturePasskeys, settings.SigninMode, settings.SigninPasskeyRoles,
+		settings.FeatureTenancy, settings.FeaturePasskeys,
 		settings.SigninLockoutEnabled, settings.SigninLockoutMinutes, settings.SigninLockoutScope, settings.SigninPerMinute,
-		settings.SigninMaxFailures, settings.SigninWindowMinutes, settings.SessionsIdleDays, settings.SessionsMaxDays,
-		settings.CaptchaProvider, settings.CaptchaContexts, settings.StorageRemotesRequire, settings.StorageRemotesScope,
+		settings.SigninMaxFailures, settings.SigninWindowMinutes,
+		settings.CaptchaProvider, settings.StorageRemotesRequire, settings.StorageRemotesScope,
 		settings.StorageRemotesGraceDays, settings.StorageLocalMaxBytes, settings.StorageHosts, settings.CachePartial,
 		settings.CacheEvictAfterDays, settings.CacheMinIdleHours, settings.CacheClonesBytes, settings.CacheMinFreeBytes,
 		settings.CacheAssetsBytes, settings.DailyLanguages,

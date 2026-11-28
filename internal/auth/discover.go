@@ -121,8 +121,7 @@ func (s *Service) anyRouted(ctx context.Context) bool {
 // identifierFirst fills what the sign-in page says of the address-first step
 // and the SSO entry: by the stored mode (an effective local_only only says no
 // site provider is on; a domain may route to a tenant's own).
-func (s *Service) identifierFirst(ctx context.Context, st *secState, info *PublicInfo) {
-	mode := st.Login.Mode
+func (s *Service) identifierFirst(ctx context.Context, mode string, info *PublicInfo) {
 	if mode == ModeLocalOnly || !s.anyRouted(ctx) {
 		return
 	}

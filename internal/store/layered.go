@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -104,6 +105,31 @@ func queryLayered(ctx context.Context, q Q, query string, args ...any) ([]Layere
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// LayeredOwners lists the layers and layer ids (never the site's own, whose id
+// is empty) that hold a record of one of the keys: the tenants with a value or
+// a rule of their own for them, and the plans with a rule.
+func LayeredOwners(ctx context.Context, q Q, keys ...string) ([][2]string, error) {
+	marks := make([]string, len(keys))
+	args := make([]any, len(keys))
+	for i, k := range keys {
+		marks[i], args[i] = "?", k
+	}
+	rows, err := q.Query(ctx, `SELECT DISTINCT layer, layer_id FROM layered_settings WHERE layer_id <> '' AND key IN (`+strings.Join(marks, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var o [2]string
+		if err := rows.Scan(&o[0], &o[1]); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
 	}
 	return out, rows.Err()
 }

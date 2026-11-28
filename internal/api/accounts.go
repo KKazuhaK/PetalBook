@@ -203,10 +203,13 @@ func (s *server) getSession(c *call) {
 
 // startSession sends the cookie of a new session.
 func (s *server) startSession(c *call, token string) {
-	http.SetCookie(c.w, s.auth.SessionCookie(token))
+	http.SetCookie(c.w, s.auth.SessionCookie(c.r.Context(), token))
 }
 
 type credentials struct {
+	// Tenant is the slug of the tenant the sign-in page is for; it picks the
+	// captcha settings of the login (absent: the site's).
+	Tenant   string              `json:"tenant"`
 	Token    string              `json:"token"`
 	Username string              `json:"username"`
 	Name     string              `json:"name"`
@@ -237,7 +240,14 @@ func (s *server) login(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	res, err := s.auth.Login(c.r.Context(), auth.LoginParams{Username: req.Username, Password: req.Password, IP: s.auth.ClientAddr(c.r), Captcha: req.Captcha})
+	tenant := ""
+	if req.Tenant != "" {
+		var ok bool
+		if tenant, ok = s.scopedTenant(c, req.Tenant); !ok {
+			return
+		}
+	}
+	res, err := s.auth.Login(c.r.Context(), auth.LoginParams{Username: req.Username, Password: req.Password, IP: s.auth.ClientAddr(c.r), Captcha: req.Captcha, TenantID: tenant})
 	if err != nil {
 		s.fail(c.w, err)
 		return

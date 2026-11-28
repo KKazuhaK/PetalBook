@@ -34,6 +34,7 @@ var scopeAllowlist = map[string]string{
 	"CountTenantPasswordAdmins":  "one tenant by its id, given: an organisation requiring its single sign-on keeps an administrator with a password (3.6 d4)",
 	"CountPasskeyRequired":       "a count for the security page, which is the server's own",
 	"DeleteOldInvites":           "background job: expired invites of every tenant",
+	"DeleteExpiredSessions":      "background job: expired sessions of every tenant, by the site's cutoffs and those of the tenants given (their lifetimes)",
 	"NotifyUser":                 "a notification for one person by id: the row carries the person's own tenant, read here",
 	"TrimAudit":                  "background job: the audit log of every tenant",
 	"CountAuditPurgeUpTo":        "the cap given: the site administrator's purge of the audit log of every tenant (site.audit.purge)",
@@ -278,6 +279,7 @@ var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|space
 // (docs/api.md, "Deleting a user": a deleted person is invisible). A query on the
 // users table that does not say deleted_at is on this list with the reason.
 var deletedAllowlist = map[string]string{
+	"DeleteExpiredSessions":   "background job: an expired session of a deleted person ends too; the join only picks the tenant's people",
 	"EndSessionsByMethod":     "ends the sessions that started through a provider when it is deleted, whatever tenant their people are in",
 	"EndTenantSessions":       "ends every session of a tenant's people when it is disabled; ending the (already ended) sessions of a deleted person too is harmless",
 	"DeleteTenantSessionEnds": "forgets a tenant's `disabled` records when it is enabled again; a deleted person's records go with the rest",

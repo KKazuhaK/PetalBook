@@ -27,7 +27,11 @@ export interface CaptchaState {
   missing: boolean
 }
 
-export function useCaptcha(ctx: CaptchaContext, { auto = true }: { auto?: boolean } = {}): CaptchaState {
+// `tenant` is the slug of the organisation the form is opened for: its captcha settings are the ones asked.
+export function useCaptcha(
+  ctx: CaptchaContext,
+  { auto = true, tenant }: { auto?: boolean; tenant?: string } = {},
+): CaptchaState {
   const [challenge, setChallenge] = useState<CaptchaChallenge | null>(null)
   const [loading, setLoading] = useState(auto)
   const [loadError, setLoadError] = useState('')
@@ -42,7 +46,7 @@ export function useCaptcha(ctx: CaptchaContext, { auto = true }: { auto?: boolea
   const run = useCallback(
     (account?: string) => {
       const mine = ++seq.current
-      return api.captcha(ctx, account).then(
+      return api.captcha(ctx, account, tenant).then(
         (c) => {
           if (mine !== seq.current) return
           setChallenge(c)
@@ -58,7 +62,7 @@ export function useCaptcha(ctx: CaptchaContext, { auto = true }: { auto?: boolea
         },
       )
     },
-    [ctx],
+    [ctx, tenant],
   )
   const refresh = useCallback(
     (account?: string) => {

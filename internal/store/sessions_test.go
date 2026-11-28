@@ -68,3 +68,53 @@ func TestTheDisabledRecordsOfAPersonAreForgottenOnEnabling(t *testing.T) {
 		}
 	})
 }
+
+// The sweep of expired sessions keeps to each tenant's own cutoffs: the people
+// of a tenant with lifetimes of its own go by theirs, everyone else by the site's.
+func TestExpiredSessionsGoByTheirTenantsCutoffs(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.UnixMilli(time.Now().UnixMilli()).UTC()
+		const other = "T000000009"
+		if err := st.CreateTenant(ctx, store.Tenant{ID: other, Slug: "acme", Name: "Acme", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		mkUser(t, st, "site", "site", "member")
+		if err := store.InsertUser(ctx, st.Q(), store.User{ID: "own", Username: "own", Name: "own", Role: "member", TenantID: other, Created: now}); err != nil {
+			t.Fatal(err)
+		}
+		old := now.Add(-48 * time.Hour)
+		for _, id := range []string{"site", "own"} {
+			if err := store.InsertSession(ctx, st.Q(), store.Session{ID: "s-" + id, UserID: id, Created: old, LastUsed: old}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// The site lets a session sit idle 30 days: nothing goes. The tenant's own cutoff is a day: its person's goes.
+		own := []store.SessionCutoff{{Tenant: other, IdleBefore: now.Add(-24 * time.Hour), CreatedBefore: now.Add(-90 * 24 * time.Hour)}}
+		n, err := store.DeleteExpiredSessions(ctx, st.Q(), now.Add(-30*24*time.Hour), now.Add(-90*24*time.Hour), now, own)
+		if err != nil || n != 1 {
+			t.Fatalf("%d %v", n, err)
+		}
+		if _, reason, err := store.LookupSession(ctx, st.Q(), "s-own"); !errors.Is(err, store.ErrNotFound) || reason != store.EndExpired {
+			t.Fatalf("own: %q %v", reason, err)
+		}
+		if _, _, err := store.LookupSession(ctx, st.Q(), "s-site"); err != nil {
+			t.Fatalf("site: %v", err)
+		}
+		// The other way: the tenant lets its people sit idle longer than the site does.
+		if err := store.InsertSession(ctx, st.Q(), store.Session{ID: "s-own2", UserID: "own", Created: old, LastUsed: old}); err != nil {
+			t.Fatal(err)
+		}
+		own = []store.SessionCutoff{{Tenant: other, IdleBefore: now.Add(-60 * 24 * time.Hour), CreatedBefore: now.Add(-90 * 24 * time.Hour)}}
+		n, err = store.DeleteExpiredSessions(ctx, st.Q(), now.Add(-24*time.Hour), now.Add(-90*24*time.Hour), now, own)
+		if err != nil || n != 1 {
+			t.Fatalf("%d %v", n, err)
+		}
+		if _, _, err := store.LookupSession(ctx, st.Q(), "s-own2"); err != nil {
+			t.Fatalf("a longer lifetime of the tenant's was not kept: %v", err)
+		}
+		if _, _, err := store.LookupSession(ctx, st.Q(), "s-site"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("site: %v", err)
+		}
+	})
+}

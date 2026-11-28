@@ -64,11 +64,6 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		snap = cachedSession{userID: row.UserID, created: row.Created, lastUsed: row.LastUsed, persisted: row.LastUsed, loaded: now, held: row.Held, holdBy: holdOf(row.Method),
 			currentTenant: row.CurrentTenant, proofs: row.Proofs}
 	}
-	sec := s.sec(ctx)
-	if now.Sub(snap.lastUsed) > sec.idle || now.Sub(snap.created) > sec.max {
-		s.endSession(ctx, id, snap.userID, store.EndExpired)
-		return nil, ended(store.EndExpired, "Your session has ended; sign in again.")
-	}
 	u, access, err := s.cachedEntry(ctx, snap.userID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -76,6 +71,13 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 			return nil, errf(Unauthenticated, "Sign in to continue.")
 		}
 		return nil, err
+	}
+	// The lifetimes are the person's tenant's (sessions.idleDays and .maxDays):
+	// two lookups in the settings' cache, no query.
+	idle, max := s.lifetimesOf(ctx, s.sec(ctx), tenantOfPerson(u))
+	if now.Sub(snap.lastUsed) > idle || now.Sub(snap.created) > max {
+		s.endSession(ctx, id, snap.userID, store.EndExpired)
+		return nil, ended(store.EndExpired, "Your session has ended; sign in again.")
 	}
 	// A disabled tenant is a disabled account: one atomic load, and a map lookup
 	// only while some tenant is disabled.

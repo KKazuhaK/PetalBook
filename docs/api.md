@@ -216,9 +216,13 @@ section, in "Account" and the security settings of "Administration" answers
 
 The session is a cookie (`HttpOnly`, `SameSite=Lax`, `Secure` when
 `--public-url` is `https`); its value means nothing to the client. A session
-ends after `sessionIdleDays` without use (30 by default) and at the latest
-`sessionMaxDays` after sign-in (90 by default); both are security settings, and
-a change applies to the sessions that already exist at their next request.
+ends after `sessions.idleDays` without use (30 by default) and at the latest
+`sessions.maxDays` after sign-in (90 by default); both are layered settings,
+and a change applies to the sessions that already exist at their next request.
+They are the lifetimes of the person's own tenant: an organisation may shorten
+them for its people (see "The sign-in policy of a tenant"), and a session is
+checked against them on every request from the settings' cache, with no query
+of its own. The session cookie's `Max-Age` is the tenant's `sessions.maxDays`.
 Changing a password ends the user's other sessions; disabling a user ends all
 of them.
 
@@ -324,6 +328,11 @@ only when the `setup` context asks for one (see "Captcha"). `201` with
 
 `captcha` is `{"id", "answer"}` for the self-hosted image, `{"token"}` for a
 third-party one, and left out when `GET /api/captcha` said none is required.
+`tenant` (a slug, optional) names the organisation the sign-in page was opened
+for (`?tenant=`): the captcha asked is then that organisation's (see "The
+sign-in policy of a tenant"); without it, the site's. It is never worked out
+from the username, which would tell which organisation it is in. An unknown or
+disabled `tenant` is `404`, counted against the address's requests first.
 
 From 3.6 the field is `identifier`, an email address or a username, in place
 of `username` (see "Signing in by email address" under "Tenant autonomy").
@@ -708,11 +717,15 @@ default, after 3): once the address, or for `login` the username, has that many
 failures in the current window. Passkey sign-in and single sign-on have no
 captcha.
 
-#### `GET /api/captcha?ctx={context}&account={username}`
+#### `GET /api/captcha?ctx={context}&account={username}&tenant={slug}`
 
 Public. `Cache-Control: no-store`. Counts against the address's requests this
 minute. `account` matters only for `login`; the page asks again when the
-username changes (when the field loses focus, not at every key).
+username changes (when the field loses focus, not at every key). `tenant` is
+the organisation the form is opened for (optional, `404` if unknown): for
+`login`, `forgot` and `register` the answer is the settings of that
+organisation's `captcha.contexts`; without `tenant`, and always for `invite`
+and `setup`, the site's.
 
 ```json
 {"required": true, "provider": "image", "siteKey": "", "id": "…", "image": "data:image/png;base64,…"}
@@ -9688,7 +9701,11 @@ applies to every layered (b) key of the inventory:
     are listed loosest first (`registration.mode`: `open` < `invite` <
     `closed`; `storage.partial.unsupported`: `allow` < `refuse`);
   - `subset`: a list is stricter when it keeps fewer of the entries above it,
-    `["*"]` (everything) being the loosest (`signin.social`, `storage.hosts`).
+    `["*"]` (everything) being the loosest (`signin.social`, `storage.hosts`);
+  - `superset`: a list is stricter when it holds more, so a value is looser when
+    it lacks an entry the floor has (`signin.passkeyRoles`);
+  - `document`: a document, compared field by field by the key's own rule
+    (`captcha.contexts`, see below).
 
   A key without an order, or without a tenant layer below the site, cannot be
   `tighten`ed (`400 invalid`); a floor that is not one of an `order` key's
@@ -9798,6 +9815,10 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | `signin.social` | list: provider slugs, or `["*"]` (default) | S, T (3.6 d3) |
 | `domains.joinRole` | choice: `member` (the account roles that are not administrator's) | S, T (3.6 d5) |
 | `signin.ssoOnly`, `signin.ssoOnlyAdmins` | boolean (`true` is stricter; tenant layer only tightens) | S, T (3.6 d4) |
+| `signin.mode` | choice `dual`, `sso_first`, `sso_redirect`, `local_only`; no order, default rule `allow` | S, T |
+| `signin.passkeyRoles` | list of `admin`, `member`; `superset`; default rule `tighten` | S, T |
+| `sessions.idleDays`, `sessions.maxDays` | limits; `lower`; default rule `tighten` | S, T |
+| `captcha.contexts` | document; `document`; default rule `tighten` | S, T |
 | `audit.signins`, `.reads`, `.downloads`, `.api` | boolean | S, T |
 | `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` 0 for no age limit), choice `or`, `and` | S! |
 | `audit.keepDays.<category>` (eight) | limit, 0 (forever) to 3,650, or none | S! |
@@ -12293,9 +12314,11 @@ Milestone 3.1 adds `storage` (see "Server storage").
 
 ### Security settings
 
-The 安全 page of `/admin`. The sign-in policy is layered settings of the site,
-the same for every tenant (the sign-in page comes before any tenant is known),
-written with `PUT /api/admin/settings/{key}` and read with
+The 安全 page of `/admin`. The sign-in policy is layered settings of the site;
+the keys that take effect after the person is known, or on a page opened for
+an organisation, have a tenant layer too (see "The sign-in policy of a
+tenant"), and the rest are the same for every tenant (the sign-in page comes
+before any tenant is known). Written with `PUT /api/admin/settings/{key}` and read with
 `GET /api/admin/settings`:
 
 | Key | Kind | Default | |
@@ -12663,6 +12686,83 @@ The registry of kinds, for the filters of the web:
 tenant's value, or the site's for a site administrator without `?tenant=`).
 `site` marks a kind only the server's administrators see; a tenant's
 administrators are not given those.
+
+### The sign-in policy of a tenant
+
+`signin.mode`, `signin.passkeyRoles`, `sessions.idleDays`, `sessions.maxDays`
+and `captcha.contexts` are site and tenant settings (decided 2026-11-28): the
+organisation decides inside what the site allows, with the lower modes of
+"Forced, minimum, default". Written for an organisation with
+`PUT /api/admin/tenants/{tenant}/settings/{key}` (its administrators, or a site
+administrator), and listed in `GET /api/settings`. What takes the server-wide
+decisions before any tenant is known stays the site's alone: `signin.lockout.*`,
+`signin.perMinute`, `.maxFailures`, `.windowMinutes` (a stricter value of a
+tenant would tell which tenant a username is in), `captcha.provider` and its
+keys, and `features.passkeys`.
+
+| Key | Order of strictness | Default rule of the site |
+|---|---|---|
+| `sessions.idleDays`, `sessions.maxDays` | `lower`: fewer days is stricter | `tighten` |
+| `signin.passkeyRoles` | `superset`: more roles is stricter | `tighten` |
+| `captcha.contexts` | `document`: see below | `tighten` |
+| `signin.mode` | none: `local_only` is different from `sso_redirect`, not more or less strict | `allow` |
+
+The site may switch any of them to `allow`, `restrict` (a mode has `options`),
+`lock` or, where there is an order, `tighten`; `signin.mode` cannot be
+`tighten`ed (`400 invalid`). A tenant's value looser than the site's under
+`tighten` is `409 setting_restricted` when written, and kept but not in effect
+when the site became stricter after it.
+
+- **Sessions.** The lifetimes that apply to a session are those of its person's
+  own tenant (`users.tenant_id`), when it is created (the cookie's `Max-Age`)
+  and on every request. They are read from the settings' cache, two lookups
+  and no query, so the check costs what it did. A tenant's idle time is never
+  more than its lifetime when read (a tenant that shortens only `maxDays` is
+  not refused; the site's own two are held to each other, `400 invalid`). A
+  site administrator, in whatever organisation, follows the site's lifetimes
+  and passkey roles, as for `ssoOnly`. A session older than
+  its tenant's `maxDays` or unused for longer than its `idleDays` ends with
+  `reason: "expired"`, the first time it is used. The daily sweep deletes
+  expired sessions by their tenant's cutoffs.
+- **`signin.passkeyRoles`.** A person must hold a passkey when their role is in
+  their tenant's list. A tenant's list holds every role of the site's (looser is
+  `409`) and may add the others; without a value it is the site's. A non-empty
+  list needs passkeys to work at all (`features.passkeys` on and an `https`
+  `--public-url`), else `400 passkey_unavailable`. The person's
+  `passkeyRequired` (`GET /api/users/{id}`) says the tenant's requirement too.
+- **`captcha.contexts`.** A document of the three forms an organisation may
+  ask a captcha of, `login`, `forgot` and `register`, each `{"on", "when",
+  "failures"}` as at the site; a partial document is merged over the
+  organisation's own and written whole. `invite` and `setup` are the site's
+  (the invitation is found only after the captcha is asked, and there is no
+  tenant at setup): naming one is `400 invalid`. A form is stricter when it is
+  on, asks `always` (rather than `after_failures`), or asks after fewer
+  failures; a value that is looser than the site's in any form is looser as a
+  whole. A third-party provider needs the site's keys (`400
+  captcha_site_key_required`, `captcha_needs_public_url`).
+  **Which tenant.** The forms are answered before the person is known, so the
+  tenant is the one the request is scoped to, never one worked out from what
+  the person typed: `tenant` (a slug) in the body of `POST /api/login`,
+  `POST /api/register` and `POST /api/password/forgot`, and `?tenant=` of
+  `GET /api/captcha`. The default tenant is a tenant like any other (its
+  value is the site's unless it has one): `register` and `forgot` without a
+  `tenant` are its, as everywhere. **A request that names a tenant is asked
+  the stricter of the site's own value and that tenant's, never less than the
+  site's, even where the site's rule is `allow`** (the tenant named is not
+  tied to the account signing in). **When the tenant is unknown, the site's
+  value is used:** a `login` or `GET /api/captcha` that names no tenant, the
+  invitation and the first-run setup. So a sign-in without `tenant` is no
+  stricter than the site's, and the web app's page for an organisation
+  passes it.
+- **`signin.mode`.** The mode of the sign-in page opened for the organisation
+  (`loginMode` of `GET /api/auth/providers?tenant=`): `local_only` while no
+  provider is enabled at all, else the organisation's. It shapes the page and
+  nothing else: `signin.ssoOnly` is enforced as before, and an organisation's
+  `local_only` never lifts the site's `ssoOnly` for it (the page then shows the
+  site's mode). Without `?tenant=` the page is the site's.
+
+`petalbook security reset` writes the site's rows only: an organisation's own
+values are kept.
 
 ### `petalbook security reset --data DIR`
 

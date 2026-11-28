@@ -261,7 +261,12 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	}
 	// 3. the captcha
 	st := s.sec(ctx)
-	if err := s.checkCaptcha(ctx, st, CtxRegister, "", p.IP, p.Captcha); err != nil {
+	// An organisation of the person's own does not exist yet: the site's captcha.
+	capTenant := p.TenantID
+	if p.Org != nil {
+		capTenant = ""
+	}
+	if err := s.checkCaptcha(ctx, st, capTenant, CtxRegister, "", p.IP, p.Captcha); err != nil {
 		return err
 	}
 	// 4. the fields
@@ -671,7 +676,7 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, lang, ip string) (
 		}
 		return nil, err
 	}
-	held := s.passkeyRequiredOf(st, *u)
+	held := s.passkeyRequiredOf(ctx, st, *u)
 	tok, err := s.issueSession(ctx, u.ID, held, "registration")
 	if err != nil {
 		return nil, err
@@ -826,7 +831,7 @@ func (s *Service) Forgot(ctx context.Context, p ForgotParams) error {
 		return coded(403, "password_reset_off", "Password reset is not available.")
 	}
 	st := s.sec(ctx)
-	if err := s.checkCaptcha(ctx, st, CtxForgot, "", p.IP, p.Captcha); err != nil {
+	if err := s.checkCaptcha(ctx, st, p.TenantID, CtxForgot, "", p.IP, p.Captcha); err != nil {
 		return err
 	}
 	login := strings.TrimSpace(p.Login)

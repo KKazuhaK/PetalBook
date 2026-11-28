@@ -331,7 +331,11 @@ func baseDefinitions() []*Def {
 		{Key: SigninSocial, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{"*"}, Lower: Lower{Mode: Allow}, Check: checkSocial, Strict: StrictSubset},
 
 		// The sign-in policy.
-		{Key: SigninMode, Kind: Choice, Layers: []Layer{Site}, Default: "dual", Choices: []string{"dual", "sso_first", "sso_redirect", "local_only"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		// The mode of the sign-in page has no order of strictness (local_only is
+		// not more or less strict than sso_redirect, only different), so it is
+		// allowed, restricted or locked, never tightened. It shapes the page; the
+		// site's ssoOnly is enforced whatever a tenant chooses.
+		{Key: SigninMode, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: "dual", Choices: []string{"dual", "sso_first", "sso_redirect", "local_only"}, Lower: Lower{Mode: Allow}},
 		// An organisation may require its own single sign-on of its people
 		// (3.6 d4); it never lifts the site's.
 		{Key: SigninSSOOnly, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Tighten}, Strict: StrictHigher},
@@ -339,20 +343,24 @@ func baseDefinitions() []*Def {
 		// single sign-on like its members; off (the default) they keep their
 		// password. A site administrator always keeps theirs.
 		{Key: SigninSSOOnlyAdmins, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Tighten}, Strict: StrictHigher},
-		{Key: SigninPasskeyRoles, Kind: List, Layers: []Layer{Site}, Default: []string{}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		// More roles holding a passkey is stricter. An organisation may add to the
+		// site's roles, never drop one.
+		{Key: SigninPasskeyRoles, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{}, Lower: Lower{Mode: Tighten}, Strict: StrictSuperset},
 		{Key: SigninLockoutEnabled, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: signinWhy, Strict: StrictHigher},
 		{Key: SigninLockoutMinutes, Kind: Limit, Layers: []Layer{Site}, Default: int64(15), Min: 1, Max: 10080, Lower: Lower{Mode: Allow}, ServerWide: signinWhy, Strict: StrictHigher},
 		{Key: SigninLockoutScope, Kind: Choice, Layers: []Layer{Site}, Default: "ip_account", Choices: []string{"ip_account", "ip", "account"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		{Key: SigninPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(10), Min: 1, Max: 100000, Lower: Lower{Mode: Allow}, ServerWide: signinWhy, Strict: StrictLower},
 		{Key: SigninMaxFailures, Kind: Limit, Layers: []Layer{Site}, Default: int64(10), Min: 1, Max: 100000, Lower: Lower{Mode: Allow}, ServerWide: signinWhy, Strict: StrictLower},
 		{Key: SigninWindowMinutes, Kind: Limit, Layers: []Layer{Site}, Default: int64(15), Min: 1, Max: 10080, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
-		// The server's flags are the defaults (SetDefault); per-organisation
-		// lifetimes come later.
-		{Key: SessionsIdleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow}, ServerWide: sessionsWhy, Strict: StrictLower},
-		{Key: SessionsMaxDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(90), Min: 1, Max: 3650, Lower: Lower{Mode: Allow}, ServerWide: sessionsWhy, Strict: StrictLower},
+		// The server's flags are the defaults (SetDefault). An organisation may
+		// shorten the lifetimes of its own people, never lengthen them.
+		{Key: SessionsIdleDays, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Tighten}, Strict: StrictLower},
+		{Key: SessionsMaxDays, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: int64(90), Min: 1, Max: 3650, Lower: Lower{Mode: Tighten}, Strict: StrictLower},
 		{Key: CaptchaProvider, Kind: Choice, Layers: []Layer{Site}, Default: "image", Choices: []string{"image", "turnstile", "recaptcha", "hcaptcha"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		// Validated and made whole by internal/auth (see its BindSettings).
-		{Key: CaptchaContexts, Kind: Doc, Layers: []Layer{Site}, Default: captchaContextsDefault(), Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		// A tenant holds the forms the request is scoped to a tenant for (login,
+		// forgot, register); a form on, or asking sooner, is stricter.
+		{Key: CaptchaContexts, Kind: Doc, Layers: []Layer{Site, Tenant}, Default: captchaContextsDefault(), Lower: Lower{Mode: Tighten}, Strict: StrictDoc, LooserDoc: captchaLooser},
 
 		// The storage policy.
 		{Key: StorageRemotesRequire, Kind: Text, Layers: []Layer{Site}, Default: "", Lower: Lower{Mode: Allow}, ServerWide: storageWhy},
@@ -431,10 +439,9 @@ func captchaContextsDefault() map[string]any {
 
 // Why the groups of server-wide settings are server-wide.
 const (
-	signinWhy   = "the sign-in page comes before any tenant is known"
-	sessionsWhy = "a session is the server's: per-organisation lifetimes come later"
-	storageWhy  = "the server's storage policy is worked out over every space at once"
-	cacheWhy    = "the cache is the server's own disk"
+	signinWhy  = "the sign-in page comes before any tenant is known"
+	storageWhy = "the server's storage policy is worked out over every space at once"
+	cacheWhy   = "the cache is the server's own disk"
 )
 
 func checkHTTPS(v any) (any, error) {

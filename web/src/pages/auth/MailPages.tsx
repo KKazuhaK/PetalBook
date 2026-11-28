@@ -107,7 +107,7 @@ function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: Regis
   const [orgName, setOrgName] = useState('')
   const [orgSlug, setOrgSlug] = useState('')
   const [slugEdited, setSlugEdited] = useState(false)
-  const captcha = useCaptcha('register')
+  const captcha = useCaptcha('register', { tenant: org ? undefined : tenant })
   const [username, setUsername] = useState('')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -645,7 +645,7 @@ export function ForgotPage() {
   const gate = useAccountsOnly()
   const [params] = useSearchParams()
   const tenant = params.get('tenant') ?? undefined
-  const captcha = useCaptcha('forgot')
+  const captcha = useCaptcha('forgot', { tenant })
   const [login, setLogin] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')

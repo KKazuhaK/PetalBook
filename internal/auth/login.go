@@ -62,6 +62,11 @@ func pairKey(ip, ukey string) string { return "p:" + ip + "|" + ukey }
 type LoginParams struct {
 	Username, Password, IP string
 	Captcha                *CaptchaAnswer
+	// TenantID is the tenant the sign-in page is scoped to (?tenant=), or ""
+	// when it names none: it picks the captcha settings of login, as the
+	// person is not known before the captcha is asked. It is never worked out
+	// from the username, which would tell which tenant it is in.
+	TenantID string
 }
 
 // LoginResult is a signed-in user and the cookie value of the session.
@@ -85,7 +90,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		return nil, err
 	}
 	st := s.sec(ctx)
-	if err := s.checkCaptcha(ctx, st, CtxLogin, p.Username, ip, p.Captcha); err != nil {
+	if err := s.checkCaptcha(ctx, st, p.TenantID, CtxLogin, p.Username, ip, p.Captcha); err != nil {
 		s.auditThrottled(AuditEvent{Kind: "login_failed", Username: p.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "captcha_failed"}}, "captcha_failed")
 		return nil, err
 	}
@@ -187,7 +192,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 	// passkey and has one gets no password session, a temporary password
 	// included.
 	held, holdBy := false, ""
-	if s.passkeyRequiredOf(st, *u) {
+	if s.passkeyRequiredOf(ctx, st, *u) {
 		// Only a passkey of this host can be used; one made for an old host leaves the person to register a new one.
 		n, err := store.CountPasskeysForRP(ctx, s.st.Q(), u.ID, s.pk.rpID)
 		if err != nil {
@@ -267,11 +272,11 @@ func (s *Service) auditLock(st *secState, username, ip string) {
 
 // passkeyRequiredOf says whether the person must sign in with a passkey, by
 // themselves or by their role, while passkeys can be used at all.
-func (s *Service) passkeyRequiredOf(st *secState, u store.User) bool {
+func (s *Service) passkeyRequiredOf(ctx context.Context, st *secState, u store.User) bool {
 	if !st.Passkeys.Enabled || s.pk == nil {
 		return false
 	}
-	return u.PasskeyRequired || st.roles[u.Role]
+	return u.PasskeyRequired || s.passkeyRoleHeld(ctx, st, tenantOfPerson(&u), u.Role)
 }
 
 // Setup creates the first administrator from the first-run token.
@@ -280,7 +285,7 @@ func (s *Service) Setup(ctx context.Context, token, username, name, password, ip
 		return nil, err
 	}
 	st := s.sec(ctx)
-	if err := s.checkCaptcha(ctx, st, CtxSetup, "", ip, cap); err != nil {
+	if err := s.checkCaptcha(ctx, st, "", CtxSetup, "", ip, cap); err != nil {
 		return nil, err
 	}
 	if err := s.gateIP(st, ip); err != nil {
@@ -308,7 +313,7 @@ func (s *Service) Setup(ctx context.Context, token, username, name, password, ip
 		return nil, err
 	}
 	// A new account has no passkey: held when one is required of it.
-	held := s.passkeyRequiredOf(st, *u)
+	held := s.passkeyRequiredOf(ctx, st, *u)
 	tok, err := s.issueSession(ctx, u.ID, held, "setup")
 	if err != nil {
 		return nil, err
@@ -331,7 +336,7 @@ func (s *Service) inviteGate(ctx context.Context, token, ip string, cap *Captcha
 		return nil, nil, err
 	}
 	st := s.sec(ctx)
-	if err := s.checkCaptcha(ctx, st, CtxInvite, "", ip, cap); err != nil {
+	if err := s.checkCaptcha(ctx, st, "", CtxInvite, "", ip, cap); err != nil {
 		return nil, nil, err
 	}
 	if err := s.gateIP(st, ip); err != nil {
@@ -389,7 +394,7 @@ func (s *Service) AcceptInvite(ctx context.Context, token, username, name, passw
 		return nil, err
 	}
 	// A new account has no passkey: held when one is required of it.
-	held := s.passkeyRequiredOf(st, *u)
+	held := s.passkeyRequiredOf(ctx, st, *u)
 	tok, err := s.issueSession(ctx, u.ID, held, "invite")
 	if err != nil {
 		return nil, err

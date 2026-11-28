@@ -36,6 +36,15 @@ type User struct {
 // LocalUserID is the built-in user of single-user mode.
 const LocalUserID = "local"
 
+// PolicyTenant is the tenant whose sign-in policy applies to the person: their
+// own, except for a site administrator, who follows the site's ("").
+func (u User) PolicyTenant() string {
+	if u.SiteAdmin {
+		return ""
+	}
+	return u.TenantID
+}
+
 const userCols = `id, username, name, email, role, disabled, created, email_verified, passkey_required, tenant_id, site_admin, remote_exempt`
 
 func scanUser(sc interface{ Scan(...any) error }) (*User, error) {

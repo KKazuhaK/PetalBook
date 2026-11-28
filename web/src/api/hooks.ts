@@ -371,10 +371,11 @@ export function useUrls() {
 }
 
 // What the sign-in pages draw: the enabled providers and what is available (read again each time a page opens).
-export function useAuthProviders(enabled = true) {
+// With a tenant (the slug of `?tenant=`) the page is that organisation's: its providers and its mode.
+export function useAuthProviders(enabled = true, tenant?: string) {
   return useQuery({
-    queryKey: keys.providers,
-    queryFn: ({ signal }) => api.providers(signal),
+    queryKey: tenant ? [...keys.providers, tenant] : keys.providers,
+    queryFn: ({ signal }) => api.providers(signal, tenant),
     staleTime: 0,
     gcTime: 0,
     enabled,

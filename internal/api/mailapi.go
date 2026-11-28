@@ -57,6 +57,21 @@ func (s *server) tenantOfRequest(c *call, slug string) (string, bool) {
 	return r.ID, ok
 }
 
+// scopedTenant is tenantOfRequest for a sign-in form that names a tenant
+// (login, captcha): a slug that is not a tenant is counted against the
+// address's requests before it is refused, so that probing slugs is limited
+// like any other sign-in request.
+func (s *server) scopedTenant(c *call, slug string) (string, bool) {
+	st := s.opt.Store
+	if id, ok := st.TenantIDBySlug(slug); !ok || st.TenantDisabled(id) {
+		if err := s.auth.AllowPublic(c.r.Context(), s.auth.ClientAddr(c.r)); err != nil {
+			s.fail(c.w, err)
+			return "", false
+		}
+	}
+	return s.tenantOfRequest(c, slug)
+}
+
 // --- mail settings -------------------------------------------------------------------
 
 type mailResp struct {

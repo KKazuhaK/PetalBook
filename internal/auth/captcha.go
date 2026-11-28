@@ -86,9 +86,11 @@ func (s *Service) CaptchaProvider(ctx context.Context) string {
 }
 
 // captchaRequired says whether the context asks for a captcha of this address
-// (and, for the login, this username).
-func (s *Service) captchaRequired(st *secState, ctxName, ip, username string) bool {
-	c, ok := st.Captcha.Contexts[ctxName]
+// (and, for the login, this username), by the settings of the tenant the
+// request is scoped to (tenant "": the request names none, and the site's
+// settings are used).
+func (s *Service) captchaRequired(ctx context.Context, st *secState, tenant, ctxName, ip, username string) bool {
+	c, ok := s.captchaCtxOf(ctx, st, tenant, ctxName)
 	if !ok || !c.On {
 		return false
 	}
@@ -101,8 +103,10 @@ func (s *Service) captchaRequired(st *secState, ctxName, ip, username string) bo
 	return ctxName == CtxLogin && username != "" && s.failUser.Count(userKey(username), st.window) >= c.Failures
 }
 
-// CaptchaFor answers GET /api/captcha.
-func (s *Service) CaptchaFor(ctx context.Context, ctxName, account, ip string) (*CaptchaChallenge, error) {
+// CaptchaFor answers GET /api/captcha. tenant is the id of the tenant the
+// request is scoped to, or "" for none: the captcha of login, forgot and
+// register is then the tenant's own, else the site's.
+func (s *Service) CaptchaFor(ctx context.Context, tenant, ctxName, account, ip string) (*CaptchaChallenge, error) {
 	if err := s.allow(ctx, ip); err != nil {
 		return nil, err
 	}
@@ -114,7 +118,7 @@ func (s *Service) CaptchaFor(ctx context.Context, ctxName, account, ip string) (
 		return nil, errf(Invalid, "Ctx is login, invite, setup, forgot or register.")
 	}
 	st := s.sec(ctx)
-	if !s.captchaRequired(st, ctxName, ip, account) {
+	if !s.captchaRequired(ctx, st, tenant, ctxName, ip, account) {
 		return &CaptchaChallenge{}, nil
 	}
 	out := &CaptchaChallenge{Required: true, Provider: st.Captcha.Provider}
@@ -132,8 +136,8 @@ func (s *Service) CaptchaFor(ctx context.Context, ctxName, account, ip string) (
 
 // checkCaptcha refuses the request when the context needs a captcha of this
 // address and the answer is not right. It runs before anything costs work.
-func (s *Service) checkCaptcha(ctx context.Context, st *secState, ctxName, username, ip string, ans *CaptchaAnswer) error {
-	if !s.captchaRequired(st, ctxName, ip, username) {
+func (s *Service) checkCaptcha(ctx context.Context, st *secState, tenant, ctxName, username, ip string, ans *CaptchaAnswer) error {
+	if !s.captchaRequired(ctx, st, tenant, ctxName, ip, username) {
 		return nil
 	}
 	if ans == nil || (ans.Token == "" && (ans.ID == "" || ans.Answer == "")) {

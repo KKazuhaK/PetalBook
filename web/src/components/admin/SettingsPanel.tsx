@@ -20,6 +20,7 @@ import { tt } from '@/i18n/tenants'
 import { SecretsSection } from './SecretsSection'
 import { needsCapabilityConfirm, useCapabilityConfirm } from './CapabilityConfirm'
 import { isLooser } from '@/api/strictness'
+import { CAPTCHA_TENANT_FORMS, CaptchaContextsEditor } from './CaptchaContextsEditor'
 
 const ts = tt.settings
 
@@ -33,6 +34,19 @@ export function settingError(e: unknown): string {
 }
 
 const nameOf = (key: string) => ts.names[key] ?? key
+
+// A list that holds some of a few fixed entries is a row of boxes, not a text area.
+const LIST_ENTRIES: Record<string, string[]> = { 'signin.passkeyRoles': ['admin', 'member'] }
+// A document with an editor of its own on this page (the others are edited where they belong).
+const DOC_EDITORS = new Set(['captcha.contexts'])
+
+// What a tenant's own layer writes of a value: for the captcha, only the forms an organisation may ask (the invitation
+// and the setup are the site's, and the server refuses them).
+function forTenant(key: string, value: unknown): unknown {
+  if (key !== 'captcha.contexts' || !value || typeof value !== 'object') return value
+  const doc = value as Record<string, unknown>
+  return Object.fromEntries(CAPTCHA_TENANT_FORMS.filter((f) => doc[f] !== undefined).map((f) => [f, doc[f]]))
+}
 
 // The most characters of a rule's note.
 export const NOTE_MAX = 200
@@ -59,6 +73,7 @@ function ValueEditor({
   label,
   choices,
   words,
+  entries,
   looser,
   floor,
   strictness,
@@ -70,6 +85,8 @@ function ValueEditor({
   label: string
   choices?: string[]
   words?: Record<string, string>
+  // The entries a list may hold, when it is one of a few.
+  entries?: string[]
   // Under a minimum from the site (tighten): whether a value would be looser than it, so that the control can grey
   // out what the server would refuse; floor and strictness bound a number.
   looser?: (v: unknown) => boolean
@@ -125,7 +142,31 @@ function ValueEditor({
           onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
         />
       )
+    case 'doc':
+      return (
+        <CaptchaContextsEditor value={value} disabled={disabled} label={label} looser={looser} onChange={onChange} />
+      )
     case 'list':
+      if (entries) {
+        const held = Array.isArray(value) ? (value as string[]) : []
+        return (
+          <div className="flex flex-wrap gap-x-4 gap-y-1" role="group" aria-label={label}>
+            {entries.map((e) => (
+              <label key={e} className="flex min-h-10 items-center gap-2 text-sm lg:min-h-0">
+                <input
+                  type="checkbox"
+                  className="size-4"
+                  // An entry the minimum holds cannot be dropped.
+                  disabled={disabled || (held.includes(e) && looser?.(held.filter((x) => x !== e)) === true)}
+                  checked={held.includes(e)}
+                  onChange={(ev) => onChange(entries.filter((x) => (x === e ? ev.target.checked : held.includes(x))))}
+                />
+                {words?.[e] ?? e}
+              </label>
+            ))}
+          </div>
+        )
+      }
       return (
         <Textarea
           rows={3}
@@ -372,6 +413,7 @@ export function SiteRow({
               label={label ?? name}
               choices={s.choices}
               words={ts.choices[s.key]}
+              entries={LIST_ENTRIES[s.key]}
               onChange={changeValue}
             />
           )}
@@ -435,18 +477,18 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
   const [siteLock, setSiteLock] = useState(mine?.siteLocked === true)
   const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
   const name = nameOf(s.key)
-  const doc = s.kind === 'doc'
+  const doc = s.kind === 'doc' && !DOC_EDITORS.has(s.key)
   // The site's lock over everyone, or its lock for this tenant when the person is the tenant's own administrator.
   const forcedForTenant = mine?.siteLocked === true
   const locked = s.site.lower.mode === 'lock' && !(isSite && forcedForTenant)
   const frozen = forcedForTenant && !isSite
   const canForce = isSite && !doc
   const dirtySiteLock = canForce && siteLock !== forcedForTenant
-  const dirtyValue = !doc && !same(follow ? null : value, start)
+  const dirtyValue = !doc && !same(follow ? null : forTenant(s.key, value), forTenant(s.key, start))
   const dirtyLower = !sameRule(lower, mine?.lower ?? { mode: 'allow' })
   // A lock always names a value: following, while forced, forces the value in effect, never null.
   const forcing = canForce && siteLock
-  const sent = follow ? (forcing ? s.effective : null) : value
+  const sent = follow ? (forcing ? s.effective : null) : forTenant(s.key, value)
   const capability = useCapabilityConfirm(() => setMessage({ tone: 'info', text: ts.saved }))
   const save = () => {
     setMessage(null)
@@ -532,17 +574,21 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
                   label={name}
                   choices={s.choices}
                   words={ts.choices[s.key]}
+                  entries={LIST_ENTRIES[s.key]}
                   looser={looser}
                   floor={floor}
                   strictness={s.strictness}
                   onChange={setValue}
                 />
               )}
-              {tightened && floor !== undefined && s.kind !== 'doc' && (
-                <p className="text-xs text-muted-foreground" data-slot="rule-floor">
-                  {ts.stricterThan(floorText(s, floor))}
-                </p>
-              )}
+              {tightened &&
+                floor !== undefined &&
+                s.kind !== 'doc' &&
+                !(Array.isArray(floor) && floor.length === 0) && (
+                  <p className="text-xs text-muted-foreground" data-slot="rule-floor">
+                    {ts.stricterThan(floorText(s, floor))}
+                  </p>
+                )}
               {reason?.note && (
                 <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="rule-note">
                   {ts.noteOf(reason.note)}

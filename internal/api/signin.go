@@ -153,7 +153,15 @@ func (s *server) discoverSSO(c *call) {
 
 func (s *server) getCaptcha(c *call) {
 	q := c.r.URL.Query()
-	ch, err := s.auth.CaptchaFor(c.r.Context(), q.Get("ctx"), q.Get("account"), s.auth.ClientAddr(c.r))
+	// ?tenant={slug} scopes the form to a tenant (absent: the site's settings).
+	tenant := ""
+	if slug := q.Get("tenant"); slug != "" {
+		var ok bool
+		if tenant, ok = s.scopedTenant(c, slug); !ok {
+			return
+		}
+	}
+	ch, err := s.auth.CaptchaFor(c.r.Context(), tenant, q.Get("ctx"), q.Get("account"), s.auth.ClientAddr(c.r))
 	if err != nil {
 		s.fail(c.w, err)
 		return

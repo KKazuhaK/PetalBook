@@ -344,16 +344,16 @@ with the reason given in the registry.
 | Old | New | Kind, layers |
 |---|---|---|
 | `tenancy.enabled` | `features.tenancy` | bool, S! (whether tenants other than the default exist) |
-| `security.login.mode` | `signin.mode` | choice, S! (the sign-in page comes before any tenant; a tenant layer arrives with 3.6 d) |
+| `security.login.mode` | `signin.mode` | choice, S, T (2026-11-28: the page opened for an organisation shows its own; no strictness) |
 | `security.login.ssoOnly` | `signin.ssoOnly` | bool, S! (tenant layer with 3.6 d) |
 | (new, 2026-11-27) | `signin.ssoOnlyAdmins` | bool, S, T (tightens only): a tenant's ssoOnly holds its administrators too |
 | `security.passkeys.enabled` | `features.passkeys` | bool, S! |
-| `security.passkeys.requireRoles` | `signin.passkeyRoles` | list, S! |
-| `security.captcha.contexts` | `captcha.contexts` | doc, S!, validated by `auth` |
+| `security.passkeys.requireRoles` | `signin.passkeyRoles` | list, S, T (2026-11-28; `superset`, default rule `tighten`) |
+| `security.captcha.contexts` | `captcha.contexts` | doc, S, T (2026-11-28; `document` strictness, default rule `tighten`; a tenant holds login, forgot and register), validated by `auth` |
 | `security.captcha.provider` | `captcha.provider` | choice, S! |
 | `security.lockout.*` | `signin.lockout.enabled`, `.minutes`, `.scope` | bool / limit / choice, S! |
 | `security.limits.perMinute`, `.maxFailures`, `.windowMinutes` | `signin.perMinute`, `signin.maxFailures`, `signin.windowMinutes` | limits, S! |
-| `security.limits.sessionIdleDays`, `.sessionMaxDays` | `sessions.idleDays`, `sessions.maxDays` | limits, S! (per-organisation lifetimes come with 3.7) |
+| `security.limits.sessionIdleDays`, `.sessionMaxDays` | `sessions.idleDays`, `sessions.maxDays` | limits, S, T (2026-11-28; `lower`, default rule `tighten`; the person's own tenant's lifetimes apply) |
 | `storage.remotes.require`, `.scope`, `.graceDays` | the same keys | S+T, site lower lock; a tenant may only tighten (the registry's reserved note, `registry.go:62`) |
 | `storage.localSpaces.maxBytes` | the same key | limit, S+T, lock |
 | `storage.hosts.allowed` | `storage.hosts` | list, S!. Bound to `--remote-host`, read-only when the flag is given |
@@ -631,10 +631,15 @@ have.
   `registration.mode`, `.perHour`, `files.maxBytes`, `signin.social`,
   `storage.partial.unsupported`, `signin.ssoOnly`, `.ssoOnlyAdmins`, and the
   server-wide `signin.lockout.*`, `signin.perMinute`, `.maxFailures`,
-  `sessions.*`, `storage.remotes.scope`, `.graceDays`,
-  `storage.localSpaces.maxBytes`, `storage.hosts`. Not declared, because there
-  is no obvious order: `signin.mode`, `signin.passkeyRoles`, `captcha.*`
-  (a document), `domains.joinRole`, the features (off is `restrict`'s job),
+  `storage.remotes.scope`, `.graceDays`,
+  `storage.localSpaces.maxBytes`, `storage.hosts`. Declared with the tenant
+  layer of the sign-in policy (2026-11-28): `sessions.*` (`lower`),
+  `signin.passkeyRoles` (`superset`: more roles must hold a passkey) and
+  `captcha.contexts` (`document`: a form on, asking always, or after fewer
+  failures is stricter, form by form; login, forgot and register only).
+  Not declared, because there is no obvious order: `signin.mode` (`local_only`
+  is different from `sso_redirect`, not stricter), `domains.joinRole`, the
+  features (off is `restrict`'s job),
   `registration.domains`, the quotas (0 means none for `spacesPerPerson`).
   The orders are in `settingStrictness` of the generated `registries.json`.
 - **Where the value is held.** `Effective.Floor` is the value the tenant's layer

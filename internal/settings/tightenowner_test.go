@@ -72,7 +72,7 @@ func TestAFloorOutsideTheChoicesIsTheStrictest(t *testing.T) {
 func TestTightenNeedsALayerBelow(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
-		if _, err := s.SetSite(ctx, settings.SessionsMaxDays, settings.Change{HasLower: true, Lower: lower(settings.Tighten)}); code(err) != settings.CodeInvalid {
+		if _, err := s.SetSite(ctx, settings.SigninMaxFailures, settings.Change{HasLower: true, Lower: lower(settings.Tighten)}); code(err) != settings.CodeInvalid {
 			t.Fatalf("%v", err)
 		}
 	})

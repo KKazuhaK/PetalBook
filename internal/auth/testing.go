@@ -1,5 +1,11 @@
 package auth
 
+import (
+	"sync/atomic"
+
+	"petalbook.app/server/internal/settings"
+)
+
 // HashOps reports how many password hashes the service has started. Tests use
 // it to check that a sign-in for an unknown user costs what any other does.
 func HashOps(s *Service) int64 { return s.hasher.ops.Load() }
@@ -13,3 +19,7 @@ func CaptchaSolution(s *Service, id string) string { return s.capStore.Get(id, f
 
 // CaptchaHeld is how many image challenges are held in memory.
 func CaptchaHeld(s *Service) int { return s.capStore.Len() }
+
+// SettingsComputes counts the times the layered settings are read from the
+// database (not from their cache) from now on.
+func SettingsComputes(s *Service) *atomic.Int64 { return settings.ComputeCounter(s.settings.Load()) }
