@@ -115,7 +115,7 @@ func TestAuditOptionalCategoriesFollowTheirSettings(t *testing.T) {
 		f := newTenFx(t, a)
 		logins := func() int { return auditCounts(t, f.root, "&kind=login&tenant="+f.tenB)["login"] }
 		signIn := func() {
-			a.newClient("").do("POST", "/api/login", map[string]any{"username": "mem-b", "password": pw}).want(t, 200, "")
+			a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "mem-b", "password": pw}).want(t, 200, "")
 		}
 		before := logins()
 		signIn()

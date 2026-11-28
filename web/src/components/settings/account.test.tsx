@@ -3,13 +3,16 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { Route, Routes } from 'react-router'
 import type { FixtureOptions } from '@/api/fixtures/data/model'
 import type { Link } from '@/api/types'
+import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { apiErrorText } from '@/i18n/apiErrors'
 import { ts } from '@/i18n/signin'
+import { keys } from '@/api/hooks'
+import type { AccountInfo, AccountMethod } from '@/api/types'
 import { byLabel, click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
-// The account's security page: passkeys and the linked sign-ins.
+// The account's security page: one list of sign-in methods (the password, the linked sign-ins, the passkeys).
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
@@ -54,7 +57,7 @@ const github = {
 
 async function open(path = '/settings/security', server: FixtureOptions = {}) {
   m = await mount(routes, { entries: [path], signIn: true, fixtures: { mode: 'accounts', ...server } })
-  await settle(() => panelText().includes(ts.passkeys.title), 'the security page')
+  await settle(() => panelText().includes(ts.methods.title), 'the security page')
 }
 
 // The browser's side of creating a passkey.
@@ -68,7 +71,7 @@ function stubCreate(json: Record<string, unknown> = { id: 'cred-1', type: 'publi
 describe('the passkeys of the account', () => {
   it("starts with none, and adds one with a name through the browser's prompt", async () => {
     await open()
-    expect(panelText()).toContain(ts.passkeys.empty)
+    expect(rows()).toHaveLength(0)
     const create = stubCreate({ id: 'cred-1', type: 'public-key', response: {}, synced: true })
     await type(dialog()!.querySelector<HTMLInputElement>('input[maxlength="64"]')!, 'MacBook')
     await click(buttonWith(ts.passkeys.add))
@@ -83,7 +86,7 @@ describe('the passkeys of the account', () => {
     expect(rows()[0].textContent).toContain('MacBook')
     // Whether the authenticator says it is synced is shown.
     expect(rows()[0].textContent).toContain(ts.passkeys.synced)
-    expect(rows()[0].textContent).toContain(ts.passkeys.neverUsed)
+    expect(rows()[0].textContent).toContain(ts.methods.neverUsed)
   })
 
   it('renames one', async () => {
@@ -196,7 +199,7 @@ describe('the linked sign-ins', () => {
     expect(panelText()).toContain('Company SSO')
     expect(panelText()).not.toContain(ts.identities.link('Company SSO'))
     expect(panelText()).toContain(ts.identities.link('GitHub'))
-    await click([...dialog()!.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent === t.settings.remove))
+    await click(byLabel(t.fmt.labelled(t.settings.remove, 'mock@example.com')))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
     await click(buttonWith(t.settings.removeConfirm, document.querySelector('[role="alertdialog"]')!))
     await settle(() => !panelText().includes('mock@example.com'), 'removed')
@@ -217,7 +220,7 @@ describe('the linked sign-ins', () => {
     await open('/settings/security', { providers: [company], data: (d) => d.area.account.links.push(linkOf()) })
     await settle(() => panelText().includes('mock@example.com'), 'the link')
     m!.fx.fail('DELETE', '/api/account/links/id1', 409, { code: 'last_method' })
-    await click([...dialog()!.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent === t.settings.remove))
+    await click(byLabel(t.fmt.labelled(t.settings.remove, 'mock@example.com')))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
     await click(buttonWith(t.settings.removeConfirm, document.querySelector('[role="alertdialog"]')!))
     await settle(() => panelText().includes(t.settings.onlyWay), 'the refusal')
@@ -231,5 +234,128 @@ describe('a link that failed', () => {
     await settle(() => panelText().includes(ts.ssoErrors.identity_in_use), 'the message')
     expect(panelText()).toContain(ts.identities.linkFailed)
     await settle(() => !locationText().includes('sso_error'), 'the address is clean')
+  })
+})
+
+// A server answer for the account, for what the fixture does not make: the list as the server says it.
+async function answer(methods: AccountMethod[], canUnlink: boolean) {
+  const account = await m!.qc.fetchQuery<AccountInfo>({ queryKey: keys.account, staleTime: 0 })
+  m!.fx.reply('GET', '/api/account', {
+    ...account,
+    hasPassword: methods.some((x) => x.type === 'password'),
+    methods,
+    canUnlink,
+  })
+  await m!.qc.invalidateQueries({ queryKey: keys.account })
+}
+
+const rowOf = (key: string) => document.querySelector<HTMLElement>(`tbody [data-method="${key}"]`)
+const cardOf = (key: string) =>
+  document.querySelector<HTMLElement>(`[data-slot="methods-cards"] [data-method="${key}"]`)
+
+describe('the list of sign-in methods', () => {
+  it('is one table of the password, the linked sign-ins and the passkeys, each with when it was added and last used', async () => {
+    await open('/settings/security', {
+      providers: [company],
+      data: (d) => {
+        d.area.account.links.push(linkOf())
+        d.area.account.passkeys.push({ id: 'pk1', name: 'MacBook', created: '2026-11-02T00:00:00Z', synced: true })
+      },
+    })
+    await settle(() => rowOf('passkey:pk1') !== null, 'the list')
+    // The order is the server's: password, identities, passkeys.
+    const order = [...document.querySelectorAll<HTMLElement>('tbody [data-method]')].map((r) => r.dataset.method)
+    expect(order).toEqual(['password', 'identity:id1', 'passkey:pk1'])
+    const table = document.querySelector('table')!
+    expect([...table.querySelectorAll('thead th')].map((h) => h.textContent)).toEqual([
+      ts.methods.columns.method,
+      ts.methods.columns.added,
+      ts.methods.columns.lastUsed,
+      ts.methods.columns.actions,
+    ])
+    // A linked sign-in says its provider and identity, and when it was linked; it was never used.
+    const link = rowOf('identity:id1')!
+    expect(link.textContent).toContain('Company SSO')
+    expect(link.textContent).toContain('mock@example.com')
+    expect(link.textContent).toContain(absoluteTime('2026-11-01T00:00:00Z'))
+    expect(link.textContent).toContain(ts.methods.neverUsed)
+    expect(rowOf('passkey:pk1')!.textContent).toContain(ts.passkeys.synced)
+    // The password row has its time of use and a change action, but no remove.
+    expect(rowOf('password')!.textContent).not.toContain(ts.methods.neverUsed)
+    expect(byLabel(t.settings.changePassword)).not.toBeNull()
+    // The old separate lists are gone.
+    expect(document.querySelector('#passkeys-heading')).toBeNull()
+  })
+
+  it('shows when a method was last used, from the server', async () => {
+    await open('/settings/security')
+    await settle(() => rowOf('password') !== null, 'the list')
+    await answer(
+      [
+        { type: 'password', added: '2026-11-01T00:00:00Z', lastUsed: '2026-11-20T10:00:00Z', removable: false },
+        {
+          type: 'identity',
+          id: 'l1',
+          provider: 'Company SSO',
+          providerSlug: 'company',
+          label: 'a@example.com',
+          added: '2026-11-02T00:00:00Z',
+          lastUsed: '2026-11-21T11:30:00Z',
+          removable: true,
+        },
+      ],
+      true,
+    )
+    await settle(() => rowOf('identity:l1') !== null, 'the new list')
+    expect(rowOf('identity:l1')!.textContent).toContain(absoluteTime('2026-11-21T11:30:00Z'))
+    expect(rowOf('password')!.textContent).toContain(absoluteTime('2026-11-20T10:00:00Z'))
+  })
+
+  it('the only way to sign in cannot be removed, and the row says why', async () => {
+    await open('/settings/security')
+    await settle(() => rowOf('password') !== null, 'the list')
+    await answer(
+      [
+        {
+          type: 'identity',
+          id: 'l1',
+          provider: 'Company SSO',
+          providerSlug: 'company',
+          label: 'a@example.com',
+          added: '2026-11-02T00:00:00Z',
+          lastUsed: null,
+          removable: false,
+        },
+      ],
+      false,
+    )
+    await settle(() => rowOf('identity:l1') !== null, 'the new list')
+    expect(rowOf('identity:l1')!.textContent).toContain(ts.methods.onlyWay)
+    expect(byLabel(t.fmt.labelled(t.settings.remove, 'a@example.com'))!.hasAttribute('disabled')).toBe(true)
+    // No password: one is offered to be set.
+    expect(buttonHolding(t.settings.setPassword) === undefined).toBe(false)
+  })
+
+  it('on a phone each method is a card with its actions in a menu; the table is for wider boxes', async () => {
+    await open('/settings/security', {
+      data: (d) => {
+        d.area.account.links.push(linkOf())
+        d.area.account.passkeys.push({ id: 'pk1', name: 'MacBook', created: '2026-11-02T00:00:00Z', synced: false })
+      },
+    })
+    await settle(() => cardOf('passkey:pk1') !== null, 'the cards')
+    const cards = document.querySelector('[data-slot="methods-cards"]')!
+    expect(cards.className).toContain('@min-[560px]/methods:hidden')
+    expect(document.querySelector('[data-slot="methods-table"]')!.className).toContain('@min-[560px]/methods:block')
+    expect(cards.querySelectorAll('[data-method]')).toHaveLength(3)
+    // Each card says when it was added and when it was last used.
+    expect(cardOf('identity:id1')!.textContent).toContain(ts.methods.added(absoluteTime('2026-11-01T00:00:00Z')))
+    expect(cardOf('identity:id1')!.textContent).toContain(ts.methods.neverUsed)
+    // The actions are in the menu of the card.
+    expect(cardOf('passkey:pk1')!.querySelectorAll('button')).toHaveLength(1)
+    await click(cardOf('passkey:pk1')!.querySelector('button'))
+    await settle(() => document.querySelector('[role="menuitem"]') !== null, 'the menu')
+    const items = [...document.querySelectorAll('[role="menuitem"]')].map((i) => i.textContent)
+    expect(items).toEqual([ts.passkeys.rename, ts.passkeys.remove])
   })
 })

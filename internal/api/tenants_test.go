@@ -45,7 +45,7 @@ func TestTenancyIsOffUntilASiteAdministratorSwitchesItOn(t *testing.T) {
 		if _, err := a.auth.CreateUser(context.Background(), auth.CreateParams{Username: "tadmin", Role: "admin", Password: pw, TenantID: store.DefaultTenantID}); err != nil {
 			t.Fatal(err)
 		}
-		adm.do("POST", "/api/login", map[string]any{"username": "tadmin", "password": pw}).want(t, 200, "")
+		adm.do("POST", "/api/login", map[string]any{"identifier": "tadmin", "password": pw}).want(t, 200, "")
 		adm.do("GET", "/api/admin/settings", nil).want(t, 403, "forbidden")
 		adm.putSetting("features.tenancy", true).want(t, 403, "forbidden")
 		adm.do("GET", "/api/admin/tenants", nil).want(t, 403, "forbidden")
@@ -252,8 +252,8 @@ func TestADisabledTenantSignsNobodyIn(t *testing.T) {
 		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": true}).want(t, 200, "")
 		// Their next request ends their session; signing in is refused as a wrong password is.
 		f.memB.do("GET", "/api/spaces", nil).want(t, 401, "unauthenticated")
-		bad := a.newClient("").do("POST", "/api/login", map[string]any{"username": "mem-b", "password": "wrong password"})
-		good := a.newClient("").do("POST", "/api/login", map[string]any{"username": "mem-b", "password": pw})
+		bad := a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "mem-b", "password": "wrong password"})
+		good := a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "mem-b", "password": pw})
 		if bad.code != good.code || bad.body["error"] != good.body["error"] || bad.body["message"] != good.body["message"] {
 			t.Fatalf("a disabled tenant must look like a wrong password: %s / %s", bad.raw, good.raw)
 		}
@@ -265,7 +265,7 @@ func TestADisabledTenantSignsNobodyIn(t *testing.T) {
 		f.root.do("POST", "/api/invites", map[string]any{"role": "member", "tenant": f.tenB}).want(t, 409, "conflict")
 		// Enabling brings everything back.
 		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": false}).want(t, 200, "")
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "mem-b", "password": pw}).want(t, 200, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "mem-b", "password": pw}).want(t, 200, "")
 		tokB.do("GET", "/api/spaces", nil).want(t, 200, "")
 		f.root.do("POST", "/api/admin/spaces/"+f.spaceB+"/view", map[string]any{"reason": "test"}).want(t, 200, "")
 		f.root.do("GET", "/api/spaces/"+f.spaceB+"/pages", nil).want(t, 200, "")
@@ -310,7 +310,7 @@ func TestADisabledTenantSyncsNothing(t *testing.T) {
 		// Enabled again, the device goes on from the cursor it had.
 		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": false}).want(t, 200, "")
 		mb := a.newClient("")
-		mb.do("POST", "/api/login", map[string]any{"username": "mem-b", "password": pw}).want(t, 200, "")
+		mb.do("POST", "/api/login", map[string]any{"identifier": "mem-b", "password": pw}).want(t, 200, "")
 		if h := mb.do("GET", "/api/sync/heads"+q, nil).want(t, 200, "").body["heads"].(map[string]any); h[f.spaceB] == nil {
 			t.Fatalf("no head after the tenant is enabled again: %v", h)
 		}

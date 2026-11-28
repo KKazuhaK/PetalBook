@@ -76,7 +76,7 @@ func newTenFx(t *testing.T, a *acc) *tenFx {
 		t.Fatal(err)
 	}
 	f.admA = a.newClient("")
-	f.admA.do("POST", "/api/login", map[string]any{"username": "adm-a", "password": pw}).want(t, 200, "")
+	f.admA.do("POST", "/api/login", map[string]any{"identifier": "adm-a", "password": pw}).want(t, 200, "")
 	f.memA = a.addUser("mem-a", pw, "member")
 	f.inviteA = f.admA.do("POST", "/api/invites", map[string]any{"role": "member"}).want(t, 201, "").body["id"].(string)
 
@@ -828,7 +828,7 @@ func TestPersonalSpacesDoNotExistForATenantAdministratorOnEveryRoute(t *testing.
 		}
 		// The person's own item is the tenant's: restoring it brings their personal space back with them.
 		f.admA.do("POST", "/api/admin/recycle/"+userItem+"/restore", map[string]any{}).want(t, 200, "")
-		pat.do("POST", "/api/login", map[string]any{"username": "pat", "password": pw}).want(t, 200, "")
+		pat.do("POST", "/api/login", map[string]any{"identifier": "pat", "password": pw}).want(t, 200, "")
 		if pat.personalSpace() != patSpace {
 			t.Fatal("the personal space did not come back with its person")
 		}

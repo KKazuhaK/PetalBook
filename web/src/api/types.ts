@@ -1044,6 +1044,25 @@ export interface User {
   emails?: AccountEmail[]
 }
 
+// One row of the list of sign-in methods. `lastUsed` is null for never; `removable` is whether removing it would
+// still leave a way that works (the password is never removed, only changed).
+export interface AccountMethod {
+  type: 'password' | 'identity' | 'passkey'
+  id?: string
+  added: string
+  lastUsed: string | null
+  removable: boolean
+  // Identity: the provider's display name and slug, and the label of the identity there.
+  provider?: string
+  providerSlug?: string
+  kind?: string
+  class?: string
+  label?: string
+  // Passkey.
+  name?: string
+  synced?: boolean
+}
+
 // Why a session ended without the person signing out (docs/api.md, "Why a session ended").
 export type EndedReason = 'expired' | 'signed_out_elsewhere' | 'password_changed' | 'disabled'
 export const ENDED_REASONS: readonly EndedReason[] = ['expired', 'signed_out_elsewhere', 'password_changed', 'disabled']
@@ -1206,6 +1225,10 @@ export interface AccountInfo {
   groups: GroupRef[]
   // The account's addresses, the primary first: the primary alone while accounts.multipleEmails is off.
   emails?: AccountEmail[]
+  // The one list of ways to sign in (docs/api.md, "GET /api/account"): the password, each linked sign-in, each
+  // passkey. canUnlink: at least two of them work now.
+  methods: AccountMethod[]
+  canUnlink: boolean
 }
 
 // One address of an account (docs/api.md, "More than one email address"). markedByAdmin: verified by a tenant

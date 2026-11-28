@@ -409,7 +409,7 @@ func TestWhichRoutesATokenMayUse(t *testing.T) {
 		}
 		// A token cannot make a token, nor sign in.
 		b.do("POST", "/api/account/tokens", map[string]any{"name": "n", "spaces": []string{tm.sid}}).want(t, 403, "token_scope")
-		b.do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 403, "token_scope")
+		b.do("POST", "/api/login", map[string]any{"identifier": "olive", "password": pw}).want(t, 403, "token_scope")
 		b.do("POST", "/api/logout", nil).want(t, 403, "token_scope")
 	})
 }

@@ -18,6 +18,36 @@ type AccountView struct {
 	Passkeys    []PasskeyView
 	// PasskeyRequired: the person must have a passkey (by themselves or by their role).
 	PasskeyRequired bool
+	// Methods is the one list of ways to sign in: the password, each linked
+	// sign-in, each passkey, in that order. CanUnlink: removing one of them
+	// would still leave a way that works now.
+	Methods   []MethodView
+	CanUnlink bool
+}
+
+// Kinds of MethodView.
+const (
+	MethodPassword = "password"
+	MethodIdentity = "identity"
+	MethodPasskey  = "passkey"
+)
+
+// MethodView is one way the person signs in. Added is when it was made (for
+// the password, when it was last set); LastUsed is zero when it never signed
+// the person in. Removable says whether the person may remove it now: what is
+// left must still be a way that works.
+type MethodView struct {
+	Type      string
+	ID        string
+	Added     time.Time
+	LastUsed  time.Time
+	Removable bool
+	// Identity: the provider's name, slug, kind and class, and the label of the
+	// identity there (an address or a login).
+	Provider, ProviderSlug, Kind, Class, Label string
+	// Passkey.
+	Name   string
+	Synced bool
 }
 
 // LinkView is a linked account (a sign-in link) as shown to its owner.
@@ -49,14 +79,60 @@ func (s *Service) Links(ctx context.Context, userID string) ([]LinkView, error) 
 // Account describes the signed-in user's sign-in methods.
 func (s *Service) Account(ctx context.Context, u store.User) (*AccountView, error) {
 	v := &AccountView{User: u}
-	if _, err := store.GetPasswordHash(ctx, s.st.Q(), u.ID); err == nil {
+	q := s.st.Q()
+	set, used, err := store.PasswordInfo(ctx, q, u.ID)
+	switch {
+	case err == nil:
 		v.HasPassword = true
-	} else if !errors.Is(err, store.ErrNotFound) {
+	case !errors.Is(err, store.ErrNotFound):
 		return nil, err
 	}
-	var err error
 	if v.Passkeys, err = s.Passkeys(ctx, u.ID); err != nil {
 		return nil, err
+	}
+	links, err := store.ListLinks(ctx, q, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	// Which of them work now: password and passkeys unless local sign-in is
+	// refused to the person (passkeys also need to be on), a link while its
+	// provider is set up and on. A method that does not work may always go; one
+	// that does may go while another one that works remains.
+	st := s.sec(ctx)
+	local := !s.localRefusedUser(ctx, st, &u)
+	works := 0
+	if v.HasPassword && local {
+		works++
+	}
+	pkWorks := local && s.passkeysOn(st)
+	if pkWorks {
+		works += len(v.Passkeys)
+	}
+	linkWorks := make([]bool, len(links))
+	for i, l := range links {
+		if rt := s.provs.getID(l.ProviderID); rt != nil && s.signInOn(ctx, rt) {
+			linkWorks[i] = true
+			works++
+		}
+	}
+	v.CanUnlink = works >= 2
+	removable := func(counts bool) bool { return !counts || works >= 2 }
+	if v.HasPassword {
+		// The password has no remove action: it is changed, not deleted.
+		v.Methods = append(v.Methods, MethodView{Type: MethodPassword, Added: set, LastUsed: used})
+	}
+	for i, l := range links {
+		name, slug, kind := s.providerByID(l.ProviderID)
+		class := ""
+		if rt := s.provs.getID(l.ProviderID); rt != nil {
+			class = rt.row.Class
+		}
+		v.Methods = append(v.Methods, MethodView{Type: MethodIdentity, ID: l.ID, Added: l.Created, LastUsed: l.LastUsed, Removable: removable(linkWorks[i]),
+			Provider: name, ProviderSlug: slug, Kind: kind, Class: class, Label: l.Label})
+	}
+	for _, p := range v.Passkeys {
+		v.Methods = append(v.Methods, MethodView{Type: MethodPasskey, ID: p.ID, Added: p.Created, LastUsed: p.LastUsed, Removable: removable(pkWorks),
+			Name: p.Name, Synced: p.Synced})
 	}
 	return v, nil
 }

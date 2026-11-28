@@ -152,7 +152,7 @@ func TestAuditShowsFilePathsOnlyToWhoCanOpenTheSpace(t *testing.T) {
 			t.Fatal(err)
 		}
 		other := a.newClient("")
-		other.do("POST", "/api/login", map[string]any{"username": "adm-a2", "password": pw}).want(t, 200, "")
+		other.do("POST", "/api/login", map[string]any{"identifier": "adm-a2", "password": pw}).want(t, 200, "")
 		shown := func(c *client) (list, csv string) {
 			rows := c.audit(t, "file_read")
 			if len(rows) != 1 {

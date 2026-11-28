@@ -187,7 +187,7 @@ func TestThePersonalSpacesRecycleJobsAreTheSites(t *testing.T) {
 			t.Fatal(err)
 		}
 		adm := a.newClient("")
-		adm.do("POST", "/api/login", map[string]any{"username": "adm", "password": pw}).want(t, 200, "")
+		adm.do("POST", "/api/login", map[string]any{"identifier": "adm", "password": pw}).want(t, 200, "")
 		mem := a.addUser("mem", pw, "member")
 		mem.personalSpace()
 		root.do("DELETE", "/api/users/"+mustUserID(t, a, "mem"), map[string]any{}).want(t, 200, "")

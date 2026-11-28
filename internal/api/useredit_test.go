@@ -20,8 +20,8 @@ func TestAdminEditsNameAndUsernameOfAPersonOfTheirTenant(t *testing.T) {
 		}
 		// The new username signs in, the old one does not.
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "mem-b", "password": pw}).want(t, 401, "")
-		c.do("POST", "/api/login", map[string]any{"username": "bee-b", "password": pw}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "mem-b", "password": pw}).want(t, 401, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "bee-b", "password": pw}).want(t, 200, "")
 		// What it replaced is in the audit row.
 		a.auth.FlushAudit(t.Context())
 		items := f.admB.do("GET", "/api/admin/audit?kind=user_changed", nil).want(t, 200, "").body["items"].([]any)
@@ -107,7 +107,7 @@ func TestTemporaryPasswordForcesAChangeAtTheNextSignIn(t *testing.T) {
 		}
 		// Signing in with it works but is held: nothing else, until a new password is chosen.
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "mem-b", "password": temp}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "mem-b", "password": temp}).want(t, 200, "")
 		if r := c.do("GET", "/api/session", nil).want(t, 200, ""); r.body["hold"] != "password" {
 			t.Fatal(r.raw)
 		}
@@ -122,7 +122,7 @@ func TestTemporaryPasswordForcesAChangeAtTheNextSignIn(t *testing.T) {
 		}
 		// The next sign-in is an ordinary one.
 		d := a.newClient("")
-		d.do("POST", "/api/login", map[string]any{"username": "mem-b", "password": "my-own-password-2"}).want(t, 200, "")
+		d.do("POST", "/api/login", map[string]any{"identifier": "mem-b", "password": "my-own-password-2"}).want(t, 200, "")
 		d.do("GET", "/api/spaces", nil).want(t, 200, "")
 		// The password is in no audit row, and the person was told.
 		a.auth.FlushAudit(t.Context())
@@ -153,7 +153,7 @@ func TestAPersonChangesTheirOwnUsername(t *testing.T) {
 		f.memB.do("PATCH", "/api/account", map[string]any{"username": "adm-b"}).want(t, 409, "exists")
 		f.memB.do("PATCH", "/api/account", map[string]any{"username": "x"}).want(t, 400, "invalid")
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "bee.two", "password": pw}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "bee.two", "password": pw}).want(t, 200, "")
 		a.auth.FlushAudit(t.Context())
 		d := f.admB.do("GET", "/api/admin/audit?kind=user_changed", nil).want(t, 200, "").body["items"].([]any)[0].(map[string]any)["detail"].(map[string]any)
 		if d["username"] != "bee.two" || d["old"].(map[string]any)["username"] != "mem-b" {
@@ -177,7 +177,7 @@ func TestAPasswordHoldIsNotLiftedByAPasskey(t *testing.T) {
 		admin.do("POST", "/api/users/"+tid+"/password", map[string]any{"password": temp}).want(t, 204, "")
 
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "tang", "password": temp}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": temp}).want(t, 200, "")
 		c.do("GET", "/api/account/passkeys", nil).want(t, 403, "password_change_required")
 		c.do("POST", "/api/account/passkeys/begin", map[string]any{"name": "new"}).want(t, 403, "password_change_required")
 		c.do("POST", "/api/account/passkeys/finish?ceremony=x", map[string]any{}).want(t, 403, "password_change_required")
@@ -214,7 +214,7 @@ func TestATemporaryPasswordDoesNotSkipARequiredPasskey(t *testing.T) {
 		admin.do("POST", "/api/users/"+tid+"/password", map[string]any{"password": temp}).want(t, 204, "")
 
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "tang", "password": temp}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": temp}).want(t, 200, "")
 		if h := c.do("GET", "/api/session", nil).want(t, 200, "").body["hold"]; h != "password" {
 			t.Fatalf("hold %v", h)
 		}
@@ -228,7 +228,7 @@ func TestATemporaryPasswordDoesNotSkipARequiredPasskey(t *testing.T) {
 
 		admin.do("POST", "/api/users/"+tid+"/password", map[string]any{"password": temp}).want(t, 204, "")
 		d := a.newClient("")
-		d.do("POST", "/api/login", map[string]any{"username": "tang", "password": temp}).want(t, 403, "passkey_required")
+		d.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": temp}).want(t, 403, "passkey_required")
 		if u := d.do("GET", "/api/session", nil).want(t, 200, "").user(); u != nil {
 			t.Fatal("a session was started")
 		}
@@ -250,6 +250,6 @@ func TestEditingASiteAdministratorNeedsSiteAdminsManage(t *testing.T) {
 		helper.do("PATCH", "/api/users/"+rootID, map[string]any{"name": "x"}).want(t, 403, "forbidden")
 		helper.do("PATCH", "/api/users/"+rootID, map[string]any{"username": "not-root"}).want(t, 403, "forbidden")
 		helper.do("POST", "/api/users/"+rootID+"/password", map[string]any{"password": "temporary-pass-1"}).want(t, 403, "forbidden")
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "root", "password": pw}).want(t, 200, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "root", "password": pw}).want(t, 200, "")
 	})
 }

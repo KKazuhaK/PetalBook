@@ -38,7 +38,7 @@ func TestAnAdministratorMakesAnAccountAndHandsOverASetPasswordLink(t *testing.T)
 		// The link works once, and a copied link does not verify the address.
 		anon.do("POST", "/api/password/reset/check", map[string]any{"token": tok}).want(t, 404, "not_found")
 		p := a.newClient("")
-		li := p.do("POST", "/api/login", map[string]any{"username": "newbie", "password": "a brand new password"}).want(t, 200, "")
+		li := p.do("POST", "/api/login", map[string]any{"identifier": "newbie", "password": "a brand new password"}).want(t, 200, "")
 		if li.user()["emailVerified"] != false {
 			t.Fatalf("a copied link does not verify: %s", li.raw)
 		}
@@ -75,7 +75,7 @@ func TestTheMailedSetPasswordLinkVerifiesTheAddressAndTheCopiedOneDiesWithIt(t *
 		anon := a.newClient("203.0.113.9")
 		anon.do("POST", "/api/password/reset", map[string]any{"token": mailed, "password": "a brand new password"}).want(t, 204, "")
 		anon.do("POST", "/api/password/reset", map[string]any{"token": copied, "password": "another new password"}).want(t, 404, "not_found")
-		li := a.newClient("").do("POST", "/api/login", map[string]any{"username": "newbie", "password": "a brand new password"}).want(t, 200, "")
+		li := a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "newbie", "password": "a brand new password"}).want(t, 200, "")
 		if li.user()["emailVerified"] != true {
 			t.Fatalf("the mailed link verifies the address: %s", li.raw)
 		}

@@ -148,7 +148,7 @@ func TestRemoteSpaceEndToEnd(t *testing.T) {
 	// A restart reopens the space as a remote space.
 	srv2 := start(t, cfg)
 	b2 := &browser{t: t, base: srv2.base}
-	if code, _ := b2.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": password}); code != 200 {
+	if code, _ := b2.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": password}); code != 200 {
 		t.Fatal("cannot sign in after a restart")
 	}
 	if code, r := b2.do("GET", "/api/spaces/"+sid+"/remote", nil); code != 200 || r["url"] != remote {

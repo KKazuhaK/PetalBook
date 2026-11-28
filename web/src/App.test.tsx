@@ -48,7 +48,7 @@ async function boot(
     const login = await globalThis.fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: options.as ?? MOCK_ADMIN.username, password: MOCK_ADMIN.password }),
+      body: JSON.stringify({ identifier: options.as ?? MOCK_ADMIN.username, password: MOCK_ADMIN.password }),
     })
     expect(login.status).toBe(200)
   }

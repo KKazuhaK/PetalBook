@@ -12,7 +12,7 @@ let me = ''
 let space = ''
 beforeEach(async () => {
   net = network({ mode: 'accounts' })
-  me = (await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).user.id
+  me = (await api.login({ identifier: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).user.id
   space = (await api.spaces()).spaces[0].id
 })
 afterEach(() => net.restore())
@@ -73,7 +73,7 @@ describe('signing out', () => {
   it('another account that signs in on the same browser finds no copy of its own', async () => {
     await keepCopies()
     await api.logout()
-    const bob = (await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).user.id
+    const bob = (await api.login({ identifier: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).user.id
     // The same mock user, a new session: nothing of the earlier copy is left for it either.
     expect(hasCopy(bob, space)).toBe(false)
   })

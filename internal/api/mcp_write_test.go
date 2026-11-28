@@ -477,7 +477,7 @@ func TestMCPFollowsTheSwitchesAndTheAccount(t *testing.T) {
 		g.tool("spaces_list", nil).http(t, 401, "token_owner_disabled")
 		admin.do("PATCH", "/api/users/"+e.tm.ownerID, map[string]any{"disabled": false}).want(t, 200, "")
 		e.w.tool("spaces_list", nil).ok(t)
-		e.tm.owner.do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 200, "")
+		e.tm.owner.do("POST", "/api/login", map[string]any{"identifier": "olive", "password": pw}).want(t, 200, "")
 		e.tm.owner.do("DELETE", "/api/account/tokens/"+list[0].(map[string]any)["id"].(string), nil).want(t, 204, "")
 		revoked := 0
 		for _, c := range []*client{e.w, e.r} {

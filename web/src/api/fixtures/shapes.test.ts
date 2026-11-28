@@ -162,7 +162,7 @@ function probes(fx: FixtureServer): Call[] {
     ],
     ['POST', '/api/spaces/default/reindex'],
     // signing in
-    ['POST', '/api/login', { username: 'admin', password: 'x' }],
+    ['POST', '/api/login', { identifier: 'admin', password: 'x' }],
     ['POST', '/api/logout'],
     ['POST', '/api/setup', { token: 't', username: 'first', password: 'a-long-password' }],
     ['POST', '/api/invites/check', { token: 'inv' }],
@@ -236,7 +236,7 @@ function probes(fx: FixtureServer): Call[] {
     ['POST', '/api/admin/providers/gl/check', {}],
     ['DELETE', '/api/admin/providers/gl'],
     // the person's own account (as the administrator, who the probes above may have signed out)
-    ['POST', '/api/login', { username: 'admin', password: 'x' }],
+    ['POST', '/api/login', { identifier: 'admin', password: 'x' }],
     ['PATCH', '/api/account', { name: '新名字' }],
     ['POST', '/api/account/password', { current: 'x', new: 'a-long-password' }],
     ['DELETE', '/api/account/links/id1'],

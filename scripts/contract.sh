@@ -101,6 +101,6 @@ log="$work/accounts.log"
 "$bin" serve --data "$work/data" --listen "127.0.0.1:$port" >"$log" 2>&1 &
 pid=$!
 # Signing in as the user made above proves this is the server on our data directory.
-wait_ready "$log" sh -c "curl -fsS -X POST -H 'Content-Type: application/json' -d '{\"username\":\"$user\",\"password\":\"$password\"}' 'http://127.0.0.1:$port/api/login' | grep -q '\"$user\"'"
+wait_ready "$log" sh -c "curl -fsS -X POST -H 'Content-Type: application/json' -d '{\"identifier\":\"$user\",\"password\":\"$password\"}' 'http://127.0.0.1:$port/api/login' | grep -q '\"$user\"'"
 PETALBOOK_API="http://127.0.0.1:$port" PETALBOOK_CONTRACT_USER="$user" PETALBOOK_CONTRACT_PASSWORD="$password" \
   npm --prefix web run --silent test:contract

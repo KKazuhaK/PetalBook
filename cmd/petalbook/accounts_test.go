@@ -274,7 +274,7 @@ func TestAccountsModeEndToEnd(t *testing.T) {
 		t.Fatalf("set-up link logged although an account exists:\n%s", srv2.log)
 	}
 	b2 := &browser{t: t, base: srv2.base}
-	if code, _ := b2.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": password}); code != 200 {
+	if code, _ := b2.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": password}); code != 200 {
 		t.Fatal("cannot sign in after a restart")
 	}
 }
@@ -286,7 +286,7 @@ func TestAccountsModeMayListenBeyondLoopback(t *testing.T) {
 		t.Fatalf("warned about missing authentication:\n%s", srv.log)
 	}
 	// The Host check is off (not loopback-only), and the public origin is the server's own.
-	req, _ := http.NewRequest("POST", srv.base+"/api/login", strings.NewReader(`{"username":"x","password":"y"}`))
+	req, _ := http.NewRequest("POST", srv.base+"/api/login", strings.NewReader(`{"identifier":"x","password":"y"}`))
 	req.Host = "notes.example.test"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://notes.example.test")
@@ -444,7 +444,7 @@ func TestUserCommands(t *testing.T) {
 		t.Fatal("a set-up link although the command line made the first account")
 	}
 	b := &browser{t: t, base: srv.base}
-	if code, _ := b.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw1}); code != 200 {
+	if code, _ := b.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw1}); code != 200 {
 		t.Fatal("the new account cannot sign in")
 	}
 	if _, r := b.do("GET", "/api/spaces", nil); len(r["spaces"].([]any)) != 1 {
@@ -459,10 +459,10 @@ func TestUserCommands(t *testing.T) {
 		t.Fatalf("%q %v", out, err)
 	}
 	b2 := &browser{t: t, base: srv.base}
-	if code, _ := b2.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw1}); code != 401 {
+	if code, _ := b2.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw1}); code != 401 {
 		t.Fatal("the old password still works")
 	}
-	if code, _ := b2.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw2}); code != 200 {
+	if code, _ := b2.do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": pw2}); code != 200 {
 		t.Fatal("the new password does not work")
 	}
 	// The data directory and database also come from the environment.

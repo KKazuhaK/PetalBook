@@ -42,7 +42,7 @@ func TestSignInAnswersCarryTheSessionsPermissionsAndHold(t *testing.T) {
 
 		login := func(name string) []string {
 			c := a.newClient("")
-			ans := c.do("POST", "/api/login", map[string]any{"username": name, "password": pw}).want(t, 200, "")
+			ans := c.do("POST", "/api/login", map[string]any{"identifier": name, "password": pw}).want(t, 200, "")
 			return sameAsSession(t, "login "+name, ans, c)
 		}
 		if p := login("root"); !slices.Contains(p, "site.tenants.manage") || !slices.Contains(p, "tenant.users.manage") {
@@ -60,7 +60,7 @@ func TestSignInAnswersCarryTheSessionsPermissionsAndHold(t *testing.T) {
 
 		// The passkey sign-in, and its hold for a temporary password.
 		mem := a.newClient("")
-		mem.do("POST", "/api/login", map[string]any{"username": "mem", "password": pw}).want(t, 200, "")
+		mem.do("POST", "/api/login", map[string]any{"identifier": "mem", "password": pw}).want(t, 200, "")
 		key := newVKey(mustUserID(t, a, "mem"))
 		mem.register(t, key, "key").want(t, 201, "")
 		c := a.newClient("")

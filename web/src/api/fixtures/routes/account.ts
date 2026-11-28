@@ -5,6 +5,7 @@
 import type {
   AccountEmail,
   AccountInfo,
+  AccountMethod,
   AccountUsage,
   ApiToken,
   CreatedToken,
@@ -114,10 +115,38 @@ export const accountRoutes: Route[] = [
             created: user.created,
             synced: false,
           }))
+      // The one list of sign-in methods, as the server's: the password, the links that sign in, the passkeys.
+      const sign = linksOf(c).filter((l) => l.signin)
+      const count = 1 + sign.length + passkeys.length
+      const methods: AccountMethod[] = [
+        { type: 'password', added: user.created, lastUsed: user.created, removable: false },
+        ...sign.map((l) => ({
+          type: 'identity' as const,
+          id: l.id,
+          provider: l.provider,
+          providerSlug: l.slug,
+          kind: l.kind,
+          label: l.label,
+          added: l.created,
+          lastUsed: null,
+          removable: count >= 2,
+        })),
+        ...passkeys.map((p) => ({
+          type: 'passkey' as const,
+          id: p.id,
+          name: p.name,
+          synced: p.synced,
+          added: p.created,
+          lastUsed: (p as { lastUsed?: string | null }).lastUsed ?? null,
+          removable: count >= 2,
+        })),
+      ]
       return {
         user,
         hasPassword: true,
         passkeys,
+        methods,
+        canUnlink: count >= 2,
         groups: c.data.admin.groups
           .filter((g) => g.members.includes(u.id))
           .map((g) => ({ id: g.id, name: g.name, source: g.source })),

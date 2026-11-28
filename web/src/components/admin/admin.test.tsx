@@ -92,7 +92,7 @@ describe('who can reach the administration', () => {
       fixtures: { mode: 'accounts', data: (d) => void addPerson(d, 'carol') },
     })
     await act(async () => {
-      applySession(m!.qc, (await api.login({ username: 'carol', password: 'a-long-password' })).user)
+      applySession(m!.qc, (await api.login({ identifier: 'carol', password: 'a-long-password' })).user)
     })
     await settle(() => text().includes(t.notFound), 'not found')
     expect(heading()).toBeUndefined()

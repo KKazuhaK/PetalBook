@@ -390,7 +390,7 @@ func (a *acc) addUser(username, password, role string) *client {
 		a.t.Fatal(err)
 	}
 	c := a.newClient("")
-	c.do("POST", "/api/login", map[string]any{"username": username, "password": password}).want(a.t, 200, "")
+	c.do("POST", "/api/login", map[string]any{"identifier": username, "password": password}).want(a.t, 200, "")
 	a.clock.Advance(time.Second)
 	return c
 }

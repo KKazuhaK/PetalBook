@@ -18,10 +18,10 @@ func TestUnknownUserCostsAsMuchAsAWrongPassword(t *testing.T) {
 		a.setup("kazuha", pw)
 		ops := func() int64 { return auth.HashOps(a.auth) }
 		before := ops()
-		a.newClient("203.0.113.1").do("POST", "/api/login", map[string]any{"username": "kazuha", "password": "wrong password"}).want(t, 401, "")
+		a.newClient("203.0.113.1").do("POST", "/api/login", map[string]any{"identifier": "kazuha", "password": "wrong password"}).want(t, 401, "")
 		wrong := ops() - before
 		before = ops()
-		a.newClient("203.0.113.2").do("POST", "/api/login", map[string]any{"username": "nobody", "password": "wrong password"}).want(t, 401, "")
+		a.newClient("203.0.113.2").do("POST", "/api/login", map[string]any{"identifier": "nobody", "password": "wrong password"}).want(t, 401, "")
 		unknown := ops() - before
 		if wrong != 1 || unknown != 1 {
 			t.Fatalf("a wrong password ran %d hashes, an unknown user %d", wrong, unknown)

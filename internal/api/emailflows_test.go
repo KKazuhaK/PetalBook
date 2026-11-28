@@ -102,7 +102,7 @@ func TestChangingAVerifiedAddressTellsTheOldOneWithNoLink(t *testing.T) {
 		enableMail(t, root, srv)
 		verifiedUser(t, a, "tang", "old@example.test")
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
 		c.do("PATCH", "/api/account", map[string]any{"email": "new@example.test"}).want(t, 200, "")
 		m := srv.Wait(1)[0]
 		if m.To != "old@example.test" || strings.Contains(m.Text, "http") || strings.Contains(m.HTML, "href") {
@@ -184,8 +184,8 @@ func TestAResetLinkSetsANewPasswordOnceAndEndsEverySession(t *testing.T) {
 		enableMail(t, root, srv)
 		verifiedUser(t, a, "tang", "tang@example.test")
 		s1, s2 := a.newClient("198.51.100.1"), a.newClient("198.51.100.2")
-		s1.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
-		s2.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		s1.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
+		s2.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
 		anon := a.newClient("")
 		forgot(anon, "tang", "lang", "zh-Hans").want(t, 202, "")
 		m := srv.Wait(1)[0]
@@ -212,8 +212,8 @@ func TestAResetLinkSetsANewPasswordOnceAndEndsEverySession(t *testing.T) {
 		// Every session ended; the old password is gone; the new one signs in.
 		s1.do("GET", "/api/account", nil).want(t, 401, "")
 		s2.do("GET", "/api/account", nil).want(t, 401, "")
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 401, "")
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "tang", "password": "a brand new password"}).want(t, 200, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 401, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "tang", "password": "a brand new password"}).want(t, 200, "")
 		if len(auditKinds(t, root, "password_reset")) != 1 || len(auditKinds(t, root, "password_reset_requested")) != 1 {
 			t.Fatal("the reset is not audited")
 		}
@@ -252,7 +252,7 @@ func TestAResetLinkExpiresAfterAnHourAndAPasswordChangeKillsIt(t *testing.T) {
 		forgot(anon, "tang").want(t, 202, "")
 		tok2 := srv.Wait(2)[1].Token(t)
 		c := a.newClient("")
-		c.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		c.do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
 		c.do("POST", "/api/account/password", map[string]any{"current": pw, "new": "changed by the person"}).want(t, 204, "")
 		anon.do("POST", "/api/password/reset", map[string]any{"token": tok2, "password": "a brand new password"}).want(t, 404, "not_found")
 	})
@@ -405,13 +405,13 @@ func TestAResetForgivesTheFailuresAndLocksOfTheUsername(t *testing.T) {
 		root.putSetting("signin.maxFailures", 3).want(t, 200, "")
 		verifiedUser(t, a, "tang", "tang@example.test")
 		for i := 0; i < 3; i++ {
-			a.newClient("198.51.100.5").do("POST", "/api/login", map[string]any{"username": "tang", "password": "wrong one"})
+			a.newClient("198.51.100.5").do("POST", "/api/login", map[string]any{"identifier": "tang", "password": "wrong one"})
 		}
-		a.newClient("198.51.100.6").do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 429, "rate_limited")
+		a.newClient("198.51.100.6").do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 429, "rate_limited")
 		forgot(a.newClient("203.0.113.1"), "tang").want(t, 202, "")
 		tok := srv.Wait(1)[0].Token(t)
 		a.newClient("203.0.113.1").do("POST", "/api/password/reset", map[string]any{"token": tok, "password": "a brand new password"}).want(t, 204, "")
-		a.newClient("198.51.100.6").do("POST", "/api/login", map[string]any{"username": "tang", "password": "a brand new password"}).want(t, 200, "")
+		a.newClient("198.51.100.6").do("POST", "/api/login", map[string]any{"identifier": "tang", "password": "a brand new password"}).want(t, 200, "")
 	})
 }
 

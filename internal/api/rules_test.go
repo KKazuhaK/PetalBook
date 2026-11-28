@@ -42,7 +42,7 @@ func TestAFeatureThatIsOffRefusesTheTenantNotTheSite(t *testing.T) {
 			t.Fatal(err)
 		}
 		adm := a.newClient("")
-		adm.do("POST", "/api/login", map[string]any{"username": "adm", "password": pw}).want(t, 200, "")
+		adm.do("POST", "/api/login", map[string]any{"identifier": "adm", "password": pw}).want(t, 200, "")
 		mem := a.addUser("mem", pw, "member")
 		sp := mem.do("POST", "/api/spaces", map[string]any{"name": "Notes"}).want(t, 201, "").body["id"].(string)
 		view := map[string]any{"reason": "a check"}

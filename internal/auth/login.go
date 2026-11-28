@@ -60,8 +60,9 @@ func pairKey(ip, ukey string) string { return "p:" + ip + "|" + ukey }
 
 // LoginParams is a password sign-in.
 type LoginParams struct {
-	Username, Password, IP string
-	Captcha                *CaptchaAnswer
+	// Identifier is an email address (it has an @) or a username, as typed.
+	Identifier, Password, IP string
+	Captcha                  *CaptchaAnswer
 	// TenantID is the tenant the sign-in page is scoped to (?tenant=), or ""
 	// when it names none: it picks the captcha settings of login, as the
 	// person is not known before the captcha is asked. It is never worked out
@@ -90,13 +91,13 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		return nil, err
 	}
 	st := s.sec(ctx)
-	if err := s.checkCaptcha(ctx, st, p.TenantID, CtxLogin, p.Username, ip, p.Captcha); err != nil {
-		s.auditThrottled(AuditEvent{Kind: "login_failed", Username: p.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "captcha_failed"}}, "captcha_failed")
+	if err := s.checkCaptcha(ctx, st, p.TenantID, CtxLogin, p.Identifier, ip, p.Captcha); err != nil {
+		s.auditThrottled(AuditEvent{Kind: "login_failed", Username: p.Identifier, IP: ip, Detail: map[string]any{"method": "password", "reason": "captcha_failed"}}, "captcha_failed")
 		return nil, err
 	}
 	if err := s.gateIP(st, ip); err != nil {
 		// The address is at its cap or locked (scope ip).
-		s.auditThrottled(AuditEvent{Kind: "login_failed", Username: p.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "rate_limited"}}, "rate_limited")
+		s.auditThrottled(AuditEvent{Kind: "login_failed", Username: p.Identifier, IP: ip, Detail: map[string]any{"method": "password", "reason": "rate_limited"}}, "rate_limited")
 		return nil, err
 	}
 	reserved := true
@@ -111,9 +112,9 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 	// so an address and the username share one count. An address that finds
 	// nobody counts as typed, and is answered as a wrong username is.
 	var byEmail *store.User
-	ukey := userKey(p.Username)
-	if strings.Contains(p.Username, "@") && len(p.Username) <= 254 && (store.EmailIsASCII(p.Username) || s.nonASCIIEmail(ctx)) {
-		switch u, _, err := s.userBySignInEmail(ctx, strings.TrimSpace(p.Username)); {
+	ukey := userKey(p.Identifier)
+	if strings.Contains(p.Identifier, "@") && len(p.Identifier) <= 254 && (store.EmailIsASCII(p.Identifier) || s.nonASCIIEmail(ctx)) {
+		switch u, _, err := s.userBySignInEmail(ctx, strings.TrimSpace(p.Identifier)); {
 		case err == nil:
 			byEmail = u
 			ukey = userKey(u.Username)
@@ -132,7 +133,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		}
 		if table != nil {
 			if wait, locked := table.LockedFor(key, st.window); locked {
-				s.Audit(AuditEvent{Kind: "login_failed", Username: p.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "rate_limited"}})
+				s.Audit(AuditEvent{Kind: "login_failed", Username: p.Identifier, IP: ip, Detail: map[string]any{"method": "password", "reason": "rate_limited"}})
 				return nil, retryAfter(wait)
 			}
 		}
@@ -149,7 +150,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return nil, err
 		}
-	} else if un, err := NormalizeUsername(p.Username); err == nil {
+	} else if un, err := NormalizeUsername(p.Identifier); err == nil {
 		switch row, err := store.GetUserByUsername(ctx, s.st.Q(), un); {
 		case err == nil:
 			u = row
@@ -211,6 +212,9 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		// one; ChangePassword then holds it for a passkey if one is required.
 		held, holdBy = true, HoldPassword
 	}
+	if err := store.TouchPassword(ctx, s.st.Q(), u.ID, s.now()); err != nil {
+		s.log.Warn("could not record the sign-in on its password", "error", err)
+	}
 	method := "password"
 	if holdBy == HoldPassword {
 		method = holdMethodPassword
@@ -242,22 +246,22 @@ func (s *Service) wrongPassword(st *secState, p LoginParams, ukey, pkey, reason 
 			lockPair = st.lock
 		case "ip":
 			if s.failIP.LockIfAtCap("ip:"+ip, st.Limits.MaxFailures, st.window, st.lock) {
-				s.auditLock(st, p.Username, ip)
+				s.auditLock(st, p.Identifier, ip)
 			}
 		}
 	}
 	resU := s.failUser.Fail(ukey, st.Limits.MaxFailures, st.window, lockUser)
 	resP := s.failPair.Fail(pkey, st.Limits.MaxFailures, st.window, lockPair)
-	s.Audit(AuditEvent{Kind: "login_failed", Username: p.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": reason}})
+	s.Audit(AuditEvent{Kind: "login_failed", Username: p.Identifier, IP: ip, Detail: map[string]any{"method": "password", "reason": reason}})
 	for _, c := range []struct {
 		res   ratelimit.Result
 		limit string
 	}{{resU, "username"}, {resP, "pair"}} {
 		if c.res.First {
-			s.Audit(AuditEvent{Kind: "rate_limited", Username: p.Username, IP: ip, Detail: map[string]any{"limit": c.limit}})
+			s.Audit(AuditEvent{Kind: "rate_limited", Username: p.Identifier, IP: ip, Detail: map[string]any{"limit": c.limit}})
 		}
 		if c.res.Locked {
-			s.auditLock(st, p.Username, ip)
+			s.auditLock(st, p.Identifier, ip)
 		}
 	}
 	if resU.AtCap || resP.AtCap {

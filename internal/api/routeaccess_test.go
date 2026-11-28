@@ -198,7 +198,7 @@ func newRouteAccessFx(t *testing.T) *routeAccessFx {
 		t.Fatal(err)
 	}
 	f.tenant = a.newClient("")
-	f.tenant.do("POST", "/api/login", map[string]any{"username": "adm", "password": pw}).want(t, 200, "")
+	f.tenant.do("POST", "/api/login", map[string]any{"identifier": "adm", "password": pw}).want(t, 200, "")
 	owner := a.addUser("own", pw, "member")
 	f.mem = a.addUser("mem", pw, "member")
 	// A space neither administrator is a member of, the member an editor in it.

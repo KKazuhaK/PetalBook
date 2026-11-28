@@ -123,7 +123,7 @@ func TestAPersonRegistersAnOrganisationAndIsItsAdministrator(t *testing.T) {
 		if rowCount(t, a, `SELECT COUNT(*) FROM registrations`) != 0 {
 			t.Fatal("a used registration stays")
 		}
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
 	})
 }
 

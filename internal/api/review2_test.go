@@ -21,10 +21,10 @@ func TestTheSitesOwnSSOOnlyAdminsValueHoldsNoTenantsAdministrators(t *testing.T)
 		f.orgProvider(t, f.admB, f.tenB, "acme-sso", nil)
 		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/signin.ssoOnly", map[string]any{"value": true}).want(t, 200, "")
 		f.root.putSetting("signin.ssoOnlyAdmins", true).want(t, 200, "")
-		a.newClient("203.0.113.80").do("POST", "/api/login", map[string]any{"username": "adm-b", "password": pw}).want(t, 200, "")
+		a.newClient("203.0.113.80").do("POST", "/api/login", map[string]any{"identifier": "adm-b", "password": pw}).want(t, 200, "")
 		// The site's rule for the one tenant does hold it.
 		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/signin.ssoOnlyAdmins", map[string]any{"siteRule": map[string]any{"value": true}}).want(t, 200, "")
-		a.newClient("203.0.113.81").do("POST", "/api/login", map[string]any{"username": "adm-b", "password": pw}).want(t, 403, "local_login_refused")
+		a.newClient("203.0.113.81").do("POST", "/api/login", map[string]any{"identifier": "adm-b", "password": pw}).want(t, 403, "local_login_refused")
 	})
 }
 
@@ -67,8 +67,8 @@ func TestSSOOnlyAdminsRefusesPasskeyResetAndSocialToATenantAdministrator(t *test
 		if loc := idp.signIn2(t, a.newClient(""), "soc", "alice", nil); loc != "/login?sso_error=sso_required" {
 			t.Fatal(loc)
 		}
-		a.newClient("203.0.113.83").do("POST", "/api/login", map[string]any{"username": "adm-b", "password": pw}).want(t, 403, "local_login_refused")
-		a.newClient("203.0.113.84").do("POST", "/api/login", map[string]any{"username": "adm-b2", "password": pw}).want(t, 200, "")
+		a.newClient("203.0.113.83").do("POST", "/api/login", map[string]any{"identifier": "adm-b", "password": pw}).want(t, 403, "local_login_refused")
+		a.newClient("203.0.113.84").do("POST", "/api/login", map[string]any{"identifier": "adm-b2", "password": pw}).want(t, 200, "")
 	})
 }
 

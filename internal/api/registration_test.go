@@ -77,7 +77,7 @@ func TestRegistrationStartsToEndWithTheLinkInTheMail(t *testing.T) {
 			t.Fatal("registered is not audited")
 		}
 		// The person signs in with the password they chose.
-		a.newClient("").do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "tang", "password": pw}).want(t, 200, "")
 	})
 }
 

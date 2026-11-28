@@ -146,7 +146,10 @@ CREATE TABLE passwords (
   -- 1 for a temporary password an administrator set: the next sign-in with it
   -- is held until the person chooses their own. Any other way of setting the
   -- password clears it.
-  must_change BIGINT NOT NULL DEFAULT 0
+  must_change BIGINT NOT NULL DEFAULT 0,
+  -- The last password sign-in (0: never), for the account's list of sign-in
+  -- methods. Written once per sign-in.
+  last_used   BIGINT NOT NULL DEFAULT 0
 );
 
 

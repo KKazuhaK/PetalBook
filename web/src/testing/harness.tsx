@@ -119,7 +119,7 @@ export async function mount(ui: ReactNode, options: MountOptions): Promise<Mount
     return mocked(input, init)
   }
   markSignedIn()
-  if (options.signIn) await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+  if (options.signIn) await api.login({ identifier: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
