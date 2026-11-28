@@ -72,6 +72,17 @@ export const usageZhCN = {
     usageHelp: '租户里所有人合起来用了多少。',
     over: (list: string) => `超出：${list}`,
   },
+  export: {
+    title: '导出用量',
+    help: '每天每一类用量一行：人数、空间数、磁盘、置顶占用的磁盘、API 与 MCP 请求数、邮件和对外调用。日期按 UTC 计，一次最多 366 天。总量每小时更新一次，计数每分钟写入一次。',
+    from: '从',
+    to: '到',
+    format: '格式',
+    csv: 'CSV',
+    jsonl: 'JSON Lines',
+    download: '下载',
+    badRange: '请选择从起始日到结束日，一共不超过 366 天。',
+  },
   invite: {
     prefilled: '管理员替你填好了下面的内容，可以改。',
     email: (address: string) => `账号的邮箱：${address}（还没验证）`,

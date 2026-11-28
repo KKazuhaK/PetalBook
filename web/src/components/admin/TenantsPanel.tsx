@@ -36,6 +36,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { adminTenantPath } from '@/lib/urls'
 import { ManageAsButton } from './TenantScope'
+import { UsageExport } from './UsageExport'
 import { tt } from '@/i18n/tenants'
 import { tu } from '@/i18n/usage'
 import { formatUsed } from '@/lib/usage'
@@ -432,6 +433,7 @@ export function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
           <p className="text-xs text-destructive">{tu.tenant.over(joinList(u.over.map((k) => tu.quotas[k])))}</p>
         )}
       </div>
+      <UsageExport tenant={tenant.id} />
       <TenantRulesBlock tenant={tenant} />
     </>
   )

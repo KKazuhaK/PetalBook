@@ -484,6 +484,12 @@ export const adminApi = {
     return `${API_BASE}/admin/audit/download${qs ? `?${qs}` : ''}`
   },
 
+  // The address of a tenant's usage export (the browser downloads it; the server streams it).
+  usageExportUrl: (tenant: string, range: { from: string; to: string; format: 'csv' | 'jsonl' }) => {
+    const q = new URLSearchParams({ from: range.from, to: range.to, format: range.format })
+    return `${API_BASE}/admin/tenants/${enc(tenant)}/usage/export?${q.toString()}`
+  },
+
   // --- machine access: API tokens ---
   adminTokens: (params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams()

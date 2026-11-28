@@ -66,6 +66,8 @@ func init() {
 // routeAccessAdded are the routes added after the golden file was written,
 // with their decision for each caller.
 var routeAccessAdded = map[string][4]string{
+	// The usage export (3.6 limits): a tenant's administrators export their tenant's rows (the handler answers 404 for another).
+	"GET /api/admin/tenants/{tenant}/usage/export": {"ok", "ok", "403 forbidden", "403 token_scope"},
 	// Social sign-in templates and Apple's form_post (3.6 d1).
 	"GET /api/admin/provider-templates":   {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 	"POST /api/auth/oidc/{slug}/callback": {"ok", "ok", "ok", "403 token_scope"},

@@ -74,6 +74,17 @@ export const usageEn: UsageMessages = {
     usageHelp: 'What everyone in the tenant uses together.',
     over: (list) => `Over: ${list}`,
   },
+  export: {
+    title: 'Export the usage',
+    help: 'One row for each day and kind of use: people, spaces, disk, pinned disk, API and MCP requests, mail and outgoing calls. Days are in UTC, at most 366 of them. The totals are set once an hour; the counts, once a minute.',
+    from: 'From',
+    to: 'To',
+    format: 'Format',
+    csv: 'CSV',
+    jsonl: 'JSON Lines',
+    download: 'Download',
+    badRange: 'Choose days from the first to the last, at most 366 in all.',
+  },
   invite: {
     prefilled: 'An administrator filled in the fields below for you. You can change them.',
     email: (address) => `Account address: ${address} (not verified yet)`,
