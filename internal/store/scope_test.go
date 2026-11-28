@@ -26,7 +26,7 @@ var scopeAllowlist = map[string]string{
 	"ListTenantTotals": "the daily recount sets the totals of every tenant, the server's own job",
 	"PinnedBytes":      "the pin check names the tenant of the space it has already found in the caller's scope",
 	"PinSpaceWithin":   "the pin names a space the caller has already found in its scope, and that space's tenant",
-	"SpaceDiskBytes":"the pin check reads the size of a space it has already found in the caller's scope",
+	"SpaceDiskBytes":   "the pin check reads the size of a space it has already found in the caller's scope",
 	// --- the account decides the tenant: a sign-in, a session, a token, a CLI ---
 	"GetUserByUsername":          "sign-in by username: usernames are unique on the server, and the account found decides the tenant",
 	"FindUsableInvite":           "an invite by the hash of its secret token: the invite decides the tenant",
