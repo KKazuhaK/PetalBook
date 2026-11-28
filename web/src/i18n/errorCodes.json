@@ -105,6 +105,7 @@
   "provider_limit",
   "provider_not_configured",
   "provider_refused",
+  "provider_unavailable",
   "public_url_needed",
   "public_url_required",
   "push_failed",

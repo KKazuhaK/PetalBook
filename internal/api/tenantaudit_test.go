@@ -81,7 +81,7 @@ func TestANewTenantGetsTheSitesAuditDefaultAndNothingChangesLater(t *testing.T) 
 			t.Fatal("the default tenant lost its audit")
 		}
 
-		// The site sets one tenant by hand, both ways; a change of plan keeps it.
+		// The site sets one tenant by hand, both ways; a change of plan clears it like any manual rule.
 		put := "/api/admin/tenants/" + idA + "/settings/features.tenantAudit"
 		root.do("PUT", put, map[string]any{"siteLock": true, "value": true}).want(t, 200, "")
 		if !tenantAuditOn(t, admA) {
@@ -90,15 +90,16 @@ func TestANewTenantGetsTheSitesAuditDefaultAndNothingChangesLater(t *testing.T) 
 		root.do("POST", "/api/admin/plans", map[string]any{"slug": "free", "name": "Free"}).want(t, 201, "")
 		root.do("PUT", "/api/admin/tenants/"+idA+"/plan", map[string]any{"plan": "free"}).want(t, 200, "")
 		if !tenantAuditOn(t, admA) {
-			t.Fatal("a change of plan cleared the site's decision")
+			t.Fatal("the rule was on, and so is the default")
 		}
 		root.do("PUT", put, map[string]any{"siteLock": true, "value": false}).want(t, 200, "")
 		if tenantAuditOn(t, admA) {
 			t.Fatal("the site turned it off for one tenant")
 		}
+		// The owner's decision of 2026-11-27: no exception, the rule goes with the others.
 		root.do("PUT", "/api/admin/tenants/"+idA+"/plan", map[string]any{"plan": "free"}).want(t, 200, "")
-		if tenantAuditOn(t, admA) {
-			t.Fatal("a change of plan turned the audit on")
+		if !tenantAuditOn(t, admA) {
+			t.Fatal("a change of plan left the audit rule")
 		}
 	})
 }

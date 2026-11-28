@@ -132,6 +132,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   sso_provider_required:
     'Turn on a single sign-on for this organisation first (its own, or one the site offers it): otherwise its people could not sign in.',
   sso_required: 'This organisation signs its people in with single sign-on, not with a password.',
+  provider_unavailable: 'The sign-in this request was made with is not available to this organisation any more.',
   captcha_failed: 'The human check did not pass. Try again.',
   captcha_needs_public_url:
     'A third-party captcha is checked against the public address. Start the server with --public-url.',
