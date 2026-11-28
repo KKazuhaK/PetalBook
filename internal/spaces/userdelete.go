@@ -133,14 +133,27 @@ func (m *Manager) restoreUserItem(ctx context.Context, it *store.RecycleItem) (*
 		return nil, err
 	}
 	var out store.UserRestoreOutcome
-	err := m.opt.Store.Tx(ctx, func(q store.Q) error {
+	// The cap is read before the transaction (a read of the settings may take a
+	// second connection of the pool) and a read that fails refuses the restore:
+	// nobody is brought back with the cap unknown.
+	var max *int64
+	e, err := settings.Of(m.opt.Store).Get(ctx, it.TenantID, settings.QuotaPeople)
+	if err != nil {
+		m.releaseHeld(ctx, it)
+		return nil, err
+	}
+	switch v := e.Value.(type) {
+	case int64:
+		max = &v
+	case int:
+		n := int64(v)
+		max = &n
+	case float64:
+		n := int64(v)
+		max = &n
+	}
+	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
 		var err error
-		var max *int64
-		if e, gerr := settings.Of(m.opt.Store).Get(ctx, it.TenantID, settings.QuotaPeople); gerr == nil && e != nil {
-			if n, ok := e.Value.(int64); ok {
-				max = &n
-			}
-		}
 		out, err = store.RestoreUserRows(ctx, q, it, m.opt.Now(), max)
 		return err
 	})

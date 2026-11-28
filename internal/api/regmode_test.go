@@ -1,15 +1,20 @@
 package api_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/auth/testidp"
 	"petalbook.app/server/internal/mail/mailtest"
+	"petalbook.app/server/internal/settings"
 )
 
 // The registration mode (docs/design/decisions-2026-11-27.md): open, invite or
@@ -518,6 +523,68 @@ func TestRegModeCommandLineAccountIsHeldToTheCap(t *testing.T) {
 		var ae *auth.Error
 		if !errors.As(err, &ae) || ae.Code != "people_limit" {
 			t.Fatalf("%v", err)
+		}
+	})
+}
+
+// Nothing inside the transaction of CreateUser may take a second connection
+// from the pool: with as many accounts being made as the pool has connections,
+// each holding one and waiting for another, the server hangs. The settings are
+// rewritten all the while, so their cache is stale and a read of them would
+// open a connection of its own. The quota's worth of accounts is made, no more.
+func TestRegModeCreatingManyAccountsNeverHangsOnThePool(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		a.setup("root", pw)
+		const n, room = 80, 10
+		a.setSetting(t, "quota.people", int64(1+room)) // the administrator and ten more
+		stop := make(chan struct{})
+		var rewriter sync.WaitGroup
+		rewriter.Add(1)
+		go func() {
+			defer rewriter.Done()
+			for i := int64(0); ; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_, _ = settings.Of(a.st).SetSite(context.Background(), settings.RegistrationPerHour, settings.Change{HasValue: true, Value: 10 + i%40})
+			}
+		}()
+		var made, refused atomic.Int64
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			var wg sync.WaitGroup
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_, err := a.auth.CreateUser(context.Background(), auth.CreateParams{Username: fmt.Sprintf("pool%d", i), Role: "member", Password: pw})
+					var ae *auth.Error
+					switch {
+					case err == nil:
+						made.Add(1)
+					case errors.As(err, &ae) && ae.Code == "people_limit":
+						refused.Add(1)
+					default:
+						t.Errorf("pool%d: %v", i, err)
+					}
+				}()
+			}
+			wg.Wait()
+		}()
+		select {
+		case <-done:
+		case <-time.After(20 * time.Second):
+			buf := make([]byte, 1<<20)
+			t.Fatalf("creating %d accounts hangs: %s", n, buf[:runtime.Stack(buf, true)])
+		}
+		close(stop)
+		rewriter.Wait()
+		if made.Load() != room || refused.Load() != n-room {
+			t.Fatalf("made %d, refused %d", made.Load(), refused.Load())
 		}
 	})
 }

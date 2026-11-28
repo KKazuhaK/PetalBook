@@ -435,7 +435,7 @@ func TestGitHubGroupsAllowCutsOffWhoLeavesTheOrganisation(t *testing.T) {
 		gh.users["m"] = ghFake{ID: 7, Login: "mona", Email: "mona@example.test", Verified: true, Orgs: []string{"KazuhaHub", "Elsewhere"}}
 		gh.users["out"] = ghFake{ID: 8, Login: "outsider", Orgs: []string{"Elsewhere"}}
 		admin := a.setup("kazuha", pw)
-		body := gh.body("gh", map[string]any{"groups": map[string]any{"allow": []string{"KazuhaHub"}}})
+		body := gh.body("gh", map[string]any{"groups": map[string]any{"allow": []string{"kazuhahub"}}})
 		admin.do("POST", "/api/admin/providers", body).want(t, 201, "")
 		c := a.newClient("")
 		end, q := gh.signIn(t, c, "gh", "m", nil)

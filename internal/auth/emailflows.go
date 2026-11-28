@@ -1105,42 +1105,48 @@ func errPeopleLimit() *Error {
 	return coded(409, codePeopleLimit, "This organization has reached the number of people it may have.")
 }
 
-// peopleCap is the tenant's quota.people in force (false: none).
-func (s *Service) peopleCap(ctx context.Context, tenant string) (int64, bool) {
+// PeopleCap is the tenant's quota.people in force (nil: none). It reads the
+// settings, which may take a connection of the pool: call it before a
+// transaction, never inside one. A read that fails is an error: nobody is let
+// in without the cap being known.
+func (s *Service) PeopleCap(ctx context.Context, tenant string) (*int64, error) {
 	st := s.settings.Load()
 	if st == nil {
-		return 0, false
+		return nil, nil
 	}
 	e, err := st.Get(ctx, tenant, settings.QuotaPeople)
-	if err != nil || e == nil {
-		return 0, false
+	if err != nil {
+		return nil, err
 	}
-	switch n := e.Value.(type) {
+	var n int64
+	switch v := e.Value.(type) {
 	case int64:
-		return n, true
+		n = v
 	case int:
-		return int64(n), true
+		n = int64(v)
 	case float64:
-		return int64(n), true
+		n = int64(v)
+	default:
+		return nil, nil
 	}
-	return 0, false
+	return &n, nil
 }
 
-// withinPeople refuses an account that took the tenant over its quota.people,
-// called in the transaction q that made the account, after the account was
-// counted (so the count includes it). Every way an account is made goes through
-// CreateUser, so this is the one place that holds the cap. first is the command
-// line's account: the very first of the tenant is not held to it.
-func (s *Service) withinPeople(ctx context.Context, q store.Q, tenant string, first bool) error {
-	limit, ok := s.peopleCap(ctx, tenant)
-	if !ok {
+// withinPeople refuses an account that took the tenant over limit (its
+// quota.people, read before the transaction; nil: none), called in the
+// transaction q that made the account, after the account was counted (so the
+// count includes it). Every way an account is made goes through CreateUser, so
+// this is the one place that holds the cap. first is the command line's account:
+// the very first of the tenant is not held to it. It touches nothing but q.
+func withinPeople(ctx context.Context, q store.Q, tenant string, limit *int64, first bool) error {
+	if limit == nil {
 		return nil
 	}
 	u, err := store.GetUsage(ctx, q, store.UsageTenant, tenant)
 	if err != nil {
 		return err
 	}
-	if u.People > limit && !(first && u.People <= 1) {
+	if u.People > *limit && !(first && u.People <= 1) {
 		return errPeopleLimit()
 	}
 	return nil
