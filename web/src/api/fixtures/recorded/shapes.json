@@ -586,6 +586,7 @@
   "message": "string"
  },
  "GET /api/account 200": {
+  "canUnlink": "boolean",
   "emails": [
    {
     "created": "string",
@@ -602,6 +603,14 @@
    }
   ],
   "hasPassword": "boolean",
+  "methods": [
+   {
+    "added": "string",
+    "lastUsed": "null|string",
+    "removable": "boolean",
+    "type": "string"
+   }
+  ],
   "passkeys": [],
   "user": {
    "created": "string",

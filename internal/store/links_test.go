@@ -147,7 +147,7 @@ func TestConcurrentLinksOfOnePersonOrOneSubjectHaveOneWinner(t *testing.T) {
 
 // Touching a link writes only when the address, its trust or the label changed,
 // or the last use is old.
-func TestTouchLinkWritesOnlyWhatChanged(t *testing.T) {
+func TestTouchLinkWritesEverySignIn(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "U1", "u1", "member")
@@ -163,8 +163,9 @@ func TestTouchLinkWritesOnlyWhatChanged(t *testing.T) {
 		if err := store.TouchLink(ctx, st.Q(), l, "a@x.test", false, "a", now.Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
-		if l2, _ := store.FindLink(ctx, st.Q(), "p", "s"); !l2.LastUsed.Equal(l.LastUsed) {
-			t.Fatal("an unchanged link written within the day")
+		// An unchanged link still records the sign-in: the list of sign-in methods says when each was last used.
+		if l2, _ := store.FindLink(ctx, st.Q(), "p", "s"); !l2.LastUsed.Equal(now.Add(time.Hour)) {
+			t.Fatalf("the use of an unchanged link was not written: %v", l2.LastUsed)
 		}
 		if err := store.TouchLink(ctx, st.Q(), l, "b@x.test", true, "b", now.Add(time.Hour)); err != nil {
 			t.Fatal(err)

@@ -453,6 +453,10 @@ describe('the fixtures against the recorded shapes', () => {
       // The contract server has no platform set up: of a provider's App and connection only the null is recorded.
       if (key === 'GET /api/account/links 200')
         for (const p of answer.providers) Object.assign(p, { app: null, connection: null })
+      // The contract server's account has a password and nothing else: of the list of sign-in methods only the
+      // password row is recorded (the other kinds are checked against the server in the Go tests).
+      if (key === 'GET /api/account 200')
+        answer.methods = answer.methods.filter((x: { type: string }) => x.type === 'password')
       const [s, v] = pruned(shape, answer)
       for (const m of misfits(v, s)) problems.push(`${key}: ${m}`)
     }
