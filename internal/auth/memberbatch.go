@@ -49,19 +49,9 @@ const (
 type InviteOutcome struct {
 	ID, Token, Link string
 	Mail            string
-	// Sender is whose mail sent it: "site", or "" when none was sent. A tenant's
-	// own sender (the integrations.smtp capability) takes this place once a
-	// tenant can configure one; until then the site's is the only one.
+	// Sender is whose mail sent it: "tenant" (the organisation's own SMTP) or
+	// "site", or "" when none was sent.
 	Sender string
-}
-
-// MailSender is whose mail an invitation of the tenant goes by: "site" when
-// the server's mail is enabled, "" when no mail is configured anywhere.
-func (s *Service) MailSender(tenantID string) string {
-	if s.MailEnabled() {
-		return "site"
-	}
-	return ""
 }
 
 // joinInvitedGroups puts a person just made into the groups their invite
@@ -172,6 +162,9 @@ func (s *Service) InviteMany(ctx context.Context, actor store.User, access authz
 		}
 	}
 	sender := s.MailSender(tenantID)
+	if sender == "" && len(made) > 0 {
+		s.noSender(tenantID)
+	}
 	for _, i := range made {
 		out[i].Mail = MailNone
 		if sender == "" {

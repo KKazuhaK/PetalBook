@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -39,13 +40,30 @@ const (
 	MaxQueue    = 1000
 	MaxAttempts = 3
 	MaxAge      = 10 * time.Minute
+	// MaxPerSender is how many messages one tenant's sender, or one tenant's
+	// use of the site's, may have waiting at once.
+	MaxPerSender = 200
+	// SecurityReserve is what of the site's queue only security mail may use:
+	// the messages that prove an address or reset access always have room.
+	SecurityReserve = 200
+	// MaxTenantQueued bounds what all the tenants' own senders have waiting.
+	MaxTenantQueued = 2000
+	// MaxTenantDeliveries is how many deliveries of tenants' own senders run at
+	// once, each tenant at most one: a server that stalls holds one of them and
+	// never the site's, whose deliveries run on their own.
+	MaxTenantDeliveries = 8
 )
 
 // Errors a caller maps to API codes.
 var (
 	ErrNotEnabled = errors.New("mail is not enabled")
 	ErrQueueFull  = errors.New("the mail queue is full")
+	// ErrSenderFull is a tenant that already has MaxPerSender messages waiting.
+	ErrSenderFull = errors.New("the tenant has too many messages waiting")
 	ErrInsecure   = errors.New("security none is only allowed for a loopback host")
+	// ErrNotPublic is a connection to an address that is not public, refused;
+	// the address is not told.
+	ErrNotPublic = errors.New("not a public address")
 )
 
 // Settings are the sender's configuration. Password is plain text, in memory only.
@@ -59,11 +77,18 @@ type Settings struct {
 	From     string
 	FromName string
 	ReplyTo  string
+	// Control, when set, is called on every connection before it is made, with
+	// the address about to be dialled: a tenant's sender uses it to refuse
+	// addresses that are not public. Not shown to any API.
+	Control func(network, address string, c syscall.RawConn) error
 }
 
-// Message is one mail: plain text and a simple HTML part.
+// Message is one mail: plain text and a simple HTML part. FromName, when set,
+// replaces the sender's display name for this message (a tenant's name on the
+// site's mailer).
 type Message struct {
 	To, Subject, Text, HTML string
+	FromName                string
 }
 
 // Status is the result of the last delivery or test.
@@ -94,24 +119,40 @@ type Options struct {
 }
 
 type queued struct {
-	msg      Message
-	attempts int
-	first    time.Time
-	next     time.Time
+	// route is whose settings send it: "" for the site's, else a tenant's id;
+	// it is kept with the message so that a retry goes the way the first
+	// attempt did. owner is the tenant whose allowance it is ("" for none).
+	route, owner string
+	msg          Message
+	attempts     int
+	first        time.Time
+	next         time.Time
 }
 
 // Service is safe for concurrent use.
 type Service struct {
-	opt  Options
-	log  *slog.Logger
-	cfg  atomic.Pointer[Settings]
-	wake chan struct{}
+	opt Options
+	log *slog.Logger
+	cfg atomic.Pointer[Settings]
+	// wakeSite and wakeTenant wake the site's deliveries and the tenants'.
+	wakeSite, wakeTenant chan struct{}
+	// allowed says whether a tenant's own sender may still be used (the site
+	// may take the feature away): asked at each delivery.
+	allowed atomic.Pointer[func(tenant string) bool]
+	// roots, when set, replaces Options.RootCAs (tests that start their server later).
+	roots atomic.Pointer[x509.CertPool]
 
-	mu     sync.Mutex
-	queue  []*queued
-	status Status
-	sent   []time.Time // times of the last hour's deliveries, oldest first
-	failed []time.Time
+	tmu     sync.RWMutex
+	tenants map[string]*Settings // each tenant's own sender
+
+	mu      sync.Mutex
+	queue   []*queued
+	held    map[string]int  // waiting messages by "site", "r:"+route and "o:"+owner
+	busy    map[string]bool // tenant routes with a delivery under way
+	tstatus map[string]Status
+	status  Status
+	sent    []time.Time // times of the last hour's deliveries, oldest first
+	failed  []time.Time
 }
 
 // New makes a service with mail off.
@@ -125,17 +166,127 @@ func New(opt Options) *Service {
 	if opt.Logger == nil {
 		opt.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &Service{opt: opt, log: opt.Logger, wake: make(chan struct{}, 1)}
+	return &Service{opt: opt, log: opt.Logger, wakeSite: make(chan struct{}, 1), wakeTenant: make(chan struct{}, 1), tenants: map[string]*Settings{}, held: map[string]int{}, busy: map[string]bool{}, tstatus: map[string]Status{}}
+}
+
+// TrustRoots replaces the certificate roots (tests).
+func (s *Service) TrustRoots(p *x509.CertPool) { s.roots.Store(p) }
+
+func (s *Service) rootCAs() *x509.CertPool {
+	if p := s.roots.Load(); p != nil {
+		return p
+	}
+	return s.opt.RootCAs
+}
+
+// SetRouteAllowed sets the check made before each delivery by a tenant's own
+// sender: a message whose tenant may no longer use it is dropped.
+func (s *Service) SetRouteAllowed(f func(tenant string) bool) { s.allowed.Store(&f) }
+
+// SetTenant sets the sender of a tenant in force; nil, or settings that are
+// not enabled, remove it and drop what waits for it. Safe to call at any time.
+func (s *Service) SetTenant(id string, c *Settings) {
+	s.tmu.Lock()
+	if c == nil || !c.Enabled {
+		delete(s.tenants, id)
+	} else {
+		cc := *c
+		s.tenants[id] = &cc
+	}
+	s.tmu.Unlock()
+	if c == nil || !c.Enabled {
+		if n := s.drop(func(q *queued) bool { return q.route == id }); n > 0 {
+			s.log.Warn("dropped the messages waiting for a tenant's sender that is gone", "tenant", id, "dropped", n)
+		}
+		s.mu.Lock()
+		delete(s.tstatus, id)
+		s.mu.Unlock()
+	}
+}
+
+// TenantEnabled says whether the tenant has a sender of its own in force.
+func (s *Service) TenantEnabled(id string) bool {
+	s.tmu.RLock()
+	defer s.tmu.RUnlock()
+	_, ok := s.tenants[id]
+	return ok
+}
+
+// TenantStatus is the result of the tenant's last delivery or test.
+func (s *Service) TenantStatus(id string) Status {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tstatus[id]
+}
+
+// cfgOf is the settings of a route: nil when there are none in force.
+func (s *Service) cfgOf(route string) *Settings {
+	if route == "" {
+		if c := s.cfg.Load(); c != nil && c.Enabled {
+			return c
+		}
+		return nil
+	}
+	s.tmu.RLock()
+	defer s.tmu.RUnlock()
+	return s.tenants[route]
+}
+
+// drop removes what waits and matches, and counts again; it says how many went.
+func (s *Service) drop(match func(*queued) bool) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dropped := 0
+	kept := s.queue[:0]
+	for _, q := range s.queue {
+		if !match(q) {
+			kept = append(kept, q)
+		} else {
+			dropped++
+		}
+	}
+	for i := len(kept); i < len(s.queue); i++ {
+		s.queue[i] = nil
+	}
+	s.queue = kept
+	s.held = map[string]int{}
+	for _, q := range s.queue {
+		s.count(q, 1)
+	}
+	return dropped
+}
+
+// count adds d to the counts of the message's route and owner (s.mu held).
+func (s *Service) count(q *queued, d int) {
+	if q.route != "" {
+		s.held["r:"+q.route] += d
+		s.held["tenants"] += d
+	} else {
+		s.held["site"] += d
+		// A tenant's use of the site's mailer is counted apart from what waits for
+		// its own sender: a stalled server of its own never takes room from it.
+		if q.owner != "" {
+			s.held["o:"+q.owner] += d
+		}
+	}
 }
 
 // Configure sets the settings in force. Switching mail off drops what waits.
 func (s *Service) Configure(c Settings) {
 	s.cfg.Store(&c)
 	if !c.Enabled {
-		s.mu.Lock()
-		s.queue = nil
-		s.mu.Unlock()
+		if n := s.drop(func(q *queued) bool { return q.route == "" }); n > 0 {
+			s.log.Warn("dropped the messages waiting when mail was switched off", "dropped", n)
+		}
 	}
+}
+
+// SiteFromName is the display name of the site's sender.
+func (s *Service) SiteFromName() string {
+	if c := s.cfg.Load(); c != nil {
+		return c.FromName
+	}
+	return ""
 }
 
 // Enabled says whether mail can be sent now.
@@ -144,24 +295,53 @@ func (s *Service) Enabled() bool {
 	return c != nil && c.Enabled
 }
 
-// Enqueue adds a mail to the queue.
-func (s *Service) Enqueue(m Message) error {
-	if !s.Enabled() {
+// Enqueue adds a mail to the queue, to go by the site's settings.
+func (s *Service) Enqueue(m Message) error { return s.EnqueueVia("", "", true, m) }
+
+// EnqueueVia adds a mail that goes by the settings of route ("" for the
+// site's, else a tenant's id) and counts against owner's share of the queue
+// ("" for none). The queue remembers the route, so a retry uses the same one.
+// The site's queue and the tenants' are counted apart, so a tenant's senders
+// never take room from the site's; security mail (security true) may use the
+// last SecurityReserve places of the site's, the rest may not.
+func (s *Service) EnqueueVia(route, owner string, security bool, m Message) error {
+	if s.cfgOf(route) == nil {
 		return ErrNotEnabled
 	}
 	s.mu.Lock()
-	if len(s.queue) >= MaxQueue {
+	switch {
+	case route == "" && s.held["site"] >= MaxQueue,
+		route == "" && !security && s.held["site"] >= MaxQueue-SecurityReserve,
+		route != "" && s.held["tenants"] >= MaxTenantQueued:
 		s.mu.Unlock()
 		return ErrQueueFull
 	}
+	q := &queued{route: route, owner: owner, msg: m}
+	// Each route has its own budget; security mail through the site's is held only
+	// by the site's reserve, so a tenant's ordinary mail cannot crowd it out.
+	if route != "" && s.held["r:"+route] >= MaxPerSender || route == "" && !security && owner != "" && s.held["o:"+owner] >= MaxPerSender {
+		s.mu.Unlock()
+		return ErrSenderFull
+	}
 	now := s.opt.Now()
-	s.queue = append(s.queue, &queued{msg: m, first: now, next: now})
+	q.first, q.next = now, now
+	s.queue = append(s.queue, q)
+	s.count(q, 1)
 	s.mu.Unlock()
+	s.poke(route == "")
+	return nil
+}
+
+// poke wakes the site's deliveries, or the tenants'.
+func (s *Service) poke(site bool) {
+	ch := s.wakeTenant
+	if site {
+		ch = s.wakeSite
+	}
 	select {
-	case s.wake <- struct{}{}:
+	case ch <- struct{}{}:
 	default:
 	}
-	return nil
 }
 
 // Waiting is how many mails are queued.
@@ -195,26 +375,76 @@ func trim(ts []time.Time, cut time.Time) []time.Time {
 	return ts[i:]
 }
 
-func (s *Service) note(ok bool, err error, c *Settings) {
+func (s *Service) note(route string, ok bool, err error, c *Settings) {
 	now := s.opt.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.status = Status{OK: ok, Checked: now}
+	st := Status{OK: ok, Checked: now}
+	if !ok {
+		st.Message = Describe(err, c)
+	}
+	if route != "" {
+		s.tstatus[route] = st // a tenant's own sender: the site's numbers are not its
+		return
+	}
+	s.status = st
 	if ok {
 		s.sent = append(trim(s.sent, now.Add(-time.Hour)), now)
 		return
 	}
-	s.status.Message = Describe(err, c)
 	s.failed = append(trim(s.failed, now.Add(-time.Hour)), now)
 }
 
-// Run delivers the queue until ctx ends.
+// Run delivers the queue until ctx ends. The site's messages are delivered one
+// at a time, on their own; the tenants' own senders' by a pool of
+// MaxTenantDeliveries, each tenant at most one at a time. A sender that stalls
+// holds one place of the pool: other tenants' own-sender mail waits only when
+// every place is held by a stalled one. The site's mail never waits for them.
 func (s *Service) Run(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.loop(ctx, true, nil)
+	}()
+	s.loop(ctx, false, make(chan struct{}, MaxTenantDeliveries))
+	<-done
+}
+
+func (s *Service) loop(ctx context.Context, site bool, slots chan struct{}) {
+	wake := s.wakeTenant
+	if site {
+		wake = s.wakeSite
+	}
+	var inflight sync.WaitGroup
+	defer inflight.Wait()
 	for {
-		q, wait := s.pick()
+		if slots != nil {
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		q, wait := s.pick(site)
 		if q != nil {
-			s.deliver(ctx, q)
+			if site {
+				s.deliver(ctx, q)
+				continue
+			}
+			inflight.Add(1)
+			go func() {
+				defer inflight.Done()
+				s.deliver(ctx, q)
+				s.mu.Lock()
+				delete(s.busy, q.route)
+				s.mu.Unlock()
+				<-slots
+				s.poke(false)
+			}()
 			continue
+		}
+		if slots != nil {
+			<-slots
 		}
 		var timer <-chan time.Time
 		var t *time.Timer
@@ -228,7 +458,7 @@ func (s *Service) Run(ctx context.Context) {
 				t.Stop()
 			}
 			return
-		case <-s.wake:
+		case <-wake:
 		case <-timer:
 		}
 		if t != nil {
@@ -237,22 +467,32 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// pick takes the next mail that is due, dropping those too old; wait is how
-// long until the next one is due (0: nothing queued).
-func (s *Service) pick() (*queued, time.Duration) {
+// pick takes the next mail of the site's (site true) or of a tenant that has no
+// delivery under way, that is due, dropping those too old; wait is how long
+// until the next one is due (0: nothing queued).
+func (s *Service) pick(site bool) (*queued, time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.opt.Now()
 	var wait time.Duration
 	for i := 0; i < len(s.queue); {
 		q := s.queue[i]
+		if (q.route == "") != site || (!site && s.busy[q.route]) {
+			i++
+			continue
+		}
 		if now.Sub(q.first) > MaxAge {
 			s.log.Warn("dropped a mail that could not be sent in time", "attempts", q.attempts)
 			s.queue = append(s.queue[:i], s.queue[i+1:]...)
+			s.count(q, -1)
 			continue
 		}
 		if !q.next.After(now) {
 			s.queue = append(s.queue[:i], s.queue[i+1:]...)
+			s.count(q, -1)
+			if !site {
+				s.busy[q.route] = true
+			}
 			return q, 0
 		}
 		if d := q.next.Sub(now); wait == 0 || d < wait {
@@ -264,18 +504,28 @@ func (s *Service) pick() (*queued, time.Duration) {
 }
 
 func (s *Service) deliver(ctx context.Context, q *queued) {
-	c := s.cfg.Load()
-	if c == nil || !c.Enabled {
+	// The route the first attempt took: the site's, or the tenant's own. A
+	// sender that is gone since drops the message.
+	c := s.cfgOf(q.route)
+	if c == nil {
 		return
+	}
+	// The site may have taken the tenant's own sender away since the message was
+	// queued: it is dropped, not sent another way (its mail.useSite is not asked).
+	if q.route != "" {
+		if f := s.allowed.Load(); f != nil && !(*f)(q.route) {
+			s.log.Warn("dropped a mail of a tenant whose own sender is no longer allowed", "tenant", q.route)
+			return
+		}
 	}
 	dctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	err := s.send(dctx, *c, q.msg)
 	cancel()
 	if err == nil {
-		s.note(true, nil, c)
+		s.note(q.route, true, nil, c)
 		return
 	}
-	s.note(false, err, c)
+	s.note(q.route, false, err, c)
 	q.attempts++
 	if q.attempts >= MaxAttempts {
 		// The address and the text are not logged: they hold a link.
@@ -284,8 +534,9 @@ func (s *Service) deliver(ctx context.Context, q *queued) {
 	}
 	q.next = s.opt.Now().Add(s.opt.Backoff[q.attempts-1])
 	s.mu.Lock()
-	if c2 := s.cfg.Load(); c2 != nil && c2.Enabled && len(s.queue) < MaxQueue {
+	if s.cfgOf(q.route) != nil {
 		s.queue = append(s.queue, q)
+		s.count(q, 1)
 	}
 	s.mu.Unlock()
 }
@@ -293,8 +544,14 @@ func (s *Service) deliver(ctx context.Context, q *queued) {
 // Test sends one message now with the given settings (enabled or not),
 // recording the result as the status.
 func (s *Service) Test(ctx context.Context, c Settings, m Message) error {
+	return s.TestFor(ctx, "", c, m)
+}
+
+// TestFor is Test for the sender of a tenant ("" for the site's): the result
+// is that sender's status.
+func (s *Service) TestFor(ctx context.Context, route string, c Settings, m Message) error {
 	err := s.send(ctx, c, m)
-	s.note(err == nil, err, &c)
+	s.note(route, err == nil, err, &c)
 	return err
 }
 
@@ -313,6 +570,9 @@ func IsLoopback(host string) bool {
 func Describe(err error, c *Settings) string {
 	if err == nil {
 		return ""
+	}
+	if errors.Is(err, ErrNotPublic) {
+		return ErrNotPublic.Error() // the address it resolved to is not told
 	}
 	msg := err.Error()
 	if c != nil && c.Password != "" {
@@ -357,6 +617,7 @@ func (s *Service) send(ctx context.Context, c Settings, m Message) error {
 	addr := net.JoinHostPort(c.Host, strconv.Itoa(port))
 	var d net.Dialer
 	d.Timeout = 10 * time.Second
+	d.Control = c.Control
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return err
@@ -373,7 +634,7 @@ func (s *Service) send(ctx context.Context, c Settings, m Message) error {
 			return ErrInsecure
 		}
 	}
-	tlsCfg := &tls.Config{ServerName: strings.Trim(c.Host, "[]"), MinVersion: tls.VersionTLS12, RootCAs: s.opt.RootCAs}
+	tlsCfg := &tls.Config{ServerName: strings.Trim(c.Host, "[]"), MinVersion: tls.VersionTLS12, RootCAs: s.rootCAs()}
 	secure := false
 	if c.Security == TLS {
 		tc := tls.Client(conn, tlsCfg)
@@ -473,8 +734,12 @@ func (s *Service) build(c Settings, to string, m Message) ([]byte, error) {
 	}
 	var b strings.Builder
 	from := c.From
-	if c.FromName != "" {
-		from = (&netmail.Address{Name: c.FromName, Address: c.From}).String()
+	name := c.FromName
+	if m.FromName != "" {
+		name = m.FromName
+	}
+	if name != "" {
+		from = (&netmail.Address{Name: name, Address: c.From}).String()
 	}
 	hdr := func(k, v string) { b.WriteString(k + ": " + v + "\r\n") }
 	hdr("From", from)

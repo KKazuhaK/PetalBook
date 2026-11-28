@@ -1843,6 +1843,71 @@ function suite(target: Target) {
           }
         })
 
+        it("a tenant's own mail server: never shows the password, public addresses over TLS only, and goes with its tenant", async () => {
+          const was = await siteValue(admin, 'features.tenancy')
+          await putSite(admin, 'features.tenancy', true)
+          const t = (await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('om'), name: 'Own mail' }))
+            .json as {
+            id: string
+          }
+          try {
+            const path = `/api/admin/tenants/${t.id}/mail`
+            const secret = 'tenant-smtp-secret'
+            const rule = await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/mail.ownSender`, {
+              siteRule: { value: true },
+            })
+            expect(rule.status).toBe(200)
+            const fresh = await call(admin, 'GET', path)
+            expect(fresh.json).toMatchObject({
+              enabled: false,
+              host: '',
+              port: 587,
+              security: 'starttls',
+              hasPassword: false,
+              sender: expect.stringMatching(/^(site|)$/),
+            })
+            const put = await call(admin, 'PUT', path, {
+              enabled: false,
+              host: 'smtp.example.com',
+              port: 587,
+              security: 'starttls',
+              username: 'bot',
+              password: secret,
+              from: 'hello@own-mail.example',
+              fromName: 'Own',
+            })
+            expect(put.status).toBe(200)
+            expect(put.json).toMatchObject({
+              host: 'smtp.example.com',
+              hasPassword: true,
+              from: 'hello@own-mail.example',
+            })
+            expect(JSON.stringify(put.json)).not.toContain(secret)
+            expect(JSON.stringify((await call(admin, 'GET', path)).json)).not.toContain(secret)
+            expect(JSON.stringify((await call(admin, 'GET', `/api/admin/tenants/${t.id}/secrets`)).json)).not.toContain(
+              secret,
+            )
+            // Over TLS and to public addresses only.
+            expect((await call(admin, 'PUT', path, { security: 'none' })).json.error).toBe('mail_insecure')
+            expect((await call(admin, 'PUT', path, { host: '127.0.0.1' })).json.error).toBe('mail_host_not_public')
+            expect((await call(admin, 'PUT', path, { port: 22 })).json.error).toBe('invalid')
+            expect((await call(admin, 'POST', `${path}/test`, { to: 'not an address' })).json.error).toBe('invalid')
+            const m = await newMember(uniq('om'))
+            for (const [method, p] of [
+              ['GET', path],
+              ['PUT', path],
+              ['DELETE', path],
+              ['POST', `${path}/test`],
+            ] as const)
+              expect((await call(m.browser, method, p, method === 'GET' ? undefined : {})).status, p).toBe(403)
+            expect((await call(admin, 'DELETE', path)).status).toBe(204)
+            expect((await call(admin, 'GET', path)).json).toMatchObject({ host: '', hasPassword: false })
+          } finally {
+            await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
+            await putSite(admin, 'features.tenancy', was)
+          }
+        })
+
         it('settings by layer: values are checked, a lock refuses the tenant, a restriction caps it, and what a lock hides is kept', async () => {
           const was = await siteValue(admin, 'features.tenancy')
           await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: true })

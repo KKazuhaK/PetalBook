@@ -44,6 +44,7 @@ export type PermissionKey =
   | 'tenant.github.manage'
   | 'tenant.domains.manage'
   | 'tenant.signin.manage'
+  | 'tenant.mail.manage'
   | 'space.read'
   | 'space.write'
   | 'space.members.manage'

@@ -87,6 +87,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   slug_taken: '这个组织地址已被占用，换一个吧。',
   org_limit: '不能再创建组织了。',
   mail_insecure: '发信连接没有加密，请换成加密的连接。',
+  mail_host_not_public: '发信服务器必须在公网地址上，本机或内网的地址不能用。',
   mail_from_required: '请填写发件人地址。',
   mail_needs_public_url: '邮件里的链接要指向公开地址，请用 --public-url 启动服务器。',
   public_url_required: '登录服务需要公开地址，请用 --public-url 启动服务器。',

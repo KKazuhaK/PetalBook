@@ -1588,9 +1588,10 @@ The invitation goes by mail when mail is configured: `mail` on the result is
 `sent` (queued; the answer carries no token), `none` (no mail is configured
 anywhere: `token` is given, once, for the administrator to hand over as
 `/invite#{token}`), or `limited` (the cap below is spent: `token` is given). The
-answer's `mail` is `{"configured": bool, "sender": "site" | ""}`. The sender is
-the server's mail; a tenant's own sender (the feature `mail.ownSender`) takes
-its place when a tenant can configure one. Sending is capped: three messages
+answer's `mail` is `{"configured": bool, "sender": "tenant" | "site" | ""}`. The
+sender is the organisation's own SMTP when it has one in force, else the
+server's mail while `mail.useSite` is in effect for it, else none (see "Mail:
+`GET/PUT /api/admin/tenants/{tenant}/mail`"). Sending is capped: three messages
 per address per hour (as every account mail) and 300 invitations per
 administrator per hour.
 
@@ -7931,6 +7932,8 @@ the site's own kinds):
 | `tenant_console_opened` | a site administrator entered a tenant's scope (see "Acting scope"; at most once an hour per session and tenant) | `tenant` |
 | `setting_changed` | a site or tenant setting changed | `key`, `layer`, `from`, `to` |
 | `mail_changed`, `mail_test` | the mail settings changed; a test was sent | the changed fields (password as `"changed"`); `to`, `ok` |
+| `tenant_mail_changed`, `tenant_mail_test` | a tenant's own sender changed or was removed (`removed: true`); a test was sent through it | as `mail_changed`, for the tenant; never the password |
+| `mail_not_sent` | a message of a tenant could not be sent because no sender is open to it: no sender of its own, and the site's not for it (`mail.useSite` off). At most once a day for the tenant | `reason` (`no_sender`) |
 | `registered` | a registration was confirmed | `email` |
 | `user_created` | an administrator made an account by hand (`POST /api/admin/users`) | `role`, `siteAdmin`, `email`, `signIn` (`link`, `sso`), `mail` (`sent`, `none`, `limited`) |
 | `email_verified` | an address was verified | `email` |
@@ -7962,7 +7965,8 @@ not fill the log).
 | `password_reset_off` | 403 | asking for a reset while mail is not enabled |
 | `mail_not_configured` | 409 | opening registration, asking for a verification, or sending a reset while mail is not enabled |
 | `mail_needs_public_url` | 400 | enabling mail without `--public-url` |
-| `mail_insecure` | 400 | `security: "none"` to a host that is not loopback |
+| `mail_insecure` | 400 | `security: "none"` to a host that is not loopback (for an organisation's own sender, `none` at all) |
+| `mail_host_not_public` | 400 | an organisation's own mail server named by an address that is not public (loopback, private, link-local) or by a name of this machine (`localhost`, `.local`, `.internal`) |
 | `mail_from_required` | 400 | enabling mail without `from` |
 | `sso_only_with_registration` | 409 (opening `features.orgCreation`), 400 (`PUT /api/admin/security`) | `ssoOnly` and organisations people create together (password sign-up makes them) |
 | `email_domain_not_allowed` | 400 | the address's domain is not in `registration.domains` |
@@ -9692,7 +9696,8 @@ count is one fixed minute per tenant, in memory, so one tenant's requests never
 use another's, and nothing is read from the database for it (the limit comes
 from the settings' cache). `0` allows none; no value is no limit.
 
-`rate.mailPerDay` holds the site's mailer for the tenant: a message over the
+`rate.mailPerDay` holds the site's mailer for the tenant (a message sent by the
+tenant's own sender is counted, never held): a message over the
 day's limit is not queued, and what asked for it answers `429 rate_limited` with
 `Retry-After` until the UTC day ends. A bulk invitation stops at the limit: the
 rows it did not send say `mail: "limited"` and carry the link to hand over, as for
@@ -9958,11 +9963,12 @@ Notes:
   3.1 does; the site may loosen each to `allow` (the site's value is a default)
   or lock it. 3.1's `storage.remotes.require` is derived from `storage.mode`
   (see "Storage modes").
-- The keys `mail.useSite`, `daily.useSiteApis`,
+- The keys `daily.useSiteApis`,
   `connections.useSiteApps`, `outbound.perMinute` and `outbound.tenantPerMinute`
   are in the registry, with their defaults, before the features that read them
   are built; until then nothing reads them (their help says "not in effect
-  yet"). `storage.mode` and `storage.partial.unsupported` are read (see "Storage
+  yet"). `mail.useSite` is read (see "Mail: `GET/PUT
+  /api/admin/tenants/{tenant}/mail`"). `storage.mode` and `storage.partial.unsupported` are read (see "Storage
   modes" and the note below). The three `useSite` switches default to on, which is what a tenant
   gets today. A site administrator who wants one off for a tenant has to
   **lock** it off (a rule for the tenant, or the site's lock): an off that is
@@ -10759,13 +10765,113 @@ tenant with a rule, as for any key.
 #### Mail: `GET/PUT /api/admin/tenants/{tenant}/mail`, `POST …/mail/test`
 
 The shape of `/api/admin/mail` (3.3), without `security: "none"`, under the
-outgoing rules above. A tenant's mail (verification, reset, registration,
-notices) is sent with the tenant's SMTP when it has one enabled; otherwise with
-the site's if `mail.useSite` is in effect (the site's `from` address, the
-tenant's name as the display name), otherwise not at all (the tenant's
-registration and reset then answer as with mail off). The 3.3 caps stay
-site-wide (1,000 waiting on the server, 3 an hour to one address); each tenant
-has at most 200 waiting.
+outgoing rules above. Only a tenant's ordinary mail (invitations, notices) may
+go by its own SMTP, or by the site's while `mail.useSite` is in effect (the
+site's `from` address, `<tenant name> via <site name>` as the display name);
+mail that proves an address or lets someone in (verification, claim, reset,
+registration, a welcome link) always goes by the site's sender (see "Which
+sender a message uses" below). The 3.3 caps stay (3 an hour to one address); each
+tenant has at most 200 waiting.
+
+Built (3.6). The routes need `tenant.mail.manage` and the feature
+`mail.ownSender` (off by default: `403 feature_off`; a site administrator is not
+bound by it, and may read and change any tenant's). `{tenant}` is one the caller
+may manage (`404 not_found` otherwise).
+
+- `GET` answers `{"enabled", "host", "port", "security", "username",
+  "hasPassword", "from", "fromName", "replyTo", "status": {"ok", "checked",
+  "message"}, "sender"}`. `sender` is whose mailer the tenant's messages go by
+  now: `"tenant"`, `"site"` or `""` (none). With no record it is the defaults
+  (`port` 587, `security` `starttls`, `enabled` false). The password is never
+  shown.
+- `PUT` takes any of `enabled`, `host`, `port`, `security`, `username`,
+  `password` (write-only; absent keeps it, `""` clears it), `from`, `fromName`
+  (at most 60 characters) and `replyTo`; all are checked before anything is
+  stored. The non-secret fields are the tenant's integration record of kind
+  `smtp`, the password is the tenant's secret `mail.password` (setting it as
+  a secret has the same effect at once). Refusals: `400 invalid`,
+  `400 mail_insecure` (`security: "none"`, whatever the host: a tenant's sender
+  is always over TLS), `400 mail_host_not_public`, `400 invalid` for a port
+  other than 25, 465, 587 or 2525 and for a `from` address on the server's own
+  domain (or under it), `400 mail_needs_public_url`, `400 mail_from_required`.
+- `DELETE` removes the record and the password (`204`); the tenant's messages
+  then go by the site's, as the setting says.
+- `POST …/mail/test` `{"to", "lang"}` sends one message now through the stored
+  sender (enabled or not), waiting up to 15 seconds, and answers `200`
+  `{"ok": true}` or `{"ok": false, "message"}` (the server's answer, with
+  the password never in it); at most 10 an hour for each tenant (`429
+  rate_limited`), as the site's test. `409 mail_not_configured` while there is
+  no host.
+- **Outgoing connections.** The server makes them, so a tenant's sender reaches
+  public addresses only: the host may not be a loopback, private or link-local
+  address or a name of this machine (`400 mail_host_not_public`), and the
+  address each name resolves to is checked as it is dialled (a name that
+  resolves to a private address is refused then, in the test's answer and in
+  `status`), as for a tenant's single sign-on. The server's certificate is
+  always verified.
+- **Audit.** `tenant_mail_changed` (the changed fields, the password as
+  `"changed"`, or `removed: true`) and `tenant_mail_test` (`to`, `ok`), in the
+  tenant's own rows; never the password.
+
+**Which sender a message uses.** Every kind of message is classified once
+(`mailKinds`, `internal/auth/mailcfg.go`):
+
+- **Security mail ALWAYS goes by the site's sender**, whatever the tenant has
+  and whatever `mail.useSite` says, because the site is the identity provider
+  and a tenant's own server must never see what proves an address or lets
+  someone in: a registration's confirmation and its "this address already has an
+  account" note, the notices of a change to an account's addresses (changed,
+  added, removed, made primary: a tenant's server cannot hold back the alert), an
+  email verification and an address claim, a password reset
+  (`/api/password/forgot` and an administrator's), the set-password link of an
+  account an administrator made, the answers to a request to join (and the
+  notice of a sign-in with a provider). Such a message is still charged to the
+  tenant it is about as before (counted, never held to `rate.mailPerDay`),
+  displayed as `<tenant name> via <site name>` when it is about a tenant, and is
+  never refused for `mail.useSite`. Its flows need the site's mail on
+  (`409 mail_not_configured` or a closed registration otherwise), whatever a
+  tenant has of its own.
+- **Ordinary mail** (an invitation into the tenant that sends it, a test) goes by the first of: the tenant's own
+  sender, when it is enabled, its password can be opened, and the site allows it
+  (`mail.ownSender`; asked again at each delivery, and a message of a tenant that
+  lost the feature is dropped and logged, not sent another way); else the
+  site's, when the site's mail is on and `mail.useSite` is in effect for the
+  tenant; else it is not sent: the call answers `409 mail_not_configured` (an
+  invitation hands its link over, `mail: "none"`), nothing is counted, and
+  `mail_not_sent` is written, at most once a day for the tenant. `mail.useSite`
+  governs only these, and an off forces this only while it is locked (the site's
+  lock or a rule for the tenant). An invitation's link only makes a new account
+  (an address any account holds cannot be invited), which is why it is ordinary.
+  A message that goes by the tenant's own sender is counted in the tenant's day
+  but not held to `rate.mailPerDay`, which holds the site's mailer for the tenant.
+
+The choice depends on the kind and the tenant, never on an account or an
+address. On the site's mailer the display name is `<tenant name> via <site
+name>` (the site's own name for the default tenant, and for a tenant name that
+looks like an address or holds `@`, `<` or `>`); the `from` address a tenant's
+own sender may use cannot be on the server's own domain or on the domain of the
+site's own `from` address, or under either (a subdomain).
+
+**Queues.** A sender that fails does not fall back to another: a message waits
+with the sender it was made for, and is tried again by that one, up to the 3
+tries. Disabling or removing a tenant's sender drops what waited for it (the
+number is logged); a failed read of its password leaves the sender in force as
+it was. The settings of every enabled sender are in memory, read at startup and
+again for one tenant when it changes; a message makes no query for them. The
+site's queue and the tenants' are separate: the site's holds 1,000, of which the
+last 200 are for security mail only, a tenant has at most 200 waiting (by its own
+sender or by the site's), and all the tenants' own senders together at most 2,000.
+The site's messages are delivered on their own, one at a time, and never wait
+for a tenant's server. The tenants' own senders share a pool of 8 deliveries
+(the constant `MaxTenantDeliveries`), a tenant at most one at a time: a server
+that stalls holds one of the 8 places and delays that tenant; only when 8 tenants
+stall at once does another tenant's own-sender mail wait for a place. Each
+route has its own budget: what waits for a tenant's own sender never takes room
+from the same tenant's use of the site's mailer, and its security mail through
+the site's is held only by the site's reserve. `mail.ownSender` is granted by the
+site (a site setting, off by default): a tenant has an own sender only where the
+site allows it. The error of a test or a delivery that was
+refused for its address says "not a public address", never the address.
 
 #### Captcha: `GET/PUT /api/admin/tenants/{tenant}/captcha`
 
@@ -11457,6 +11563,7 @@ held by the built-in site administrator only: no custom role may hold it.
 | `tenant.github.manage` | tenant | — | Install the site's GitHub App on the organisation's GitHub account, and see, change or disconnect the organisation's installations |
 | `tenant.domains.manage` | tenant | `features.domains` | Claim the organisation's email domains, verify them by DNS, keep others from making organisations on them, and remove them |
 | `tenant.signin.manage` | tenant | `features.ownSso` | Add, change, test and remove the organisation's own single sign-on providers (OpenID Connect and SAML), and route its verified domains to them |
+| `tenant.mail.manage` | tenant | `mail.ownSender` | See, change and remove the organisation's own mail sender (SMTP), and send a test message through it |
 | `space.read` | space | — | See pages, history, attachments and search |
 | `space.write` | space | — | Create, change, move and delete pages and folders |
 | `space.members.manage` | space | — | Add, change and remove the members of the space |

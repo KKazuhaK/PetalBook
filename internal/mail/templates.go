@@ -40,6 +40,11 @@ const (
 	KindTest    = "test"
 )
 
+// Kinds is every kind of message, for the code that classifies them.
+var Kinds = []string{KindVerify, KindEmailClaim, KindRegister, KindRegisterDup, KindRegisterOrg, KindRegisterOrgRefused,
+	KindRegisterJoin, KindRegisterJoinRequest, KindJoinApproved, KindJoinDenied, KindReset, KindResetSSO, KindEmailChanged,
+	KindEmailAdded, KindEmailRemoved, KindEmailPrimary, KindInvite, KindWelcome, KindTest}
+
 // Vars are what a template may use.
 type Vars struct {
 	Site     string // the host of the public address

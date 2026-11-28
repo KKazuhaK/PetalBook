@@ -70,6 +70,25 @@ func ListIntegrations(ctx context.Context, q Q, tenantID, kind string) ([]Integr
 	return out, rows.Err()
 }
 
+// ListIntegrationsOfKind returns the records of one kind of every tenant: what
+// the server reads at startup into memory.
+func ListIntegrationsOfKind(ctx context.Context, q Q, kind string) ([]IntegrationRow, error) {
+	rows, err := q.Query(ctx, `SELECT `+integrationCols+` FROM tenant_integrations WHERE kind = ? ORDER BY tenant_id, id`, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []IntegrationRow
+	for rows.Next() {
+		r, err := scanIntegration(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // PutIntegration stores a record, replacing the one of the same tenant, kind
 // and id. A tenant that does not exist is refused by the foreign key.
 func PutIntegration(ctx context.Context, q Q, r IntegrationRow) error {

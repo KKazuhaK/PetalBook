@@ -29,6 +29,7 @@ import type {
   SpaceDeletionPreview,
   Tenant,
   TenantDomain,
+  TenantMail,
   TenantSetting,
   User,
   UserDeletionPlan,
@@ -244,6 +245,27 @@ function secretsOf(c: Ctx, tenant?: string) {
     ? (A(c).secrets.tenants[tenant] ??= { 'mail.password': { name: 'mail.password', set: false } })
     : A(c).secrets.site
   return rows
+}
+
+// A tenant's own sender as the server shows it, with whose mailer its messages go by now: its own when enabled, else the
+// site's while mail.useSite is in effect and the site's mail is on, else none.
+function tenantMailOf(c: Ctx): TenantMail {
+  const base: TenantMail = A(c).tenantMail[c.params.id] ?? {
+    enabled: false,
+    host: '',
+    port: 587,
+    security: 'starttls',
+    username: '',
+    hasPassword: false,
+    from: '',
+    fromName: '',
+    replyTo: '',
+    status: { ok: false, checked: null, message: '' },
+    sender: '',
+  }
+  const useSite = A(c).tenantRules[c.params.id]?.['mail.useSite']
+  const lent = (useSite?.rules?.[0]?.value ?? useSite?.value) !== false
+  return { ...base, sender: base.enabled ? 'tenant' : lent && A(c).mail.enabled ? 'site' : '' }
 }
 
 // --- a tenant's own single sign-on (3.6 d3): the same providers, owned by the tenant ---
@@ -1669,6 +1691,46 @@ export const adminRoutes: Route[] = [
     'POST',
     '/api/admin/mail/test',
     (c) => {
+      c.data.sent.mail.push({ to: c.body.to, kind: 'test' })
+      return { ok: true }
+    },
+  ],
+
+  // --- a tenant's own sender (3.6) ---
+  ['GET', '/api/admin/tenants/:id/mail', (c) => tenantMailOf(c)],
+  [
+    'PUT',
+    '/api/admin/tenants/:id/mail',
+    (c) => {
+      const { password, ...rest } = c.body
+      const next = { ...tenantMailOf(c), ...rest }
+      if (next.security === 'none')
+        throw new Refusal(400, 'mail_insecure', 'Security none is not allowed for an organisation.')
+      if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.)/.test(next.host))
+        throw new Refusal(400, 'mail_host_not_public', 'The mail server must be at a public address.')
+      if (next.enabled && !next.from)
+        throw new Refusal(400, 'mail_from_required', 'Give the address mail is sent from.')
+      A(c).tenantMail[c.params.id] = next
+      if (password !== undefined) {
+        next.hasPassword = password !== ''
+        secretsOf(c, c.params.id)['mail.password'] = { name: 'mail.password', set: password !== '' }
+      }
+      return tenantMailOf(c)
+    },
+  ],
+  [
+    'DELETE',
+    '/api/admin/tenants/:id/mail',
+    (c) => {
+      delete A(c).tenantMail[c.params.id]
+      secretsOf(c, c.params.id)['mail.password'] = { name: 'mail.password', set: false }
+    },
+  ],
+  [
+    'POST',
+    '/api/admin/tenants/:id/mail/test',
+    (c) => {
+      if (!tenantMailOf(c).host) throw new Refusal(409, 'mail_not_configured', 'Set up the mail server first.')
       c.data.sent.mail.push({ to: c.body.to, kind: 'test' })
       return { ok: true }
     },

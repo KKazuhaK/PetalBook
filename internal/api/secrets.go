@@ -144,6 +144,12 @@ func (s *server) secretChanged(c *call, tenant, name, what string) {
 			s.settings.Invalidate() // the captcha check is built from it
 		}
 	}
+	if tenant != "" && name == secrets.MailPassword && s.auth != nil {
+		// The organisation's own sender is kept in memory with its password.
+		if err := s.auth.ReloadTenantMail(ctx, tenant); err != nil {
+			s.log.Warn("could not apply the tenant's mail password", "error", err)
+		}
+	}
 	at := tenant
 	if at == "" {
 		at = "-"

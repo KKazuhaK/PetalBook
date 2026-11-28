@@ -58,6 +58,8 @@ var (
 	TenantDomainsManage   = Register("tenant.domains.manage", ScopeTenant, "features.domains", "Claim the organisation's email domains, verify them by DNS, keep others from making organisations on them, and remove them")
 	TenantSigninManage    = Register("tenant.signin.manage", ScopeTenant, "features.ownSso", "Add, change, test and remove the organisation's own single sign-on providers (OpenID Connect and SAML), and route its verified domains to them")
 
+	TenantMailManage = Register("tenant.mail.manage", ScopeTenant, "mail.ownSender", "See, change and remove the organisation's own mail sender (SMTP), and send a test message through it")
+
 	// A space's: the four permissions of internal/perm, under their key names.
 	// The API keeps their short names (read, write, members, manage).
 	SpaceRead          = Register("space.read", ScopeSpace, "", "See pages, history, attachments and search")

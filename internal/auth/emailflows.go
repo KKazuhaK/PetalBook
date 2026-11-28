@@ -162,7 +162,8 @@ func (s *Service) CancelClosedRegistrations(ctx context.Context) error {
 	return nil
 }
 
-// mailGate is what every flow that sends a message asks first.
+// needMail is what every flow that sends security mail asks first: those
+// messages go by the site's sender (see mailKinds), so the site's mail must be on.
 func (s *Service) needMail() error {
 	if !s.MailEnabled() {
 		return coded(409, "mail_not_configured", "Mail is not enabled.")

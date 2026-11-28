@@ -43,6 +43,10 @@ var registered = []Kind{
 	{Name: "connection_provider_changed", Category: Security, Visibility: Site},
 	{Name: "mail_changed", Category: Security, Visibility: Site, AddressFields: []string{"from", "to"}},
 	{Name: "mail_test", Category: Security, Visibility: Site, AddressFields: []string{"to"}},
+	// An organisation's own sender (3.6): its administrators see them. The
+	// password is never in a row.
+	{Name: "tenant_mail_changed", Category: Security, AddressFields: []string{"from", "replyTo"}},
+	{Name: "tenant_mail_test", Category: Security, AddressFields: []string{"to"}},
 	{Name: "secret_changed", Category: Security},
 	// Email domains (3.6 d2): claims, codes, every check by hand, verifying,
 	// the recheck's findings, and a site administrator's transfers (each
@@ -107,6 +111,9 @@ var registered = []Kind{
 	{Name: "token_revoked", Category: Admin},
 	{Name: "grant_revoked", Category: Admin},
 	{Name: "quota_exceeded", Category: Admin},
+	// A message a tenant's mail could not be sent by: it has no sender of its own
+	// and the site's is not for it (mail.useSite). At most once a day for a tenant.
+	{Name: "mail_not_sent", Category: Admin},
 	{Name: "usage_exported", Category: Admin},
 	{Name: "bulk_started", Category: Admin},
 	{Name: "bulk_finished", Category: Admin},

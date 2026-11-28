@@ -50,7 +50,12 @@ func TestAdminRoutesAreForAdministrators(t *testing.T) {
 		sid := tang.personalSpace()
 		for _, rt := range adminRoutes(t) {
 			path := adminPath(rt, sid)
-			tang.do(rt.Method, path, "{}").want(t, 403, "forbidden")
+			// A feature is read before the key, and mail.ownSender is off by default.
+			want := "forbidden"
+			if strings.HasPrefix(rt.Pattern, "/api/admin/tenants/{tenant}/mail") {
+				want = "feature_off"
+			}
+			tang.do(rt.Method, path, "{}").want(t, 403, want)
 			a.newClient("").do(rt.Method, path, "{}").want(t, 401, "")
 		}
 		// Nothing above changed anything.

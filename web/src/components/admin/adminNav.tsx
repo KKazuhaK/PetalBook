@@ -15,6 +15,7 @@ import {
 import { PageFallback } from '@/components/common'
 import { tc } from '@/i18n/console'
 import { tdom } from '@/i18n/domains'
+import { tm } from '@/i18n/mail'
 import type { AdminSection } from '@/lib/urls'
 import { GroupsPanel } from './GroupsPanel'
 import { SettingsPanel } from './SettingsPanel'
@@ -38,6 +39,7 @@ const StorageRules = lazyNamed(() => import('./StorageRules'), 'StorageRules')
 const ConnectionsSection = lazyNamed(() => import('./ConnectionsSection'), 'ConnectionsSection')
 const OrgGitHub = lazyNamed(() => import('./OrgGitHub'), 'OrgGitHub')
 const MailPanel = lazyNamed(() => import('./MailPanel'), 'MailPanel')
+const OrgMail = lazyNamed(() => import('./TenantMail'), 'OrgMail')
 const SecurityPanel = lazyNamed(() => import('./AdminSecurityPanel'), 'AdminSecurityPanel')
 const ProvidersSection = lazyNamed(() => import('./ProvidersSection'), 'ProvidersSection')
 const PlansPanel = lazyNamed(() => import('./PlansPanel'), 'PlansPanel')
@@ -143,6 +145,8 @@ export const NAV: readonly NavSection[] = [
       // The organisation's sign-in: its own SSO (3.6 d3) and email domains (d2); a site administrator has them on each
       // tenant's page.
       { key: 'signin', label: tdom.signinTab, orgOnly: true, render: () => later(<OrgDomains />) },
+      // Its own mail server (3.6) and whether it may borrow the site's.
+      { key: 'mail', label: tm.org.tab, orgOnly: true, render: () => later(<OrgMail />) },
     ],
   },
   {

@@ -295,6 +295,13 @@
       "builtInOnly": false
     },
     {
+      "name": "tenant.mail.manage",
+      "scope": "tenant",
+      "feature": "mail.ownSender",
+      "description": "See, change and remove the organisation's own mail sender (SMTP), and send a test message through it",
+      "builtInOnly": false
+    },
+    {
       "name": "space.read",
       "scope": "space",
       "feature": "",
@@ -487,6 +494,14 @@
           "site": false
         },
         {
+          "name": "tenant_mail_changed",
+          "site": false
+        },
+        {
+          "name": "tenant_mail_test",
+          "site": false
+        },
+        {
           "name": "tenant_provider_changed",
           "site": false
         },
@@ -584,6 +599,10 @@
         },
         {
           "name": "join_withdrawn",
+          "site": false
+        },
+        {
+          "name": "mail_not_sent",
           "site": false
         },
         {
