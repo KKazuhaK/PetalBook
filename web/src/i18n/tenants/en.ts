@@ -497,11 +497,11 @@ export const tenantsEn: TenantsMessages = {
       'storage.partial.unsupported':
         'What happens when a space is connected to a remote that cannot sync partially. Allow (the default): the space is cloned in full. Refuse: connecting it is refused; spaces already connected keep working. Refuse is the stricter. Not in effect yet.',
       'mail.useSite':
-        "On (the default): an organisation with no mail sender of its own sends through the site's, under the organisation's name. Off: it sends nothing until it sets one up. Not in effect yet.",
+        "On (the default): an organisation with no mail sender of its own sends through the site's, under the organisation's name. Off: it sends nothing until it sets one up. To force it off, the site must lock it off (for all, or by a rule for one organisation); an off that is not locked can be turned back on by the organisation. Not in effect yet.",
       'daily.useSiteApis':
-        "On (the default): the organisation's spaces may choose the site's daily text interfaces, within the site's allowance. Off: only its own. Not in effect yet.",
+        "On (the default): the organisation's spaces may choose the site's daily text interfaces, within the site's allowance. Off: only its own. To force it off, the site must lock it off (for all, or by a rule for one organisation); an off that is not locked can be turned back on by the organisation. Not in effect yet.",
       'connections.useSiteApps':
-        "On (the default): people of the organisation with no provider app of its own connect through the site's. Off: they cannot until it adds one. Not in effect yet.",
+        "On (the default): people of the organisation with no provider app of its own connect through the site's. Off: they cannot until it adds one. To force it off, the site must lock it off (for all, or by a rule for one organisation); an off that is not locked can be turned back on by the organisation. Not in effect yet.",
       'outbound.perMinute':
         "How many outgoing requests a minute the server makes for tenants' own configuration (their mail, captcha, daily text and provider checks), all together. Over it the request is not made. Not in effect yet.",
       'outbound.tenantPerMinute':

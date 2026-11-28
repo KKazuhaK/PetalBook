@@ -137,8 +137,20 @@ func SetStorageTargetState(ctx context.Context, q Q, id, state, stateError strin
 
 // SetStorageTargetShares makes the tenants a target is shared with exactly
 // tenants: it deletes the others and adds the new ones (a tenant that does not
-// exist is refused by the foreign key). The caller runs it in a transaction.
+// exist is refused by the foreign key). Only a target of the site (owner
+// "site") is shared: for another, or none, it is ErrNotFound and nothing
+// changes. The caller runs it in a transaction.
 func SetStorageTargetShares(ctx context.Context, q Q, id string, tenants []string) error {
+	var owner string
+	if err := q.QueryRow(ctx, `SELECT owner FROM storage_targets WHERE id = ?`, id).Scan(&owner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if owner != "site" {
+		return ErrNotFound
+	}
 	if _, err := q.Exec(ctx, `DELETE FROM storage_target_shares WHERE target_id = ?`, id); err != nil {
 		return err
 	}

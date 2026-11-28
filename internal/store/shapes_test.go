@@ -19,7 +19,7 @@ func TestLayeredNoteRoundTrip(t *testing.T) {
 		q := st.Q()
 		now := time.UnixMilli(1_700_000_000_000)
 		row := store.LayeredRow{Layer: store.LayeredSite, LayerID: tenA, Key: "quota.spaces", Value: "3", Lower: `{"mode":"lock"}`, SetBy: "U1", Updated: now,
-			Note: "每个空间都必须同步到远程仓库"}
+			Note: "每个空间都必须同步到远程仓库", NoteSet: true}
 		if err := store.PutLayered(ctx, q, row); err != nil {
 			t.Fatal(err)
 		}
@@ -27,7 +27,14 @@ func TestLayeredNoteRoundTrip(t *testing.T) {
 		if err != nil || got.Note != row.Note {
 			t.Fatalf("%+v %v", got, err)
 		}
-		// A rewrite carries the note it is given; a tenant's own value keeps its rule's note.
+		// A writer that builds a fresh row (NoteSet false) leaves the note alone; one that sets it replaces it.
+		fresh := store.LayeredRow{Layer: store.LayeredSite, LayerID: tenA, Key: "quota.spaces", Value: "4", Lower: `{"mode":"allow"}`, SetBy: "billing", Updated: now}
+		if err := store.PutLayered(ctx, q, fresh); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ = store.GetLayered(ctx, q, store.LayeredSite, tenA, "quota.spaces", store.SourceManual); got.Value != "4" || got.Note != row.Note {
+			t.Fatalf("note not kept: %+v", got)
+		}
 		row.Note = ""
 		if err := store.PutLayered(ctx, q, row); err != nil {
 			t.Fatal(err)
@@ -35,7 +42,7 @@ func TestLayeredNoteRoundTrip(t *testing.T) {
 		if got, _ = store.GetLayered(ctx, q, store.LayeredSite, tenA, "quota.spaces", store.SourceManual); got.Note != "" {
 			t.Fatalf("note kept: %q", got.Note)
 		}
-		own := store.LayeredRow{Layer: store.LayeredTenant, LayerID: tenA, Key: "files.maxBytes", Value: "5", Lower: `{"mode":"allow"}`, Updated: now, Note: "n1"}
+		own := store.LayeredRow{Layer: store.LayeredTenant, LayerID: tenA, Key: "files.maxBytes", Value: "5", Lower: `{"mode":"allow"}`, Updated: now, Note: "n1", NoteSet: true}
 		if err := store.PutLayeredFields(ctx, q, own, true, true); err != nil {
 			t.Fatal(err)
 		}
@@ -43,11 +50,16 @@ func TestLayeredNoteRoundTrip(t *testing.T) {
 		if err := store.PutLayeredFields(ctx, q, own, true, false); err != nil {
 			t.Fatal(err)
 		}
+		// A rule written without NoteSet keeps the note too.
+		own.NoteSet = false
+		if err := store.PutLayeredFields(ctx, q, own, false, true); err != nil {
+			t.Fatal(err)
+		}
 		if got, _ = store.GetLayered(ctx, q, store.LayeredTenant, tenA, "files.maxBytes", store.SourceManual); got.Value != "6" || got.Note != "n1" {
 			t.Fatalf("%+v", got)
 		}
 		// 200 characters pass, 201 do not.
-		row.Note = strings.Repeat("字", store.MaxLayeredNote)
+		row.Note, row.NoteSet = strings.Repeat("字", store.MaxLayeredNote), true
 		if err := store.PutLayered(ctx, q, row); err != nil {
 			t.Fatal(err)
 		}
@@ -245,8 +257,34 @@ func TestStorageTargetRoundTrip(t *testing.T) {
 		if l, err := store.ListStorageTargets(ctx, q, ten); err != nil || len(l) != 1 || l[0].ID != "TG1" {
 			t.Fatalf("%+v %v", l, err)
 		}
+		// A tenant's own target, or none, is never shared.
+		if err := store.SetStorageTargetShares(ctx, q, "TG1", []string{other}); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("sharing a tenant's target: %v", err)
+		}
+		if err := store.SetStorageTargetShares(ctx, q, "nope", []string{other}); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("sharing no target: %v", err)
+		}
+		if got, _ = store.GetStorageTarget(ctx, q, "TG1"); len(got.SharedWith) != 0 {
+			t.Fatalf("%+v", got)
+		}
 		if err := store.SetStorageTargetShares(ctx, q, "TG2", []string{"T999999999"}); err == nil {
 			t.Fatal("sharing with no tenant was accepted")
+		}
+		// A remote that names the tenant's target keeps the tenant from being deleted.
+		if err := store.InsertSpace(ctx, q, tenA, "SR", "Remote", "", "", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "SR", Branch: "main", CredType: "ssh", PubKey: "k", PrivKeyEnc: "e", State: store.RemoteLocal, TargetID: "TG1", Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.DeleteTenant(ctx, ten); !errors.Is(err, store.ErrTenantTargetInUse) {
+			t.Fatalf("%v", err)
+		}
+		if _, err := store.GetStorageTarget(ctx, q, "TG1"); err != nil {
+			t.Fatalf("the target went anyway: %v", err)
+		}
+		if err := store.DeleteRemote(ctx, q, "SR", ""); err != nil {
+			t.Fatal(err)
 		}
 		// The tenant's target goes with the tenant; the site's stays, minus the sharing.
 		if err := st.DeleteTenant(ctx, ten); err != nil {

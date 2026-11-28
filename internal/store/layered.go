@@ -33,7 +33,9 @@ const (
 // Starts up to, not including, Ends; the zero time is none.
 //
 // Note is the reason shown beside the rule, at most MaxLayeredNote characters
-// ("" for none); the table refuses a longer one.
+// ("" for none); the table refuses a longer one. A write replaces the stored
+// note only when NoteSet is true: a writer that builds a fresh row (a plan's or
+// billing's rule, a lock change) leaves the note as it was.
 type LayeredRow struct {
 	Layer, LayerID, Key, Source string
 	Value, Lower                string
@@ -41,6 +43,7 @@ type LayeredRow struct {
 	SetBy                       string
 	Updated                     time.Time
 	Note                        string
+	NoteSet                     bool
 }
 
 // MaxLayeredNote is the most characters of a rule's note.
@@ -119,9 +122,12 @@ func GetLayered(ctx context.Context, q Q, layer, layerID, key, source string) (*
 // layer id, key and source. The writes of layered_settings are counted once a
 // transaction by its caller (BumpSettingsRev).
 func PutLayered(ctx context.Context, q Q, r LayeredRow) error {
+	set := `value = excluded.value, lower = excluded.lower, starts = excluded.starts, ends = excluded.ends, set_by = excluded.set_by, updated = excluded.updated`
+	if r.NoteSet {
+		set += `, note = excluded.note`
+	}
 	_, err := q.Exec(ctx, `INSERT INTO layered_settings(`+layeredCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (layer, layer_id, key, source) DO UPDATE SET value = excluded.value, lower = excluded.lower,
-		starts = excluded.starts, ends = excluded.ends, set_by = excluded.set_by, updated = excluded.updated, note = excluded.note`,
+		ON CONFLICT (layer, layer_id, key, source) DO UPDATE SET `+set,
 		r.Layer, r.LayerID, r.Key, sourceOf(r), r.Value, r.Lower, nullMS(r.Starts), nullMS(r.Ends), r.SetBy, ms(r.Updated), r.Note)
 	return err
 }
@@ -150,15 +156,18 @@ func DeleteManualRules(ctx context.Context, q Q, tenant string) ([]LayeredRow, e
 
 // PutLayeredFields writes a tenant administrator's change to a tenant's own
 // record: the value when setValue, the rule when setLower. The other field of
-// an existing record is kept; the note goes with the rule (r.Note is written
-// when setLower, kept otherwise).
+// an existing record is kept; the note is replaced only when setLower and
+// r.NoteSet.
 func PutLayeredFields(ctx context.Context, q Q, r LayeredRow, setValue, setLower bool) error {
 	set := `updated = excluded.updated`
 	if setValue {
 		set += `, value = excluded.value`
 	}
 	if setLower {
-		set += `, lower = excluded.lower, note = excluded.note`
+		set += `, lower = excluded.lower`
+		if r.NoteSet {
+			set += `, note = excluded.note`
+		}
 	}
 	_, err := q.Exec(ctx, `INSERT INTO layered_settings(layer, layer_id, key, source, value, lower, set_by, updated, note) VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?)
 		ON CONFLICT (layer, layer_id, key, source) DO UPDATE SET `+set,

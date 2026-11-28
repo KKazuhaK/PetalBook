@@ -407,6 +407,10 @@ func (s *server) adminDeleteTenant(c *call) {
 		}{"tenant_not_empty", "the tenant still has users, spaces, groups, invites or items in the recycle bin; they cannot be moved to another tenant", ne.Users, ne.Spaces, ne.Groups, ne.Invites, ne.Recycle})
 		return
 	}
+	if errors.Is(err, store.ErrTenantTargetInUse) {
+		writeError(c.w, http.StatusConflict, "conflict", "A remote still uses one of the tenant's storage targets; move or disconnect it first.")
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		tenantNotFound(c)
 		return

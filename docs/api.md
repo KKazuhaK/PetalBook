@@ -9771,7 +9771,10 @@ Notes:
   are in the registry, with their defaults, before the features that read them
   are built; until then nothing reads them (their help says "not in effect
   yet"). The three `useSite` switches default to on, which is what a tenant
-  gets today.
+  gets today. A site administrator who wants one off for a tenant has to
+  **lock** it off (a rule for the tenant, or the site's lock): an off that is
+  not locked is only a default, and the tenant's administrators can turn it
+  back on.
 - `storage.partial.unsupported` (owner, 2026-11-23) is the only partial-sync
   policy. With `refuse`, connecting a space to a host that 3.5's detection found
   unable to filter (`partialSync: "no"`) answers `409 partial_unsupported` with
@@ -11374,14 +11377,20 @@ SQLite and PostgreSQL.
   `INSERT … ON CONFLICT DO UPDATE SET value = value + excluded.value`;
   `storage_targets` with `app`, `prefix`, `state` (`checking`, `ok`, `broken`),
   `state_error`, `checked_at`, `in_use` and `updated_by`, and
-  `storage_target_shares` (target, tenant) for a site target offered to tenants.
+  `storage_target_shares` (target, tenant) for a site target offered to tenants
+  (only a target owned by `site` can be shared; `DeleteTenant` refuses while a
+  remote's `target_id` names one of the tenant's targets).
 - Tenant-owned: `tenant_mail`, `tenant_captcha`, `tenant_daily` (and its
   interfaces and lines, by tenant), `github_apps` (owner `site` or a tenant;
   the site's App moves into it from `site_records`, where 2.7 keeps it),
   `tenant_domains` (tenant, domain, code hash, code expires, verified, checked,
   missing since, last check JSON, provider, join, restrict orgs; unique on
-  verified domain), `storage_targets` (id, tenant, kind, host, owner or
-  namespace, installation, app, sealed token, prefix, state, in use), each with
+  verified domain), `storage_targets` (id, owner (`site` or a tenant), provider
+  id, installation, namespace and its id, `app`, prefix, state with its error
+  and check time, in use, `updated_by`, created, updated; the kind and host are
+  the provider's, read through `provider_id`, and a GitLab or Gitea token is a
+  sealed secret of the tenant in `secrets`, not a column; a site target is
+  offered to tenants through `storage_target_shares`), each with
   `updated_by` and `updated_at`; `site_records` key `publicMailDomains`.
   `github_apps` is the GitHub provider's table; 3.8's providers have their own.
 - Sign-in: `providers.owner` and `providers.signin`, one `linked_accounts` row per (provider, person) (unique `(provider_id, subject)` and `(provider_id, user_id)`); `provider_installations` name the App
