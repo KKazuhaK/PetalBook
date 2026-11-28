@@ -341,7 +341,7 @@ export function makeProvider(
   const kind = input.kind ?? 'oidc'
   const url = `${SITE}/api/auth/${kind}/${input.slug}`
   const owner = input.owner ?? 'site'
-  const cls = input.class ?? (kind === 'github' ? 'social' : 'sso')
+  const cls = input.class ?? (kind === 'github' || kind === 'oauth2' ? 'social' : 'sso')
   const p: AuthProvider = {
     // A site provider's id is its slug; a tenant's is made for it.
     id: id ?? input.slug,
@@ -391,6 +391,21 @@ export function makeProvider(
       redirectUrl: `${url}/callback`,
     }
   }
+  if (kind === 'oauth2') {
+    const { clientSecret, fields, ...rest } = input.oauth2 ?? {}
+    p.oauth2 = {
+      authorizationEndpoint: '',
+      tokenEndpoint: '',
+      userinfoEndpoint: '',
+      scopes: [],
+      authMethod: 'client_secret_basic',
+      clientId: '',
+      ...rest,
+      fields: { subject: 'id', email: '', emailVerified: '', name: '', username: '', ...fields },
+      hasSecret: !!clientSecret,
+      redirectUrl: `${url}/callback`,
+    }
+  }
   if (kind === 'saml') {
     p.saml = {
       metadataUrl: '',
@@ -417,6 +432,7 @@ export function changeProvider(p: AuthProvider, input: ProviderInput, at: string
     oidc,
     saml,
     github,
+    oauth2,
     groups,
     apple,
     kind: _kind,
@@ -444,6 +460,12 @@ export function changeProvider(p: AuthProvider, input: ProviderInput, at: string
     const { clientSecret, ...rest } = github
     Object.assign(p.github, rest)
     if (clientSecret !== undefined) p.github.hasSecret = clientSecret !== ''
+  }
+  if (oauth2 && p.oauth2) {
+    const { clientSecret, fields, ...rest } = oauth2
+    Object.assign(p.oauth2, rest)
+    if (fields) Object.assign(p.oauth2.fields, fields)
+    if (clientSecret !== undefined) p.oauth2.hasSecret = clientSecret !== ''
   }
   if (saml && p.saml) Object.assign(p.saml, saml)
   return p

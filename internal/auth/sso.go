@@ -459,6 +459,13 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 		e.stateValue, e.verifier = randomToken(), oauth2.GenerateVerifier()
 		cfg := s.githubOAuth(rt)
 		return &BeginResult{URL: cfg.AuthCodeURL(e.stateValue, oauth2.S256ChallengeOption(e.verifier)), Cookie: s.ssoCookie(s.pending.put(e))}, nil
+	case KindOAuth2:
+		if rt.secretErr != nil || rt.cfg.OAuth2 == nil {
+			return nil, unavailable(errors.New("the provider's client secret or settings are unreadable"))
+		}
+		e.stateValue, e.verifier = randomToken(), oauth2.GenerateVerifier()
+		cfg := s.oauth2Config(rt)
+		return &BeginResult{URL: cfg.AuthCodeURL(e.stateValue, oauth2.S256ChallengeOption(e.verifier)), Cookie: s.ssoCookie(s.pending.put(e))}, nil
 	case KindSAML:
 		prov, err := s.samlFor(rt)
 		if err != nil {
@@ -674,6 +681,21 @@ func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken 
 		if errCode != "" {
 			return fail(errCode)
 		}
+	case KindOAuth2:
+		var errCode string
+		c, errCode = s.oauth2Claims(ctx, rt, code, e.verifier)
+		if errCode != "" {
+			return fail(errCode)
+		}
+		// The callback took a while (up to 20s) with the settings it read at
+		// its start. An administrator may have changed the provider since (the
+		// subject path, the userinfo host): what it read means nothing now, and
+		// nothing is linked or made from it. The provider list is in memory:
+		// no query, no settings read.
+		if cur := s.provs.getID(rt.row.ID); cur == nil || !cur.row.Updated.Equal(rt.row.Updated) {
+			s.log.Warn("sign-in refused: the provider changed during the callback", "provider", slug)
+			return fail("provider_unavailable")
+		}
 	}
 	return s.finishSSO(ctx, rt, e, c, sessionToken, ip, clear)
 }
@@ -869,6 +891,9 @@ type claimed struct {
 	labelOverride string
 	// groups is what the sign-in said about the person's groups (3.2).
 	groups groupClaim
+	// unresolved are the configured paths of a plain OAuth 2.0 provider that
+	// found nothing in the userinfo answer (a test sign-in tells them).
+	unresolved []string
 }
 
 func (c claimed) label() string {

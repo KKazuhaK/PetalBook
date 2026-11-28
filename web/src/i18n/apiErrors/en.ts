@@ -184,6 +184,8 @@ export const apiErrorsEn: ApiErrorTexts = {
   provider_limit: 'The limit on platforms of this kind is reached.',
   provider_host_mismatch:
     'People have linked accounts to this GitHub provider on its current host, so it cannot move to another GitHub host. Delete the provider, or remove its linked accounts, first.',
+  subject_fixed:
+    'Accounts are linked to this provider, so the path of the subject and the host of the user info address cannot change. Delete the provider, or remove its linked accounts, first.',
   name_taken: 'That name is already taken. Choose another.',
   push_failed: 'The content could not be pushed to the repository, so the space was not created.',
   repo_not_in_installation: 'The repository is not among those the installed app reaches. Add it on the platform.',

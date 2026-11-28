@@ -25,7 +25,7 @@ const KEY = 'petalbook.lastAccount'
 const PENDING = 'petalbook.signinMethod'
 const PENDING_MS = 15 * 60_000
 
-const KINDS: readonly string[] = ['oidc', 'saml', 'github']
+const KINDS: readonly string[] = ['oidc', 'saml', 'github', 'oauth2']
 const str = (v: unknown, max = 200): v is string => typeof v === 'string' && v.length <= max
 
 function parseMethod(v: unknown): LastMethod | null {

@@ -404,7 +404,11 @@ Decided:
     the field names for taking the subject, email and name from the user info). An
     email given by `oauth2` is by default not counted as verified (it does not
     take part in merging by verified email), unless the admin says which field in
-    the user info means "verified". PKCE is used as usual. `oauth2` can only be a
+    the user info means "verified" and the provider's "trust verified email
+    addresses" switch is on, as for OIDC. PKCE (S256) is always used. Built in
+    d6, in the nested `oauth2` block of the provider (no per-provider
+    account-creation switch: the registration mode decides; it never claims an
+    SSO-waiting account). `oauth2` can only be a
     site-wide `social` provider; a tenant's SSO is still only OIDC and SAML.
   - For the endpoints see "Several sign-in methods per account" in "Sign-in:
     social providers and SSO" of `docs/api.md`.

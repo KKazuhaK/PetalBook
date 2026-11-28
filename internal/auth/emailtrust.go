@@ -30,6 +30,8 @@ const (
 	tmplGitHub    = "github"
 	tmplOIDC      = "oidc"
 	tmplSAML      = "saml"
+	// tmplOAuth2 is a plain OAuth 2.0 provider (oauth2flow.go).
+	tmplOAuth2 = "oauth2"
 )
 
 // emailSource is what a sign-in said about an address, and about the
@@ -88,6 +90,13 @@ func trustsEmail(src emailSource) bool {
 		return claimTrue(src.claims, "xms_edov")
 	case tmplOIDC:
 		return src.trustOptIn && src.verified
+	case tmplOAuth2:
+		// Plain OAuth 2.0 has no standard verified-address claim: the
+		// administrator names the path that holds it, and the address is
+		// trusted only when that says true and the site trusts the
+		// provider's addresses (the provider's mergeVerifiedEmail), as for
+		// OpenID Connect.
+		return src.trustOptIn && src.verified
 	case tmplSAML:
 		// SAML has no verified-address claim: the site's own SAML provider
 		// vouches for its addresses only by the administrator's opt-in.
@@ -108,6 +117,9 @@ func matchesByAddress(src emailSource) bool { return !src.relay }
 // OpenID Connect provider, GitLab.com's template included (its addresses are
 // trusted only with the administrators' opt-in, as a configured provider's).
 func trustTemplate(row store.ProviderRow) string {
+	if row.Kind == KindOAuth2 {
+		return tmplOAuth2
+	}
 	switch row.Template {
 	case TemplateGoogle:
 		return tmplGoogle

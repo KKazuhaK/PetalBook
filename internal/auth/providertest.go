@@ -28,7 +28,10 @@ type TestResult struct {
 	EmailTrusted bool
 	Name         string
 	Username     string
-	At           time.Time
+	// Unresolved are the paths of a plain OAuth 2.0 provider that found nothing
+	// in the userinfo answer.
+	Unresolved []string
+	At         time.Time
 }
 
 type providerTests struct {
@@ -40,7 +43,7 @@ func testKey(userID, providerID string) string { return userID + "\x00" + provid
 
 func (s *Service) keepTest(userID, providerID string, c claimed) {
 	now := s.now()
-	r := TestResult{Subject: c.subject, Email: c.email, EmailTrusted: c.emailVerified, Name: clip(c.name, 100), Username: clip(c.preferred, 100), At: now}
+	r := TestResult{Subject: c.subject, Email: c.email, EmailTrusted: c.emailVerified, Name: clip(c.name, 100), Username: clip(c.preferred, 100), Unresolved: c.unresolved, At: now}
 	s.ptests.mu.Lock()
 	defer s.ptests.mu.Unlock()
 	if s.ptests.m == nil {

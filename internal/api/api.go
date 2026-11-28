@@ -530,7 +530,7 @@ func fromIdentityProvider(r *http.Request) bool {
 	case http.MethodGet:
 		if rest, ok := strings.CutPrefix(p, "/api/auth/"); ok {
 			parts := strings.Split(rest, "/")
-			if len(parts) == 3 && parts[1] != "" && (parts[0] == "oidc" || parts[0] == "github") && parts[2] == "callback" {
+			if len(parts) == 3 && parts[1] != "" && (parts[0] == "oidc" || parts[0] == "github" || parts[0] == "oauth2") && parts[2] == "callback" {
 				return true
 			}
 			if len(parts) == 3 && parts[0] == "saml" && parts[1] != "" && parts[2] == "metadata" {
