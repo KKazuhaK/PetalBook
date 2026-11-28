@@ -597,6 +597,49 @@ func (s *server) patchUser(c *call) {
 	}{out, verification})
 }
 
+// adminCreateUser makes an account for someone else: the person gets a
+// one-time link that sets their password (never known to the administrator),
+// unless their organisation requires its single sign-on for them. It is not
+// gated by the registration mode; quota.people bounds it.
+func (s *server) adminCreateUser(c *call) {
+	var req struct {
+		Tenant    string `json:"tenant"`
+		Username  string `json:"username"`
+		Name      string `json:"name"`
+		Email     string `json:"email"`
+		Role      string `json:"role"`
+		SiteAdmin *bool  `json:"siteAdmin"`
+		Lang      string `json:"lang"`
+	}
+	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
+		return
+	}
+	if req.Tenant == "" {
+		req.Tenant = c.tenant()
+	}
+	res, err := s.auth.AdminCreateUser(c.r.Context(), c.user(), c.p.Access, auth.AdminCreateParams{Tenant: req.Tenant, Username: req.Username, Name: req.Name,
+		Email: req.Email, Role: req.Role, SiteAdmin: req.SiteAdmin, Lang: langOf(c, req.Lang)})
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	u := res.User
+	s.audit(c, auth.AuditEvent{Kind: "user_created", Actor: c.user().ID, User: u.ID, Username: u.Username, Tenant: u.TenantID,
+		Detail: map[string]any{"role": u.Role, "siteAdmin": u.IsSiteAdmin(), "email": u.Email, "signIn": res.SignIn, "mail": res.Mail}})
+	out := struct {
+		User    userResp `json:"user"`
+		SignIn  string   `json:"signIn"`
+		Link    *string  `json:"link"`
+		Expires *string  `json:"expires"`
+		Mail    string   `json:"mail"`
+	}{User: s.toUser(*u), SignIn: res.SignIn, Mail: res.Mail}
+	if res.Link != "" {
+		exp := rfc3339(res.Expires)
+		out.Link, out.Expires = &res.Link, &exp
+	}
+	writeJSON(c.w, http.StatusCreated, out)
+}
+
 // setTemporaryPassword gives a person a password the administrator typed:
 // they must replace it at their next sign-in, and their sessions end.
 func (s *server) setTemporaryPassword(c *call) {

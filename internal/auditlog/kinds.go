@@ -83,6 +83,7 @@ var registered = []Kind{
 	{Name: "join_denied", Category: Admin, AddressFields: []string{"email"}},
 	{Name: "join_withdrawn", Category: Admin, AddressFields: []string{"email"}},
 	{Name: "join_cancelled", Category: Admin, AddressFields: []string{"email"}},
+	{Name: "user_created", Category: Admin, AddressFields: []string{"email"}},
 	{Name: "user_changed", Category: Admin, AddressFields: []string{"email", "old.email"}},
 	{Name: "user_deleted", Category: Admin},
 	{Name: "user_restored", Category: Admin},

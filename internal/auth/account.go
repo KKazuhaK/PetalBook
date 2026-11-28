@@ -194,7 +194,7 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 			return err
 		}
 		// A password change makes a reset link made before it unusable.
-		if err := store.DeleteEmailTokens(ctx, q, p.User.ID, store.TokenReset); err != nil {
+		if err := store.DeleteResetTokens(ctx, q, p.User.ID); err != nil {
 			return err
 		}
 		return store.DeleteUserSessions(ctx, q, p.User.ID, p.SessionID, store.EndPassword, s.now())
@@ -985,7 +985,7 @@ func (s *Service) SetTemporaryPassword(ctx context.Context, actor store.User, ac
 			return err
 		}
 		// A reset link made before this stops working, and so does every session.
-		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
+		if err := store.DeleteResetTokens(ctx, q, u.ID); err != nil {
 			return err
 		}
 		if err := store.DeleteUserSessions(ctx, q, u.ID, "", store.EndPassword, s.now()); err != nil {

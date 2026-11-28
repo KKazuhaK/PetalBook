@@ -997,7 +997,7 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 		if err := store.SetPasswordHash(ctx, q, u.ID, hash, s.now()); err != nil {
 			return err
 		}
-		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
+		if err := store.DeleteResetTokens(ctx, q, u.ID); err != nil {
 			return err
 		}
 		return store.DeleteUserSessions(ctx, q, u.ID, "", store.EndPassword, s.now())

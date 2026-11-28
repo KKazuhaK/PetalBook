@@ -733,8 +733,9 @@ CREATE UNIQUE INDEX registrations_username ON registrations(username);
 CREATE UNIQUE INDEX registrations_org_slug ON registrations(org_slug) WHERE org_slug <> '';
 CREATE INDEX registrations_tenant ON registrations(tenant_id, expires);
 
--- Links that confirm an address ('verify') or reset a password ('reset'): only
--- the SHA-256 of the token is stored.
+-- Links that confirm an address ('verify'), reset a password ('reset') or set the
+-- first password of an account an administrator made ('welcome', and
+-- 'welcome_mail' when it was mailed): only the SHA-256 of the token is stored.
 CREATE TABLE email_tokens (
   hash    TEXT COLLATE "C" PRIMARY KEY,
   kind    TEXT COLLATE "C" NOT NULL,

@@ -34,7 +34,10 @@ const (
 	KindEmailRemoved = "email_removed"
 	KindEmailPrimary = "email_primary"
 	KindInvite       = "invite"
-	KindTest         = "test"
+	// KindWelcome tells a person an administrator made an account for them,
+	// with the link that sets its password.
+	KindWelcome = "welcome"
+	KindTest    = "test"
 )
 
 // Vars are what a template may use.
@@ -157,6 +160,8 @@ func en(kind string, v Vars) body {
 		return body{subject: "Sign in with " + v.Provider, paras: []string{fmt.Sprintf("Someone asked to reset the password of your account on %s. Your account signs in with %s, so there is no password to reset: sign in with %s instead.", v.Site, v.Provider, v.Provider)}, foot: ignore}
 	case KindInvite:
 		return body{subject: "You are invited to " + v.Site, paras: []string{fmt.Sprintf("You were invited to make an account on %s. Follow this link to choose your username and password. It works once and for %d days.", v.Site, v.Hours/24)}, link: v.Link, foot: "If you were not expecting this, you can ignore this message; no account is made until you follow the link."}
+	case KindWelcome:
+		return body{subject: "An account was made for you on " + v.Site, paras: []string{fmt.Sprintf("An administrator made the account %s for you on %s. Follow this link to choose your password. It works once and for %d days.", account(v), v.Site, v.Hours/24)}, link: v.Link, foot: "If you were not expecting this, you can ignore this message; the account stays closed until a password is chosen."}
 	case KindEmailChanged:
 		return body{subject: "The email address of your account was changed", paras: []string{fmt.Sprintf("The email address of your account on %s was changed. If this was not you, tell an administrator.", v.Site)}}
 	case KindEmailAdded:
@@ -203,6 +208,8 @@ func zh(kind string, v Vars) body {
 		return body{subject: "请用 " + v.Provider + " 登录", paras: []string{fmt.Sprintf("有人要重置你在 %s 上的账号密码。你的账号通过 %s 登录，没有可以重置的密码，请直接用 %s 登录。", v.Site, v.Provider, v.Provider)}, foot: ignore}
 	case KindInvite:
 		return body{subject: "邀请你加入 " + v.Site, paras: []string{fmt.Sprintf("你被邀请在 %s 上创建账号。点开下面的链接，设置用户名和密码。链接只能用一次，%d 天内有效。", v.Site, v.Hours/24)}, link: v.Link, foot: "如果你没有预期这封邀请，忽略即可；点开链接之前不会创建任何账号。"}
+	case KindWelcome:
+		return body{subject: "管理员在 " + v.Site + " 上为你创建了账号", paras: []string{fmt.Sprintf("管理员在 %s 上为你创建了账号 %s。点开下面的链接，设置你的密码。链接只能用一次，%d 天内有效。", v.Site, account(v), v.Hours/24)}, link: v.Link, foot: "如果你没有预期这封邮件，忽略即可；设置密码之前账号无法登录。"}
 	case KindEmailChanged:
 		return body{subject: "你账号的邮箱地址被改了", paras: []string{fmt.Sprintf("你在 %s 上的账号的邮箱地址被改了。如果不是你本人，请告诉管理员。", v.Site)}}
 	case KindEmailAdded:

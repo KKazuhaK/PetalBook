@@ -966,11 +966,20 @@ func (s *Service) findReset(ctx context.Context, token string) (*store.EmailToke
 		return nil, nil, errBadLink()
 	}
 	hash := hashToken(token)
-	t, err := store.FindEmailToken(ctx, s.st.Q(), store.TokenReset, hash, s.now())
-	if errors.Is(err, store.ErrNotFound) {
+	// A reset link, or the link that sets the first password of an account an
+	// administrator made (mailed, or copied by the administrator).
+	var t *store.EmailToken
+	for _, kind := range []string{store.TokenReset, store.TokenWelcomeMail, store.TokenWelcome} {
+		var err error
+		if t, err = store.FindEmailToken(ctx, s.st.Q(), kind, hash, s.now()); err == nil {
+			break
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return nil, nil, err
+		}
+		t = nil
+	}
+	if t == nil {
 		return nil, nil, errBadLink()
-	} else if err != nil {
-		return nil, nil, err
 	}
 	if !ctEqual(t.Hash, hash) {
 		return nil, nil, errBadLink()
@@ -995,9 +1004,16 @@ func (s *Service) findReset(ctx context.Context, token string) (*store.EmailToke
 			return nil, nil, err
 		}
 	}
-	if ok, err := s.canUsePassword(ctx, s.st.Q(), *u); err != nil {
-		return nil, nil, err
-	} else if !ok {
+	// A reset never adds a password the person could not already use; the first
+	// password of an account made by an administrator has none yet, and is
+	// refused only where the person's sign-in is the organisation's SSO.
+	if t.Kind == store.TokenReset {
+		if ok, err := s.canUsePassword(ctx, s.st.Q(), *u); err != nil {
+			return nil, nil, err
+		} else if !ok {
+			return nil, nil, errBadLink()
+		}
+	} else if s.localRefusedUser(ctx, s.sec(ctx), u) {
 		return nil, nil, errBadLink()
 	}
 	return t, u, nil
@@ -1035,6 +1051,7 @@ func (s *Service) ResetPassword(ctx context.Context, token, password, ip string)
 	if err != nil {
 		return err
 	}
+	verifies := t.Kind == store.TokenWelcomeMail && t.Email != "" && t.Email == u.Email
 	err = s.st.Tx(ctx, func(q store.Q) error {
 		if ok, err := store.UseEmailToken(ctx, q, t.Hash, s.now()); err != nil {
 			return err
@@ -1044,7 +1061,13 @@ func (s *Service) ResetPassword(ctx context.Context, token, password, ip string)
 		if err := store.SetPasswordHash(ctx, q, u.ID, hash, s.now()); err != nil {
 			return err
 		}
-		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
+		// The mailed first-password link reached the address: it proves it.
+		if verifies {
+			if err := store.SetEmailRowVerified(ctx, q, u.ID, t.Email, true, ""); err != nil {
+				return err
+			}
+		}
+		if err := store.DeleteResetTokens(ctx, q, u.ID); err != nil {
 			return err
 		}
 		return store.DeleteUserSessions(ctx, q, u.ID, "", store.EndPassword, s.now())
@@ -1054,10 +1077,19 @@ func (s *Service) ResetPassword(ctx context.Context, token, password, ip string)
 	}
 	s.refundIP(ip)
 	s.evictUser(u.ID, "")
+	if verifies {
+		s.dropUser(u.ID)
+		u.EmailVerified = true
+		s.cfg.Spaces.UserChanged(ctx, *u)
+	}
 	ukey := userKey(u.Username)
 	s.failUser.Reset(ukey)
 	s.failPair.ResetWhere(func(k string) bool { return strings.HasSuffix(k, "|"+ukey) })
-	s.Audit(AuditEvent{Kind: "password_reset", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"by": "user"}})
+	by := "user"
+	if t.Kind != store.TokenReset {
+		by = "welcome"
+	}
+	s.Audit(AuditEvent{Kind: "password_reset", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"by": by}})
 	return nil
 }
 
