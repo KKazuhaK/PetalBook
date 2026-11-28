@@ -107,7 +107,15 @@ export async function mount(ui: ReactNode, options: MountOptions): Promise<Mount
       viewAs: new Headers(init?.headers).get('petalbook-view-as'),
     })
     const ms = options.delay?.(method, url) ?? 0
-    if (ms > 0) await new Promise((r) => setTimeout(r, ms))
+    // `Infinity` holds the request until it is cancelled, so no clock decides whether it is still on its way.
+    if (ms > 0)
+      await new Promise<void>((resolve, reject) => {
+        const timer = Number.isFinite(ms) ? setTimeout(resolve, ms) : undefined
+        init?.signal?.addEventListener('abort', () => {
+          clearTimeout(timer)
+          reject(new DOMException('The operation was aborted.', 'AbortError'))
+        })
+      })
     return mocked(input, init)
   }
   markSignedIn()

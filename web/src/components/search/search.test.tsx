@@ -210,8 +210,9 @@ describe('the search dialog', () => {
     m = await mount(app, {
       entries: ['/s/default/recent'],
       fixtures: { mode: 'single' },
-      // Search requests take a while, so the first is still pending when the text changes.
-      delay: (method, url) => (method === 'GET' && url.includes('q=') ? 400 : 0),
+      // The first search is held until it is cancelled, so it is still pending when the text changes, however slow the machine.
+      delay: (method, url) =>
+        method === 'GET' && url.includes('q=%E6%85%A2') && !url.includes('%E8%B5%B0') ? Infinity : 0,
     })
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }))
