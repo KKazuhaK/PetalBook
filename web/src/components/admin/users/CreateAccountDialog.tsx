@@ -46,7 +46,7 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
   // An administrator of the default tenant, made across the site, may be one of the whole server: the server asks
   // for the choice to be made, true or false (never a default taken for the person).
   const asksSiteAdmin = across && grantAdmin && list.find((x) => x.id === chosen)?.default === true
-  const [siteAdmin, setSiteAdmin] = useState(false)
+  const [wholeServer, setWholeServer] = useState(false)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -61,7 +61,7 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
           email: email.trim() || undefined,
           role,
           tenant: across && chosen ? chosen : undefined,
-          siteAdmin: asksSiteAdmin ? siteAdmin : undefined,
+          siteAdmin: asksSiteAdmin ? wholeServer : undefined,
         }),
       )
       setMade(res)
@@ -140,12 +140,12 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
                   <input
                     type="checkbox"
                     className="size-4"
-                    checked={siteAdmin}
-                    onChange={(e) => setSiteAdmin(e.target.checked)}
+                    checked={wholeServer}
+                    onChange={(e) => setWholeServer(e.target.checked)}
                   />
                   {d.siteAdminLabel}
                 </label>
-                {siteAdmin && (
+                {wholeServer && (
                   <p
                     role="status"
                     data-slot="site-admin-warning"
