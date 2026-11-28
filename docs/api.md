@@ -7108,6 +7108,8 @@ layers below it may do (`lower`):
 ```
 
 - `allow`: the layers below may set any valid value.
+- `tighten` (3.6): a value at least as strict as the one above it, for a key
+  that has an order of strictness; see "Forced, minimum, default".
 - `restrict`: for a `choice` setting, one of `options`; for a `limit` setting
   (a number where smaller is stricter), at most `max`.
 - `lock`: the layers below cannot set it.
@@ -9675,14 +9677,62 @@ applies to every layered (b) key of the inventory:
 | `restrict` | 限定范围 / limited to | pick among `options`, or stay at or under `max` (3.3) |
 | `lock` | 强制 / forced | nothing: the site's value applies |
 
-- Every key says what "stricter" means for it (`strictness`): `higher`
-  (booleans where `true` is stricter, e.g. `signin.ssoOnly`), `lower` (limits,
-  e.g. `session.maxDays`), an order of options (`captcha.contexts.*`:
-  `off` < `after_failures` < `always`), or `subset` (lists, e.g. `storage.hosts`: a
-  lower layer keeps only some of the site's entries). A key without an order
-  cannot be `tighten`ed (`400 invalid`).
+- Every key says what "stricter" means for it (`strictness`, in each entry of
+  `GET /api/admin/settings` and of a tenant's settings; left out for a key that
+  has none):
+  - `higher`: a larger number is stricter, or `true` for a boolean (e.g.
+    `signin.ssoOnly`, `signin.lockout.minutes`);
+  - `lower`: a smaller number is stricter, `null` (no limit) being the loosest
+    (e.g. `registration.perHour`, `sessions.maxDays`);
+  - `order`: a choice is stricter the later it is in the key's `choices`, which
+    are listed loosest first (`registration.mode`: `open` < `invite` <
+    `closed`; `storage.partial.unsupported`: `allow` < `refuse`);
+  - `subset`: a list is stricter when it keeps fewer of the entries above it,
+    `["*"]` (everything) being the loosest (`signin.social`, `storage.hosts`).
+
+  A key without an order, or without a tenant layer below the site, cannot be
+  `tighten`ed (`400 invalid`); a floor that is not one of an `order` key's
+  choices holds everything open to none (it counts as the strictest). The orders of
+  the keys are in `settingStrictness` of the generated
+  `web/src/api/generated/registries.json`.
+- The site's value the minimum is held to is the site's own, or its rule's
+  value for that tenant when a rule for it is in effect (the `floor` of the
+  `reason` below). A tenant's value is in effect while it is not looser than
+  the floor; a looser one that is already stored (the site became stricter
+  after it was written) is kept with `inEffect: false`, the site's value
+  applies, and the tenant's page says "overridden by the site's value". It
+  counts again when the floor allows it. A write of a looser value is
+  `409 setting_restricted`. `affected` of a site change to `tighten` counts the
+  tenants whose own value is looser than the site's value now.
+- **A key whose site value is for the site's own people.** The site's own
+  value of `registration.mode` governs personal accounts only and never
+  constrains an organisation (decision of 2026-11-27): an organisation is held
+  by a rule written for that tenant alone. So the site's layer of such a key
+  (`ownPeopleOnly: true` in `GET /api/admin/settings`) takes no lower mode but
+  `allow` (`400 invalid` for `tighten`, `restrict` or `lock`, telling the
+  administrator to use a rule for the tenant), and a tenant that has no rule
+  sits on the key's tenant default (`invite`), not on the site's value. A rule
+  for the tenant with `tighten` holds the tenant to that rule's value.
+- One function decides what a tenant's layer is held to and sits on (`Def.heldTo`:
+  the site's layer, or the site's rule for the tenant when one is in effect,
+  its value and its lower each replacing the site's when it has one). The read
+  (`inEffect`), the write check (`409 setting_restricted`), the count of
+  `affected` and `reason` all use it, so they cannot differ.
+- The default rule of `signin.ssoOnly` and `signin.ssoOnlyAdmins` is
+  `tighten` (3.6 d4 made them tenant layers that only tighten; the site may
+  now choose `allow` for them too).
 - `note` (at most 200 characters, optional, any mode but `allow`) is shown to
-  the tenant's administrators next to the setting.
+  the tenant's administrators next to the setting. It is part of `lower`:
+  the site's (`PUT /api/admin/settings/{key}`, `"lower": {"mode": …, "note": …}`),
+  the site's rule for one tenant (`siteRule.lower.note`), a plan's rule, and a
+  tenant's own rule for the layers below. A write that sends `lower` without
+  `note` keeps the note stored; `"note": ""` clears it; a rule that allows
+  everything has none (changing to `allow` clears it, and a note with `allow`
+  is `400 invalid`), nor does a removed rule; a longer one is `400 invalid`.
+  The note is not part of what the layers below are held to. It appears as
+  `note` in every `lower` of the answers (`site.lower`, `tenant.rules[].lower`,
+  `reason`), and the change is audited: `setting_changed` carries `note` when
+  the writer sent one, and its `from` and `to` hold the rules with their notes.
 - A lower layer's own `lower` must be at least as strict as the one above it
   (3.3's rule, `tighten` sitting between `allow` and `restrict`).
 - Values that a change makes ineffective are kept, `inEffect: false`, as in
@@ -9713,9 +9763,17 @@ take about 30 MB. There is no cap on the number of tenants cached.
   `siteLock`, or when a rule for the tenant leaves it nothing to choose).
 - `setBy`: who wrote the tenant layer's value, `site` or `tenant`.
 - `allowed` is what the site's rule and the rule for the tenant both leave.
-- `forced`: the site locks it. `reason` is then `{"by": "site", "mode": "lock", "note": "…"}`;
-  for `tighten` and `restrict` the reason says so as well and `allowed` (or
-  `max`) says what is left. The page shows a forced setting read only, greyed,
+- `forced`: the site locks it. `reason` is then `{"by": "site", "mode": "lock", "note": "…"}`
+  (`by` is `site` when the site's own layer holds the tenant and `rule` when the
+  site's rule for this tenant does; a rule that allows everything gives no
+  `reason`, and the page shows no badge for it);
+  for `tighten` and `restrict` the reason says so as well: it is the rule the
+  tenant's layer is held to (the site's, or its rule for this tenant), with
+  `options` or `max` for a restriction and, for `tighten`, `floor`, the value
+  the tenant's own must be at least as strict as. It is left out while the site
+  allows everything. `reason` and `strictness` are in the answers of `GET` and
+  `PUT` of `/api/admin/tenants/{tenant}/settings`; `allowed`, `editable` and
+  `forced` of the example are not made yet. The page shows a forced setting read only, greyed,
   with "由全站管理员统一设置" and the note.
 - `GET /api/settings?space=` (3.3) answers the same `reason` for the space and
   person layers (`by` is `site` or `tenant`).

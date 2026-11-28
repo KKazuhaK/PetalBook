@@ -252,10 +252,10 @@ const (
 // read by internal/quota, not something a person sets for themselves.
 func baseDefinitions() []*Def {
 	return []*Def{
-		{Key: RegistrationMode, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: RegInvite, TenantDefault: RegInvite, Choices: []string{RegOpen, RegInvite, RegClosed}, Lower: Lower{Mode: Allow}},
+		{Key: RegistrationMode, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: RegInvite, TenantDefault: RegInvite, Choices: []string{RegOpen, RegInvite, RegClosed}, Lower: Lower{Mode: Allow}, Strict: StrictOrder},
 		{Key: RegistrationDomains, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{}, Lower: Lower{Mode: Allow}, Check: checkDomains},
 		{Key: RegistrationPerHour, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: int64(50), Min: 1, Max: 10000,
-			Lower: Lower{Mode: Restrict, Max: i64(50)}},
+			Lower: Lower{Mode: Restrict, Max: i64(50)}, Strict: StrictLower},
 		{Key: LegalTermsURL, Kind: Text, Layers: []Layer{Site, Tenant}, Default: "", Lower: Lower{Mode: Allow}, Check: checkHTTPS},
 		{Key: LegalPrivacyURL, Kind: Text, Layers: []Layer{Site, Tenant}, Default: "", Lower: Lower{Mode: Allow}, Check: checkHTTPS},
 		// What a space may do with the daily text (2.3's allow switches).
@@ -272,7 +272,7 @@ func baseDefinitions() []*Def {
 		// The size of one file (3.5). The default and the site's lower rule are the
 		// site's --max-upload, which the server sets (SetFileCeiling).
 		{Key: FilesMaxBytes, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: int64(10 << 20), Min: 1, Max: 256 << 20,
-			Lower: Lower{Mode: Restrict, Max: i64(10 << 20)}},
+			Lower: Lower{Mode: Restrict, Max: i64(10 << 20)}, Strict: StrictLower},
 		// Attachments are separate by default. The space layer is the owner's
 		// request when the space is made, read by AssetsRule, not a stored
 		// setting. A site administrator may also lock the value for one tenant.
@@ -328,38 +328,38 @@ func baseDefinitions() []*Def {
 		{Key: DomainsJoinRole, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: store.DefaultJoinRole, Choices: slices.Clone(store.JoinRoles), Lower: Lower{Mode: Allow}},
 
 		// The social providers a tenant's people may use.
-		{Key: SigninSocial, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{"*"}, Lower: Lower{Mode: Allow}, Check: checkSocial},
+		{Key: SigninSocial, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{"*"}, Lower: Lower{Mode: Allow}, Check: checkSocial, Strict: StrictSubset},
 
 		// The sign-in policy.
 		{Key: SigninMode, Kind: Choice, Layers: []Layer{Site}, Default: "dual", Choices: []string{"dual", "sso_first", "sso_redirect", "local_only"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		// An organisation may require its own single sign-on of its people
 		// (3.6 d4); it never lifts the site's.
-		{Key: SigninSSOOnly, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Allow}, TightenOnly: true},
+		{Key: SigninSSOOnly, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Tighten}, Strict: StrictHigher},
 		// With ssoOnly on, the organisation's administrators are held to its
 		// single sign-on like its members; off (the default) they keep their
 		// password. A site administrator always keeps theirs.
-		{Key: SigninSSOOnlyAdmins, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Allow}, TightenOnly: true},
+		{Key: SigninSSOOnlyAdmins, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Tighten}, Strict: StrictHigher},
 		{Key: SigninPasskeyRoles, Kind: List, Layers: []Layer{Site}, Default: []string{}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
-		{Key: SigninLockoutEnabled, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
-		{Key: SigninLockoutMinutes, Kind: Limit, Layers: []Layer{Site}, Default: int64(15), Min: 1, Max: 10080, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: SigninLockoutEnabled, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: signinWhy, Strict: StrictHigher},
+		{Key: SigninLockoutMinutes, Kind: Limit, Layers: []Layer{Site}, Default: int64(15), Min: 1, Max: 10080, Lower: Lower{Mode: Allow}, ServerWide: signinWhy, Strict: StrictHigher},
 		{Key: SigninLockoutScope, Kind: Choice, Layers: []Layer{Site}, Default: "ip_account", Choices: []string{"ip_account", "ip", "account"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
-		{Key: SigninPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(10), Min: 1, Max: 100000, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
-		{Key: SigninMaxFailures, Kind: Limit, Layers: []Layer{Site}, Default: int64(10), Min: 1, Max: 100000, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		{Key: SigninPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(10), Min: 1, Max: 100000, Lower: Lower{Mode: Allow}, ServerWide: signinWhy, Strict: StrictLower},
+		{Key: SigninMaxFailures, Kind: Limit, Layers: []Layer{Site}, Default: int64(10), Min: 1, Max: 100000, Lower: Lower{Mode: Allow}, ServerWide: signinWhy, Strict: StrictLower},
 		{Key: SigninWindowMinutes, Kind: Limit, Layers: []Layer{Site}, Default: int64(15), Min: 1, Max: 10080, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		// The server's flags are the defaults (SetDefault); per-organisation
 		// lifetimes come later.
-		{Key: SessionsIdleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow}, ServerWide: sessionsWhy},
-		{Key: SessionsMaxDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(90), Min: 1, Max: 3650, Lower: Lower{Mode: Allow}, ServerWide: sessionsWhy},
+		{Key: SessionsIdleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow}, ServerWide: sessionsWhy, Strict: StrictLower},
+		{Key: SessionsMaxDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(90), Min: 1, Max: 3650, Lower: Lower{Mode: Allow}, ServerWide: sessionsWhy, Strict: StrictLower},
 		{Key: CaptchaProvider, Kind: Choice, Layers: []Layer{Site}, Default: "image", Choices: []string{"image", "turnstile", "recaptcha", "hcaptcha"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		// Validated and made whole by internal/auth (see its BindSettings).
 		{Key: CaptchaContexts, Kind: Doc, Layers: []Layer{Site}, Default: captchaContextsDefault(), Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 
 		// The storage policy.
 		{Key: StorageRemotesRequire, Kind: Text, Layers: []Layer{Site}, Default: "", Lower: Lower{Mode: Allow}, ServerWide: storageWhy},
-		{Key: StorageRemotesScope, Kind: Choice, Layers: []Layer{Site}, Default: "new", Choices: []string{"new", "all"}, Lower: Lower{Mode: Allow}, ServerWide: storageWhy},
-		{Key: StorageRemotesGraceDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 0, Max: 365, Lower: Lower{Mode: Allow}, ServerWide: storageWhy},
-		{Key: StorageLocalMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: nil, Min: 1 << 20, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}, ServerWide: storageWhy},
-		{Key: StorageHosts, Kind: List, Layers: []Layer{Site}, Default: []string{}, Lower: Lower{Mode: Allow}, ServerWide: "the hosts a remote may be on are the server's network policy"},
+		{Key: StorageRemotesScope, Kind: Choice, Layers: []Layer{Site}, Default: "new", Choices: []string{"new", "all"}, Lower: Lower{Mode: Allow}, ServerWide: storageWhy, Strict: StrictOrder},
+		{Key: StorageRemotesGraceDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 0, Max: 365, Lower: Lower{Mode: Allow}, ServerWide: storageWhy, Strict: StrictLower},
+		{Key: StorageLocalMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: nil, Min: 1 << 20, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}, ServerWide: storageWhy, Strict: StrictLower},
+		{Key: StorageHosts, Kind: List, Layers: []Layer{Site}, Default: []string{}, Lower: Lower{Mode: Allow}, ServerWide: "the hosts a remote may be on are the server's network policy", Strict: StrictSubset},
 		{Key: CachePartial, Kind: Bool, Layers: []Layer{Site}, Default: true, Lower: Lower{Mode: Allow}, ServerWide: cacheWhy},
 		{Key: CacheEvictAfterDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(14), Min: 1, Max: 365, Nullable: true, Lower: Lower{Mode: Allow}, ServerWide: cacheWhy},
 		{Key: CacheMinIdleHours, Kind: Limit, Layers: []Layer{Site}, Default: int64(24), Min: 1, Max: 720, Lower: Lower{Mode: Allow}, ServerWide: cacheWhy},
@@ -376,7 +376,7 @@ func baseDefinitions() []*Def {
 		{Key: MailUseSite, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
 		{Key: DailyUseSiteAPIs, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
 		{Key: ConnectionsUseSiteApps, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
-		{Key: StoragePartialUnsupported, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: "allow", Choices: []string{"allow", "refuse"}, Lower: Lower{Mode: Allow}},
+		{Key: StoragePartialUnsupported, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: "allow", Choices: []string{"allow", "refuse"}, Lower: Lower{Mode: Allow}, Strict: StrictOrder},
 
 		// The outgoing calls made for tenants' configuration (reserved).
 		{Key: OutboundPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(600), Min: 1, Max: 1 << 30, Lower: Lower{Mode: Allow},

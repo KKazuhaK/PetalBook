@@ -357,6 +357,13 @@ type Effective struct {
 	// Above is the rule the tenant's layer is held to: the site's lower, or the
 	// site's rule for this tenant when it has one in effect.
 	Above Lower
+	// Floor is the value the tenant's layer sits on: the site's, or its rule's
+	// for this tenant. Under Above.Mode tighten the tenant's value is in effect
+	// only while it is not looser than Floor.
+	Floor any
+	// ByRule says Above and Floor come from the site's rule for this tenant
+	// (in effect), not from the site's own layer.
+	ByRule bool
 }
 
 // For returns every setting as the tenant sees it ("" for the site alone). It
@@ -580,6 +587,9 @@ func (s *Service) siteView(ctx context.Context, q store.Q, d *Def, r *store.Laye
 		if err := json.Unmarshal([]byte(r.Lower), &l); err != nil {
 			return v, err
 		}
+		if l.Mode != Allow {
+			l.Note = r.Note
+		}
 		v.Lower = l
 	}
 	return v, nil
@@ -661,7 +671,15 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 		if err != nil {
 			return 0, err
 		}
+		if d.TenantDefault != nil && l.Mode != Allow {
+			return 0, bad("%s: the site's own value governs the site's own people only and holds no organisation; set a rule for the organisation instead", key)
+		}
 		lower = &l
+	}
+	if ch.HasLower {
+		if _, _, err := noteOf(ch.Lower); err != nil {
+			return 0, err
+		}
 	}
 	err = s.write(ctx, func(q store.Q) error {
 		_, err := s.putSite(ctx, q, d, ch, val, lower, false)
@@ -734,6 +752,13 @@ func (s *Service) putSite(ctx context.Context, q store.Q, d *Def, ch Change, val
 		if lower != nil {
 			raw, _ := json.Marshal(lower)
 			row.Lower = string(raw)
+		}
+		note, set, err := noteOf(ch.Lower)
+		if err != nil {
+			return nil, err
+		}
+		if set {
+			row.Note, row.NoteSet = note, true
 		}
 	}
 	row.Updated, row.SetBy = s.now(), ch.By
@@ -848,6 +873,19 @@ func (s *Service) affected(ctx context.Context, q store.Q, d *Def, lower *Lower)
 	if lower != nil {
 		l = *lower
 	}
+	// What a tighten rule holds the tenants' values to: the site's own value, now.
+	var floor any
+	if l.Mode == Tighten {
+		row, err := store.GetLayered(ctx, q, string(Site), "", d.Key, store.SourceManual)
+		if err != nil && !isNotFound(err) {
+			return 0, err
+		}
+		sv, err := s.siteView(ctx, q, d, row)
+		if err != nil {
+			return 0, err
+		}
+		_, floor, _ = d.heldTo(sv, nil)
+	}
 	rows, err := store.LayeredOfKey(ctx, q, string(Tenant), d.Key)
 	if err != nil {
 		return 0, err
@@ -856,7 +894,7 @@ func (s *Service) affected(ctx context.Context, q store.Q, d *Def, lower *Lower)
 	for _, r := range rows {
 		hit := false
 		if r.Value != "" {
-			if v, err := decode(r.Value); err == nil && v != nil && !l.Allows(d, v) {
+			if v, err := decode(r.Value); err == nil && v != nil && !l.AllowsOver(d, v, floor) {
 				hit = true
 			}
 		}
@@ -877,6 +915,8 @@ func describe(d *Def, l Lower) string {
 	switch {
 	case l.Mode == Restrict && d.Kind == Limit && l.Max != nil:
 		return "at most " + itoa(*l.Max)
+	case l.Mode == Tighten:
+		return "at least as strict as the site's value"
 	case l.Mode == Restrict && d.Kind == Bool:
 		return "it can only be turned off"
 	case l.Mode == Restrict:

@@ -23,6 +23,7 @@ import type {
   ProviderInput,
   RecycleItem,
   RestoreResult,
+  SettingLower,
   SiteSetting,
   StoragePerson,
   SpaceDeletionPreview,
@@ -33,6 +34,7 @@ import type {
   UserDeletionPlan,
 } from '../../types.ts'
 import registries from '../../generated/registries.json' with { type: 'json' }
+import { isLooser } from '../../strictness.ts'
 import { TENANT_KEYS } from '../data/settingDefs.ts'
 import {
   changeProvider,
@@ -168,17 +170,67 @@ function recycled(c: Ctx, init: Partial<RecycleItem>): RecycleItem {
 
 const siteOf = (c: Ctx, key: string): SiteSetting => find(A(c).settings, (s) => s.key === key, 'the setting')
 
+// The rule the tenant's layer is held to: the site's rule for this tenant when it has one in effect, else the site's.
+function aboveOf(def: SiteSetting, own: TenantSetting['tenant']) {
+  const rule = own?.rules?.find((r) => r.inEffect)
+  // A key that governs the site's own people holds no tenant by its site layer (the server's TenantDefault).
+  const site = def.ownPeopleOnly
+    ? { lower: { mode: 'allow' } as SettingLower, floor: 'invite' }
+    : { lower: def.site.lower, floor: def.site.value }
+  return { lower: rule?.lower ?? site.lower, floor: rule?.value ?? site.floor, byRule: !!rule?.lower }
+}
+
 function tenantSetting(c: Ctx, tenant: string, def: SiteSetting): TenantSetting {
   const own = A(c).tenantRules[tenant]?.[def.key] ?? null
+  const above = aboveOf(def, own)
+  // A tenant's value under a minimum counts only while it is not looser than it (kept, not in effect, otherwise).
+  if (own && own.value != null && !own.siteLocked && above.lower.mode === 'tighten')
+    own.inEffect = !isLooser(def.strictness, def.kind, def.choices, own.value, above.floor)
   return {
     key: def.key,
     kind: def.kind,
     layers: def.layers,
     ...(def.choices ? { choices: def.choices } : {}),
+    ...(def.strictness ? { strictness: def.strictness } : {}),
     site: { value: def.site.value, lower: def.site.lower },
     tenant: own ?? { value: null, lower: null, inEffect: true, siteLocked: false },
+    ...(above.lower.mode === 'allow'
+      ? {}
+      : {
+          reason: {
+            by: above.byRule ? ('rule' as const) : ('site' as const),
+            ...above.lower,
+            ...(above.lower.mode === 'tighten' ? { floor: above.floor } : {}),
+          },
+        }),
     // A rule that is not in effect leaves the site's value.
-    effective: own && own.inEffect && own.value !== null && own.value !== undefined ? own.value : def.site.value,
+    effective: own && own.inEffect && own.value !== null && own.value !== undefined ? own.value : above.floor,
+  }
+}
+
+// A rule as a write sends it: without a note it keeps the stored one, with one (even empty) it replaces it, and a
+// rule that allows everything has none.
+function ruleWritten(sent: SettingLower | null | undefined, stored: SettingLower | null | undefined): SettingLower {
+  if (!sent || sent.mode === 'allow') return { mode: 'allow' }
+  const note = sent.note !== undefined ? sent.note : stored?.note
+  if ((note ?? '').length > 200) throw new Refusal(400, 'invalid', 'note is at most 200 characters')
+  const { note: _drop, ...rest } = sent
+  void _drop
+  return note ? { ...rest, note } : rest
+}
+
+// What the server refuses of a tenant's value under the rule above it.
+function checkTenantValue(def: SiteSetting, above: ReturnType<typeof aboveOf>, v: unknown) {
+  if (v === null || v === undefined) return
+  if (above.lower.mode === 'lock') throw new Refusal(409, 'setting_locked', `${def.key} is locked`)
+  if (above.lower.mode === 'tighten' && isLooser(def.strictness, def.kind, def.choices, v, above.floor))
+    throw new Refusal(409, 'setting_restricted', `${def.key}: at least as strict as the site's value`)
+  if (above.lower.mode === 'restrict') {
+    const l = above.lower
+    if (l.max !== undefined && typeof v === 'number' && v > l.max)
+      throw new Refusal(409, 'setting_restricted', `${def.key}: at most ${l.max}`)
+    if (l.options && !l.options.includes(v as string | boolean))
+      throw new Refusal(409, 'setting_restricted', `${def.key}: one of the site's options`)
   }
 }
 
@@ -1189,8 +1241,11 @@ export const adminRoutes: Route[] = [
       const rules = (A(c).tenantRules[c.params.id] ??= {})
       const own = (rules[def.key] ??= { value: null, lower: null, inEffect: true, siteLocked: false })
       const b = c.body
-      if ('value' in b) own.value = b.value
-      if ('lower' in b) own.lower = b.lower
+      if ('value' in b) {
+        if (!('siteLock' in b) && !('siteRule' in b)) checkTenantValue(def, aboveOf(def, own), b.value)
+        own.value = b.value
+      }
+      if ('lower' in b) own.lower = b.lower ? ruleWritten(b.lower, own.lower) : null
       if ('siteLock' in b) {
         own.siteLocked = !!b.siteLock
         // The site's lock is a manual rule that forces the value.
@@ -1216,10 +1271,15 @@ export const adminRoutes: Route[] = [
             {
               source: 'manual',
               value: b.siteRule.value,
-              lower: b.siteRule.lower ?? null,
               inEffect: true,
               setBy: signedIn(c.data).username,
               ...b.siteRule,
+              lower: b.siteRule.lower
+                ? ruleWritten(
+                    b.siteRule.lower,
+                    own.rules?.find((r: { source: string }) => r.source === 'manual')?.lower,
+                  )
+                : null,
             },
           ]
         }
@@ -1413,7 +1473,13 @@ export const adminRoutes: Route[] = [
       capabilityRefusal(c)
       const s = siteOf(c, c.params.key)
       if ('value' in c.body) s.site.value = c.body.value
-      if ('lower' in c.body) s.site.lower = c.body.lower ?? { mode: 'allow' }
+      if ('lower' in c.body) {
+        if (s.ownPeopleOnly && c.body.lower && c.body.lower.mode !== 'allow')
+          throw new Refusal(400, 'invalid', `${s.key} governs the site's own people only: set a rule for the tenant`)
+        if (c.body.lower?.mode === 'tighten' && !s.strictness)
+          throw new Refusal(400, 'invalid', `${s.key} has no order of strictness, so it cannot be tightened`)
+        s.site.lower = ruleWritten(c.body.lower, s.site.lower)
+      }
       // A feature's switch is what GET /api/settings tells the pages.
       if (typeof s.site.value === 'boolean' && s.key in c.data.features) c.data.features[s.key] = s.site.value
       return s

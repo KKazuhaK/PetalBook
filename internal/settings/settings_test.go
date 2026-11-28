@@ -165,7 +165,8 @@ func TestRegistrationModeIsTheTenantsOwn(t *testing.T) {
 			t.Fatal("a tenant's value leaked into the site's")
 		}
 		// A site rule for the tenant still restricts it, as for any setting.
-		if _, err := s.SetSite(ctx, settings.RegistrationMode, settings.Change{HasLower: true, Lower: &settings.Lower{Mode: settings.Restrict, Options: []any{settings.RegInvite, settings.RegClosed}}}); err != nil {
+		rule := &settings.Rule{Lower: &settings.Lower{Mode: settings.Restrict, Options: []any{settings.RegInvite, settings.RegClosed}}}
+		if err := s.SetTenant(ctx, ten, settings.RegistrationMode, settings.Change{Site: true, HasSiteRule: true, SiteRule: rule}); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.SetTenant(ctx, ten, settings.RegistrationMode, settings.Change{HasValue: true, Value: settings.RegOpen}); code(err) != settings.CodeRestricted {

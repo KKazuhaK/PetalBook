@@ -16,7 +16,7 @@ func TestATenantMayOnlyTightenSSOOnly(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
 		d, _ := s.Def(settings.SigninSSOOnly)
-		if !d.Has(settings.Tenant) || !d.TightenOnly {
+		if !d.Has(settings.Tenant) || d.Strict != settings.StrictHigher || d.Lower.Mode != settings.Tighten {
 			t.Fatalf("%+v", d)
 		}
 		// The site's is off: the tenant turns it on for itself.

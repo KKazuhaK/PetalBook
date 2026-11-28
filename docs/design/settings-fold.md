@@ -615,3 +615,59 @@ run on SQLite and PostgreSQL (`PETALBOOK_TEST_POSTGRES`).
   administrators only.
 - **The boundary timer** tries again after `settings.BoundaryRetry` (1 minute)
   when the boundaries cannot be read, instead of arming nothing.
+
+## 10. The lower mode `tighten` and rule notes (3.6 rest, PR 2)
+
+The three lower modes of 3.3 (`allow`, `restrict`, `lock`) gain a fourth between
+`allow` and `restrict`: **`tighten`**, "a value at least as strict as the one
+above". It is what 3.6 d4 had as a per-key boolean (`Def.TightenOnly`, used by
+`signin.ssoOnly` and `signin.ssoOnlyAdmins`), made a mode any layered key can
+have.
+
+- **Strictness per key.** `Def.Strict` replaces `TightenOnly`: `higher` or
+  `lower` (a boolean or a number), `order` (a choice, `Choices` loosest first)
+  or `subset` (a list, `["*"]` loosest). A key with none refuses `tighten`
+  (`400 invalid`). Declared now, so that later PRs only flip layers:
+  `registration.mode`, `.perHour`, `files.maxBytes`, `signin.social`,
+  `storage.partial.unsupported`, `signin.ssoOnly`, `.ssoOnlyAdmins`, and the
+  server-wide `signin.lockout.*`, `signin.perMinute`, `.maxFailures`,
+  `sessions.*`, `storage.remotes.scope`, `.graceDays`,
+  `storage.localSpaces.maxBytes`, `storage.hosts`. Not declared, because there
+  is no obvious order: `signin.mode`, `signin.passkeyRoles`, `captcha.*`
+  (a document), `domains.joinRole`, the features (off is `restrict`'s job),
+  `registration.domains`, the quotas (0 means none for `spacesPerPerson`).
+  The orders are in `settingStrictness` of the generated `registries.json`.
+- **Where the value is held.** `Effective.Floor` is the value the tenant's layer
+  sits on (the site's, or its rule's for the tenant); `tenantEffective` marks the
+  tenant's value `inEffect` when `Above.AllowsOver(def, value, Floor)`, and the
+  write path (`setTenant`) refuses a looser value with the same call, so the two
+  cannot differ. `Floor` is also the one value `reason.floor` shows.
+- **A site change that makes tenants' values looser than the new floor.** The
+  docs of 3.3 already say a value a rule now forbids is kept with
+  `inEffect: false`; `tighten` follows that: no confirmation, the value
+  clamps to the site's, the tenant view says "overridden by the site's value",
+  and it counts again when the floor allows it. `affected` counts the tenants
+  whose value is looser than the site's value after a change *of the rule*.
+- **Keys with a `TenantDefault`** (`registration.mode`): the site's own value
+  governs its own people only (2026-11-27), so the site's layer takes only
+  `allow` for them (the others are `400 invalid`), and `Def.heldTo` ignores it
+  anyway. Only a rule for the tenant holds one; `Def.heldTo(site, rule)` is the
+  single answer to "what is this tenant held to, and what does it sit on",
+  used by `tenantEffective`, the write check and `affected`. `reason.by` is
+  `rule` when the rule for the tenant holds it. `tighten` needs a tenant layer
+  (`400 invalid` otherwise), and a floor outside an `order` key's choices
+  counts as the strictest.
+- **The default rule of the two `ssoOnly` keys is `tighten`** (it was `allow`
+  plus a hard-wired boolean). A site administrator may now pick `allow` for
+  them; a tenant could then switch the site's `ssoOnly` off for itself.
+- **Space and person layers.** `tighten` has no effect below the tenant: no key
+  with a space or person layer has a strictness yet. `Lower.Allows` is true for
+  `tighten`; a caller that checks a value of a lower layer under it would need
+  `AllowsOver` with the value above.
+- **Notes.** `layered_settings.note` (3.6 PR 1) is read and written through
+  `Lower.Note`: it is not stored in the rule's JSON but in the column, and put
+  back into `SiteView.Lower`, `RuleView.Lower` and `TenantView.Lower` when read.
+  `Lower.NoteSet` (set by `UnmarshalJSON` when the key `note` was sent) says
+  whether a writer replaces it; the others keep what is stored (the store's
+  `NoteSet`). A rule that allows everything, or a removed one, has none.
+  A tenant is shown the note of the rule it is held to as `reason.note`.

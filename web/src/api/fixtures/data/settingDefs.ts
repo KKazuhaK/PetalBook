@@ -2,12 +2,14 @@
 // site's value with the rule it lays on the tenants below. The fixture keeps them as data; what a value may be is the
 // server's to say.
 
-import type { SiteSetting } from '../../types.ts'
+import registries from '../../generated/registries.json' with { type: 'json' }
+import type { SiteSetting, Strictness } from '../../types.ts'
 
-export const SETTING_DEFS: SiteSetting[] = [
+const DEFS: SiteSetting[] = [
   {
     key: 'registration.mode',
     kind: 'choice',
+    ownPeopleOnly: true,
     layers: ['site', 'tenant'],
     choices: ['open', 'invite', 'closed'],
     site: { value: 'invite', lower: { mode: 'allow' } },
@@ -280,13 +282,13 @@ export const SETTING_DEFS: SiteSetting[] = [
     key: 'signin.ssoOnly',
     kind: 'boolean',
     layers: ['site', 'tenant'],
-    site: { value: false, lower: { mode: 'allow' } },
+    site: { value: false, lower: { mode: 'tighten' } },
   },
   {
     key: 'signin.ssoOnlyAdmins',
     kind: 'boolean',
     layers: ['site', 'tenant'],
-    site: { value: false, lower: { mode: 'allow' } },
+    site: { value: false, lower: { mode: 'tighten' } },
   },
   {
     key: 'signin.passkeyRoles',
@@ -462,6 +464,12 @@ export const SETTING_DEFS: SiteSetting[] = [
     site: { value: ['zh-Hans', 'en'], lower: { mode: 'allow' } },
   },
 ]
+
+// What stricter means for a key comes from the server's registry (the generated registries.json), as the keys do.
+const STRICTNESS: Record<string, string> = registries.settingStrictness
+export const SETTING_DEFS: SiteSetting[] = DEFS.map((d) =>
+  STRICTNESS[d.key] ? { ...d, strictness: STRICTNESS[d.key] as Strictness } : d,
+)
 
 // The settings a tenant has a rule for (the ones with a tenant layer, and the site's own that a site administrator
 // may set for one tenant).

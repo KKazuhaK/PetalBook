@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { Trash2 } from 'lucide-react'
-import type { RuleWrite, SettingKind, SettingLower } from '@/api/types'
+import type { RuleWrite, SettingKind, SettingLower, Strictness } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { SettingsRow, SettingsRows } from '@/components/settings/SettingsParts'
 import { Button } from '@/components/ui/button'
@@ -31,6 +31,8 @@ export interface RuleSetting {
   key: string
   kind: SettingKind
   choices?: string[]
+  // What stricter means for the key: with it the rule may be a minimum (tighten).
+  strictness?: Strictness
   // A limit the tenant also sets: a plan's or billing's value for it must cap (a maximum or a lock), because the
   // tenant's own value would rank above a bare value.
   tenantSets?: boolean
@@ -229,6 +231,9 @@ export function RuleDialog({
                 label={tx.lowerLabel}
                 choices={s.choices}
                 words={tt.settings.choices[s.key]}
+                strictness={s.strictness}
+                noteLabel={tx.noteLabel}
+                notePlaceholder={tx.notePlaceholder}
                 onChange={setLower}
               />
             </SettingsRow>
