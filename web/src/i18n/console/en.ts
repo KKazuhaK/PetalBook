@@ -118,6 +118,7 @@ export const consoleEn: ConsoleMessages = {
       role: 'Role',
       tenant: 'Tenant',
       tenantDefault: (name) => `${name} (personal accounts)`,
+      siteAdminLabel: 'Site administrator (administers the whole server)',
       siteAdminWarning: 'This makes a site administrator: someone who administers the whole server.',
       submit: 'Create account',
       creating: 'Creating…',

@@ -34,7 +34,8 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
   const [username, setUsername] = useState('')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<Role>('member')
+  const [grantAdmin, setGrantAdmin] = useState(false)
+  const role: Role = grantAdmin ? 'admin' : 'member'
   const [tenant, setTenant] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -42,8 +43,10 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
   const list = tenants.data ?? []
   // The default tenant is the first, and is where the person lands until another is picked.
   const chosen = tenant || list.find((x) => x.default)?.id || ''
-  // An administrator of the default tenant, made across the site, is one of the whole server.
-  const makesSiteAdmin = across && role === 'admin' && list.find((x) => x.id === chosen)?.default === true
+  // An administrator of the default tenant, made across the site, may be one of the whole server: the server asks
+  // for the choice to be made, true or false (never a default taken for the person).
+  const asksSiteAdmin = across && grantAdmin && list.find((x) => x.id === chosen)?.default === true
+  const [siteAdmin, setSiteAdmin] = useState(false)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -58,7 +61,7 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
           email: email.trim() || undefined,
           role,
           tenant: across && chosen ? chosen : undefined,
-          siteAdmin: makesSiteAdmin ? true : undefined,
+          siteAdmin: asksSiteAdmin ? siteAdmin : undefined,
         }),
       )
       setMade(res)
@@ -104,7 +107,11 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="grid gap-1.5">
                 <Label htmlFor="create-account-role">{d.role}</Label>
-                <NativeSelect id="create-account-role" value={role} onChange={(e) => setRole(e.target.value as Role)}>
+                <NativeSelect
+                  id="create-account-role"
+                  value={role}
+                  onChange={(e) => setGrantAdmin(e.target.value === 'admin')}
+                >
                   <option value="member">{tc.users.roleMember}</option>
                   <option value="admin">{tc.users.roleAdmin}</option>
                 </NativeSelect>
@@ -127,14 +134,27 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
                 </div>
               )}
             </div>
-            {makesSiteAdmin && (
-              <p
-                role="status"
-                data-slot="site-admin-warning"
-                className="rounded-md border border-brand/40 bg-brand/5 px-3 py-2 text-sm"
-              >
-                {d.siteAdminWarning}
-              </p>
+            {asksSiteAdmin && (
+              <div className="grid gap-1.5" data-slot="site-admin-choice">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4"
+                    checked={siteAdmin}
+                    onChange={(e) => setSiteAdmin(e.target.checked)}
+                  />
+                  {d.siteAdminLabel}
+                </label>
+                {siteAdmin && (
+                  <p
+                    role="status"
+                    data-slot="site-admin-warning"
+                    className="rounded-md border border-brand/40 bg-brand/5 px-3 py-2 text-sm"
+                  >
+                    {d.siteAdminWarning}
+                  </p>
+                )}
+              </div>
             )}
             <FormMessage>{error}</FormMessage>
             <DialogFooter>

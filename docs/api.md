@@ -1260,7 +1260,12 @@ account's; and the account is still waiting, enabled, and in that tenant. The si
 social providers and the custom OAuth2 kind never claim. The registration mode does not
 matter: the account exists. An address a waiting account holds is never taken from it by
 a sign-in, nor made a second account's: any other sign-in that vouches for it is
-refused as `email_in_use` (`?sso_error=email_in_use`).
+refused as `email_in_use` (`?sso_error=email_in_use`). That holds only
+while the account's own tenant can still vouch for the address (a verified domain of it,
+or one routed to it): once the domain lapses or moves to another tenant, the account is
+an ordinary unverified holder of the address again, and the address is not locked. A
+`PATCH /api/users/{id}` of a waiting account's address to one the tenant cannot vouch
+for (or to none) is `400 email_domain_not_verified`.
 
 Audit: `user_created` (the actor, the person, the tenant; `role`, `siteAdmin`, `email`,
 `signIn`, `mail`), and `password_reset` with `by: "welcome"` when the person sets the

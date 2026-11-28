@@ -1086,9 +1086,13 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 			if row.Holds() {
 				return nil, false, ssoErr("email_in_use")
 			}
+			// Kept for a waiting account only while its own tenant can still
+			// vouch for the address (a verified domain of it, or routed to it):
+			// once the domain lapses or moves, it is an ordinary unverified
+			// holder's, and the address must not stay locked for nothing.
 			if tenant, err := store.AwaitingSSO(ctx, s.st.Q(), row.UserID); err != nil {
 				return nil, false, err
-			} else if tenant != "" {
+			} else if tenant != "" && s.ssoCanVouch(ctx, tenant, e) {
 				return nil, false, ssoErr("email_in_use")
 			}
 		case !errors.Is(err, store.ErrNotFound):

@@ -59,9 +59,10 @@ func TestASiteSocialProviderNeverClaims(t *testing.T) {
 	})
 }
 
-// Another organisation's own SSO never claims, even where it vouches for the
-// address (the domain moved to it after the account was made).
-func TestAnotherTenantsSSONeverClaims(t *testing.T) {
+// Another organisation's own SSO never claims, and is not refused either, when
+// the domain moved to it after the account was made: the wait only holds an
+// address while its own tenant can still vouch for it.
+func TestAnotherTenantsSSONeverClaimsButIsNotLockedOut(t *testing.T) {
 	t.Parallel()
 	idp := ssoIDP(t)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
@@ -71,11 +72,58 @@ func TestAnotherTenantsSSONeverClaims(t *testing.T) {
 		f.admB.do("DELETE", domainsPath(f.tenB)+"/acme.example", nil).want(t, 204, "")
 		a.clock.Advance(time.Hour)
 		f.verify(t, f.admC, f.tenC, "acme.example")
-		f.orgProvider(t, f.admC, f.tenC, "beta-sso", nil)
+		f.orgProvider(t, f.admC, f.tenC, "beta-sso", map[string]any{"_open": true})
 		c := a.newClient("")
-		idp.signIn2(t, c, "beta-sso", "alice", nil)
-		if signedInAs(t, c) == "al" || waiting(t, a) != 1 {
-			t.Fatalf("claimed by another tenant's SSO: %q", signedInAs(t, c))
+		loc := idp.signIn2(t, c, "beta-sso", "alice", nil)
+		who := signedInAs(t, c)
+		if loc != "/" || who == "" || who == "al" {
+			t.Fatalf("%s %q", loc, who)
+		}
+		if u := userTenant(t, a, who); u.TenantID != f.tenC || u.Email != "alice@acme.example" {
+			t.Fatalf("%+v", u)
+		}
+	})
+}
+
+// The domain lapses: the address is no longer kept for the waiting account, and
+// is an ordinary unverified holder's again.
+func TestAWaitingAddressIsNotKeptOnceItsDomainLapses(t *testing.T) {
+	t.Parallel()
+	idp := ssoIDP(t)
+	site := newIDPFor(t, "m")
+	site.addUser("alice", testidp.Claims{"sub": "s-alice", "preferred_username": "alice", "email": "alice@acme.example", "email_verified": true, "name": "Alice"})
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		f := ssoClaimFx(t, a, idp, "open")
+		setMode(t, f.root, "", "open")
+		f.root.do("POST", "/api/admin/providers", site.providerBody("m", map[string]any{"mergeVerifiedEmail": true})).want(t, 201, "")
+		f.admB.do("POST", adminUsers, map[string]any{"username": "al", "email": "alice@acme.example"}).want(t, 201, "")
+		f.admB.do("DELETE", domainsPath(f.tenB)+"/acme.example", nil).want(t, 204, "")
+		c := a.newClient("")
+		loc := site.signIn2(t, c, "m", "alice", nil)
+		if who := signedInAs(t, c); loc != "/" || who == "" || who == "al" {
+			t.Fatalf("locked out: %s %q", loc, who)
+		}
+	})
+}
+
+// A tenant administrator cannot move a waiting account's address off the
+// tenant's verified domains (it would lock that address out of every other
+// sign-in): 400 email_domain_not_verified. The person it belongs to signs in.
+func TestAWaitingAccountsAddressStaysOnTheTenantsDomains(t *testing.T) {
+	t.Parallel()
+	idp := ssoIDP(t)
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		f := ssoClaimFx(t, a, idp, "open")
+		r := f.admB.do("POST", adminUsers, map[string]any{"username": "al", "email": "someone@acme.example"}).want(t, 201, "")
+		id := r.user()["id"].(string)
+		f.admB.do("PATCH", "/api/users/"+id, map[string]any{"email": "carol@beta.example"}).want(t, 400, "email_domain_not_verified")
+		f.admB.do("PATCH", "/api/users/"+id, map[string]any{"email": ""}).want(t, 400, "email_domain_not_verified")
+		f.admB.do("PATCH", "/api/users/"+id, map[string]any{"email": "other@acme.example"}).want(t, 200, "")
+		// Carol is not locked out of her own address at C.
+		f.orgProvider(t, f.admC, f.tenC, "beta-sso", map[string]any{"_open": true})
+		c := a.newClient("")
+		if loc := idp.signIn2(t, c, "beta-sso", "carol", nil); loc != "/" || signedInAs(t, c) == "" {
+			t.Fatalf("%s %q", loc, signedInAs(t, c))
 		}
 	})
 }

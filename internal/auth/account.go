@@ -339,6 +339,16 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, access authz
 		}
 		email = e
 	}
+	// A waiting account (made for its tenant's SSO, which finds it by its
+	// address) keeps an address that tenant can vouch for: another would only
+	// lock that address out of every other sign-in.
+	if patch.Email != nil {
+		if wait, err := store.AwaitingSSO(ctx, s.st.Q(), targetID); err != nil {
+			return nil, err
+		} else if wait != "" && (email == "" || !s.ssoCanVouch(ctx, wait, email)) {
+			return nil, coded(400, "email_domain_not_verified", "This account waits for its organisation's single sign-on, which finds it by its address: it has to stay on a verified domain of the organisation.")
+		}
+	}
 	var name, username string
 	if patch.Name != nil {
 		n, err := cleanDisplayName(*patch.Name)

@@ -54,7 +54,10 @@ password self-registration, is replaced by a three-way setting,
     while the account is waiting, enabled and in the tenant. Site social providers and the
     custom OAuth2 kind never claim. Any other sign-in that vouches for a waiting account's
     address is refused `email_in_use`: a sign-in never moves such an address or makes a
-    second account for it (before, under `open`, a trusted sign-in took the address from
+    second account for it, while its own tenant can still vouch for the address (once the
+    domain lapses or moves, the account is an ordinary unverified holder again; and changing a
+    waiting account's address off the tenant's domains is `400 email_domain_not_verified`)
+    (before, under `open`, a trusted sign-in took the address from
     the unverified holder and made a new account; that rule for other unverified holders
     is unchanged).
 - **Defaults.** Invites worked while registration was closed, so the old behaviour

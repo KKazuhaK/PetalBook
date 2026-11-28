@@ -103,7 +103,7 @@ describe('Create account', () => {
     await settle(() => document.body.textContent!.includes('erin'), 'the person in the list')
   })
 
-  it('warns, and says so to the server, when the account is an administrator of the default tenant', async () => {
+  it('asks whether an administrator of the default tenant is a site administrator, and always sends the answer', async () => {
     await open()
     await click(button(tc.users.create))
     await settle(() => dlg() !== null, 'the dialog')
@@ -111,8 +111,28 @@ describe('Create account', () => {
       () => dlg()!.querySelector<HTMLSelectElement>('#create-account-tenant')!.options.length > 0,
       'the tenants',
     )
-    expect(dlg()!.querySelector('[data-slot="site-admin-warning"]')).toBeNull()
+    expect(dlg()!.querySelector('[data-slot="site-admin-choice"]')).toBeNull()
     await type(dlg()!.querySelector<HTMLSelectElement>('#create-account-role')!, 'admin')
+    await settle(() => dlg()!.querySelector('[data-slot="site-admin-choice"]') !== null, 'the choice')
+    expect(dlg()!.querySelector('[data-slot="site-admin-warning"]')).toBeNull()
+    await type(input(d.username), 'erin')
+    await click(button(d.submit, dlg()!))
+    await settle(() => dlg()!.textContent!.includes(d.linkTitle), 'the link')
+    // Not ticked: a plain administrator of the default tenant, said so.
+    expect(JSON.parse(posts()[0].body!).siteAdmin).toBe(false)
+  })
+
+  it('warns when the site administrator box is ticked, and sends true', async () => {
+    await open()
+    await click(button(tc.users.create))
+    await settle(() => dlg() !== null, 'the dialog')
+    await settle(
+      () => dlg()!.querySelector<HTMLSelectElement>('#create-account-tenant')!.options.length > 0,
+      'the tenants',
+    )
+    await type(dlg()!.querySelector<HTMLSelectElement>('#create-account-role')!, 'admin')
+    await settle(() => dlg()!.querySelector('[data-slot="site-admin-choice"]') !== null, 'the choice')
+    await click(dlg()!.querySelector('[data-slot="site-admin-choice"] input'))
     await settle(() => dlg()!.querySelector('[data-slot="site-admin-warning"]') !== null, 'the warning')
     expect(dlg()!.querySelector('[data-slot="site-admin-warning"]')!.textContent).toBe(d.siteAdminWarning)
     await type(input(d.username), 'erin')
