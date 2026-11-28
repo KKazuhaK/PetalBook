@@ -276,7 +276,7 @@ func (s *Service) passkeyRequiredOf(ctx context.Context, st *secState, u store.U
 	if !st.Passkeys.Enabled || s.pk == nil {
 		return false
 	}
-	return u.PasskeyRequired || s.passkeyRoleHeld(ctx, st, u.TenantID, u.Role)
+	return u.PasskeyRequired || s.passkeyRoleHeld(ctx, st, tenantOfPerson(&u), u.Role)
 }
 
 // Setup creates the first administrator from the first-run token.

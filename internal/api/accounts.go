@@ -243,7 +243,7 @@ func (s *server) login(c *call) {
 	tenant := ""
 	if req.Tenant != "" {
 		var ok bool
-		if tenant, ok = s.tenantOfRequest(c, req.Tenant); !ok {
+		if tenant, ok = s.scopedTenant(c, req.Tenant); !ok {
 			return
 		}
 	}

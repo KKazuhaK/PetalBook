@@ -35,6 +35,16 @@ func (s *Service) tenantValue(ctx context.Context, tenant, key string) (any, boo
 	return e.Value, true
 }
 
+// tenantOfPerson is the tenant whose sign-in policy applies to a person: their
+// own, except for a site administrator, who always follows the site's (as for
+// ssoOnly): "".
+func tenantOfPerson(u *store.User) string {
+	if u.SiteAdmin {
+		return ""
+	}
+	return u.TenantID
+}
+
 func days(n int64) time.Duration { return time.Duration(n) * 24 * time.Hour }
 
 // lifetimesOf is how long a session of the tenant's people may sit idle and
@@ -65,21 +75,50 @@ func (s *Service) passkeyRoleHeld(ctx context.Context, st *secState, tenant, rol
 	return st.roles[role]
 }
 
-// captchaCtxOf is the setting of one captcha form as the tenant has it. The
-// invitation and the first-run setup are never a tenant's (the invite is found
-// only after the captcha, and there is no tenant at setup): the site's. A
-// tenant that is unknown (the request is not scoped to one) gets the site's.
+// captchaCtxOf is the setting of one captcha form for a request scoped to the
+// tenant: the stricter of the site's own and the tenant's, never less than the
+// site's, whatever the site's rule says: the tenant a request names is not tied
+// to the account it signs in, so naming one must not weaken the site's form.
+// The invitation and the first-run setup are never a tenant's (the invite is
+// found only after the captcha, and there is no tenant at setup): the site's.
+// A tenant that is unknown (the request names none) gets the site's.
 func (s *Service) captchaCtxOf(ctx context.Context, st *secState, tenant, ctxName string) (CaptchaCtx, bool) {
-	if slices.Contains(settings.CaptchaTenantContexts, ctxName) {
-		if v, ok := s.tenantValue(ctx, tenant, settings.CaptchaContexts); ok {
-			if ctxs, err := contextsOf(v, st.Captcha.Contexts); err == nil {
-				c, found := ctxs[ctxName]
-				return c, found
-			}
-		}
+	site, found := st.Captcha.Contexts[ctxName]
+	if !slices.Contains(settings.CaptchaTenantContexts, ctxName) {
+		return site, found
 	}
-	c, found := st.Captcha.Contexts[ctxName]
-	return c, found
+	v, ok := s.tenantValue(ctx, tenant, settings.CaptchaContexts)
+	if !ok {
+		return site, found
+	}
+	ctxs, err := contextsOf(v, st.Captcha.Contexts)
+	if err != nil {
+		return site, found
+	}
+	own, ok := ctxs[ctxName]
+	if !ok {
+		return site, found
+	}
+	return stricterCaptcha(site, own), true
+}
+
+// stricterCaptcha is the stricter of two settings of a form: on beats off,
+// asking always beats asking after failures, and fewer failures beat more.
+func stricterCaptcha(a, b CaptchaCtx) CaptchaCtx {
+	switch {
+	case !a.On:
+		return b
+	case !b.On:
+		return a
+	case a.When == "always":
+		return a
+	case b.When == "always":
+		return b
+	}
+	if b.Failures < a.Failures {
+		return b
+	}
+	return a
 }
 
 // storedModeOf is the signin.mode of the tenant's people, as stored: the

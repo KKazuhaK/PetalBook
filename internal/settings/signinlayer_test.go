@@ -228,3 +228,21 @@ func equal(a, b any) bool {
 	y, _ := json.Marshal(b)
 	return string(x) == string(y)
 }
+
+// A tenant's document holds only login, forgot and register: a form the site
+// asks that a tenant cannot hold (the invitation) does not make its values
+// looser.
+func TestCaptchaLooserComparesOnlyAnOrganisationsForms(t *testing.T) {
+	t.Parallel()
+	d, _ := settings.New(nil).Def(settings.CaptchaContexts)
+	on := map[string]any{"on": true, "when": "after_failures", "failures": float64(3)}
+	always := map[string]any{"on": true, "when": "always", "failures": float64(3)}
+	site := map[string]any{"invite": on, "setup": on, "login": on}
+	tenant := map[string]any{"login": always}
+	if settings.Looser(d, tenant, site) {
+		t.Fatal("a stricter login is looser for want of the invitation")
+	}
+	if !settings.Looser(d, map[string]any{}, site) {
+		t.Fatal("a login left out under a login that is on is looser")
+	}
+}

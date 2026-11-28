@@ -74,7 +74,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	}
 	// The lifetimes are the person's tenant's (sessions.idleDays and .maxDays):
 	// two lookups in the settings' cache, no query.
-	idle, max := s.lifetimesOf(ctx, s.sec(ctx), u.TenantID)
+	idle, max := s.lifetimesOf(ctx, s.sec(ctx), tenantOfPerson(u))
 	if now.Sub(snap.lastUsed) > idle || now.Sub(snap.created) > max {
 		s.endSession(ctx, id, snap.userID, store.EndExpired)
 		return nil, ended(store.EndExpired, "Your session has ended; sign in again.")

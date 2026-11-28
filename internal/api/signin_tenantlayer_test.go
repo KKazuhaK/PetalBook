@@ -54,10 +54,10 @@ func TestATenantsSessionLifetimesApplyToItsPeople(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		f := newTLFx(t, a)
-		f.tset(f.admB, f.tenB, "sessions.idleDays", 2).want(t, 200, "")
+		f.tset(f.admB, f.tenB, "sessions.idleDays", 6).want(t, 200, "") // never more than the lifetime when read
 		f.tset(f.admB, f.tenB, "sessions.maxDays", 5).want(t, 200, "")
 		// Not above the maximum, and not above what the site allows.
-		f.tset(f.admB, f.tenB, "sessions.idleDays", 6).want(t, 400, "invalid")
+		f.tset(f.admB, f.tenB, "sessions.idleDays", 2).want(t, 200, "")
 		f.tset(f.admB, f.tenB, "sessions.maxDays", 120).want(t, 409, "setting_restricted")
 		// A new session lasts as long as its person's tenant says.
 		day := 24 * 60 * 60
@@ -284,6 +284,140 @@ func TestATenantsSigninModeIsItsPagesOwn(t *testing.T) {
 		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/signin.mode", map[string]any{"value": "local_only"}).want(t, 200, "")
 		if mode("acme") != "dual" {
 			t.Fatalf("acme's page: %v", mode("acme"))
+		}
+	})
+}
+
+// A request that names a tenant never weakens the site's own captcha: the form
+// asked is the stricter of the site's and the named tenant's, even where the
+// site allows a tenant to loosen. The named tenant is not tied to the account.
+func TestANamedTenantNeverWeakensTheSitesCaptcha(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		f := newTLFx(t, a)
+		f.lowerOf(t, "captcha.contexts", map[string]any{"mode": "allow"})
+		f.root.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
+		f.tset(f.admC, f.tenC, "captcha.contexts", map[string]any{"login": map[string]any{"on": false}}).want(t, 200, "")
+		c := a.newClient("203.0.113.41")
+		if c.do("GET", "/api/captcha?ctx=login&tenant=beta", nil).want(t, 200, "").body["required"] != true {
+			t.Fatal("beta's looser value reached the form")
+		}
+		c.do("POST", "/api/login", map[string]any{"username": "root", "password": pw, "tenant": "beta"}).want(t, 400, "captcha_failed")
+		// Stricter than the site's still holds: the tenant asks always where the site asks after failures.
+		f.root.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": true, "when": "after_failures", "failures": 5}}).want(t, 200, "")
+		f.tset(f.admB, f.tenB, "captcha.contexts", map[string]any{"login": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
+		if c.do("GET", "/api/captcha?ctx=login&tenant=acme", nil).want(t, 200, "").body["required"] != true ||
+			c.do("GET", "/api/captcha?ctx=login&tenant=beta", nil).want(t, 200, "").body["required"] != false {
+			t.Fatal("the stricter of the two")
+		}
+	})
+}
+
+// A tenant's write of a stricter login captcha holds while the site asks the
+// invitation's: the tenant's document has only its own forms.
+func TestATenantsCaptchaWriteIgnoresTheSitesOtherForms(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		f := newTLFx(t, a)
+		f.root.putSetting("captcha.contexts", map[string]any{"invite": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
+		f.tset(f.admB, f.tenB, "captcha.contexts", map[string]any{"login": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
+		c := a.newClient("203.0.113.42")
+		if c.do("GET", "/api/captcha?ctx=login&tenant=acme", nil).want(t, 200, "").body["required"] != true {
+			t.Fatal("acme's value is not in effect")
+		}
+	})
+}
+
+// A site administrator who belongs to an organisation follows the site's
+// sessions and passkey roles, not the organisation's.
+func TestSiteAdministratorsKeepTheSitesSessionsAndPasskeyRules(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		f := newTLFx(t, a)
+		if _, err := a.auth.CreateUser(t.Context(), auth.CreateParams{Username: "sa", Role: "admin", Password: pw, TenantID: f.tenB, SiteAdmin: true}); err != nil {
+			t.Fatal(err)
+		}
+		f.tset(f.admB, f.tenB, "sessions.maxDays", 5).want(t, 200, "")
+		f.tset(f.admB, f.tenB, "signin.passkeyRoles", []string{"admin", "member"}).want(t, 200, "")
+		sa := a.newClient("")
+		r := sa.do("POST", "/api/login", good("sa")).want(t, 200, "")
+		if got := sessionMaxAge(r, a.auth.SessionCookieName()); got != 90*24*60*60 {
+			t.Fatalf("the cookie lasts %d seconds", got)
+		}
+		if sa.do("GET", "/api/session", nil).want(t, 200, "").body["hold"] == "passkey" {
+			t.Fatal("held for the organisation's passkey rule")
+		}
+		for range 4 {
+			a.clock.Advance(36 * time.Hour)
+			sa.do("GET", "/api/account", nil).want(t, 200, "")
+		}
+		f.mB.do("GET", "/api/account", nil).want(t, 401, "unauthenticated")
+	})
+}
+
+// A tenant that shortens only maxDays is not refused: the idle time never
+// exceeds the lifetime.
+func TestATenantMayShortenMaxDaysAlone(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		f := newTLFx(t, a)
+		f.tset(f.admB, f.tenB, "sessions.maxDays", 20).want(t, 200, "")
+		f.tset(f.admB, f.tenB, "sessions.idleDays", 25).want(t, 200, "") // clamped to the lifetime when read
+	})
+}
+
+// An unknown tenant is counted against the address before it is refused.
+func TestAnUnknownTenantIsCountedBeforeItIsRefused(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		f := newTLFx(t, a)
+		f.root.putSetting("signin.perMinute", 3).want(t, 200, "")
+		c := a.newClient("203.0.113.43")
+		limited := false
+		for range 15 {
+			if c.do("GET", "/api/captcha?ctx=login&tenant=nowhere", nil).code == 429 {
+				limited = true
+			}
+		}
+		if !limited {
+			t.Fatal("probing slugs is not limited")
+		}
+		d := a.newClient("203.0.113.44")
+		limited = false
+		for range 15 {
+			if d.do("POST", "/api/login", map[string]any{"username": "x", "password": pw, "tenant": "nowhere"}).code == 429 {
+				limited = true
+			}
+		}
+		if !limited {
+			t.Fatal("probing slugs at login is not limited")
+		}
+	})
+}
+
+// The sweep keeps by each person's tenant: a tenant that allows 200 days keeps
+// a session idle for 95; one with shorter limits loses it, the others' stay.
+func TestTheSweepUsesTheTenantsCutoffs(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		f := newTLFx(t, a)
+		f.lowerOf(t, "sessions.maxDays", map[string]any{"mode": "allow"})
+		f.lowerOf(t, "sessions.idleDays", map[string]any{"mode": "allow"})
+		f.root.putSetting("sessions.maxDays", 365).want(t, 200, "")
+		f.root.putSetting("sessions.idleDays", 30).want(t, 200, "")
+		f.tset(f.admB, f.tenB, "sessions.maxDays", 400).want(t, 200, "")
+		f.tset(f.admB, f.tenB, "sessions.idleDays", 200).want(t, 200, "")
+		f.tset(f.admC, f.tenC, "sessions.idleDays", 7).want(t, 200, "")
+		mb, mc := a.newClient(""), a.newClient("")
+		mb.do("POST", "/api/login", good("mb")).want(t, 200, "")
+		mc.do("POST", "/api/login", good("mc")).want(t, 200, "")
+		a.clock.Advance(95 * 24 * time.Hour)
+		a.auth.Sweep(t.Context())
+		mb.do("GET", "/api/account", nil).want(t, 200, "")
+		mc.do("GET", "/api/account", nil).want(t, 401, "unauthenticated")
+		var n int
+		if err := a.st.Q().QueryRow(t.Context(), `SELECT COUNT(*) FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.username = 'mc'`).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("beta's session is still stored: %d %v", n, err)
 		}
 	})
 }

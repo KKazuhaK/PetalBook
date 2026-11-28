@@ -434,7 +434,7 @@ func (s *Service) SessionCookie(ctx context.Context, token string) *http.Cookie 
 	max := st.max
 	if row, _, err := store.LookupSession(ctx, s.st.Q(), hashToken(token)); err == nil {
 		if u, _, err := s.cachedEntry(ctx, row.UserID); err == nil {
-			_, max = s.lifetimesOf(ctx, st, u.TenantID)
+			_, max = s.lifetimesOf(ctx, st, tenantOfPerson(u))
 		}
 	}
 	return s.newCookie(s.SessionCookieName(), token, int(max/time.Second))

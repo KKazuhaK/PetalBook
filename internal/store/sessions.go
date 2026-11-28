@@ -282,7 +282,7 @@ func DeleteExpiredSessions(ctx context.Context, q Q, idleBefore, createdBefore, 
 	}
 	for _, o := range own {
 		for _, c := range []cut{{"last_used", o.IdleBefore}, {"created", o.CreatedBefore}} {
-			n, err := deleteExpired(ctx, q, c.col, c.at, at, ` AND user_id IN (SELECT id FROM users WHERE tenant_id = ?)`, o.Tenant)
+			n, err := deleteExpired(ctx, q, c.col, c.at, at, ` AND user_id IN (SELECT id FROM users WHERE tenant_id = ? AND site_admin = 0)`, o.Tenant)
 			total += n
 			if err != nil {
 				return total, err
@@ -297,7 +297,7 @@ func DeleteExpiredSessions(ctx context.Context, q Q, idleBefore, createdBefore, 
 			marks[i] = "?"
 			args = append(args, o.Tenant)
 		}
-		rest = ` AND user_id NOT IN (SELECT id FROM users WHERE tenant_id IN (` + strings.Join(marks, ",") + `))`
+		rest = ` AND user_id NOT IN (SELECT id FROM users WHERE site_admin = 0 AND tenant_id IN (` + strings.Join(marks, ",") + `))`
 	}
 	for _, c := range []cut{{"last_used", idleBefore}, {"created", createdBefore}} {
 		n, err := deleteExpired(ctx, q, c.col, c.at, at, rest, args...)

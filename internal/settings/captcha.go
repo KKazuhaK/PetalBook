@@ -55,8 +55,9 @@ func captchaCtxs(v any) map[string]captchaCtx {
 // is off above leaves v free; a form v leaves out is the default (off).
 func captchaLooser(v, above any) bool {
 	a, b := captchaCtxs(above), captchaCtxs(v)
-	for name, ac := range a {
-		if !ac.On {
+	for _, name := range CaptchaTenantContexts {
+		ac, ok := a[name]
+		if !ok || !ac.On {
 			continue
 		}
 		bc, ok := b[name]

@@ -332,7 +332,7 @@ third-party one, and left out when `GET /api/captcha` said none is required.
 for (`?tenant=`): the captcha asked is then that organisation's (see "The
 sign-in policy of a tenant"); without it, the site's. It is never worked out
 from the username, which would tell which organisation it is in. An unknown or
-disabled `tenant` is `404`.
+disabled `tenant` is `404`, counted against the address's requests first.
 
 From 3.6 the field is `identifier`, an email address or a username, in place
 of `username` (see "Signing in by email address" under "Tenant autonomy").
@@ -12716,8 +12716,11 @@ when the site became stricter after it.
 - **Sessions.** The lifetimes that apply to a session are those of its person's
   own tenant (`users.tenant_id`), when it is created (the cookie's `Max-Age`)
   and on every request. They are read from the settings' cache, two lookups
-  and no query, so the check costs what it did. `sessions.idleDays` is at most
-  `sessions.maxDays` for the tenant too (`400 invalid`); a session older than
+  and no query, so the check costs what it did. A tenant's idle time is never
+  more than its lifetime when read (a tenant that shortens only `maxDays` is
+  not refused; the site's own two are held to each other, `400 invalid`). A
+  site administrator, in whatever organisation, follows the site's lifetimes
+  and passkey roles, as for `ssoOnly`. A session older than
   its tenant's `maxDays` or unused for longer than its `idleDays` ends with
   `reason: "expired"`, the first time it is used. The daily sweep deletes
   expired sessions by their tenant's cutoffs.
@@ -12743,7 +12746,10 @@ when the site became stricter after it.
   `POST /api/register` and `POST /api/password/forgot`, and `?tenant=` of
   `GET /api/captcha`. The default tenant is a tenant like any other (its
   value is the site's unless it has one): `register` and `forgot` without a
-  `tenant` are its, as everywhere. **When the tenant is unknown, the site's
+  `tenant` are its, as everywhere. **A request that names a tenant is asked
+  the stricter of the site's own value and that tenant's, never less than the
+  site's, even where the site's rule is `allow`** (the tenant named is not
+  tied to the account signing in). **When the tenant is unknown, the site's
   value is used:** a `login` or `GET /api/captcha` that names no tenant, the
   invitation and the first-run setup. So a sign-in without `tenant` is no
   stricter than the site's, and the web app's page for an organisation

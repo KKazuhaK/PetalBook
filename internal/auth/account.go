@@ -846,7 +846,7 @@ func (s *Service) Sweep(ctx context.Context) {
 // or by their role (for showing it; sign-in also needs passkeys to work).
 func (s *Service) PasskeyRequiredOf(u store.User) bool {
 	st := s.secPtr.Load()
-	return u.PasskeyRequired || (st != nil && s.passkeyRoleHeld(context.Background(), st, u.TenantID, u.Role))
+	return u.PasskeyRequired || (st != nil && s.passkeyRoleHeld(context.Background(), st, tenantOfPerson(&u), u.Role))
 }
 
 // Counts are how many passkeys and identities each user has.

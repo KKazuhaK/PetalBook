@@ -157,7 +157,7 @@ func (s *server) getCaptcha(c *call) {
 	tenant := ""
 	if slug := q.Get("tenant"); slug != "" {
 		var ok bool
-		if tenant, ok = s.tenantOfRequest(c, slug); !ok {
+		if tenant, ok = s.scopedTenant(c, slug); !ok {
 			return
 		}
 	}

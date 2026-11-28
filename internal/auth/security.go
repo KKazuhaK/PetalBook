@@ -386,14 +386,16 @@ func (s *Service) bindSettings() {
 		_, max := s.lifetimesOf(ctx, s.sec(ctx), tenant)
 		return int(max / (24 * time.Hour))
 	}
+	// A tenant's idle time is never more than its lifetime when read (see
+	// lifetimesOf), so only the site's two are held to each other.
 	bind(settings.SessionsIdleDays, settings.SiteBinding{Check: func(ctx context.Context, tenant string, v any) (any, error) {
-		if n, _ := v.(int64); int(n) > maxDays(ctx, tenant) {
+		if n, _ := v.(int64); tenant == "" && int(n) > maxDays(ctx, tenant) {
 			return nil, errf(Invalid, "sessions.maxDays is at least sessions.idleDays.")
 		}
 		return v, nil
 	}})
 	bind(settings.SessionsMaxDays, settings.SiteBinding{Check: func(ctx context.Context, tenant string, v any) (any, error) {
-		if n, _ := v.(int64); int(n) < idleDays(ctx, tenant) {
+		if n, _ := v.(int64); tenant == "" && int(n) < idleDays(ctx, tenant) {
 			return nil, errf(Invalid, "sessions.maxDays is at least sessions.idleDays.")
 		}
 		return v, nil
