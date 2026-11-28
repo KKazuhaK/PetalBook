@@ -11,6 +11,7 @@ import (
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/auth/testidp"
+	"petalbook.app/server/internal/store"
 )
 
 func TestOAuth2LinkAndTest(t *testing.T) {
@@ -103,18 +104,20 @@ func TestOAuth2RefusedAnswers(t *testing.T) {
 			{"control character in the subject", func() { user("a\u0007b") }},
 			{"userinfo 401", func() { g.meStatus = 401 }},
 			{"userinfo 500", func() { g.meStatus = 500 }},
-			{"userinfo redirect", func() { g.meRedirect = g.srv.URL + "/me-elsewhere" }},
+			// Each redirect leads to a valid answer: only refusing to follow it passes.
+			{"userinfo redirect", func() { g.meRedirect = g.srv.URL + "/me-ok" }},
+			{"token redirect", func() { g.tokenRedirect = true }},
 			{"userinfo not JSON", func() { g.meRaw = "<html>hello</html>" }},
 			{"userinfo an array", func() { g.meRaw = `[{"id":1}]` }},
 			{"userinfo a string", func() { g.meRaw = `"x"` }},
 			{"userinfo trailing text", func() { g.meRaw = `{"id":1} {"id":2}` }},
-			{"userinfo over 1 MiB", func() { g.meSize = 1<<20 + 10 }},
+			{"userinfo over 1 MiB", func() { g.meSize = 1<<20 + 10 }}, // a valid object, then spaces past 1 MiB
 			{"no access token", func() { g.noToken = true }},
 		}
 		for i, tc := range cases {
 			g.set(func() {
 				g.users["neo"] = discordUser(1, "Neo", "neo@example.test", true)
-				g.meStatus, g.meRaw, g.meSize, g.meRedirect, g.noToken = 0, "", 0, "", false
+				g.meStatus, g.meRaw, g.meSize, g.meRedirect, g.noToken, g.tokenRedirect = 0, "", 0, "", false, false
 				tc.set()
 			})
 			c := a.newClient(fmt.Sprintf("203.0.113.%d", i+1)) // each start is rate limited by address
@@ -131,7 +134,7 @@ func TestOAuth2RefusedAnswers(t *testing.T) {
 		// The wrong client authentication method: the provider wants the form.
 		g.set(func() {
 			g.users["neo"] = discordUser(1, "Neo", "neo@example.test", true)
-			g.meStatus, g.meRaw, g.meSize, g.meRedirect, g.noToken, g.post = 0, "", 0, "", false, true
+			g.meStatus, g.meRaw, g.meSize, g.meRedirect, g.noToken, g.tokenRedirect, g.post = 0, "", 0, "", false, false, true
 		})
 		c := a.newClient("")
 		if end := g.signIn(t, c, "disco", "neo", nil); end != "/login?sso_error=idp_error" || signedInAs(t, c) != "" {
@@ -147,10 +150,14 @@ func TestOAuth2RefusedAnswers(t *testing.T) {
 
 func TestOAuth2UserinfoTimesOut(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+	o := providersOpts()
+	o.mod = func(c *auth.Config) {
+		c.OAuth2RequestTimeout, c.OAuth2FlowTimeout = 100*time.Millisecond, 200*time.Millisecond
+	}
+	eachAccounts(t, o, func(t *testing.T, a *acc) {
 		g := newFakeOAuth2(t)
 		g.users["neo"] = discordUser(1, "Neo", "", nil)
-		g.meDelay = 15 * time.Second
+		g.meDelay = 5 * time.Second
 		admin := a.setup("kazuha", pw)
 		admin.putSetting("registration.mode", "open").want(t, 200, "")
 		admin.do("POST", "/api/admin/providers", g.body("disco", nil)).want(t, 201, "")
@@ -159,8 +166,43 @@ func TestOAuth2UserinfoTimesOut(t *testing.T) {
 		if end := g.signIn(t, c, "disco", "neo", nil); end != "/login?sso_error=idp_error" || signedInAs(t, c) != "" {
 			t.Fatalf("%s", end)
 		}
-		if d := time.Since(start); d > 14*time.Second {
+		if d := time.Since(start); d > 3*time.Second {
 			t.Fatalf("took %s", d)
+		}
+	})
+}
+
+// A callback that read the provider before an administrator changed it is
+// refused: what it read means nothing under the new settings.
+func TestOAuth2CallbackRefusedWhenTheProviderChangedMeanwhile(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		g := newFakeOAuth2(t)
+		g.users["neo"] = discordUser(1, "Neo", "neo@example.test", true)
+		admin := a.setup("kazuha", pw)
+		admin.putSetting("registration.mode", "open").want(t, 200, "")
+		admin.do("POST", "/api/admin/providers", g.body("disco", nil)).want(t, 201, "")
+		g.set(func() {
+			g.meHook = func() {
+				a.clock.Advance(time.Second)
+				admin.do("PATCH", "/api/admin/providers/disco", map[string]any{"oauth2": map[string]any{"fields": map[string]any{"subject": "username"}}}).want(t, 200, "")
+			}
+		})
+		c := a.newClient("")
+		if end := g.signIn(t, c, "disco", "neo", nil); end != "/login?sso_error=provider_unavailable" || signedInAs(t, c) != "" {
+			t.Fatalf("%s %q", end, signedInAs(t, c))
+		}
+		if n := linkCount(t, a, "disco") + rowCount(t, a, `SELECT COUNT(*) FROM users WHERE username = 'neo'`); n != 0 {
+			t.Fatalf("%d rows were made", n)
+		}
+		// The next sign-in reads the new settings and works.
+		g.set(func() { g.meHook = nil })
+		d := a.newClient("")
+		if end := g.signIn(t, d, "disco", "neo", nil); end != "/" || signedInAs(t, d) != "neo" {
+			t.Fatalf("%s %q", end, signedInAs(t, d))
+		}
+		if _, err := store.FindLink(context.Background(), a.st.Q(), "disco", "neo"); err != nil {
+			t.Fatal(err)
 		}
 	})
 }

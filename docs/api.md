@@ -10195,7 +10195,9 @@ way to sign in), and an account without a password adds one with
     `emails.0.email`. A path is 1 to 8 segments of 1 to 64 characters of
     `A-Z a-z 0-9 _ : -`, at most 256 characters in all. A segment of digits
     indexes an array, and only an array (on an object it is a key). `subject`
-    is required; the others may be empty.
+    is required; the others may be empty. Map `subject` to a stable id that
+    users cannot change (not a name or an address); surrounding whitespace is
+    trimmed.
   - **The subject** is a JSON string (trimmed, 1 to 255 bytes without control
     characters) or a whole number as written (`4711`, `9007199254740993`); a
     float (`1.5`, `1.0`), an exponent, a bool, an object, an array, `null` or a

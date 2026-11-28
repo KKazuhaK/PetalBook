@@ -40,6 +40,12 @@ type fakeOAuth2 struct {
 	meSize     int
 	meDelay    time.Duration
 	meRedirect string
+	// tokenRedirect: the token endpoint answers with a redirect to /token-ok,
+	// which has the valid answer.
+	tokenRedirect bool
+	lastTok       string
+	// meHook runs while /me is being answered (a change made mid-callback).
+	meHook func()
 	// What the provider saw.
 	meHeaders   []http.Header
 	tokenAuth   []string // "basic" or "post" per token request
@@ -108,6 +114,12 @@ func newFakeOAuth2(t *testing.T) *fakeOAuth2 {
 			return
 		}
 		delete(g.codes, r.PostForm.Get("code"))
+		if g.tokenRedirect {
+			g.lastTok = "tok_" + gr.key
+			g.toks[g.lastTok] = gr.key
+			http.Redirect(w, r, "/token-ok", http.StatusFound)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if g.noToken {
 			json.NewEncoder(w).Encode(map[string]string{"token_type": "bearer"})
@@ -117,14 +129,36 @@ func newFakeOAuth2(t *testing.T) *fakeOAuth2 {
 		g.toks[tok] = gr.key
 		json.NewEncoder(w).Encode(map[string]string{"access_token": tok, "token_type": "Bearer", "scope": "identify email"})
 	})
+	// The valid answers a redirect would lead to.
+	mux.HandleFunc("GET /token-ok", func(w http.ResponseWriter, r *http.Request) {
+		g.mu.Lock()
+		tok := g.lastTok
+		g.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"access_token": tok, "token_type": "Bearer"})
+	})
+	mux.HandleFunc("GET /me-ok", func(w http.ResponseWriter, r *http.Request) {
+		g.mu.Lock()
+		key := g.toks[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
+		user := g.users[key]
+		if user == nil {
+			user = g.users["neo"]
+		}
+		g.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(user)
+	})
 	mux.HandleFunc("GET /me", func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		g.paths = append(g.paths, "/me")
 		g.meHeaders = append(g.meHeaders, r.Header.Clone())
 		key, ok := g.toks[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
 		status, raw, size, delay, redir := g.meStatus, g.meRaw, g.meSize, g.meDelay, g.meRedirect
-		user := g.users[key]
+		user, hook := g.users[key], g.meHook
 		g.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
 		if delay > 0 {
 			select {
 			case <-time.After(delay):
@@ -151,8 +185,8 @@ func newFakeOAuth2(t *testing.T) *fakeOAuth2 {
 		}
 		b, _ := json.Marshal(user)
 		if size > len(b) {
-			// A valid object padded with a long string.
-			b, _ = json.Marshal(map[string]any{"id": "x", "pad": strings.Repeat("a", size)})
+			// A valid object followed by whitespace: only the size check refuses it.
+			b = append(b, strings.Repeat(" ", size-len(b))...)
 		}
 		w.Write(b)
 	})

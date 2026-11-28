@@ -82,6 +82,9 @@ type Config struct {
 	// HTTPClient reaches the identity providers, the SAML metadata, GitHub and
 	// the captcha providers; a default client when nil (tests give their own).
 	HTTPClient *http.Client
+	// OAuth2RequestTimeout and OAuth2FlowTimeout replace the limits of a custom
+	// OAuth 2.0 provider's calls, 10s each and 20s for a callback (tests).
+	OAuth2RequestTimeout, OAuth2FlowTimeout time.Duration
 	// Secrets seals what is kept in the state database; the space manager's
 	// box when nil.
 	Secrets *secret.Box

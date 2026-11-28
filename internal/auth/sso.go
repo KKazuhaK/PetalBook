@@ -687,6 +687,15 @@ func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken 
 		if errCode != "" {
 			return fail(errCode)
 		}
+		// The callback took a while (up to 20s) with the settings it read at
+		// its start. An administrator may have changed the provider since (the
+		// subject path, the userinfo host): what it read means nothing now, and
+		// nothing is linked or made from it. The provider list is in memory:
+		// no query, no settings read.
+		if cur := s.provs.getID(rt.row.ID); cur == nil || !cur.row.Updated.Equal(rt.row.Updated) {
+			s.log.Warn("sign-in refused: the provider changed during the callback", "provider", slug)
+			return fail("provider_unavailable")
+		}
 	}
 	return s.finishSSO(ctx, rt, e, c, sessionToken, ip, clear)
 }

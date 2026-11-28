@@ -114,7 +114,7 @@ export const securityZhCN = {
   } as Record<string, string>,
   providers: {
     title: '登录提供方',
-    help: '单点登录用的 OpenID Connect、SAML 和 GitHub 提供方，最多 50 个。',
+    help: '登录用的 OpenID Connect、SAML、GitHub 和普通 OAuth 2.0 提供方，最多 50 个。',
     // 组织自己的单点登录（3.6 d3）。
     org: {
       title: '组织的单点登录',
@@ -179,7 +179,8 @@ export const securityZhCN = {
     moreTemplates: '更多模板',
     regions: { global: '通用' } as Record<string, string>,
     custom: '自定义提供方',
-    customHelp: '任意 OpenID Connect 或 SAML 提供方，或 GitHub Enterprise Server。',
+    customHelp:
+      '任意 OpenID Connect 或 SAML 提供方、GitHub Enterprise Server，或没有 OpenID Connect 的普通 OAuth 2.0 提供方（例如 Discord）。',
     back: '返回',
     templateTitle: (name: string) => `添加 ${name}`,
     fromTemplate: (name: string) => `用 ${name} 模板创建`,
@@ -290,7 +291,8 @@ export const securityZhCN = {
       fieldsHelp:
         '用点分隔的路径指向返回内容，例如 id、data.user.id 或 emails.0.email：数字表示列表里的第几项。最多 8 段，每段由字母、数字、_ : 或 - 组成。',
       subject: '主体',
-      subjectHelp: '这个人在提供方的 ID：字符串或整数。有人用这个提供方登录之后就不能再改。',
+      subjectHelp:
+        '这个人在提供方的 ID：字符串或整数。请使用用户不能修改的稳定 ID，不要用名字或邮箱；前后的空白会被去掉。有人用这个提供方登录之后，这个路径就不能再改。',
       email: '邮箱',
       emailVerified: '邮箱已验证',
       emailVerifiedHelp: '只有这一项为 true，并且开启“信任这个提供方验证过的邮箱”时，邮箱才会被信任。留空：永不信任。',

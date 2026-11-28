@@ -140,7 +140,7 @@ export const securityEn: SecurityMessages = {
   },
   providers: {
     title: 'Sign-in providers',
-    help: 'OpenID Connect, SAML and GitHub providers for single sign-on, at most 50.',
+    help: 'OpenID Connect, SAML, GitHub and plain OAuth 2.0 providers for sign-in, at most 50.',
     // The organisation's own single sign-on (3.6 d3).
     org: {
       title: 'Single sign-on',
@@ -208,7 +208,8 @@ export const securityEn: SecurityMessages = {
     moreTemplates: 'More templates',
     regions: { global: 'General' } as Record<string, string>,
     custom: 'Custom provider',
-    customHelp: 'Any OpenID Connect or SAML provider, or a GitHub Enterprise Server.',
+    customHelp:
+      'Any OpenID Connect or SAML provider, a GitHub Enterprise Server, or a plain OAuth 2.0 provider without OpenID Connect (Discord, for example).',
     back: 'Back',
     templateTitle: (name: string) => `Add ${name}`,
     fromTemplate: (name: string) => `Made from the ${name} template`,
@@ -327,7 +328,7 @@ export const securityEn: SecurityMessages = {
         'Dotted paths into the answer, such as id, data.user.id or emails.0.email: a number picks an item of a list. Up to 8 names of letters, digits, _ : or -.',
       subject: 'Subject',
       subjectHelp:
-        'The person’s id at the provider: a string or a whole number. It cannot change once someone has signed in with this provider.',
+        'The person’s id at the provider: a string or a whole number. Use a stable id that users cannot change, not a name or an address; surrounding whitespace is trimmed. The path cannot change once someone has signed in with this provider.',
       email: 'Email',
       emailVerified: 'Email verified',
       emailVerifiedHelp:

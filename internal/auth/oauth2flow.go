@@ -32,8 +32,8 @@ import (
 // nothing is followed by redirect, and every answer is read up to 1 MiB.
 
 const (
-	oauth2ReqTimeout   = 10 * time.Second // each request
-	oauth2FlowTimeout  = 20 * time.Second // the whole callback
+	oauth2ReqTimeout   = 10 * time.Second // each request (Config.OAuth2RequestTimeout)
+	oauth2FlowTimeout  = 20 * time.Second // the whole callback (Config.OAuth2FlowTimeout)
 	oauth2ReadLimit    = 1 << 20
 	oauth2MaxScopes    = 32
 	oauth2MaxPathParts = 8
@@ -142,7 +142,7 @@ func arrayIndex(seg string) (int, bool) {
 var integerRE = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
 
 // oauth2Subject reads the subject from what its path found: a string (trimmed)
-// or an integer as written. A float, an exponent, a bool, an object, a null or
+// or an integer as written (surrounding whitespace of a string is trimmed). A float, an exponent, a bool, an object, a null or
 // nothing is refused. The rules of a sub are the OpenID Connect ones.
 func oauth2Subject(v any) (string, bool) {
 	var s string
@@ -179,6 +179,20 @@ func (s *Service) oauth2Config(rt *providerRT) *oauth2.Config {
 		Endpoint: oauth2.Endpoint{AuthURL: o.AuthorizationEndpoint, TokenURL: o.TokenEndpoint, AuthStyle: style}}
 }
 
+func (s *Service) oauth2ReqLimit() time.Duration {
+	if s.cfg.OAuth2RequestTimeout > 0 {
+		return s.cfg.OAuth2RequestTimeout
+	}
+	return oauth2ReqTimeout
+}
+
+func (s *Service) oauth2FlowLimit() time.Duration {
+	if s.cfg.OAuth2FlowTimeout > 0 {
+		return s.cfg.OAuth2FlowTimeout
+	}
+	return oauth2FlowTimeout
+}
+
 // oauth2Client is the client of one callback: the server's, which follows no
 // redirect (a token or userinfo address that redirects is an error).
 func (s *Service) oauth2Client() *http.Client {
@@ -192,7 +206,7 @@ var errUserinfo = errors.New("the userinfo answer is not usable")
 // oauth2Userinfo asks the userinfo address for the user: GET, bearer token,
 // 200, a JSON object of at most 1 MiB.
 func (s *Service) oauth2Userinfo(ctx context.Context, hc *http.Client, o *OAuth2Cfg, token string) (map[string]any, error) {
-	ctx, cancel := context.WithTimeout(ctx, oauth2ReqTimeout)
+	ctx, cancel := context.WithTimeout(ctx, s.oauth2ReqLimit())
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.UserinfoEndpoint, nil)
 	if err != nil {
@@ -236,9 +250,9 @@ func (s *Service) oauth2Claims(ctx context.Context, rt *providerRT, code, verifi
 	}
 	o := rt.cfg.OAuth2
 	hc := s.oauth2Client()
-	ctx, cancel := context.WithTimeout(ctx, oauth2FlowTimeout)
+	ctx, cancel := context.WithTimeout(ctx, s.oauth2FlowLimit())
 	defer cancel()
-	xctx, xcancel := context.WithTimeout(context.WithValue(ctx, oauth2.HTTPClient, hc), oauth2ReqTimeout)
+	xctx, xcancel := context.WithTimeout(context.WithValue(ctx, oauth2.HTTPClient, hc), s.oauth2ReqLimit())
 	tok, err := s.oauth2Config(rt).Exchange(xctx, code, oauth2.VerifierOption(verifier))
 	xcancel()
 	if err != nil || tok.AccessToken == "" {
