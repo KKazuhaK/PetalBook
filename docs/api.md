@@ -9872,8 +9872,11 @@ Notes:
   provider: `PUT …/remote` with a `connection` credential and a new space made
   with `storage.sync` (nothing is made on the host). It applies to every space,
   not only those that need partial sync, and whether or not the server clones
-  partially. A host not found out yet (`unknown`, and a plain address, which has
-  no provider to ask) is let through; the detection of 3.5 fills it in as the
+  partially. A remote given as a plain address (`remote` with a token, or `PUT …/remote` without a
+  `connection`) whose host is a provider's (compared as host names: lower case, no
+  port, no trailing dot, IDNA's ASCII form) is held to what is known of that
+  provider, so an address does not get round the policy. A host not found out yet
+  (`unknown`), and an address no provider has, is let through; the detection of 3.5 fills it in as the
   provider is used. **Nothing is migrated**: a space that is connected already
   keeps its remote and keeps syncing when the policy turns to `refuse`; only a
   new connection (also reconnecting, or changing the remote) is looked at. With
@@ -10766,12 +10769,23 @@ Option A (owner, 2026-11-23). A space is stored in one of three modes:
   only `github.com` and GitHub is set up). 3.1's checks read the derived value.
   Today it is worked out at two points: **for the site** (the modes the site's
   own `storage.mode` rule allows) it is the value 3.1's queries read, with the
-  grace period, `scope` and overdue read-only behaviour of 3.1; it counts from
-  the last write of the rule, and an explicit `storage.remotes.require`, when
-  set, wins; **for an organisation** (the modes its own rules also leave out)
+  grace period, `scope` and overdue read-only behaviour of 3.1 (below); an
+  explicit `storage.remotes.require`, when set, wins; **for an organisation** (the modes its own rules also leave out)
   it is checked when a space is made (`409 remote_required`, exempt people
   excepted). A tenant that drops `server` itself does not put its existing
-  spaces under a deadline: the deadline queries are the site's.
+  spaces under a deadline: the deadline queries are the site's. Such an
+  organisation does not let a space go back to the server either: `DELETE
+  …/remote` of one of its spaces is `409 remote_required` (the exemptions of 3.1
+  excepted), besides the site's own check.
+  The grace period counts from `since`, which is when the **requirement in force**
+  (what is required, `scope` and `storage.hosts`, whether derived or set) last
+  changed, kept with that requirement and settled after a write of
+  `storage.mode`, `storage.remotes.require`, `.scope` or `storage.hosts`, and when
+  the server starts. It is never the time a rule was written: a rule older than
+  the grace period does not make spaces overdue at once, whether it is a later
+  widening of `scope`, clearing a set requirement, or a server started with the
+  rule in place. A change starts the period afresh; ending the requirement
+  clears it.
   `storage.remotes.scope`, `.graceDays`, the exemptions and
   `storage.localSpaces.maxBytes` keep their meaning and concern `server` spaces.
   A `tenant` space follows a remote and so meets the requirement.

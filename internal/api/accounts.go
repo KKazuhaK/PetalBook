@@ -792,13 +792,9 @@ func (s *server) createSpace(c *call) {
 	if req.Storage != nil {
 		asked = req.Storage.Mode
 	}
-	if _, err := s.spaces.ResolveMode(c.r.Context(), c.user().ID, c.tenant(), asked, sync || req.Remote != nil); err != nil {
-		s.fail(c.w, err)
-		return
-	}
 	if r := req.Remote; r != nil {
 		in, err = s.spaces.CreateWithRemote(c.r.Context(), c.user().ID, req.Name, req.Inbox,
-			spaces.ConnectRequest{URL: r.URL, Branch: r.Branch, CredType: r.Credential.Type, Username: r.Credential.Username, Token: r.Credential.Token})
+			spaces.ConnectRequest{URL: r.URL, Branch: r.Branch, CredType: r.Credential.Type, Username: r.Credential.Username, Token: r.Credential.Token, Mode: asked})
 	} else if sync {
 		g := req.Storage.Sync
 		if p, ok := s.registry().Get(g.Provider); !ok || p.Descriptor().Type == connections.GitID {
@@ -809,7 +805,7 @@ func (s *server) createSpace(c *call) {
 			}
 			return
 		}
-		sc := spaces.SyncCreate{Provider: g.Provider, Owner: g.Owner, Name: g.Name, Private: g.Private == nil || *g.Private, Description: g.Description, Create: g.Create == nil || *g.Create}
+		sc := spaces.SyncCreate{Provider: g.Provider, Owner: g.Owner, Name: g.Name, Private: g.Private == nil || *g.Private, Description: g.Description, Create: g.Create == nil || *g.Create, Mode: asked}
 		assets, aerr := assetsAsked(g.Assets)
 		if aerr != nil {
 			s.fail(c.w, aerr)
@@ -818,7 +814,7 @@ func (s *server) createSpace(c *call) {
 		sc.Assets = assets
 		in, err = s.spaces.CreateWithSync(c.r.Context(), c.user().ID, req.Name, req.Inbox, sc)
 	} else {
-		in, err = s.spaces.CreateWith(c.r.Context(), c.user().ID, req.Name, req.Inbox)
+		in, err = s.spaces.CreateWithMode(c.r.Context(), c.user().ID, req.Name, req.Inbox, asked)
 	}
 	if err != nil {
 		s.fail(c.w, err)

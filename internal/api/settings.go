@@ -295,7 +295,7 @@ func (s *server) adminPutSetting(c *call) {
 		out.Affected = &affected
 	}
 	// storage.mode's modes allowed derive the requirement when none is set.
-	if (ch.HasValue && strings.HasPrefix(key, "storage.remotes.") || key == settings.StorageMode && (ch.HasValue || ch.HasLower)) && s.spaces != nil {
+	if (ch.HasValue && (strings.HasPrefix(key, "storage.remotes.") || key == settings.StorageHosts) || key == settings.StorageMode && (ch.HasValue || ch.HasLower)) && s.spaces != nil {
 		// The requirement changed: what is cached of it goes, the people's counts
 		// follow it.
 		aff, err := s.spaces.StoragePolicyChanged(ctx)

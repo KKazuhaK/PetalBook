@@ -276,6 +276,14 @@ func New(opt Options) *Handler {
 		opt.Connections = connections.NewRegistry(append(ps, connections.NewGit())...)
 	}
 	wireLoss()
+	// The requirement of a remote as the settings now make it (a rule on
+	// storage.mode written before this server started, say) begins its grace
+	// period now, not when the rule was written.
+	if opt.Spaces != nil {
+		if err := opt.Spaces.SettlePolicy(context.Background()); err != nil && opt.Logger != nil {
+			opt.Logger.Error("could not settle when the remote requirement took its form", "error", err)
+		}
+	}
 	// The GitHub row is both a sign-in provider and where repositories are
 	// connected: sign-in reads it again when the App changes, and connecting
 	// repositories with another account never takes a person's last way in.

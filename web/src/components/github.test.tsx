@@ -374,7 +374,9 @@ describe('the new-space dialog', () => {
     await openNewSpace('connected', undefined, () => {}, { effective: 'own', allowed: ['own'] })
     await settle(() => text().includes(tg.newSpace.whereSync('GitHub')), 'the option')
     expect(text()).not.toContain(tg.newSpace.whereServerHelp)
-    expect(text()).toContain(tg.newSpace.whereOther)
+    // A plain address is given after the space is made, which a remote that must be there from the start cannot wait for.
+    expect(text()).not.toContain(tg.newSpace.whereOtherHelp)
+    expect(text()).toContain(tg.newSpace.addressNeedsServer)
     expect(checkbox(tg.newSpace.whereSync('GitHub')).checked).toBe(true)
   })
 

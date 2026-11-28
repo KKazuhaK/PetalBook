@@ -126,7 +126,8 @@ function NewSpaceForm({
   const places = [
     ...(canServer ? [''] : []),
     ...shownProviders.map((p) => p.id),
-    ...(canOwn && (providers.length > 0 || !canServer) ? [OTHER] : []),
+    // A plain address is given after the space exists, so it is no way in where the server is not allowed.
+    ...(canOwn && canServer && providers.length > 0 ? [OTHER] : []),
     ...(canTenant && !tenantMissing ? [TENANT] : []),
   ]
   const defaultWhere = (() => {
@@ -287,7 +288,7 @@ function NewSpaceForm({
           autoComplete="off"
         />
 
-        {places.length > 1 && (
+        {(places.length > 1 || (!canServer && canOwn && places.length > 0)) && (
           <fieldset className="grid min-w-0 grid-cols-1 gap-3 rounded-lg border p-3">
             <legend className="px-1 text-xs text-muted-foreground">{tg.newSpace.legend}</legend>
             {canServer && (
@@ -337,6 +338,9 @@ function NewSpaceForm({
                   <span className="block text-xs text-muted-foreground">{tg.newSpace.whereOtherHelp}</span>
                 </span>
               </label>
+            )}
+            {!canServer && canOwn && (
+              <p className="text-xs break-words text-muted-foreground">{tg.newSpace.addressNeedsServer}</p>
             )}
             {places.includes(TENANT) && (
               <label className="flex cursor-pointer items-start gap-2 text-sm">

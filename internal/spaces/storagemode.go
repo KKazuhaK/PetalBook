@@ -4,8 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"slices"
+	"strings"
 
+	"golang.org/x/net/idna"
+
+	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
@@ -120,6 +125,20 @@ func (m *Manager) ResolveMode(ctx context.Context, userID, tenantID, asked strin
 	return mode, nil
 }
 
+// resolveFor is ResolveMode for the tenant the creator belongs to, which it
+// returns: the space is made in it.
+func (m *Manager) resolveFor(ctx context.Context, userID, asked string, hasRemote bool) (string, error) {
+	if m.single != nil {
+		return "", nil
+	}
+	u, err := store.GetUser(ctx, m.opt.Store.Q(), store.AllTenants(), userID) // the creator, by id
+	if err != nil {
+		return "", err
+	}
+	_, err = m.ResolveMode(ctx, userID, u.TenantID, asked, hasRemote)
+	return u.TenantID, err
+}
+
 func modeWords(mode string) string {
 	switch mode {
 	case ModeServer:
@@ -161,7 +180,43 @@ func (m *Manager) CheckPartial(ctx context.Context, tenantID, provider string) e
 	if !ok {
 		return nil
 	}
-	d := p.Descriptor()
+	return m.checkPartialOf(ctx, tenantID, p.Descriptor())
+}
+
+// CheckPartialHost is CheckPartial for a remote given as a plain address: when
+// its host is one of a provider's (compared as host names, in lower case, without
+// a trailing dot and in the form of IDNA's ASCII), that provider's detection
+// applies, so an address cannot get round the policy. A host that no provider
+// has is let through, nothing being known of it.
+func (m *Manager) CheckPartialHost(ctx context.Context, tenantID, host string) error {
+	if m.single != nil || host == "" {
+		return nil
+	}
+	want := normHost(host)
+	for _, p := range m.opt.Connections.List() {
+		if d := p.Descriptor(); d.Host != "" && d.ID != connections.GitID && normHost(d.Host) == want {
+			if err := m.checkPartialOf(ctx, tenantID, d); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// normHost is a host name in one form for comparing: no port, lower case, no
+// trailing dot, internationalised names as ASCII.
+func normHost(h string) string {
+	if hh, _, err := net.SplitHostPort(h); err == nil {
+		h = hh
+	}
+	h = strings.ToLower(strings.TrimSuffix(strings.Trim(h, "[]"), "."))
+	if a, err := idna.Lookup.ToASCII(h); err == nil {
+		return a
+	}
+	return h
+}
+
+func (m *Manager) checkPartialOf(ctx context.Context, tenantID string, d connections.Descriptor) error {
 	if d.Capabilities.PartialSync != "no" {
 		return nil
 	}
