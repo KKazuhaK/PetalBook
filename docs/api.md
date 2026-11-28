@@ -10006,7 +10006,7 @@ tenant's, or the site's, is `404 not_found`):
   `400 invalid`). Its `slug` starts with the tenant's own slug and a hyphen
   (`acme-okta`; `400 invalid` otherwise, also through `POST /api/admin/providers`
   with an `owner`), so plain names stay the site's to take and no tenant takes
-  another's. A template, `kind` `github`, `class` `social`,
+  another's. A template, `kind` `github` or `oauth2`, `class` `social`,
   `mergeVerifiedEmail: true`, a `tenant` (jit) other than its own and
   `tenants` are `400 invalid`. It starts off until the tenant has a verified
   domain (`409 domain_required` when asked on). `201` with the Provider;
@@ -10156,26 +10156,73 @@ way to sign in), and an account without a password adds one with
     reserved slugs for the site's own providers: an organisation's provider
     cannot take one (`409 slug_reserved`). The `template` column takes only
     the known templates, in the database too.
-  - The `oauth2` kind is reserved in the database for plain OAuth 2.0
-    providers (below); it is not offered yet.
-- **Custom providers.** Besides the templates a site administrator may add any
-  OpenID Connect provider (`kind: "oidc"`, by its discovery document, as
-  before) or a plain OAuth 2.0 one, `kind: "oauth2"`:
+- **Custom OAuth 2.0 providers** (`kind: "oauth2"`, 3.6 d6). Besides the
+  templates and OpenID Connect providers (by discovery document) a site
+  administrator may add a provider that has only plain OAuth 2.0: no ID token
+  and no discovery (Discord, a self-hosted GitLab without OpenID Connect). The
+  body takes a nested `oauth2` block, like `oidc`, `saml` and `github`:
 
   ```json
-  {"slug": "forum", "kind": "oauth2", "class": "social", "name": "Our forum",
-   "authorizeUrl": "https://forum.example/oauth/authorize", "tokenUrl": "https://forum.example/oauth/token",
-   "userinfoUrl": "https://forum.example/api/me", "scopes": ["read:user"],
-   "fields": {"subject": "id", "email": "email", "emailVerified": null, "name": "name", "login": "username"},
-   "clientId": "…", "clientSecret": "…"}
+  {"slug": "discord", "kind": "oauth2", "name": "Discord",
+   "oauth2": {
+     "authorizationEndpoint": "https://discord.com/oauth2/authorize",
+     "tokenEndpoint": "https://discord.com/api/oauth2/token",
+     "userinfoEndpoint": "https://discord.com/api/users/@me",
+     "scopes": ["identify", "email"],
+     "authMethod": "client_secret_basic",
+     "fields": {"subject": "id", "email": "email", "emailVerified": "verified", "name": "global_name", "username": "username"},
+     "clientId": "…", "clientSecret": "…"}}
   ```
 
-  The three addresses are `https` and pass the public-address check; PKCE (S256)
-  is used. `fields.subject` is required and is read as a string. Without
-  `fields.emailVerified` the address is never treated as verified (no
-  `mergeVerifiedEmail`, no domain routing). `oauth2` is site-owned and
-  `social` only (`400 invalid` otherwise); a tenant's SSO stays OpenID Connect
-  or SAML. Its routes are `/api/auth/oauth2/{slug}/…`, as for the other kinds.
+  The Provider object has the same block (`clientSecret` never; `hasSecret`
+  and `redirectUrl`, `…/api/auth/oauth2/{slug}/callback`, instead). `PATCH`
+  takes any part of it.
+
+  - The three addresses are `https` addresses of at most 2048 characters with
+    no user-info part, no query and no fragment. `scopes` has at most 32
+    entries. `authMethod` is `client_secret_basic` (the client in the
+    `Authorization` header, the default) or `client_secret_post` (in the form);
+    it is never guessed. PKCE (`S256`) is always used. The site's own providers
+    are not held to public addresses, as its OpenID Connect, SAML and GitHub
+    Enterprise ones are not; the calls never follow a redirect, read at most
+    1 MiB, take 10 seconds each and 20 for the whole callback.
+  - After the code is exchanged the server asks `userinfoEndpoint` once, with
+    `GET`, `Authorization: Bearer <token>`, `Accept: application/json` and
+    `User-Agent: PetalBook`; the answer must be `200` and one JSON object. The
+    token is then dropped. Nothing else is asked: no second address request, no
+    avatar.
+  - `fields` are dotted paths into that object: `id`, `data.user.id`,
+    `emails.0.email`. A path is 1 to 8 segments of 1 to 64 characters of
+    `A-Z a-z 0-9 _ : -`, at most 256 characters in all. A segment of digits
+    indexes an array, and only an array (on an object it is a key). `subject`
+    is required; the others may be empty. Map `subject` to a stable id that
+    users cannot change (not a name or an address); surrounding whitespace is
+    trimmed.
+  - **The subject** is a JSON string (trimmed, 1 to 255 bytes without control
+    characters) or a whole number as written (`4711`, `9007199254740993`); a
+    float (`1.5`, `1.0`), an exponent, a bool, an object, an array, `null` or a
+    missing value is `sso_error=idp_error` and nobody is signed in. A number and
+    a string of the same digits are the same subject. While anyone is linked to
+    the provider, changing `fields.subject` or the host of `userinfoEndpoint`
+    is `409 subject_fixed`.
+  - **The address** is trusted only when the path in `fields.emailVerified`
+    resolves to JSON `true` (or the string `"true"`) **and** the provider's
+    `mergeVerifiedEmail` is on, as for OpenID Connect (see "Which sign-ins vouch
+    for an address"). Without the path, or without the switch, it is kept as
+    given, unverified: it never finds, takes or merges into another account.
+  - `oauth2` is site-owned and `social` only: a tenant's own provider route,
+    `class: "sso"`, `tenants` and a template are `400 invalid`, and a tenant's
+    SSO stays OpenID Connect or SAML. `groups` is `400 invalid` for it (the
+    answer is not read for groups). It can never claim an account an
+    administrator made for an organisation's SSO (it is social).
+  - Accounts are made as the registration mode of the tenant the sign-in lands
+    in says, like every sign-in; there is no switch of its own. Sign-ins are
+    audited as `login` and `login_failed` with `method: "oauth2"`; changes as
+    `provider_created` and `provider_changed`, with the fields as
+    `oauth2.authorizationEndpoint`, `oauth2.fields.subject`, … and the secret as
+    `oauth2.clientSecret: "changed"`.
+  - Its callback is `GET /api/auth/oauth2/{slug}/callback` (a redirect from the
+    provider, like GitHub's), and it starts at `/api/auth/oauth2/{slug}/start`.
 
 #### Email domains and the SSO entry
 
@@ -10806,6 +10853,9 @@ From 3.6 the email address is the main way in; the username stays.
     GitLab.com template): only with its `mergeVerifiedEmail` switch on (shown
     as "trust this provider's verified email addresses", off by default) and
     the `email_verified` claim.
+  - A custom OAuth 2.0 provider (`kind: "oauth2"`): as an OpenID Connect one,
+    with the value at the path `fields.emailVerified` (JSON `true` or `"true"`)
+    in place of the claim; with no such path its addresses are never trusted.
 
 ### Joining an organisation
 
@@ -12400,9 +12450,10 @@ nothing is made, linked or signed in. The browser comes back to
 `/admin/security/providers?sso_error=<code>` when the sign-in failed (for
 instance `saml_no_email`). `GET` answers what the provider said, once, to the
 administrator who ran it and for five minutes:
-`{"result": {"subject", "email", "emailTrusted", "name", "username", "at"}}`, or
+`{"result": {"subject", "email", "emailTrusted", "name", "username", "unresolved", "at"}}`, or
 `{"result": null}`. `emailTrusted` is whether the trust rules would verify the
-address.
+address. `unresolved` is the list of configured paths of a custom OAuth 2.0
+provider that found nothing in the userinfo answer (`[]` for any other kind).
 
 #### Provider refusals
 
@@ -12412,6 +12463,7 @@ address.
 | `exists` | 409 | the slug is taken |
 | `domain_required` | 409 | turning on a provider owned by a tenant that has no verified domain |
 | `provider_limit` | 409 | there are 50 providers |
+| `subject_fixed` | 409 | changing `oauth2.fields.subject` or the host of `oauth2.userinfoEndpoint` while accounts are linked to the provider |
 | `oidc_issuer_invalid` | 400 | the issuer is not an `https` address |
 | `saml_needs_https` | 400 | SAML without an `https` `--public-url` (the cookie that crosses from the identity provider must be `Secure`) |
 | `saml_metadata_invalid` | 400 | the metadata cannot be parsed, has no signing certificate or no redirect binding for sign-in |

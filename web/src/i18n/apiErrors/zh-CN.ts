@@ -163,6 +163,8 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   provider_limit: '这种平台的数量已达上限。',
   provider_host_mismatch:
     '已有人在这个 GitHub 提供方当前的主机上关联了账号，所以它不能换到另一个 GitHub 主机。请先删除这个提供方，或移除它已关联的账号。',
+  subject_fixed:
+    '已有账号关联到这个提供方，所以主体的路径和用户信息地址的主机不能再改。请先删除这个提供方，或移除它已关联的账号。',
   name_taken: '这个名字已经被占用了，请换一个。',
   push_failed: '没能把内容推送到仓库，空间没有创建。',
   repo_not_in_installation: '这个仓库不在已安装的应用范围内，请在平台上把它加进去。',

@@ -23,6 +23,7 @@ import type {
   ProviderClass,
   ProviderInput,
   ProviderKind,
+  OAuth2AuthMethod,
   ProviderTemplate,
   ProviderTestResult,
 } from '@/api/types'
@@ -58,8 +59,8 @@ import { tg } from '@/i18n/groups'
 import { RequiredMark } from '@/components/ui/field-mark'
 
 const tp = tsec.providers
-const KINDS: readonly ProviderKind[] = ['oidc', 'saml', 'github']
-// An organisation's own single sign-on is OpenID Connect or SAML (3.6 d3).
+const KINDS: readonly ProviderKind[] = ['oidc', 'saml', 'github', 'oauth2']
+// An organisation's own single sign-on is OpenID Connect or SAML (3.6 d3); a plain OAuth 2.0 provider is the site's social sign-in.
 const ORG_KINDS: readonly ProviderKind[] = ['oidc', 'saml']
 
 // Where the section's providers live: the site's (/api/admin/providers), or one tenant's own
@@ -264,6 +265,9 @@ function TestOutcome() {
         ],
         [tp.testName, result.name || '—'],
         [tp.testUsername, result.username || '—'],
+        ...(result.unresolved.length > 0
+          ? ([[tp.testUnresolved, result.unresolved.join(', ')]] as [string, ReactNode][])
+          : []),
       ]
     : []
   return (
@@ -502,6 +506,20 @@ interface F {
     allowIdpInitiated: boolean
   }
   github: { baseUrl: string; clientId: string; secret: string | null }
+  oauth2: {
+    authorizationEndpoint: string
+    tokenEndpoint: string
+    userinfoEndpoint: string
+    scopes: string
+    authMethod: OAuth2AuthMethod
+    subject: string
+    email: string
+    emailVerified: string
+    name: string
+    username: string
+    clientId: string
+    secret: string | null
+  }
   groups: {
     enabled: boolean
     claim: string
@@ -535,6 +553,20 @@ const blank = (): F => ({
     allowIdpInitiated: false,
   },
   github: { baseUrl: 'https://github.com', clientId: '', secret: null },
+  oauth2: {
+    authorizationEndpoint: '',
+    tokenEndpoint: '',
+    userinfoEndpoint: '',
+    scopes: '',
+    authMethod: 'client_secret_basic',
+    subject: 'id',
+    email: 'email',
+    emailVerified: '',
+    name: '',
+    username: '',
+    clientId: '',
+    secret: null,
+  },
   groups: { enabled: false, claim: 'groups', missing: 'keep', map: [], allow: '' },
 })
 
@@ -581,6 +613,17 @@ function formOf(p: AuthProvider): F {
       clientId: p.github.clientId,
       secret: null,
     }
+  if (p.oauth2)
+    f.oauth2 = {
+      authorizationEndpoint: p.oauth2.authorizationEndpoint,
+      tokenEndpoint: p.oauth2.tokenEndpoint,
+      userinfoEndpoint: p.oauth2.userinfoEndpoint,
+      scopes: p.oauth2.scopes.join(' '),
+      authMethod: p.oauth2.authMethod,
+      ...p.oauth2.fields,
+      clientId: p.oauth2.clientId,
+      secret: null,
+    }
   return f
 }
 
@@ -597,7 +640,7 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
   // The class is chosen once, when the provider is made; GitHub is always social sign-in.
   const out: ProviderInput = was
     ? {}
-    : { slug: f.slug.trim(), kind: f.kind, class: f.kind === 'github' ? 'social' : f.class }
+    : { slug: f.slug.trim(), kind: f.kind, class: f.kind === 'github' || f.kind === 'oauth2' ? 'social' : f.class }
   const diff = <K extends keyof F>(k: K) => !base || JSON.stringify(f[k]) !== JSON.stringify(base[k])
   if (diff('name')) out.name = f.name.trim()
   if (diff('icon')) out.icon = f.icon
@@ -608,13 +651,17 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
   const gb = base?.groups
   const groups: NonNullable<ProviderInput['groups']> = {}
   if (f.groups.enabled !== (gb?.enabled ?? false)) groups.enabled = f.groups.enabled
-  if (f.kind !== 'github' && f.groups.claim.trim() !== (gb?.claim ?? (f.kind === 'oidc' ? 'groups' : '')))
+  if (
+    f.kind !== 'github' &&
+    f.kind !== 'oauth2' &&
+    f.groups.claim.trim() !== (gb?.claim ?? (f.kind === 'oidc' ? 'groups' : ''))
+  )
     groups.claim = f.groups.claim.trim()
   if (f.groups.missing !== (gb?.missing ?? 'keep')) groups.missing = f.groups.missing
   const rows = f.groups.map.filter((e) => e.value !== '' || e.groupId !== '')
   if (JSON.stringify(rows) !== JSON.stringify(gb?.map ?? [])) groups.map = rows
   if (f.groups.allow.trim() !== (gb?.allow ?? '').trim()) groups.allow = lines(f.groups.allow)
-  if (Object.keys(groups).length > 0) out.groups = groups
+  if (Object.keys(groups).length > 0 && f.kind !== 'oauth2') out.groups = groups
   if (f.kind === 'oidc') {
     const o = f.oidc
     const b = base?.oidc
@@ -646,6 +693,23 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
     if (!b || s.signRequests !== b.signRequests) block.signRequests = s.signRequests
     if (!b || s.allowIdpInitiated !== b.allowIdpInitiated) block.allowIdpInitiated = s.allowIdpInitiated
     if (Object.keys(block).length || !was) out.saml = block
+  } else if (f.kind === 'oauth2') {
+    const o = f.oauth2
+    const b = base?.oauth2
+    const block: NonNullable<ProviderInput['oauth2']> = {}
+    if (!b || o.authorizationEndpoint !== b.authorizationEndpoint)
+      block.authorizationEndpoint = o.authorizationEndpoint.trim()
+    if (!b || o.tokenEndpoint !== b.tokenEndpoint) block.tokenEndpoint = o.tokenEndpoint.trim()
+    if (!b || o.userinfoEndpoint !== b.userinfoEndpoint) block.userinfoEndpoint = o.userinfoEndpoint.trim()
+    if (!b || o.scopes !== b.scopes) block.scopes = words(o.scopes)
+    if (!b || o.authMethod !== b.authMethod) block.authMethod = o.authMethod
+    if (!b || o.clientId !== b.clientId) block.clientId = o.clientId.trim()
+    if (o.secret !== null) block.clientSecret = o.secret
+    const fields: NonNullable<NonNullable<ProviderInput['oauth2']>['fields']> = {}
+    for (const k of ['subject', 'email', 'emailVerified', 'name', 'username'] as const)
+      if (!b || o[k] !== b[k]) fields[k] = o[k].trim()
+    if (Object.keys(fields).length) block.fields = fields
+    if (Object.keys(block).length || !was) out.oauth2 = block
   } else {
     const g = f.github
     const b = base?.github
@@ -739,8 +803,8 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
           <Label htmlFor="provider-class">{tp.classLabel}</Label>
           <NativeSelect
             id="provider-class"
-            value={f.kind === 'github' ? 'social' : f.class}
-            disabled={edit || f.kind === 'github'}
+            value={f.kind === 'github' || f.kind === 'oauth2' ? 'social' : f.class}
+            disabled={edit || f.kind === 'github' || f.kind === 'oauth2'}
             onChange={(e) => set({ class: e.target.value as ProviderClass })}
           >
             <option value="social">{tp.classes.social}</option>
@@ -794,8 +858,9 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
       {f.kind === 'oidc' && <OidcFields f={f} set={set} initial={initial} />}
       {f.kind === 'saml' && <SamlFields f={f} set={set} initial={initial} />}
       {f.kind === 'github' && <GithubFields f={f} set={set} initial={initial} />}
+      {f.kind === 'oauth2' && <OAuth2Fields f={f} set={set} initial={initial} />}
 
-      <GroupsFields f={f} set={set} />
+      {f.kind !== 'oauth2' && <GroupsFields f={f} set={set} />}
 
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={busy || !dirty}>
@@ -1317,6 +1382,67 @@ function GithubFields({ f, set, initial }: Sub) {
       )}
       {initial?.github && <ReadOnly label={tp.github.redirectUrl} value={initial.github.redirectUrl} />}
     </fieldset>
+  )
+}
+
+function OAuth2Fields({ f, set, initial }: Sub) {
+  const o = f.oauth2
+  const to = tp.oauth2
+  const up = (p: Partial<F['oauth2']>) => set({ oauth2: { ...o, ...p } })
+  const text = (label: string, key: keyof F['oauth2'], help?: string, required = false) => (
+    <Field
+      label={label}
+      help={help}
+      requiredMark={required}
+      value={String(o[key] ?? '')}
+      onChange={(e) => up({ [key]: e.target.value } as Partial<F['oauth2']>)}
+      autoComplete="off"
+      autoCapitalize="none"
+      spellCheck={false}
+      className="break-all"
+    />
+  )
+  return (
+    <>
+      <fieldset className="grid min-w-0 grid-cols-1 gap-4" data-slot="oauth2-fields">
+        <legend className="pb-1 text-sm font-semibold">{tp.kinds.oauth2}</legend>
+        <p className="text-xs text-muted-foreground">{to.help}</p>
+        {text(to.authorizationEndpoint, 'authorizationEndpoint', to.endpointHelp, true)}
+        {text(to.tokenEndpoint, 'tokenEndpoint', undefined, true)}
+        {text(to.userinfoEndpoint, 'userinfoEndpoint', to.userinfoHelp, true)}
+        {text(to.scopes, 'scopes', to.scopesHelp)}
+        <div className="grid gap-1.5">
+          <Label htmlFor="oauth2-method">{to.authMethod}</Label>
+          <NativeSelect
+            id="oauth2-method"
+            value={o.authMethod}
+            onChange={(e) => up({ authMethod: e.target.value as OAuth2AuthMethod })}
+          >
+            <option value="client_secret_basic">{to.methodBasic}</option>
+            <option value="client_secret_post">{to.methodPost}</option>
+          </NativeSelect>
+          <p className="text-xs text-muted-foreground">{to.authMethodHelp}</p>
+        </div>
+        {text(to.clientId, 'clientId', undefined, true)}
+        <WriteOnly
+          label={to.clientSecret}
+          required
+          stored={initial?.oauth2?.hasSecret === true}
+          value={o.secret}
+          onChange={(v) => up({ secret: v })}
+        />
+        {initial?.oauth2 && <ReadOnly label={to.redirectUrl} value={initial.oauth2.redirectUrl} />}
+      </fieldset>
+      <fieldset className="grid min-w-0 grid-cols-1 gap-4" data-slot="oauth2-paths">
+        <legend className="pb-1 text-sm font-semibold">{to.fields}</legend>
+        <p className="text-xs text-muted-foreground">{to.fieldsHelp}</p>
+        {text(to.subject, 'subject', to.subjectHelp, true)}
+        {text(to.email, 'email')}
+        {text(to.emailVerified, 'emailVerified', to.emailVerifiedHelp)}
+        {text(to.name, 'name')}
+        {text(to.username, 'username')}
+      </fieldset>
+    </>
   )
 }
 

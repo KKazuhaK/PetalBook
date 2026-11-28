@@ -1163,7 +1163,7 @@ export interface ConsentDecision {
   access?: TokenAccess
 }
 
-export type ProviderKind = 'oidc' | 'saml' | 'github'
+export type ProviderKind = 'oidc' | 'saml' | 'github' | 'oauth2'
 
 // One account the person has at a provider (GET /api/account/links, GET /api/users/{id}/links): one per provider. It
 // signs them in (`signin`), holds their repositories (`repos`), or both: the GitHub link is one row for the two.
@@ -1925,6 +1925,26 @@ export interface SamlSettings {
   certificate: string
   certificateExpires: string
 }
+// The paths into the userinfo answer of a plain OAuth 2.0 provider: dotted, e.g. `data.user.id` or `emails.0.email`.
+export interface OAuth2Fields {
+  subject: string
+  email: string
+  emailVerified: string
+  name: string
+  username: string
+}
+export type OAuth2AuthMethod = 'client_secret_basic' | 'client_secret_post'
+export interface OAuth2Settings {
+  authorizationEndpoint: string
+  tokenEndpoint: string
+  userinfoEndpoint: string
+  scopes: string[]
+  authMethod: OAuth2AuthMethod
+  fields: OAuth2Fields
+  clientId: string
+  hasSecret: boolean
+  redirectUrl: string
+}
 export interface GithubSettings {
   baseUrl: string
   clientId: string
@@ -1988,6 +2008,7 @@ export interface AuthProvider {
   oidc?: OidcSettings
   saml?: SamlSettings
   github?: GithubSettings
+  oauth2?: OAuth2Settings
   status: { ok: boolean; checked: string; message: string }
   // A provider people sign in with always has `signin`; `repos` says it also holds repositories (the GitHub row once its App is set up).
   signin?: boolean
@@ -2022,6 +2043,12 @@ export interface ProviderInput {
     >
   >
   github?: Partial<Pick<GithubSettings, 'baseUrl' | 'clientId'>> & { clientSecret?: string }
+  oauth2?: Partial<
+    Pick<
+      OAuth2Settings,
+      'authorizationEndpoint' | 'tokenEndpoint' | 'userinfoEndpoint' | 'scopes' | 'authMethod' | 'clientId'
+    >
+  > & { fields?: Partial<OAuth2Fields>; clientSecret?: string }
 }
 
 // What a row of the audit log is about (docs/api.md, "Audit log"): the core categories are always written, the optional
@@ -2694,6 +2721,8 @@ export interface ProviderTestResult {
   emailTrusted: boolean
   name: string
   username: string
+  // The paths of a plain OAuth 2.0 provider that found nothing in the userinfo answer ([] for any other kind).
+  unresolved: string[]
   at: string
 }
 export interface PersonMemberships {

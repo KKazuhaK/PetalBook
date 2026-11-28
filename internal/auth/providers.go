@@ -43,6 +43,9 @@ const (
 	KindOIDC   = "oidc"
 	KindSAML   = "saml"
 	KindGitHub = "github"
+	// KindOAuth2 is a plain OAuth 2.0 provider (oauth2flow.go): the site's own,
+	// and social.
+	KindOAuth2 = "oauth2"
 )
 
 const (
@@ -79,6 +82,8 @@ type provCfg struct {
 	AllowIDPInitiated  bool      `json:"allowIdpInitiated,omitempty"`
 	Certificate        string    `json:"certificate,omitempty"`
 	CertificateExpires time.Time `json:"certificateExpires,omitempty"`
+	// OAuth2 is the addresses, scopes, client and field paths of a kind oauth2.
+	OAuth2 *OAuth2Cfg `json:"oauth2,omitempty"`
 	// Groups (any kind, from 3.2): the groups claim and what it maps to.
 	Groups *GroupsCfg `json:"groups,omitempty"`
 	// A provider made from a template (3.6): the addresses and the token
@@ -401,6 +406,7 @@ type ProviderView struct {
 	OIDC    *OIDCView   `json:"oidc,omitempty"`
 	SAML    *SAMLView   `json:"saml,omitempty"`
 	GitHub  *GitHubView `json:"github,omitempty"`
+	OAuth2  *OAuth2View `json:"oauth2,omitempty"`
 	Apple   *AppleView  `json:"apple,omitempty"`
 	Groups  GroupsCfg   `json:"groups"`
 	// Signin is always true here (these are the providers people sign in with);
@@ -455,6 +461,19 @@ type SAMLView struct {
 	CertificateExpires string    `json:"certificateExpires,omitempty"`
 }
 
+// OAuth2View is the OAuth 2.0 part of a provider.
+type OAuth2View struct {
+	AuthorizationEndpoint string       `json:"authorizationEndpoint"`
+	TokenEndpoint         string       `json:"tokenEndpoint"`
+	UserinfoEndpoint      string       `json:"userinfoEndpoint"`
+	Scopes                []string     `json:"scopes"`
+	AuthMethod            string       `json:"authMethod"`
+	Fields                OAuth2Fields `json:"fields"`
+	ClientID              string       `json:"clientId"`
+	HasSecret             bool         `json:"hasSecret"`
+	RedirectURL           string       `json:"redirectUrl"`
+}
+
 // GitHubView is the GitHub part of a provider.
 type GitHubView struct {
 	BaseURL     string `json:"baseUrl"`
@@ -506,6 +525,11 @@ func (s *Service) viewOf(rt *providerRT, people int, routes map[string][]string)
 	case KindGitHub:
 		v.GitHub = &GitHubView{BaseURL: rt.cfg.BaseURL, ClientID: rt.cfg.ClientID, HasSecret: row.SecretEnc != "" || (len(rt.cfg.App) > 0 && rt.secret != ""),
 			RedirectURL: s.redirectURL(rt), App: len(rt.cfg.App) > 0}
+	case KindOAuth2:
+		if o := rt.cfg.OAuth2; o != nil {
+			v.OAuth2 = &OAuth2View{AuthorizationEndpoint: o.AuthorizationEndpoint, TokenEndpoint: o.TokenEndpoint, UserinfoEndpoint: o.UserinfoEndpoint,
+				Scopes: append([]string{}, o.Scopes...), AuthMethod: o.AuthMethod, Fields: o.Fields, ClientID: o.ClientID, HasSecret: row.SecretEnc != "", RedirectURL: s.redirectURL(rt)}
+		}
 	case KindSAML:
 		entity, acs, metaPath := s.samlURLs(row.Slug)
 		if rt.cfg.EntityID != "" {
@@ -650,6 +674,7 @@ type ProviderInput struct {
 		AllowIDPInitiated *bool   `json:"allowIdpInitiated"`
 	} `json:"saml"`
 	GitHub *GitHubInput `json:"github"`
+	OAuth2 *OAuth2Input `json:"oauth2"`
 	Groups *groupsInput `json:"groups"`
 }
 
@@ -693,6 +718,27 @@ type GitHubInput struct {
 	BaseURL      *string `json:"baseUrl"`
 	ClientID     *string `json:"clientId"`
 	ClientSecret *string `json:"clientSecret"`
+}
+
+// OAuth2Input is the OAuth 2.0 part of a POST or PATCH.
+type OAuth2Input struct {
+	AuthorizationEndpoint *string            `json:"authorizationEndpoint"`
+	TokenEndpoint         *string            `json:"tokenEndpoint"`
+	UserinfoEndpoint      *string            `json:"userinfoEndpoint"`
+	Scopes                *[]string          `json:"scopes"`
+	AuthMethod            *string            `json:"authMethod"`
+	Fields                *OAuth2FieldsInput `json:"fields"`
+	ClientID              *string            `json:"clientId"`
+	ClientSecret          *string            `json:"clientSecret"`
+}
+
+// OAuth2FieldsInput are the paths of a POST or PATCH; "" clears an optional one.
+type OAuth2FieldsInput struct {
+	Subject       *string `json:"subject"`
+	Email         *string `json:"email"`
+	EmailVerified *string `json:"emailVerified"`
+	Name          *string `json:"name"`
+	Username      *string `json:"username"`
 }
 
 // AppleInput is the team id, the key id and the key (an AuthKey_<id>.p8) that
@@ -874,6 +920,18 @@ func foldClient(in ProviderInput, kind string) (ProviderInput, error) {
 			return in, err
 		}
 		in.GitHub = &g
+	case KindOAuth2:
+		o := OAuth2Input{}
+		if in.OAuth2 != nil {
+			o = *in.OAuth2
+		}
+		if o.ClientID, err = both(in.ClientID, o.ClientID); err != nil {
+			return in, err
+		}
+		if o.ClientSecret, err = both(in.ClientSecret, o.ClientSecret); err != nil {
+			return in, err
+		}
+		in.OAuth2 = &o
 	default:
 		return in, providerInvalid("A SAML provider has no client id or secret.")
 	}
@@ -887,7 +945,7 @@ func foldClient(in ProviderInput, kind string) (ProviderInput, error) {
 // is never anyone's.
 func classFor(in ProviderInput, owner string) (string, error) {
 	cls := ClassSSO
-	if *in.Kind == KindGitHub {
+	if *in.Kind == KindGitHub || *in.Kind == KindOAuth2 {
 		cls = ClassSocial
 	}
 	if in.Class != nil {
@@ -898,8 +956,12 @@ func classFor(in ProviderInput, owner string) (string, error) {
 		return "", providerInvalid("Class is social or sso.")
 	case owner != store.ProviderSite && cls != ClassSSO:
 		return "", providerInvalid("An organisation's own provider is its single sign-on (class sso).")
+	case *in.Kind == KindOAuth2 && owner != store.ProviderSite:
+		return "", providerInvalid("A plain OAuth 2.0 provider is the site's social sign-in: an organisation's single sign-on is OpenID Connect or SAML.")
 	case *in.Kind == KindGitHub && cls != ClassSocial:
 		return "", providerInvalid("GitHub is social sign-in (class social).")
+	case *in.Kind == KindOAuth2 && cls != ClassSocial:
+		return "", providerInvalid("A plain OAuth 2.0 provider is social sign-in (class social).")
 	}
 	return cls, nil
 }
@@ -1004,8 +1066,8 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		if b.row.Owner != store.ProviderSite {
 			b.row.ID = s.newID()
 		}
-		if in.Kind == nil || !slices.Contains([]string{KindOIDC, KindSAML, KindGitHub}, *in.Kind) {
-			return nil, providerInvalid("Kind is oidc, saml or github.")
+		if in.Kind == nil || !slices.Contains([]string{KindOIDC, KindSAML, KindGitHub, KindOAuth2}, *in.Kind) {
+			return nil, providerInvalid("Kind is oidc, saml, github or oauth2.")
 		}
 		// The ids of the server's own providers belong to their kind: a site
 		// provider's id is its slug, and links, installations and remotes
@@ -1046,6 +1108,9 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		}
 		b.cfg.AuthMethods = slices.Clone(cur.cfg.AuthMethods)
 		b.cfg.Scopes = slices.Clone(cur.cfg.Scopes)
+		if cur.cfg.OAuth2 != nil {
+			b.cfg.OAuth2 = cur.cfg.OAuth2.clone()
+		}
 		if cur.cfg.Groups != nil {
 			g := *cur.cfg.Groups
 			g.Map = slices.Clone(g.Map)
@@ -1063,7 +1128,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	if err != nil {
 		return nil, err
 	}
-	if (in.OIDC != nil && kind != KindOIDC) || (in.SAML != nil && kind != KindSAML) || (in.GitHub != nil && kind != KindGitHub) ||
+	if (in.OIDC != nil && kind != KindOIDC) || (in.SAML != nil && kind != KindSAML) || (in.GitHub != nil && kind != KindGitHub) || (in.OAuth2 != nil && kind != KindOAuth2) ||
 		(in.Apple != nil && b.row.Template != TemplateApple) {
 		return nil, providerInvalid("The settings are for another kind of provider.")
 	}
@@ -1269,6 +1334,10 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			}
 		}
 		b.row.Issuer = b.cfg.BaseURL
+	case KindOAuth2:
+		if err := s.applyOAuth2(ctx, b, cur, in.OAuth2, creating, mark); err != nil {
+			return nil, err
+		}
 	case KindSAML:
 		if !strings.HasPrefix(s.cfg.PublicURL, "https://") {
 			return nil, coded(400, "saml_needs_https", "SAML needs an https --public-url: the cookie that crosses from the identity provider must be Secure.")
@@ -1357,6 +1426,9 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		b.row.Issuer = b.cfg.IDPEntityID
 	}
 	if in.Groups != nil {
+		if kind == KindOAuth2 {
+			return nil, providerInvalid("A plain OAuth 2.0 provider has no groups: the userinfo answer is not read for them.")
+		}
 		if err := s.applyGroups(ctx, b, in.Groups); err != nil {
 			return nil, err
 		}
@@ -1631,7 +1703,7 @@ func auditTenant(owner string) string {
 }
 
 func secretChanged(in ProviderInput) bool {
-	return in.ClientSecret != nil || in.OIDC != nil && in.OIDC.ClientSecret != nil || in.GitHub != nil && in.GitHub.ClientSecret != nil
+	return in.ClientSecret != nil || in.OIDC != nil && in.OIDC.ClientSecret != nil || in.GitHub != nil && in.GitHub.ClientSecret != nil || in.OAuth2 != nil && in.OAuth2.ClientSecret != nil
 }
 
 // sealSecret seals the plaintext secret into the row ("" clears it).
@@ -1668,6 +1740,11 @@ func (c provCfg) issuerFor(kind string) string {
 		return c.Issuer
 	case KindGitHub:
 		return c.BaseURL
+	case KindOAuth2:
+		if c.OAuth2 != nil {
+			return c.OAuth2.AuthorizationEndpoint
+		}
+		return ""
 	}
 	return c.IDPEntityID
 }
@@ -1820,6 +1897,8 @@ func (s *Service) fetchInto(ctx context.Context, b *built) *providerRT {
 		rt.statusOK = true
 	case KindGitHub:
 		rt.statusOK = true // nothing to fetch: GitHub's endpoints are fixed
+	case KindOAuth2:
+		rt.statusOK = true // nothing to fetch: the addresses are the administrator's
 	case KindSAML:
 		xmlText := b.cfg.MetadataXML
 		if b.cfg.MetadataURL != "" {
@@ -2089,6 +2168,28 @@ func changedValue(b *built, field string) any {
 		return b.cfg.Scopes
 	case "github.baseUrl":
 		return b.cfg.BaseURL
+	case "oauth2.authorizationEndpoint":
+		return b.cfg.OAuth2.AuthorizationEndpoint
+	case "oauth2.tokenEndpoint":
+		return b.cfg.OAuth2.TokenEndpoint
+	case "oauth2.userinfoEndpoint":
+		return b.cfg.OAuth2.UserinfoEndpoint
+	case "oauth2.scopes":
+		return b.cfg.OAuth2.Scopes
+	case "oauth2.authMethod":
+		return b.cfg.OAuth2.AuthMethod
+	case "oauth2.clientId":
+		return b.cfg.OAuth2.ClientID
+	case "oauth2.fields.subject":
+		return b.cfg.OAuth2.Fields.Subject
+	case "oauth2.fields.email":
+		return b.cfg.OAuth2.Fields.Email
+	case "oauth2.fields.emailVerified":
+		return b.cfg.OAuth2.Fields.EmailVerified
+	case "oauth2.fields.name":
+		return b.cfg.OAuth2.Fields.Name
+	case "oauth2.fields.username":
+		return b.cfg.OAuth2.Fields.Username
 	case "saml.metadataUrl":
 		return b.cfg.MetadataURL
 	case "saml.entityId":
