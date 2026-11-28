@@ -58,6 +58,9 @@ func init() {
 	// A route that declares a feature is refused while the tenant does not have it (3.6 part 6): more
 	// tenants are off in this fixture, so a site administrator is told so, as the route's key comes first.
 	routeAccessChanged["POST /api/admin/tenants"] = map[string]string{"site admin": "403 feature_off"}
+	// A tenant's administrators pin their tenant's spaces within storage.pinnedBytes (3.6 limits); the
+	// exemption in the same request stays the site's.
+	routeAccessChanged["PUT /api/admin/spaces/{space}/storage"] = map[string]string{"tenant admin": "ok"}
 }
 
 // routeAccessAdded are the routes added after the golden file was written,

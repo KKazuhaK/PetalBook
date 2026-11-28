@@ -257,7 +257,7 @@ var routeTable = []route{
 	{"GET", "/api/admin/spaces", needs(authz.TenantSpacesRead).always(), true, false, false, (*server).adminListSpaces},
 	{"GET", "/api/admin/spaces/{space}", needs(authz.TenantSpacesRead).always(), true, false, false, (*server).adminGetSpace},
 	{"POST", "/api/admin/spaces/{space}/size", needs(authz.TenantSpacesManage).always(), true, false, false, (*server).adminResizeSpace},
-	{"PUT", "/api/admin/spaces/{space}/storage", needs(authz.SiteStorageManage).always(), true, false, false, (*server).adminPutSpaceStorage},
+	{"PUT", "/api/admin/spaces/{space}/storage", needs(authz.TenantSpacesManage).always(), true, false, false, (*server).adminPutSpaceStorage},
 	{"POST", "/api/admin/spaces/{space}/evict", needs(authz.SiteStorageManage).always(), true, false, false, (*server).adminEvictSpace},
 	{"GET", "/api/admin/storage", needs(authz.TenantStorageRead).always(), true, false, false, (*server).adminGetStorage},
 	{"GET", "/api/admin/storage/people", needs(authz.TenantStorageRead).always(), true, false, false, (*server).adminListPeople},
