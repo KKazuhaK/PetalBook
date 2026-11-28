@@ -6,7 +6,7 @@ go 1.27
 ignore ./web/node_modules
 
 require (
-	github.com/KazuhaHub/authcore v0.6.3-0.20261106114224-f3886de2dcef
+	github.com/KazuhaHub/authcore v0.6.3-0.20261127233907-038409e5436a
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/crewjam/saml v0.5.1
 	github.com/descope/virtualwebauthn v1.0.5

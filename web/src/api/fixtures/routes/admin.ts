@@ -1590,7 +1590,18 @@ export const adminRoutes: Route[] = [
   [
     'GET',
     '/api/admin/tenants/:id/providers',
-    (c) => ({ providers: tenantProvidersOf(c).map((p) => withRoutes(c, p)) }),
+    (c) => ({
+      providers: tenantProvidersOf(c).map((p) => withRoutes(c, p)),
+      // The site's SSO offered to the tenant (to all, or by its list): a domain may be routed to it too (3.6 d4).
+      offered: A(c)
+        .providers.filter(
+          (p) =>
+            p.owner === 'site' &&
+            p.class === 'sso' &&
+            (p.tenants === 'all' || p.tenants === null || p.tenants.includes(c.params.id)),
+        )
+        .map((p) => ({ id: p.id, slug: p.slug, kind: p.kind, name: p.name, icon: p.icon, enabled: p.enabled })),
+    }),
   ],
   [
     'POST',

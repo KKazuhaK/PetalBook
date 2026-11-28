@@ -120,8 +120,13 @@ export const apiErrorsEn: ApiErrorTexts = {
     "This provider's client is the GitHub App's: change it with the App's settings in the repository providers.",
   auto_create_needs_org: 'Creating accounts automatically needs an organisation to be named first.',
   local_admin_required: 'An administrator who can sign in with a password has to exist first.',
+  last_local_admin:
+    'This organisation requires single sign-on: keep at least one enabled administrator of it with a password.',
   sso_only_with_registration:
     'With password sign-in off nobody could finish registering. Turn open registration off first.',
+  sso_provider_required:
+    'Turn on a single sign-on for this organisation first (its own, or one the site offers it): otherwise its people could not sign in.',
+  sso_required: 'This organisation signs its people in with single sign-on, not with a password.',
   captcha_failed: 'The human check did not pass. Try again.',
   captcha_needs_public_url:
     'A third-party captcha is checked against the public address. Start the server with --public-url.',

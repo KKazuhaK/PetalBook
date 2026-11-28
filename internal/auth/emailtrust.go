@@ -209,6 +209,15 @@ func (s *Service) mayUse(ctx context.Context, rt *providerRT, u store.User) erro
 	if rt.row.Class == ClassSSO && u.IsSiteAdmin() {
 		return nil
 	}
+	// A tenant that requires its single sign-on refuses the site's social
+	// sign-in to its people (3.6 d4); a site administrator is never refused
+	// by a tenant's setting.
+	if rt.row.Class == ClassSocial && s.socialAllowed(ctx, u.TenantID, rt.row.Slug) {
+		if !u.IsSiteAdmin() && s.tenantSSOOnly(ctx, u.TenantID) {
+			return &ssoError{code: "sso_required", user: &u}
+		}
+		return nil
+	}
 	if !s.tenantMayUse(ctx, rt, u.TenantID) {
 		return notAllowed(&u)
 	}
@@ -224,7 +233,7 @@ func (s *Service) tenantMayUse(ctx context.Context, rt *providerRT, tenant strin
 	case rt.row.Class == ClassSSO:
 		return rt.cfg.Offer != OfferList || s.provs.sharedWith(rt.row.ID, tenant)
 	case rt.row.Class == ClassSocial:
-		return s.socialAllowed(ctx, tenant, rt.row.Slug)
+		return s.socialAllowed(ctx, tenant, rt.row.Slug) && !s.tenantSSOOnly(ctx, tenant)
 	}
 	return true
 }

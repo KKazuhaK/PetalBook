@@ -35,6 +35,7 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 //   MOCK_TENANT_ADMIN=1  the administrator is a tenant administrator, not a site administrator
 //   MOCK_NARROW_ROLE=1   with MOCK_MEMBER_ADMIN: the role in Acme only reads
 //   MOCK_MEMBER_ADMIN=1  with MOCK_ORGS: a plain member who administers only Acme (the console opens in its scope)
+//   MOCK_SSO_DOMAINS=1   two email domains routed to single sign-on: the sign-in page asks for the address first
 function optionsFromEnv(): FixtureOptions {
   const mode = process.env.MOCK_MODE ?? 'single'
   if (mode === 'single') return {}
@@ -48,9 +49,31 @@ function optionsFromEnv(): FixtureOptions {
       { slug: 'campus', kind: 'saml', name: 'Campus login', order: 1 },
     ],
     invite: { token: INVITE_TOKEN, role: 'member' },
+    ...(process.env.MOCK_SSO_DOMAINS === '1' ? { ssoDomains: SSO_DOMAINS } : {}),
     // The administration console has people, a group, a plan and a space to show; the settings have a shared space.
     data: mode === 'setup' ? undefined : seedAccounts,
   }
+}
+
+// MOCK_SSO_DOMAINS=1: two verified domains routed to an organisation's single sign-on, so the sign-in page asks for
+// the address first: acme.example requires it, beta.example only offers it.
+const SSO_DOMAINS: NonNullable<FixtureOptions['ssoDomains']> = {
+  'acme.example': {
+    slug: 'acme-entra',
+    kind: 'oidc',
+    name: 'Acme Entra ID',
+    icon: 'preset:microsoft',
+    start: '/api/auth/oidc/acme-entra/start',
+    enforced: true,
+  },
+  'beta.example': {
+    slug: 'beta-sso',
+    kind: 'saml',
+    name: 'Beta 单点登录',
+    icon: '',
+    start: '/api/auth/saml/beta-sso/start',
+    enforced: false,
+  },
 }
 
 const REMOTE_STATES = ['ok', 'offline', 'rewritten', 'error'] as const

@@ -450,6 +450,15 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, access authz
 				}
 			}
 		}
+		// While the tenant's ssoOnly is on, its last administrator with a
+		// password stays one, enabled (3.6 d4).
+		if !store.IsAdminRole(role) || disabled {
+			if last, err := s.LastLocalAdmin(ctx, q, *u); err != nil {
+				return err
+			} else if last {
+				return errLastLocalAdmin()
+			}
+		}
 		if role != u.Role {
 			if err := store.SetRole(ctx, q, u.ID, role); err != nil {
 				return err
@@ -860,6 +869,11 @@ type PublicInfo struct {
 	Local     bool
 	SSO       bool
 	Passkey   bool
+	// IdentifierFirst and SSOEntry: some verified domain routes its sign-in to
+	// a provider that can sign in (3.6 d4), and the stored mode asks for the
+	// address first (dual, sso_first) or offers the SSO entry (any but
+	// local_only).
+	IdentifierFirst, SSOEntry bool
 }
 
 // PublicInfo describes the sign-in page. It asks the database nothing: the
@@ -870,6 +884,7 @@ func (s *Service) PublicInfo(ctx context.Context) PublicInfo {
 	info := PublicInfo{Providers: s.provs.publicList(), Mode: s.effectiveMode(st)}
 	info.Local, info.SSO = info.Mode != ModeSSORedirect, info.Mode != ModeLocalOnly
 	info.Passkey = s.passkeysOn(st)
+	s.identifierFirst(ctx, st, &info)
 	return info
 }
 
@@ -882,6 +897,7 @@ func (s *Service) PublicInfoFor(ctx context.Context, tenant string) PublicInfo {
 	info := PublicInfo{Providers: s.PublicProvidersFor(ctx, tenant), Mode: s.effectiveMode(st)}
 	info.Local, info.SSO = info.Mode != ModeSSORedirect, info.Mode != ModeLocalOnly
 	info.Passkey = s.passkeysOn(st)
+	s.identifierFirst(ctx, st, &info)
 	return info
 }
 
@@ -904,7 +920,7 @@ func (s *Service) waysToSignIn(ctx context.Context, q store.Q, userID, without s
 		}
 	}
 	st := s.sec(ctx)
-	if s.ssoOnlyInEffect(st) && !u.IsAdmin() {
+	if s.ssoOnlyFor(ctx, st, u.TenantID) && !u.IsAdmin() {
 		return n, nil
 	}
 	if _, err := store.GetPasswordHash(ctx, q, userID); err == nil {

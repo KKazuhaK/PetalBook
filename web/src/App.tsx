@@ -28,6 +28,7 @@ import { viewAsId } from '@/lib/viewAs'
 // their own as well.
 const PageEditor = lazy(() => import('@/pages/PageEditor'))
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
+const SsoEntryPage = lazy(() => import('@/pages/auth/SsoEntryPage'))
 const SetupPage = lazy(() => import('@/pages/auth/SetupPage'))
 const InvitePage = lazy(() => import('@/pages/auth/InvitePage'))
 const MailPage = (
@@ -181,6 +182,7 @@ function ToViewAs() {
 // useBlocker (leave-with-unsaved-text guard) needs a data router.
 const router = createBrowserRouter([
   { path: 'login', element: later(<LoginPage />) },
+  { path: 'login/sso', element: later(<SsoEntryPage />) },
   { path: 'setup', element: later(<SetupPage />) },
   { path: 'invite', element: later(<InvitePage />) },
   { path: 'register', element: later(<RegisterPage />) },

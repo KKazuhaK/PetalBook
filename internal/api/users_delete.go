@@ -105,6 +105,12 @@ func (s *server) blockersOf(ctx context.Context, actor store.User, access authz.
 			blockers = append(blockers, map[string]any{"reason": "last_admin", "message": "there must be at least one enabled administrator"})
 		}
 	}
+	// While the tenant's ssoOnly is on, its last administrator with a password stays (3.6 d4).
+	if last, err := s.auth.LastLocalAdmin(ctx, s.opt.Store.Q(), *target); err != nil {
+		return nil, false, err
+	} else if last {
+		blockers = append(blockers, map[string]any{"reason": "last_local_admin", "message": "the organization requires single sign-on: keep at least one enabled administrator of it with a password"})
+	}
 	return blockers, false, nil
 }
 
@@ -240,6 +246,9 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 		return nil, &auth.Error{Kind: auth.Forbidden, Msg: "Only a site administrator may delete a site administrator."}
 	}
 	if len(blockers) > 0 {
+		if blockers[0]["reason"] == "last_local_admin" {
+			return nil, auth.ErrLastLocalAdmin()
+		}
 		return nil, &auth.Error{Kind: auth.Conflict, Msg: blockers[0]["message"].(string)}
 	}
 	plan, err := store.PlanUserDeletion(ctx, s.opt.Store.Q(), sc, id, in.Heir, in.Transfers)

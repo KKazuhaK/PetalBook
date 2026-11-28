@@ -72,6 +72,7 @@ import type {
   AuditPurgeCount,
   AuditPurgeStarted,
   AuthProvider,
+  OfferedSSO,
   ProviderTemplate,
   Passkey,
   ProviderInput,
@@ -403,7 +404,9 @@ export const adminApi = {
     request<{ result: ProviderTestResult | null }>(`/admin/providers/${enc(id)}/test`, { signal }),
   // --- a tenant's own single sign-on (3.6 d3): the same Provider, owned by the tenant ---
   tenantProviders: (tenant: string, signal?: AbortSignal) =>
-    request<{ providers: AuthProvider[] }>(`/admin/tenants/${enc(tenant)}/providers`, { signal }),
+    request<{ providers: AuthProvider[]; offered: OfferedSSO[] }>(`/admin/tenants/${enc(tenant)}/providers`, {
+      signal,
+    }),
   createTenantProvider: (tenant: string, input: ProviderInput) =>
     request<AuthProvider>(`/admin/tenants/${enc(tenant)}/providers`, { method: 'POST', body: input }),
   patchTenantProvider: (tenant: string, id: string, input: ProviderInput) =>

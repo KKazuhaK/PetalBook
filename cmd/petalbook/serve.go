@@ -426,7 +426,8 @@ func runServe(ctx context.Context, c serveConfig) error {
 		// The tenants' verified email domains, in memory: sign-in and registration ask them.
 		dom = domains.New(domains.Options{Store: st, SiteHost: api.SiteHostOf(cfg.publicURL), Logger: log})
 		if svc, err = auth.New(ctx, auth.Config{Store: st, Spaces: mgr, PublicURL: cfg.publicURL, TrustedProxies: cfg.proxies,
-			HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log, OrgDomains: dom.OfTenant, ManagedDomain: dom.Managed}); err != nil {
+			HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log, OrgDomains: dom.OfTenant, ManagedDomain: dom.Managed,
+			RouteDomain: dom.Route, RoutedProviders: dom.RoutedProviders}); err != nil {
 			return err
 		}
 	} else {

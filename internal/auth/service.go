@@ -99,8 +99,15 @@ type Config struct {
 	// and keeps others from making organisations on it ("" for none): the
 	// in-memory map of internal/domains, asked by orgCreationBlocked.
 	ManagedDomain func(ctx context.Context, email string) string
-	Logger        *slog.Logger
-	Now           func() time.Time
+	// RouteDomain is where the domain of an address routes its sign-in: the
+	// tenant that holds it verified and the provider it is routed to (the
+	// in-memory map of internal/domains, asked by Discover).
+	RouteDomain func(ctx context.Context, email string) (tenant, provider string, ok bool)
+	// RoutedProviders is every provider some verified domain is routed to,
+	// while the domain's tenant has features.domains.
+	RoutedProviders func(ctx context.Context) []string
+	Logger          *slog.Logger
+	Now             func() time.Time
 }
 
 // Service is safe for concurrent use.

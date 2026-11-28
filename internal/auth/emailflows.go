@@ -253,6 +253,14 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		}
 	} else if len(rules.Domains) > 0 && !domainAllowed(email, rules.Domains) {
 		return coded(400, "email_domain_not_allowed", "Registration is open to some email domains only.")
+	} else if s.tenantSSOOnly(ctx, p.TenantID) {
+		// The tenant requires its single sign-on: its people come through it.
+		return s.ssoRequiredOf(ctx, email)
+	}
+	// An address of a domain whose organisation requires its single sign-on
+	// signs up there (3.6 d4): about the domain only, never the account.
+	if err := s.ssoRequired(ctx, email); err != nil {
+		return err
 	}
 	// 6. the terms
 	if (rules.TermsURL != "" || rules.PrivacyURL != "") && !p.AcceptTerms {
@@ -539,6 +547,15 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*Regis
 	if s.ssoOnlyInEffect(st) {
 		return nil, errLocalRefused()
 	}
+	// An organisation that has since come to require its single sign-on
+	// (for the tenant joined, or for the domain of the address) makes no
+	// password account: the link answers as the registration would now.
+	if !org && s.tenantSSOOnly(ctx, reg.TenantID) {
+		return nil, s.ssoRequiredOf(ctx, reg.Email)
+	}
+	if err := s.ssoRequired(ctx, reg.Email); err != nil {
+		return nil, err
+	}
 	p := CreateParams{Username: reg.Username, Name: reg.Name, Email: reg.Email, EmailVerified: true, TakeUnverified: true, Role: "member",
 		PasswordHash: reg.PasswordHash, TenantID: reg.TenantID, RegistrationID: reg.ID, Terms: reg.Terms}
 	if org {
@@ -782,7 +799,7 @@ func (s *Service) canUsePassword(ctx context.Context, q store.Q, u store.User) (
 	} else if err != nil {
 		return false, err
 	}
-	return !(s.ssoOnlyInEffect(s.sec(ctx)) && !u.IsAdmin()), nil
+	return !(s.ssoOnlyFor(ctx, s.sec(ctx), u.TenantID) && !u.IsAdmin()), nil
 }
 
 // resetLinks makes a reset link for each account that can use a password and

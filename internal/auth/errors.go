@@ -33,6 +33,8 @@ type Error struct {
 	Accounts *int
 	// Organization is the organisation a domain_managed answer names.
 	Organization *OrgRef
+	// SSO is where an sso_required answer sends the person instead.
+	SSO *Discovered
 	// Reason, on an Unauthenticated refusal of a cookie whose session ended, is
 	// why (store.EndExpired and the others); "" for any other cookie.
 	Reason string

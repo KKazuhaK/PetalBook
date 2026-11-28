@@ -16,6 +16,21 @@ export const signinZhCN = {
     noProviders: '没有可用的登录方式。请联系管理员。',
     loadFailed: '无法读取登录方式',
     ssoRetry: '重新登录',
+    // Identifier first (3.6 d4): the address or username, then the way to sign in.
+    identifier: '邮箱或用户名',
+    next: '继续',
+    finding: '正在查找登录方式…',
+    change: '更换',
+    ssoRequired: (name: string) => `你的组织要求通过 ${name} 登录。`,
+    ssoEntry: '通过单点登录（SSO）登录',
+  },
+  // The "Sign in with SSO" page (/login/sso): a work address, then the organisation's identity provider.
+  ssoEntry: {
+    title: '单点登录',
+    intro: '输入你的工作邮箱，我们会带你去组织的登录页面。',
+    email: '工作邮箱',
+    notFound: '这个地址没有设置单点登录。请用其他方式登录。',
+    needAddress: '请输入完整的邮箱地址（包含 @）。',
   },
   // Coming back after a session ended (docs/api.md, "Why a session ended").
   ended: {
@@ -44,6 +59,7 @@ export const signinZhCN = {
     invite_invalid: '邀请无效、已过期或已被用过。',
     setup_invalid: '设置令牌不对，或者已经有管理员了。',
     rate_limited: '请求太频繁，请稍等一会儿再试。',
+    sso_required: '你的组织要求通过它自己的单点登录进入，请用它登录。',
     saml_destination: 'SAML 回应没有目的地址，或目的地址不是这个服务器。',
     saml_weak_signature: 'SAML 回应的签名或摘要太弱（需要 SHA-256 或更强）。请让身份提供方改用更强的算法。',
     saml_encrypted: 'SAML 回应里的断言被加密了，而这个登录方式不接受加密的断言。',

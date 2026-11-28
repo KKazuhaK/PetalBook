@@ -247,16 +247,23 @@ type BeginParams struct {
 	Return string
 	// User is the signed-in user, for link.
 	User *store.User
-	// LoginHint is the address of the person who is coming back (the sign-in page
-	// after a session ended). An OpenID Connect provider gets it as `login_hint`;
-	// SAML and GitHub have no such parameter, so it is not sent to them.
+	// LoginHint is the address the person gave (the sign-in page after a
+	// session ended, or the address typed first, 3.6 d4). An OpenID Connect
+	// provider gets it as `login_hint`, a SAML provider whose NameID is the
+	// address as the request's Subject; GitHub has no such parameter.
 	LoginHint string
 }
 
+// plausibleHint says whether a login hint is sent at all: one line of at most
+// 254 bytes (the longest address), for OpenID Connect and SAML alike.
+func plausibleHint(hint string) bool {
+	return hint != "" && len(hint) <= 254 && !strings.ContainsFunc(hint, unicode.IsControl)
+}
+
 // withLoginHint adds `login_hint` to an authorization address, if the hint is
-// a plausible one (one line, not long). Anything else leaves the address as it is.
+// plausible. Anything else leaves the address as it is.
 func withLoginHint(authURL, hint string) string {
-	if hint == "" || len(hint) > 254 || strings.ContainsFunc(hint, unicode.IsControl) {
+	if !plausibleHint(hint) {
 		return authURL
 	}
 	u, err := url.Parse(authURL)
@@ -457,7 +464,14 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 			return nil, unavailable(err)
 		}
 		binding := randomToken()
-		req, err := prov.NewAuthnRequest(binding)
+		// The address goes as the request's Subject only to a provider whose
+		// NameID is the address (emailAddress): an identity provider that
+		// honours a Subject authenticates that subject alone (3.6 d4).
+		var opts authsaml.AuthnOptions
+		if plausibleHint(p.LoginHint) && rt.cfg.NameIDFormat == string(crewjamsaml.EmailAddressNameIDFormat) {
+			opts.SubjectHint = p.LoginHint
+		}
+		req, err := prov.NewAuthnRequestWith(binding, opts)
 		if err != nil {
 			return nil, unavailable(err)
 		}

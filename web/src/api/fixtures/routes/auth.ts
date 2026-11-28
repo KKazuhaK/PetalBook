@@ -98,6 +98,7 @@ export const authRoutes: Route[] = [
     '/api/auth/providers',
     (c) => {
       const a = c.data.auth
+      const routed = Object.keys(a.ssoDomains).length > 0
       return {
         providers: a.providers.map((p) => ({ slug: p.slug, kind: p.kind, name: p.name, icon: p.icon ?? '' })),
         loginMode: a.loginMode,
@@ -107,7 +108,18 @@ export const authRoutes: Route[] = [
         register: a.register,
         forgot: a.forgot,
         orgCreation: a.orgCreation,
+        identifierFirst: routed && (a.loginMode === 'dual' || a.loginMode === 'sso_first'),
+        ssoEntry: routed && a.loginMode !== 'local_only',
       }
+    },
+  ],
+  [
+    'POST',
+    '/api/auth/discover',
+    (c) => {
+      const email = String(c.body.email ?? '').trim()
+      const at = email.lastIndexOf('@')
+      return { sso: at < 0 ? null : (c.data.auth.ssoDomains[email.slice(at + 1).toLowerCase()] ?? null) }
     },
   ],
   ['POST', '/api/auth/:kind/:slug/start', (c) => ({ url: `/api/auth/${c.params.kind}/${c.params.slug}/callback` })],
@@ -147,6 +159,11 @@ export const authRoutes: Route[] = [
     'POST',
     '/api/register',
     (c) => {
+      // An address of a domain whose organisation requires its single sign-on signs up there (3.6 d4).
+      const email = String(c.body.email ?? '')
+      const sso = c.data.auth.ssoDomains[email.slice(email.lastIndexOf('@') + 1).toLowerCase()]
+      if (sso?.enforced)
+        throw new Refusal(409, 'sso_required', 'this organization signs its people in with single sign-on', { sso })
       c.data.sent.mail.push({ to: c.body.email, kind: c.body.org ? 'register_org' : 'register' })
       return reply(202, { sent: true })
     },

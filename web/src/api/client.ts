@@ -49,6 +49,7 @@ import type {
   ConnectAssetsInput,
   ConnectRemoteInput,
   AuthProviders,
+  DiscoveredSSO,
   Link,
   CaptchaAnswer,
   CaptchaChallenge,
@@ -791,6 +792,9 @@ export const api = {
     rememberUser(r.user.id)
     return r
   },
+  // Where an address signs in: about its domain only, never an account; a username gets null.
+  discover: (email: string) =>
+    request<{ sso: DiscoveredSSO | null }>('/auth/discover', { method: 'POST', body: { email } }),
   login: async (input: { username: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<SignInAnswer>('/login', { method: 'POST', body: input })
     markSignedIn()

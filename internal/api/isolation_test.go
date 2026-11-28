@@ -202,6 +202,7 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/invites/check":              {kind: isoExempt, reason: "the secret token of an invite is the capability, in any tenant"},
 	"POST /api/invites/accept":             {kind: isoExempt, reason: "the secret token of an invite is the capability, in any tenant"},
 	"GET /api/auth/providers":              {kind: isoExempt, reason: "public; ?tenant= is tested apart"},
+	"POST /api/auth/discover":              {kind: isoExempt, reason: "public; about the domain of an address, never an account"},
 	"GET /api/captcha":                     {kind: isoExempt, reason: "public"},
 	"GET /api/register":                    {kind: isoExempt, reason: "public: names a tenant by slug and shows only its public rules"},
 	"POST /api/register":                   {kind: isoExempt, reason: "public: makes a pending registration in the tenant named by slug; tested in the registration tests"},

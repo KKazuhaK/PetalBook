@@ -141,6 +141,11 @@ func (s *Service) SetPlanRules(ctx context.Context, planID, by string, rules map
 		}
 		rows = append(rows, row)
 	}
+	for _, t := range s.TenantsOfPlan(planID) {
+		if err := s.checkPlanFor(ctx, t, rules); err != nil {
+			return err
+		}
+	}
 	err := s.write(ctx, func(q store.Q) error {
 		for _, row := range rows {
 			var err error
@@ -157,6 +162,32 @@ func (s *Service) SetPlanRules(ctx context.Context, planID, by string, rules map
 	})
 	s.planGen.Add(1)
 	return err
+}
+
+// checkPlanFor runs the bindings' checks of a plan's values for one tenant on
+// it (signin.ssoOnly needs a single sign-on the tenant's people can use): a
+// plan is no tenant's, so its values are checked for each, never as the
+// site's.
+func (s *Service) checkPlanFor(ctx context.Context, tenant string, rules map[string]*Rule) error {
+	keys := make([]string, 0, len(rules))
+	for k := range rules {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		r, d := rules[k], s.byK[k]
+		if r == nil || r.Value == nil || d == nil {
+			continue
+		}
+		v, err := s.checkShape(ctx, d, tenant, r.Value)
+		if err != nil {
+			return err
+		}
+		if _, err := s.checkBound(ctx, d, tenant, v); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ForgetPlan tells the service that a plan and its rules were deleted
@@ -201,6 +232,20 @@ type KeyedRule struct {
 func (s *Service) SetTenantPlan(ctx context.Context, tenant, planID string) (cleared []KeyedRule, err error) {
 	if _, ok := s.st.TenantRefOf(tenant); !ok {
 		return nil, store.ErrNotFound
+	}
+	// The plan's values are checked for the tenant it is given to.
+	if planID != "" {
+		rules, err := s.PlanRules(ctx, planID)
+		if err != nil {
+			return nil, err
+		}
+		ptrs := make(map[string]*Rule, len(rules))
+		for k, r := range rules {
+			ptrs[k] = &r
+		}
+		if err := s.checkPlanFor(ctx, tenant, ptrs); err != nil {
+			return nil, err
+		}
 	}
 	var gone []store.LayeredRow
 	err = s.write(ctx, func(q store.Q) error {

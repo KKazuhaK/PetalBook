@@ -4,6 +4,7 @@
 import type {
   CaptchaProvider,
   ConsentInfo,
+  DiscoveredSSO,
   EndedReason,
   FolderBinding,
   Favorite,
@@ -105,6 +106,8 @@ export interface AuthData {
   invite: { token: string; role: 'member' | 'admin'; fill?: { username: string; name: string; email: string } } | null
   // The challenge a captcha request answers with, or none.
   captcha: { provider?: CaptchaProvider; siteKey?: string; id?: string; image?: string } | null
+  // Verified domains routed to a single sign-on (3.6 d4), by domain (lower case): what POST /api/auth/discover answers.
+  ssoDomains: Record<string, DiscoveredSSO>
   // OAuth authorization requests waiting for the person's consent, by `req`.
   consents: Record<string, ConsentInfo>
 }
@@ -162,6 +165,7 @@ export interface FixtureOptions {
   loginMode?: AuthData['loginMode']
   passkeys?: boolean
   invite?: AuthData['invite']
+  ssoDomains?: AuthData['ssoDomains']
   // Change what was built, before the server starts.
   data?: (d: FixtureData) => void
 }
@@ -267,6 +271,7 @@ export function createData(options: FixtureOptions = {}): FixtureData {
       forgot: false,
       orgCreation: false,
       invite: options.invite ?? null,
+      ssoDomains: options.ssoDomains ?? {},
       captcha: null,
       consents: {},
     },

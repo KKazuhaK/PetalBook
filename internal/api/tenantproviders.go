@@ -71,7 +71,10 @@ func (s *server) tenantListProviders(c *call) {
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Providers []auth.ProviderView `json:"providers"`
-	}{l})
+		// Offered is the site's SSO providers offered to the tenant, read
+		// only: what its domains may be routed to besides its own (3.6 d4).
+		Offered []auth.OfferedProvider `json:"offered"`
+	}{l, s.auth.OfferedSSO(c.r.Context(), t)})
 }
 
 func (s *server) tenantGetProvider(c *call) {

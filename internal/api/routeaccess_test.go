@@ -66,6 +66,8 @@ var routeAccessAdded = map[string][4]string{
 	// Social sign-in templates and Apple's form_post (3.6 d1).
 	"GET /api/admin/provider-templates":   {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 	"POST /api/auth/oidc/{slug}/callback": {"ok", "ok", "ok", "403 token_scope"},
+	// Finding the SSO by an address (3.6 d4): public.
+	"POST /api/auth/discover": {"ok", "ok", "ok", "403 token_scope"},
 	// The console's scope selector (3.6 c7).
 	// The member reaches the handler, which answers 403 for a list that is empty.
 	"GET /api/admin/scopes": {"ok", "ok", "ok", "403 token_scope"},

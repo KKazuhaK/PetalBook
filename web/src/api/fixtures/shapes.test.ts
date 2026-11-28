@@ -86,6 +86,7 @@ function probes(fx: FixtureServer): Call[] {
     ['GET', '/api/spaces/default/daily'],
     ['GET', '/api/spaces/default/checks'],
     ['GET', '/api/auth/providers'],
+    ['POST', '/api/auth/discover', { email: 'tang@nowhere.example' }],
     ['GET', '/api/captcha'],
     ['GET', '/api/account'],
     ['GET', '/api/account/links'],

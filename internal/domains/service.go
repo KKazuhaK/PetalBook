@@ -91,11 +91,17 @@ type Options struct {
 type owner struct {
 	tenant   string
 	restrict bool
+	// provider is the sign-in provider the domain is routed to (3.6 d3; ""
+	// for none).
+	provider string
 }
 
 type book struct {
 	byDomain map[string]owner
 	byTenant map[string][]string
+	// routed is every (provider, tenant) some verified domain routes: a
+	// provider counts while one of its tenants has features.domains.
+	routes []route
 }
 
 // Service is safe for concurrent use.
@@ -157,10 +163,21 @@ func (s *Service) Load(ctx context.Context) error {
 		return err
 	}
 	b := &book{byDomain: make(map[string]owner, len(rows)), byTenant: map[string][]string{}}
+	seen := map[route]bool{}
 	for _, r := range rows {
-		b.byDomain[r.Domain] = owner{r.TenantID, r.RestrictOrgs}
+		b.byDomain[r.Domain] = owner{r.TenantID, r.RestrictOrgs, r.ProviderID}
 		b.byTenant[r.TenantID] = append(b.byTenant[r.TenantID], r.Domain)
+		if rt := (route{r.ProviderID, r.TenantID}); r.ProviderID != "" && !seen[rt] {
+			seen[rt] = true
+			b.routes = append(b.routes, rt)
+		}
 	}
+	sort.Slice(b.routes, func(i, j int) bool {
+		if b.routes[i].provider != b.routes[j].provider {
+			return b.routes[i].provider < b.routes[j].provider
+		}
+		return b.routes[i].tenant < b.routes[j].tenant
+	})
 	s.book.Store(b)
 	return nil
 }
@@ -214,6 +231,36 @@ func (s *Service) Managed(ctx context.Context, email string) string {
 		return t
 	}
 	return ""
+}
+
+// Route is where the domain of an address sends its sign-in (3.6 d4): the
+// tenant that holds the domain verified and the provider the domain is routed
+// to; ok false when no tenant does (or its tenant does not have the feature
+// now), or the domain is routed nowhere. From memory: no query. Whether the
+// provider can be used now is the caller's to say.
+func (s *Service) Route(ctx context.Context, email string) (tenant, provider string, ok bool) {
+	o, found := s.book.Load().byDomain[EmailDomain(email)]
+	if !found || o.provider == "" || !s.on(ctx, o.tenant) {
+		return "", "", false
+	}
+	return o.tenant, o.provider, true
+}
+
+// route is a provider some verified domain of the tenant is routed to.
+type route struct{ provider, tenant string }
+
+// RoutedProviders is every provider a verified domain is routed to while the
+// domain's tenant has features.domains, sorted (whether the sign-in page asks
+// for the address first): a tenant that lost the feature routes nowhere, as
+// Route says. From memory and the settings' cache.
+func (s *Service) RoutedProviders(ctx context.Context) []string {
+	var out []string
+	for _, r := range s.book.Load().routes {
+		if (len(out) == 0 || out[len(out)-1] != r.provider) && s.on(ctx, r.tenant) {
+			out = append(out, r.provider)
+		}
+	}
+	return out
 }
 
 // Count is how many domains the map holds (tests, status).
@@ -323,6 +370,10 @@ func (s *Service) SetProvider(ctx context.Context, tenant, input, providerID str
 	}
 	if _, err := store.SetDomainProvider(ctx, s.opt.Store.Q(), tenant, r.Domain, providerID, s.opt.Now()); err != nil {
 		return r, err
+	}
+	if r.Verified() {
+		// The map routes the sign-in (Route).
+		s.Changed(ctx)
 	}
 	return store.GetDomain(ctx, s.opt.Store.Q(), tenant, r.Domain)
 }

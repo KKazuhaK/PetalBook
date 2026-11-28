@@ -174,6 +174,14 @@ func CountEnabledPasswordAdmins(ctx context.Context, q Q) (n int, err error) {
 	return
 }
 
+// CountTenantPasswordAdmins counts the enabled administrators of one tenant
+// who have a password (the back door an organisation that requires its single
+// sign-on keeps, 3.6 d4), over users_admins.
+func CountTenantPasswordAdmins(ctx context.Context, q Q, tenantID string) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u JOIN passwords p ON p.user_id = u.id WHERE u.tenant_id = ? AND u.role = 'admin' AND u.deleted_at IS NULL AND u.disabled = 0`, tenantID).Scan(&n)
+	return
+}
+
 // SetRole changes a user's role in their tenant. (A site administrator is an
 // administrator with the flag: the callers that demote one clear the flag too,
 // see SetSiteAdmin.)

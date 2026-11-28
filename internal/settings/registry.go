@@ -282,7 +282,9 @@ func baseDefinitions() []*Def {
 
 		// The sign-in policy.
 		{Key: SigninMode, Kind: Choice, Layers: []Layer{Site}, Default: "dual", Choices: []string{"dual", "sso_first", "sso_redirect", "local_only"}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
-		{Key: SigninSSOOnly, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
+		// An organisation may require its own single sign-on of its people
+		// (3.6 d4); it never lifts the site's.
+		{Key: SigninSSOOnly, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Allow}, TightenOnly: true},
 		{Key: SigninPasskeyRoles, Kind: List, Layers: []Layer{Site}, Default: []string{}, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		{Key: SigninLockoutEnabled, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},
 		{Key: SigninLockoutMinutes, Kind: Limit, Layers: []Layer{Site}, Default: int64(15), Min: 1, Max: 10080, Lower: Lower{Mode: Allow}, ServerWide: signinWhy},

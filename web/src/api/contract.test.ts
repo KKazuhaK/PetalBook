@@ -422,6 +422,7 @@ function suite(target: Target) {
         ['POST', '/api/login', { username: 'a', password: 'b' }],
         ['POST', '/api/setup', { token: 'x', username: 'ab', password: 'password1' }],
         ['GET', '/api/auth/providers'],
+        ['POST', '/api/auth/discover', { email: 'a@example.test' }],
         ['GET', '/api/captcha?ctx=login'],
         ['POST', '/api/auth/passkey/begin', {}],
         ['POST', '/api/auth/oidc/company/start', { intent: 'login' }],
@@ -1496,6 +1497,16 @@ function suite(target: Target) {
           expect(list.filter((s) => s.kind === 'site')).toHaveLength(1)
           const m = await newMember(uniq('sc'))
           expect((await call(m.browser, 'GET', '/api/admin/scopes')).status).toBe(403)
+        })
+
+        it('discover answers null for a username and for a domain nobody routes, and the page does not ask for the address first', async () => {
+          const anon = browser()
+          expect((await call(anon, 'POST', '/api/auth/discover', { email: 'kazuha' })).json).toEqual({ sso: null })
+          expect((await call(anon, 'POST', '/api/auth/discover', { email: 'a@nowhere.example' })).json).toEqual({
+            sso: null,
+          })
+          const pr = (await call(anon, 'GET', '/api/auth/providers')).json
+          expect([pr.identifierFirst, pr.ssoEntry]).toEqual([false, false])
         })
 
         it('mail is off until an administrator enables it: registration and reset answer as switched off, nothing can open registration', async () => {

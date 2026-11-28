@@ -607,15 +607,27 @@ type Change struct {
 }
 
 func (s *Service) check(ctx context.Context, d *Def, tenant string, v any) (any, error) {
+	v, err := s.checkShape(ctx, d, tenant, v)
+	if err != nil {
+		return nil, err
+	}
+	return s.checkBound(ctx, d, tenant, v)
+}
+
+// checkShape checks a value against the kind and range of the definition,
+// without the binding's check.
+func (s *Service) checkShape(_ context.Context, d *Def, _ string, v any) (any, error) {
 	if v == nil && d.Kind != Limit && d.Kind != Doc {
 		return nil, bad("%s needs a value", d.Key)
 	}
 	if v != nil && d.Kind != Doc {
-		var err error
-		if v, err = d.Value(v); err != nil {
-			return nil, err
-		}
+		return d.Value(v)
 	}
+	return v, nil
+}
+
+// checkBound is the binding's check of a value for the tenant.
+func (s *Service) checkBound(ctx context.Context, d *Def, tenant string, v any) (any, error) {
 	if b, ok := s.binding(d.Key); ok && b.Check != nil && v != nil {
 		return b.Check(ctx, tenant, v)
 	}

@@ -94,6 +94,17 @@ type Def struct {
 	// (profile.go) switch every such setting off, and their test fails for one
 	// that is not listed.
 	Outward bool
+	// TightenOnly is a tenant layer that may only make the setting stricter
+	// than the value above it (docs/api.md, the lower mode `tighten`): a
+	// boolean where true is the stricter, such as signin.ssoOnly. A looser
+	// value is refused when the tenant writes it; one stored before the value
+	// above became stricter is kept, not in effect.
+	TightenOnly bool
+}
+
+// looser reports whether v is looser than above under TightenOnly.
+func (d *Def) looser(v, above any) bool {
+	return d.TightenOnly && d.Kind == Bool && v == false && above == true
 }
 
 // Has reports whether the setting exists in layer l.
