@@ -419,6 +419,13 @@ describe('the new-space dialog', () => {
     expect(JSON.parse(posts()[0]!.body!).storage).toEqual({ mode: 'server' })
   })
 
+  it('says what is available, not "pick a platform", when no platform is set up', async () => {
+    await openNewSpace('off', undefined, () => {}, { effective: 'tenant', allowed: ['own', 'tenant'] })
+    await settle(() => text().includes(tg.newSpace.whereTenant), 'the organisation option')
+    expect(text()).toContain(tg.newSpace.noPlatform)
+    expect(text()).not.toContain(tg.newSpace.addressNeedsServer)
+  })
+
   it('hides a mode that cannot be used now, and says so when nothing is left', async () => {
     await openNewSpace('off', undefined, () => {}, {
       effective: 'tenant',

@@ -340,7 +340,9 @@ function NewSpaceForm({
               </label>
             )}
             {!canServer && canOwn && (
-              <p className="text-xs break-words text-muted-foreground">{tg.newSpace.addressNeedsServer}</p>
+              <p className="text-xs break-words text-muted-foreground">
+                {shownProviders.length > 0 ? tg.newSpace.addressNeedsServer : tg.newSpace.noPlatform}
+              </p>
             )}
             {places.includes(TENANT) && (
               <label className="flex cursor-pointer items-start gap-2 text-sm">

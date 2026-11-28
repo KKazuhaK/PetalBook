@@ -42,6 +42,8 @@ export const githubEn = {
     whereTenantHelp: 'The server makes a repository for the space at the place your organisation has set up.',
     addressNeedsServer:
       'Your administrators require a space to follow a remote from the start, so a plain address cannot be given afterwards: pick a platform.',
+    noPlatform:
+      'Your administrators require a space to follow a remote from the start, and no platform is set up on this server to follow one.',
     noPlace: 'The administrators allow no place to store a new space for you right now.',
     whereTenantMissing: 'Your organisation has no storage target yet.',
     whereOtherHelp:

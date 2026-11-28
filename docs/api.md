@@ -10784,8 +10784,12 @@ Option A (owner, 2026-11-23). A space is stored in one of three modes:
   the server starts. It is never the time a rule was written: a rule older than
   the grace period does not make spaces overdue at once, whether it is a later
   widening of `scope`, clearing a set requirement, or a server started with the
-  rule in place. A change starts the period afresh; ending the requirement
-  clears it.
+  rule in place. A requirement that begins, changes what is required, or widens
+  `scope` to `all` starts the period afresh; ending the requirement clears it; a
+  change of `storage.hosts` that leaves what is required alone, and narrowing
+  `scope` to `new`, keep `since`. A change whose settling failed is settled by
+  the next rebuild of the policy. A personal space is not asked about the
+  organisation's modes when its remote is removed (the site's check stays).
   `storage.remotes.scope`, `.graceDays`, the exemptions and
   `storage.localSpaces.maxBytes` keep their meaning and concern `server` spaces.
   A `tenant` space follows a remote and so meets the requirement.

@@ -96,9 +96,10 @@ func TestARuleOlderThanTheGracePeriodDoesNotMakeSpacesOverdueAtStart(t *testing.
 	})
 }
 
-// The hosts are part of the requirement: a change of them starts the grace
-// period again, and writing the same ones does not.
-func TestAChangeOfTheHostsStartsAFreshGracePeriod(t *testing.T) {
+// Only a widening of the requirement starts the grace period again: a change of
+// the hosts that leaves what is required alone, and a narrowing of the scope,
+// keep the time it began, so the spaces it covered stay covered.
+func TestOnlyAWideningOfTheRequirementStartsAFreshGracePeriod(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, storageOpts(&netSwitch{}, nil), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
@@ -106,15 +107,55 @@ func TestAChangeOfTheHostsStartsAFreshGracePeriod(t *testing.T) {
 		since := sinceOf(t, admin)
 		a.clock.Advance(5 * day)
 		admin.putSetting("storage.hosts", []string{"example.test"}).want(t, 200, "")
-		next := sinceOf(t, admin)
-		if next == since || next == "" {
-			t.Fatalf("since %q stayed %q", next, since)
+		admin.putSetting("storage.hosts", []string{"example.test", "other.test"}).want(t, 200, "")
+		if sinceOf(t, admin) != since {
+			t.Fatalf("a change of the hosts moved since from %q to %q", since, sinceOf(t, admin))
+		}
+		// Widening: scope "all" starts it now. Narrowing back does not move it.
+		admin.putSetting("storage.remotes.scope", "all").want(t, 200, "")
+		wide := sinceOf(t, admin)
+		if wide == since {
+			t.Fatal("widening the scope did not start a grace period")
 		}
 		a.clock.Advance(day)
-		admin.putSetting("storage.hosts", []string{"example.test"}).want(t, 200, "")
-		if sinceOf(t, admin) != next {
-			t.Fatal("the same hosts started it again")
+		admin.putSetting("storage.remotes.scope", "new").want(t, 200, "")
+		if sinceOf(t, admin) != wide {
+			t.Fatal("narrowing the scope moved since")
 		}
+	})
+}
+
+// A change of the settings whose settling failed (the record still names the old
+// requirement) is made good by the next rebuild: the grace period is counted from
+// then once, not again at every rebuild.
+func TestAnUnsettledRequirementIsSettledByTheNextRebuild(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, storageOpts(&netSwitch{}, nil), func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		a.setSetting(t, "storage.remotes.require", "any") // written without settling, as when the settle failed
+		first := sinceOf(t, admin)
+		if first == "" {
+			t.Fatal("no since for the requirement in force")
+		}
+		a.clock.Advance(5 * day)
+		admin.putSetting("cache.minIdleHours", 30).want(t, 200, "") // anything that rebuilds the policy
+		if sinceOf(t, admin) != first {
+			t.Fatalf("since moved from %q to %q: the record was not settled", first, sinceOf(t, admin))
+		}
+	})
+}
+
+// The personal space is made local whatever the modes say, so an organisation
+// that leaves out the server does not stop its owner taking the remote off.
+func TestAPersonalSpaceMayLoseItsRemoteWhereTheOrganisationLeavesOutTheServer(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, fgOpts, func(t *testing.T, a *acc) {
+		admin, member := fgSetup(t, a, "gitlab", a.gl)
+		a.gl.AddRepo("acme", "wiki", true)
+		base := member.personalSpaceBase()
+		member.do("PUT", base+"/remote", map[string]any{"url": a.gl.URL + "/acme/wiki.git", "credential": map[string]any{"type": "connection", "provider": "gitlab", "via": "user"}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/tenants/"+store.DefaultTenantID+"/settings/storage.mode", map[string]any{"value": "own", "lower": map[string]any{"mode": "restrict", "options": []string{"own"}}}).want(t, 200, "")
+		member.do("DELETE", base+"/remote", nil).want(t, 204, "")
 	})
 }
 

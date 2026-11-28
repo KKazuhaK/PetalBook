@@ -148,8 +148,26 @@ const sinceRecord = "storage"
 // requirement that was (policyKey): the grace period counts from Since, so a
 // change of anything the requirement is made of starts it afresh.
 type sinceRec struct {
-	Since time.Time `json:"since"`
-	Key   string    `json:"key"`
+	Since   time.Time `json:"since"`
+	Key     string    `json:"key"`
+	Require string    `json:"require"`
+	Scope   string    `json:"scope"`
+}
+
+// nextSince is when the requirement (require, scope) took its form, given the
+// record of the one before: now when it begins, changes what is required or
+// widens the scope to every space, nothing when it ends, and what it was when
+// only the hosts changed or the scope narrowed, so the spaces it covered stay
+// covered and no grace period is shortened or made longer by the change.
+func nextSince(old sinceRec, require, scope string, now time.Time) time.Time {
+	now = now.UTC().Truncate(time.Millisecond)
+	switch {
+	case require == "":
+		return time.Time{}
+	case old.Require == "", old.Require != require, old.Scope != "all" && scope == "all":
+		return now
+	}
+	return old.Since
 }
 
 // initStorage reads the Git version and binds the storage settings; it is
@@ -292,10 +310,7 @@ func (m *Manager) SettlePolicy(ctx context.Context) error {
 	if rec.Key == key {
 		return nil
 	}
-	rec = sinceRec{Key: key}
-	if require != "" {
-		rec.Since = m.opt.Now().UTC().Truncate(time.Millisecond)
-	}
+	rec = sinceRec{Key: key, Require: require, Scope: scope, Since: nextSince(rec, require, scope, m.opt.Now())}
 	raw, _ := json.Marshal(rec)
 	if _, err := store.PutRecord(ctx, m.opt.Store.Q(), sinceRecord, string(raw), m.opt.Now()); err != nil {
 		return err
@@ -329,7 +344,18 @@ func (m *Manager) Storage() StorageSettings {
 	if d := m.st.derived.Load(); d != nil && d.serial == serial {
 		return d.s
 	}
-	s := m.buildStorage(ctx, eff)
+	s, unsettled := m.buildStorage(ctx, eff)
+	if unsettled {
+		// The record of when the requirement took its form is for another
+		// requirement (a change whose settling failed, or one made while the
+		// server was down): settle it now, and take it as it then is. If that
+		// fails too the answer is not kept, so the next call tries again.
+		if err := m.SettlePolicy(ctx); err != nil {
+			m.log.Warn("could not settle when the remote requirement took its form", "error", err)
+			return s
+		}
+		s, _ = m.buildStorage(ctx, eff)
+	}
 	m.st.derived.Store(&derivedStorage{serial: serial, s: s})
 	return s
 }
@@ -341,7 +367,7 @@ func (m *Manager) defaultStorage() StorageSettings {
 	return s
 }
 
-func (m *Manager) buildStorage(ctx context.Context, eff map[string]*settings.Effective) StorageSettings {
+func (m *Manager) buildStorage(ctx context.Context, eff map[string]*settings.Effective) (StorageSettings, bool) {
 	var s StorageSettings
 	str := func(k string) string { v, _ := eff[k].Value.(string); return v }
 	num := func(k string) *int64 {
@@ -368,14 +394,14 @@ func (m *Manager) buildStorage(ctx context.Context, eff map[string]*settings.Eff
 	// period never starts in the past.
 	key := policyKey(deref(s.Remotes.Require), s.Remotes.Scope, hosts)
 	rec, err := m.readSince(ctx)
+	unsettled := false
 	switch {
 	case err != nil:
 		m.log.Warn("could not read when the remote requirement took its form", "error", err)
-		fallthrough
+		s.Remotes.Since = nextSince(sinceRec{}, deref(s.Remotes.Require), s.Remotes.Scope, m.opt.Now())
 	case rec.Key != key:
-		if s.Remotes.Require != nil {
-			s.Remotes.Since = m.opt.Now().UTC().Truncate(time.Millisecond)
-		}
+		unsettled = true
+		s.Remotes.Since = nextSince(rec, deref(s.Remotes.Require), s.Remotes.Scope, m.opt.Now())
 	default:
 		s.Remotes.Since = rec.Since
 	}
@@ -393,7 +419,7 @@ func (m *Manager) buildStorage(ctx context.Context, eff map[string]*settings.Eff
 	c.ClonesBytes = num(settings.CacheClonesBytes)
 	c.MinFreeBytes = num(settings.CacheMinFreeBytes)
 	c.AssetsBytes = *num(settings.CacheAssetsBytes)
-	return s
+	return s, unsettled
 }
 
 // StoragePolicyChanged tells the manager that the requirement of a remote
@@ -612,13 +638,15 @@ func (m *Manager) CheckRemoval(ctx context.Context, id string) error {
 	if f.Exempt || f.OwnerExempt {
 		return nil
 	}
-	m.initStorage(ctx)
-	r, err := m.st.set.StorageModeRule(ctx, f.TenantID)
-	if err != nil {
-		return err
-	}
-	if !slices.Contains(r.Allowed, ModeServer) {
-		return &RequiredError{Require: "any", Msg: "This organization requires a space to follow a remote repository; it cannot be removed."}
+	if !f.Personal { // the personal space is made local whatever the modes say
+		m.initStorage(ctx)
+		r, err := m.st.set.StorageModeRule(ctx, f.TenantID)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(r.Allowed, ModeServer) {
+			return &RequiredError{Require: "any", Msg: "This organization requires a space to follow a remote repository; it cannot be removed."}
+		}
 	}
 	p := m.remotePolicy()
 	if !p.Active() {
