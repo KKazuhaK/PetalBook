@@ -75,13 +75,9 @@ func (s *Service) AdminCreateUser(ctx context.Context, actor store.User, access 
 	} else if t.Disabled {
 		return nil, errf(Conflict, "That tenant is disabled.")
 	}
-	admins := access.Can(authz.SiteAdminsManage, "")
-	site := store.IsAdminRole(p.Role) && admins && tenantID == store.DefaultTenantID
-	if p.SiteAdmin != nil {
-		if *p.SiteAdmin && (!admins || !store.IsAdminRole(p.Role)) {
-			return nil, errf(Forbidden, "Only a site administrator can make a site administrator.")
-		}
-		site = *p.SiteAdmin
+	site, err := siteAdminFor(access, tenantID, p.Role, p.SiteAdmin)
+	if err != nil {
+		return nil, err
 	}
 	u, err := s.CreateUser(ctx, CreateParams{Username: p.Username, Name: p.Name, Email: p.Email, Role: p.Role, TenantID: tenantID, SiteAdmin: site})
 	if err != nil {
@@ -132,4 +128,20 @@ func (s *Service) mailWelcome(ctx context.Context, u store.User, lang string) st
 	}
 	s.log.Warn("could not queue a message", "reason", err.Error())
 	return MailNone
+}
+
+// siteAdminFor is whether an account made in the tenant is an administrator of
+// the whole server: as for an invite (CreateInvite), an administrator of the
+// default tenant made by who manages site administrators is one, unless
+// siteAdmin says otherwise; nobody else can make one.
+func siteAdminFor(access authz.Subject, tenantID, role string, siteAdmin *bool) (bool, error) {
+	admins := access.Can(authz.SiteAdminsManage, "")
+	site := store.IsAdminRole(role) && admins && tenantID == store.DefaultTenantID
+	if siteAdmin != nil {
+		if *siteAdmin && (!admins || !store.IsAdminRole(role)) {
+			return false, errf(Forbidden, "Only a site administrator can make a site administrator.")
+		}
+		site = *siteAdmin
+	}
+	return site, nil
 }
