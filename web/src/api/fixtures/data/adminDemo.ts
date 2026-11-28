@@ -198,7 +198,6 @@ export function seedAdminDemo(d: FixtureData) {
         kind: 'oidc',
         owner: DEFAULT_TENANT,
         name: 'Acme Entra ID（员工账号）',
-        autoCreate: true,
         oidc: {
           issuer: 'https://login.microsoftonline.com/0a1b2c3d-4e5f-6789-abcd-ef0123456789/v2.0',
           clientId: 'demo',

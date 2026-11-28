@@ -91,12 +91,13 @@ type acc struct {
 type accOpts struct {
 	public string
 	// sso, when set, is made the site provider "sso" (OpenID Connect, named
-	// "Company SSO", on) before the server starts; ssoAutoCreate is its autoCreate.
-	sso           *fakeIDP
-	ssoAutoCreate bool
-	httpc         *http.Client
-	proxies       []string
-	mod           func(*auth.Config)
+	// "Company SSO", on) before the server starts; ssoOpen opens the site's registration
+	// mode, so that its sign-ins make accounts (the default, invite, makes none).
+	sso     *fakeIDP
+	ssoOpen bool
+	httpc   *http.Client
+	proxies []string
+	mod     func(*auth.Config)
 	// maxSpaces is how many spaces one user may own (0: no limit).
 	maxSpaces int
 	// defaultQuota leaves quota.spacesPerPerson at the registry's default (3);
@@ -216,7 +217,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	}
 	if o.sso != nil {
 		var in auth.ProviderInput
-		body, _ := json.Marshal(o.sso.providerBody("sso", map[string]any{"name": "Company SSO", "enabled": true, "autoCreate": o.ssoAutoCreate}))
+		body, _ := json.Marshal(o.sso.providerBody("sso", map[string]any{"name": "Company SSO", "enabled": true}))
 		if err := json.Unmarshal(body, &in); err != nil {
 			t.Fatal(err)
 		}
@@ -231,6 +232,11 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	go svc.RunMail(mailCtx)
 	// Nearly every test signs in from one address, many times: the allowance of
 	// a minute is lifted here, and the tests of the limits set it back.
+	if o.ssoOpen {
+		if _, err := settings.Of(st).SetSite(ctx, settings.RegistrationMode, settings.Change{HasValue: true, Value: settings.RegOpen}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := settings.Of(st).SetSite(ctx, settings.SigninPerMinute, settings.Change{HasValue: true, Value: int64(100000)}); err != nil {
 		t.Fatal(err)
 	}

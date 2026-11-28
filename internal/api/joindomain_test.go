@@ -10,7 +10,7 @@ import (
 
 // Joining an organisation by email domain at sign-up (3.6 d5). B (acme) has
 // verified acme.example, C (beta) beta.example; the site's registration stays
-// closed, so every account made here is made by a domain's join mode. The DNS
+// by invitation, so every account made here is made by a domain's join mode. The DNS
 // and the clock are the fixture's; nothing waits but the mail queue.
 
 type joinFx struct {
@@ -113,7 +113,7 @@ func TestJoiningByDomainIsOffByDefaultAndExactlyTheDomain(t *testing.T) {
 		if d := f.admB.do("GET", domainsPath(f.tenB), nil).want(t, 200, "").body["domains"].([]any)[0].(map[string]any); d["join"] != "off" {
 			t.Fatalf("join is off by default: %v", d)
 		}
-		reg(anon, map[string]any{"username": "alice", "email": "alice@acme.example"}).want(t, 403, "registration_closed")
+		reg(anon, map[string]any{"username": "alice", "email": "alice@acme.example"}).want(t, 403, "invite_required")
 		if g := anon.do("GET", "/api/register", nil).want(t, 200, ""); g.body["domainJoin"] != false {
 			t.Fatal(g.raw)
 		}
@@ -131,8 +131,8 @@ func TestJoiningByDomainIsOffByDefaultAndExactlyTheDomain(t *testing.T) {
 			t.Fatal(g.raw)
 		}
 		// A subdomain is not the domain: nothing is taken, nothing is sent.
-		reg(anon, map[string]any{"username": "dee", "email": "dee@sub.acme.example"}).want(t, 403, "registration_closed")
-		reg(anon, map[string]any{"username": "eve", "email": "eve@acmeexample.test"}).want(t, 403, "registration_closed")
+		reg(anon, map[string]any{"username": "dee", "email": "dee@sub.acme.example"}).want(t, 403, "invite_required")
+		reg(anon, map[string]any{"username": "eve", "email": "eve@acmeexample.test"}).want(t, 403, "invite_required")
 		// An address on the domain is taken, but is no account until its link is followed.
 		reg(anon, map[string]any{"username": "alice", "email": "alice@acme.example"}).want(t, 202, "")
 		if !mustNoUser(a, "alice") {
@@ -141,7 +141,7 @@ func TestJoiningByDomainIsOffByDefaultAndExactlyTheDomain(t *testing.T) {
 		// Off again: the link that was sent no longer joins.
 		tok := f.srv.Wait(1)[0].Token(t)
 		setJoin(f.admB, f.tenB, "acme.example", "off").want(t, 200, "")
-		anon.do("POST", "/api/register/confirm", map[string]any{"token": tok}).want(t, 403, "registration_closed")
+		anon.do("POST", "/api/register/confirm", map[string]any{"token": tok}).want(t, 403, "invite_required")
 		if !mustNoUser(a, "alice") {
 			t.Fatal("a join mode turned off still joined")
 		}

@@ -26,7 +26,7 @@ func enableMail(t *testing.T, root *client, srv *mailtest.Server) {
 func openRegistration(t *testing.T, root *client, srv *mailtest.Server) {
 	t.Helper()
 	enableMail(t, root, srv)
-	root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
+	root.do("PUT", "/api/admin/settings/registration.mode", map[string]any{"value": "open"}).want(t, 200, "")
 }
 
 // verifiedUser makes an account with a verified address and a password.

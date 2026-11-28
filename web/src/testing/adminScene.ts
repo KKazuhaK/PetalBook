@@ -58,7 +58,7 @@ export function addTenant(d: FixtureData, slug: string, name: string, extra: Par
     name,
     default: false,
     disabled: false,
-    registration: { open: false },
+    registration: { mode: 'invite' },
     quota: { people: null, spaces: null, bytes: null, pages: null },
     plan: null,
     origin: 'admin',

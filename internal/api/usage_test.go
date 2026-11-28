@@ -697,13 +697,15 @@ func TestOverFollowsTransfersOwnersAndNewPeopleAtOnce(t *testing.T) {
 		if audited(admB, "pages") != 2 {
 			t.Fatal("the second crossing of adm-b is not in the audit log")
 		}
-		// The tenant may have 2 people; a third arrives and the tenant is over at once.
+		// The tenant may have 2 people: a third is refused, not made.
 		setTotals(t, f.root, f.tenB, map[string]any{"people": 2})
 		if got := notices(f.memB, "tenant"); len(got) != 0 {
 			t.Fatalf("%v", got)
 		}
 		inv := f.admB.do("POST", "/api/invites", map[string]any{"role": "member"}).want(t, 201, "")
-		a.newClient("").do("POST", "/api/invites/accept", map[string]any{"token": inv.body["token"], "username": "third-b", "name": "Third", "password": pw}).want(t, 201, "")
+		a.newClient("").do("POST", "/api/invites/accept", map[string]any{"token": inv.body["token"], "username": "third-b", "name": "Third", "password": pw}).want(t, 409, "people_limit")
+		// Lowered under the people it has, the tenant is over at once.
+		setTotals(t, f.root, f.tenB, map[string]any{"people": 1})
 		if got := notices(f.memB, "tenant"); len(got) != 1 || got[0] != "people" {
 			t.Fatalf("the tenant's people: %v", got)
 		}

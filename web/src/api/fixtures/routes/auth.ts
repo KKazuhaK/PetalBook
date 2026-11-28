@@ -151,6 +151,7 @@ export const authRoutes: Route[] = [
     '/api/register',
     (c) => ({
       open: c.data.auth.register,
+      mode: c.data.auth.registerMode,
       orgCreation: { open: c.data.auth.orgCreation },
       domainJoin: Object.keys(c.data.auth.joinDomains).length > 0,
       ...(c.data.auth.termsUrl ? { termsUrl: c.data.auth.termsUrl } : {}),

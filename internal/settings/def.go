@@ -100,6 +100,11 @@ type Def struct {
 	// value is refused when the tenant writes it; one stored before the value
 	// above became stricter is kept, not in effect.
 	TightenOnly bool
+	// TenantDefault, when set, is the value of a tenant that neither sets the
+	// setting nor has a rule for it: the site's own value is then for the
+	// site's own people (the default tenant) only and never flows into a
+	// tenant (registration.mode). The tenant layer shows it as the site's.
+	TenantDefault any
 }
 
 // looser reports whether v is looser than above under TightenOnly.

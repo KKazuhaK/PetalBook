@@ -223,6 +223,11 @@ export const tenantsZhCN = {
     fromFlag: '由命令行参数设定，这里只读',
     choices: {
       'storage.assets': { space: '放在空间自己的仓库里', repository: '放在单独的附件仓库里' },
+      'registration.mode': {
+        open: '开放：谁都能建号',
+        invite: '凭邀请：只有邀请链接能建号',
+        closed: '关闭：谁也不能建号',
+      },
     } as Record<string, Record<string, string>>,
     siteLock: '为这个租户强制',
     siteLockHelp: '把这个值定给这个租户，租户的管理员不能改；它高于全站的默认，低于全站对所有租户的锁定。',
@@ -278,7 +283,7 @@ export const tenantsZhCN = {
       other: '没能保存',
     },
     names: {
-      'features.registration': '开放注册',
+      'registration.mode': '谁可以建号',
       'registration.domains': '注册允许的邮箱域名',
       'signin.social': '成员可以使用的社交登录',
       'registration.perHour': '每小时注册数',
@@ -397,7 +402,8 @@ export const tenantsZhCN = {
       'storage.hosts': '一行一个主机；* 表示任何主机。服务器用 --remote-host 启动时这里只读。',
       'cache.partial': '需要支持部分克隆的 Git。',
       'daily.languages': '规范的语言标签，如 zh-Hans 和 en。',
-      'features.registration': '默认关，并且对租户锁定：要开，全站管理员先放开，再在租户上打开。需要已启用的发信。',
+      'registration.mode':
+        '默认凭邀请。全站的值管不属于任何组织的人；每个组织有自己的值，不受全站的限制。关闭会连邀请链接和邮箱域名加入也停掉。密码注册需要发信。',
       'registration.perHour': '一个租户一小时最多接受多少个注册。',
       'features.offline':
         '默认开。关掉后，同步接口答 403 feature_off（features.offline），网页端停止同步，并在下次启动或轮询时删除当前账号的离线副本。应用不对离线副本加密，人退出登录时会清掉。租户可以给自己关掉；全站的值是没有表态的租户的默认，全站可以锁定它（锁定的关对所有租户都是关）或限制为只能关。',

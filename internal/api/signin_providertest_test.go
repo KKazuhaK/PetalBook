@@ -22,7 +22,7 @@ func TestAdministratorsCanTestAProviderBeforeTurningItOn(t *testing.T) {
 		ctx := context.Background()
 		a.clock.Advance(timeSince(a))
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"enabled": false, "autoCreate": true, "mergeVerifiedEmail": true})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"enabled": false, "mergeVerifiedEmail": true})).want(t, 201, "")
 
 		// Nobody signs in at a provider that is off ...
 		c := a.newClient("")
@@ -116,8 +116,9 @@ func TestDeletingAProviderEndsTheSessionsStartedThroughIt(t *testing.T) {
 	f := newIDPFor(t, "one")
 	f.addUser("alice", testidp.Claims{"sub": "sub-alice", "preferred_username": "alice", "email": "alice@example.test", "name": "Alice A", "email_verified": true})
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"autoCreate": true})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("one", nil)).want(t, 201, "")
 		via := a.newClient("")
 		if loc := f.signIn2(t, via, "one", "alice", map[string]any{}); loc == "" || signedInAs(t, via) != "alice" {
 			t.Fatalf("not signed in: %q", loc)

@@ -73,14 +73,9 @@ func TestProviderCRUDAndRefusals(t *testing.T) {
 		bad["oidc"].(map[string]any)["issuer"] = other.srv.URL
 		bad["github"] = map[string]any{"clientId": "x"}
 		admin.do("POST", "/api/admin/providers", bad).want(t, 400, "invalid") // the settings of another kind
-		// GitHub that creates accounts must name an organisation.
-		gh := newFakeGitHub(t)
-		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "auto_create_needs_org")
-		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"autoCreate": true, "github": map[string]any{"baseUrl": gh.srv.URL, "clientId": "gh-client", "clientSecret": "gh-secret", "organizations": []string{"KazuhaHub"}}})).want(t, 201, "")
-		admin.do("PATCH", "/api/admin/providers/gh", map[string]any{"github": map[string]any{"organizations": []string{}}}).want(t, 400, "auto_create_needs_org")
 		// A change: only what is sent, the secret kept unless sent.
-		p := admin.do("PATCH", "/api/admin/providers/one", map[string]any{"name": "Renamed", "autoCreate": true, "mergeVerifiedEmail": true}).want(t, 200, "")
-		if p.body["name"] != "Renamed" || p.body["autoCreate"] != true || p.body["mergeVerifiedEmail"] != true || p.body["oidc"].(map[string]any)["hasSecret"] != true {
+		p := admin.do("PATCH", "/api/admin/providers/one", map[string]any{"name": "Renamed", "mergeVerifiedEmail": true}).want(t, 200, "")
+		if p.body["name"] != "Renamed" || p.body["mergeVerifiedEmail"] != true || p.body["oidc"].(map[string]any)["hasSecret"] != true {
 			t.Fatal(p.raw)
 		}
 		p = admin.do("PATCH", "/api/admin/providers/one", map[string]any{"oidc": map[string]any{"clientSecret": ""}}).want(t, 200, "")
@@ -98,6 +93,8 @@ func TestProviderCRUDAndRefusals(t *testing.T) {
 		if d.body["enabled"] != false || d.body["status"].(map[string]any)["ok"] != false {
 			t.Fatal(d.raw)
 		}
+		gh := newFakeGitHub(t)
+		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"github": map[string]any{"baseUrl": gh.srv.URL, "clientId": "gh-client", "clientSecret": "gh-secret"}})).want(t, 201, "")
 		// Refresh on a reachable provider records the fetch.
 		rf := admin.do("POST", "/api/admin/providers/gh/check", nil).want(t, 200, "")
 		if rf.body["status"].(map[string]any)["ok"] != true || rf.body["status"].(map[string]any)["checked"] == "" {
@@ -151,8 +148,9 @@ func TestTwoOpenIDConnectProvidersSignIn(t *testing.T) {
 	one.addUser("alice", testidp.Claims{"sub": "sub-alice", "preferred_username": "alice", "email": "alice@example.test", "name": "Alice A"})
 	two.addUser("alice", testidp.Claims{"sub": "other-sub", "preferred_username": "alice", "email": "alice@example.test", "name": "Alice A"})
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/providers", one.providerBody("one", map[string]any{"autoCreate": true, "order": 1})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", one.providerBody("one", map[string]any{"order": 1})).want(t, 201, "")
 		admin.do("POST", "/api/admin/providers", two.providerBody("two", map[string]any{"order": 0})).want(t, 201, "")
 
 		pub := a.newClient("").do("GET", "/api/auth/providers", nil).want(t, 200, "")
@@ -205,9 +203,11 @@ func TestTwoOpenIDConnectProvidersSignIn(t *testing.T) {
 		if len(ids) != 1 || ids[0].(map[string]any)["slug"] != "one" || ids[0].(map[string]any)["kind"] != "oidc" || ids[0].(map[string]any)["provider"] != "Provider one" || ids[0].(map[string]any)["label"] != "alice@example.test" {
 			t.Fatal(acct.raw)
 		}
+		// With sign-up by invitation only no provider makes an account, and an address alone never merges.
+		admin.putSetting("registration.mode", "invite").want(t, 200, "")
 		d := a.newClient("")
-		if loc := two.signIn2(t, d, "two", "alice", map[string]any{}); loc != "/login?sso_error=no_account" {
-			t.Fatal(loc) // provider two does not create accounts, and an address alone never merges
+		if loc := two.signIn2(t, d, "two", "alice", map[string]any{}); loc != "/login?sso_error=invite_required" {
+			t.Fatal(loc)
 		}
 		// Linking from the account page; a callback of the other provider does not fit this attempt.
 		if loc := two.signIn2(t, c, "two", "alice", map[string]any{"intent": "link", "return": "/settings"}); loc != "/settings" {
@@ -228,6 +228,7 @@ func TestTwoOpenIDConnectProvidersSignIn(t *testing.T) {
 			}
 		}
 		// A person who can sign in only through a provider keeps it from being deleted, unless forced.
+		admin.putSetting("registration.mode", "open").want(t, 200, "")
 		f := a.newClient("")
 		two.addUser("zed", testidp.Claims{"sub": "sub-zed", "preferred_username": "zed"})
 		one.addUser("zed", testidp.Claims{"sub": "sub-zed-1", "preferred_username": "zed"})
@@ -290,8 +291,9 @@ func TestASignInNeverAttachesToAnAccountByItsAddress(t *testing.T) {
 	set("fresh", "s-fresh", "fresh@example.test", true)
 	set("owner", "s-owner", "owner@example.test", true)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/providers", f.providerBody("m", map[string]any{"mergeVerifiedEmail": true, "autoCreate": true})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("m", map[string]any{"mergeVerifiedEmail": true})).want(t, 201, "")
 		ctx := context.Background()
 		mk := func(username, email string, verified bool) string {
 			u, err := a.auth.CreateUser(ctx, auth.CreateParams{Username: username, Role: "member", Password: pw, Email: email, EmailVerified: verified})
@@ -420,10 +422,11 @@ func TestADiscoveryDocumentIsKeptAndASignInDoesNotFetchIt(t *testing.T) {
 	counter := &countingTransport{base: anyTLSClient().Transport, n: map[string]int{}}
 	o.httpc = &http.Client{Transport: counter, Timeout: 20 * time.Second}
 	eachAccounts(t, o, func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		admin := a.setup("kazuha", pw)
 		const doc = "/.well-known/openid-configuration"
 		before := counter.count(doc)
-		admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"autoCreate": true})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("one", nil)).want(t, 201, "")
 		if counter.count(doc) != before+1 {
 			t.Fatalf("%d fetches to make a provider", counter.count(doc)-before)
 		}

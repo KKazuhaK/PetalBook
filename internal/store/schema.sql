@@ -815,7 +815,7 @@ CREATE INDEX usage_overdue ON usage(tenant_id, id) WHERE kind = 'user' AND overd
 -- it, only by the row's own id (linked_accounts). config is JSON with nothing
 -- secret in it, secret_enc the sealed client secret (or SAML signing key),
 -- cache the discovery document or the identity provider's metadata. jit_tenant
--- is where autoCreate puts new accounts; trust_email_optin is a site-owned
+-- is where its new accounts land; trust_email_optin is a site-owned
 -- custom OIDC or SAML provider's "its address is verified" switch; groups_version
 -- is bumped by every change of the row. The GitLab and Gitea rows (repos = 1)
 -- keep their state in status_ok and status_checked.
@@ -839,7 +839,6 @@ CREATE TABLE providers (
   secret_enc        TEXT COLLATE "C" NOT NULL DEFAULT '',
   config            TEXT COLLATE "C" NOT NULL DEFAULT '{}',
   jit_tenant        TEXT COLLATE "C" NOT NULL DEFAULT '',
-  auto_create       BIGINT NOT NULL DEFAULT 0,
   trust_email_optin BIGINT NOT NULL DEFAULT 0,
   cache             TEXT COLLATE "C" NOT NULL DEFAULT '',
   status_ok         BIGINT NOT NULL DEFAULT 0,

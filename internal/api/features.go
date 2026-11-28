@@ -20,7 +20,6 @@ var featureNames = map[string]string{
 	settings.FeatureTokens:          "API tokens",
 	settings.FeatureMCP:             "MCP",
 	settings.OfflineCopies:          "offline copies",
-	settings.RegistrationOpen:       "self-registration",
 	settings.FeatureTenancy:         "multiple tenants",
 	settings.FeatureAdminView:       "administrator view of spaces",
 	settings.FeatureAuditDownload:   "audit log download",

@@ -86,7 +86,8 @@ func (s *Service) DomainJoinOpen(ctx context.Context) bool {
 		return false
 	}
 	for _, t := range s.cfg.JoiningTenants(ctx) {
-		if !s.st.TenantDisabled(t) {
+		// Closed turns every join off.
+		if !s.st.TenantDisabled(t) && s.RegistrationMode(ctx, t) != settings.RegClosed {
 			return true
 		}
 	}
@@ -222,7 +223,7 @@ type ssoWaiting struct{ token string }
 
 func (e *ssoWaiting) Error() string { return "waiting" }
 
-// socialJoin is a new account of a site social provider's autoCreate whose
+// socialJoin is a new account of a site social provider whose
 // verified address is on a domain that joins people to a tenant (3.6 d5): the
 // tenant's rules as for a sign-up by password. auto makes the account in the
 // tenant with its join role; request keeps the identity in a pending request

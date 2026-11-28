@@ -333,11 +333,11 @@ func (s *Service) bindSettings() {
 		if v != true || s.sec(ctx).Login.SSOOnly {
 			return v, nil
 		}
-		// Open registration needs people who can sign in with a password.
-		if open, err := s.RegistrationOpenAnywhere(ctx); err != nil {
-			return nil, err
-		} else if open || s.OrgCreation(ctx).Open {
-			return nil, coded(400, "sso_only_with_registration", "Registration is open for a tenant; close it before refusing password sign-in.")
+		// Organisations people make are confirmed by a password sign-up, which
+		// ssoOnly refuses. (Registration of the open mode is not asked: an
+		// account of the site's own sign-ins is made by them, not by a password.)
+		if s.OrgCreation(ctx).Open {
+			return nil, coded(400, "sso_only_with_registration", "Organization creation is open; close it before refusing password sign-in.")
 		}
 		return v, s.needPasswordAdmin(ctx)
 	}})

@@ -29,7 +29,6 @@ type ProviderRow struct {
 	Class, Template string
 	Enabled         bool
 	Position        int
-	AutoCreate      bool
 	// MergeVerifiedEmail is trust_email_optin: the administrator's word that
 	// the addresses this (site-owned, custom) provider gives are verified.
 	MergeVerifiedEmail bool
@@ -44,7 +43,8 @@ type ProviderRow struct {
 	Created, Updated time.Time
 	// GroupsVersion is bumped by UpdateProvider (see LockProviderGroups).
 	GroupsVersion int64
-	// TenantID is where autoCreate puts new accounts (jit_tenant).
+	// TenantID is the tenant the provider is aimed at (jit_tenant): where its
+	// new accounts land, as that tenant's registration mode allows.
 	TenantID string
 	// Repos: the provider also holds repositories (the GitHub row once its App is
 	// set up). Read-only here: the GitHub App's own writes set it.
@@ -55,18 +55,18 @@ type ProviderRow struct {
 // written with it, and repos.
 const providerRead = providerCols + `, repos`
 
-const providerCols = `id, owner, slug, kind, class, template, name, icon, enabled, position, auto_create, trust_email_optin, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated, groups_version, jit_tenant`
+const providerCols = `id, owner, slug, kind, class, template, name, icon, enabled, position, trust_email_optin, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated, groups_version, jit_tenant`
 
 func scanProvider(sc interface{ Scan(...any) error }) (*ProviderRow, error) {
 	var p ProviderRow
-	var en, pos, ac, mv, ok, chk, cr, up, repos int64
-	if err := sc.Scan(&p.ID, &p.Owner, &p.Slug, &p.Kind, &p.Class, &p.Template, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion, &p.TenantID, &repos); err != nil {
+	var en, pos, mv, ok, chk, cr, up, repos int64
+	if err := sc.Scan(&p.ID, &p.Owner, &p.Slug, &p.Kind, &p.Class, &p.Template, &p.Name, &p.Icon, &en, &pos, &mv, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion, &p.TenantID, &repos); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	p.Enabled, p.Position, p.AutoCreate, p.MergeVerifiedEmail, p.StatusOK = en != 0, int(pos), ac != 0, mv != 0, ok != 0
+	p.Enabled, p.Position, p.MergeVerifiedEmail, p.StatusOK = en != 0, int(pos), mv != 0, ok != 0
 	p.Repos = repos != 0
 	p.StatusChecked, p.Created, p.Updated = fromMS(chk), fromMS(cr), fromMS(up)
 	if chk == 0 {
@@ -114,8 +114,8 @@ func InsertProvider(ctx context.Context, q Q, p ProviderRow) error {
 			p.Class = "social"
 		}
 	}
-	_, err := q.Exec(ctx, `INSERT INTO providers(`+providerCols+`, signin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-		p.ID, owner, p.Slug, p.Kind, p.Class, p.Template, p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), p.Issuer,
+	_, err := q.Exec(ctx, `INSERT INTO providers(`+providerCols+`, signin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+		p.ID, owner, p.Slug, p.Kind, p.Class, p.Template, p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.MergeVerifiedEmail), p.Issuer,
 		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Created), ms(p.Updated), p.GroupsVersion, tenantOrDefault(p.TenantID))
 	return err
 }
@@ -153,9 +153,9 @@ func UpdateProvider(ctx context.Context, q Q, p ProviderRow) error {
 			}
 			p.Config = merged
 		}
-		res, err := q.Exec(ctx, `UPDATE providers SET name = ?, icon = ?, enabled = ?, position = ?, auto_create = ?, trust_email_optin = ?, issuer = ?,
+		res, err := q.Exec(ctx, `UPDATE providers SET name = ?, icon = ?, enabled = ?, position = ?, trust_email_optin = ?, issuer = ?,
 			config = ?, secret_enc = ?, cache = ?, status_ok = ?, status_checked = ?, status_message = ?, updated = ?, jit_tenant = ?, groups_version = groups_version + 1 WHERE id = ? AND signin = 1`,
-			p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), p.Issuer,
+			p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.MergeVerifiedEmail), p.Issuer,
 			p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Updated), tenantOrDefault(p.TenantID), p.ID)
 		return oneRow(res, err)
 	})

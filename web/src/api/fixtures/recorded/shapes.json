@@ -1998,7 +1998,7 @@
      "spaces": "null"
     },
     "registration": {
-     "open": "boolean"
+     "mode": "string"
     },
     "slug": "string",
     "updated": "string",
@@ -2047,7 +2047,7 @@
    "spaces": "null"
   },
   "registration": {
-   "open": "boolean"
+   "mode": "string"
   },
   "slug": "string",
   "updated": "string",
@@ -2483,6 +2483,7 @@
  },
  "GET /api/register 200": {
   "domainJoin": "boolean",
+  "mode": "string",
   "open": "boolean",
   "orgCreation": {
    "open": "boolean"
@@ -2547,7 +2548,6 @@
    "features.ownDaily": "boolean",
    "features.ownSso": "boolean",
    "features.passkeys": "boolean",
-   "features.registration": "boolean",
    "features.tenancy": "boolean",
    "features.tenantAudit": "boolean",
    "features.tokens": "boolean",
@@ -4244,7 +4244,7 @@
    "spaces": "null"
   },
   "registration": {
-   "open": "boolean"
+   "mode": "string"
   },
   "slug": "string",
   "updated": "string",
@@ -5018,7 +5018,7 @@
    "spaces": "null"
   },
   "registration": {
-   "open": "boolean"
+   "mode": "string"
   },
   "slug": "string",
   "updated": "string",

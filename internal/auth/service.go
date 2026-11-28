@@ -743,6 +743,21 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	}
 	var released *store.Released
 	var stamped func()
+	// What the transaction needs of the settings is read before it: a read of
+	// them may take a second connection of the pool, and accounts made as many
+	// at a time as the pool has connections would each hold one and wait for
+	// another. Nothing inside the transaction below may touch the settings.
+	var peopleCap *int64
+	if !p.Setup && p.NewTenant == nil {
+		var err error
+		if peopleCap, err = s.PeopleCap(ctx, p.TenantID); err != nil {
+			return nil, err
+		}
+	}
+	neverReuse, err := s.neverReuseNames(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for attempt := 0; ; attempt++ {
 		u.ID = s.newID()
 		cand := u
@@ -813,7 +828,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			} else if err != nil {
 				return err
 			}
-			if barred, err := s.retiredName(ctx, q, cand.Username); err != nil {
+			if barred, err := retiredIn(ctx, q, neverReuse, cand.Username); err != nil {
 				return err
 			} else if barred {
 				return errRetiredName
@@ -827,6 +842,16 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			row.Email, row.EmailVerified = "", false
 			if err := store.InsertUser(ctx, q, row); err != nil {
 				return err
+			}
+			// The cap is checked after the row is counted: the insert locks the
+			// tenant's usage row until the transaction ends, so concurrent accounts
+			// of one tenant count one after the other (READ COMMITTED included).
+			// The first account, and an organisation's own administrator, are not
+			// held to a cap that is no one's yet.
+			if !p.Setup && p.NewTenant == nil {
+				if err := withinPeople(ctx, q, cand.TenantID, peopleCap, p.FirstOK); err != nil {
+					return err
+				}
 			}
 			if cand.Email != "" {
 				r, err := store.SetPrimaryEmail(ctx, q, cand.ID, cand.Email, cand.EmailVerified, p.VerifiedBy,
@@ -1013,6 +1038,29 @@ func (s *Service) retiredName(ctx context.Context, q store.Q, username string) (
 		return false, err
 	}
 	if v, _ := e.Value.(string); v != "never" {
+		return false, nil
+	}
+	return store.UsernameRetired(ctx, q, username)
+}
+
+// neverReuseNames says whether users.reuseUsernames is "never" (a retired name
+// is barred). It reads the settings, so it is called before a transaction.
+func (s *Service) neverReuseNames(ctx context.Context) (bool, error) {
+	st := s.settings.Load()
+	if st == nil {
+		return false, nil
+	}
+	e, err := st.Get(ctx, "", settings.UsersReuseUsernames)
+	if err != nil {
+		return false, err
+	}
+	v, _ := e.Value.(string)
+	return v == "never", nil
+}
+
+// retiredIn is whether a name is barred, with the setting already read.
+func retiredIn(ctx context.Context, q store.Q, never bool, username string) (bool, error) {
+	if !never {
 		return false, nil
 	}
 	return store.UsernameRetired(ctx, q, username)

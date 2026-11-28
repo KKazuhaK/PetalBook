@@ -36,28 +36,64 @@ func (s *Service) UseSettings(st *settings.Service) { s.settings.Store(st) }
 
 // RegRules is what a tenant's registration comes to.
 type RegRules struct {
-	Open       bool
-	Domains    []string
-	TermsURL   string
-	PrivacyURL string
-	PerHour    int
+	// Mode is the tenant's registration.mode: open, invite or closed.
+	Mode string
+	// PasswordOpen says whether a person may sign up with a password and a
+	// confirmed address: the mode is open, mail is enabled, and the tenant is
+	// not disabled.
+	PasswordOpen bool
+	Domains      []string
+	TermsURL     string
+	PrivacyURL   string
+	PerHour      int
 }
 
-// Registration reports the rules of a tenant. Registration is open when the
-// effective setting says so, mail is enabled and the server has a public
-// address. It reads the cached settings, so it costs no query.
+// RegistrationMode is the registration.mode that decides who may make an
+// account in a tenant. The site's value governs the default tenant, where
+// people who belong to no organisation are; an organisation has its own, which
+// the site's does not bound. A value that cannot be read is closed.
+func (s *Service) RegistrationMode(ctx context.Context, tenant string) string {
+	st := s.settings.Load()
+	if st == nil {
+		return settings.RegClosed
+	}
+	if tenant == store.DefaultTenantID {
+		tenant = "" // the site's own
+	}
+	eff, err := st.For(ctx, tenant)
+	if err != nil || eff[settings.RegistrationMode] == nil {
+		return settings.RegClosed
+	}
+	switch m, _ := eff[settings.RegistrationMode].Value.(string); m {
+	case settings.RegOpen, settings.RegInvite:
+		return m
+	}
+	return settings.RegClosed
+}
+
+// modeErr is the refusal of a way to make an account that the tenant's mode
+// does not allow: 403 registration_closed (closed) or invite_required (invite).
+func modeErr(mode string) *Error {
+	if mode == settings.RegInvite {
+		return coded(403, "invite_required", "An invitation is needed to make an account here.")
+	}
+	return closedErr()
+}
+
+// Registration reports the rules of a tenant. It reads the cached settings, so
+// it costs no query.
 func (s *Service) Registration(ctx context.Context, tenant string) (RegRules, error) {
 	st := s.settings.Load()
 	if st == nil {
-		return RegRules{}, nil
+		return RegRules{Mode: settings.RegClosed}, nil
 	}
 	eff, err := st.For(ctx, tenant)
 	if err != nil {
 		return RegRules{}, err
 	}
 	var r RegRules
-	r.Open, _ = eff[settings.RegistrationOpen].Value.(bool)
-	r.Open = r.Open && s.MailEnabled() && !s.st.TenantDisabled(tenant)
+	r.Mode = s.RegistrationMode(ctx, tenant)
+	r.PasswordOpen = r.Mode == settings.RegOpen && s.MailEnabled() && !s.st.TenantDisabled(tenant)
 	r.Domains = stringList(eff[settings.RegistrationDomains].Value)
 	r.TermsURL, _ = eff[settings.LegalTermsURL].Value.(string)
 	r.PrivacyURL, _ = eff[settings.LegalPrivacyURL].Value.(string)
@@ -89,31 +125,15 @@ func stringList(v any) []string {
 	return nil
 }
 
-// RegistrationOpenAnywhere says whether any tenant's effective
-// features.registration is true (the check of the security settings: ssoOnly and
-// open registration cannot go together).
-func (s *Service) RegistrationOpenAnywhere(ctx context.Context) (bool, error) {
-	st := s.settings.Load()
-	if st == nil {
-		return false, nil
-	}
-	for _, id := range s.st.TenantIDs() {
-		e, err := st.Get(ctx, id, settings.RegistrationOpen)
-		if err != nil {
-			return false, err
-		}
-		if on, _ := e.Value.(bool); on {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // SSOOnlyStored says whether ssoOnly is stored on, in effect or not.
 func (s *Service) SSOOnlyStored(ctx context.Context) bool { return s.sec(ctx).Login.SSOOnly }
 
-// CancelClosedRegistrations deletes the pending registrations of every tenant
-// whose registration is not open (closing it cancels them).
+// CancelClosedRegistrations deletes the pending registrations that their
+// tenant's mode no longer allows: all of them when it is closed, those that do
+// not come by an email-domain join when it is invite (a join is re-checked when
+// its link is used), and those of every tenant that cannot take a password
+// registration (mail off, tenant disabled) when it is open. Closing
+// organisation creation cancels those of the organisations people make.
 func (s *Service) CancelClosedRegistrations(ctx context.Context) error {
 	if !s.OrgCreation(ctx).Open {
 		if _, err := store.DeleteOrgRegistrations(ctx, s.st.Q()); err != nil {
@@ -129,10 +149,14 @@ func (s *Service) CancelClosedRegistrations(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if !r.Open {
-			if _, err := store.DeleteRegistrationsOf(ctx, s.st.Q(), id); err != nil {
-				return err
-			}
+		switch {
+		case r.Mode == settings.RegClosed:
+			_, err = store.DeleteRegistrationsOf(ctx, s.st.Q(), id, true)
+		case !r.PasswordOpen:
+			_, err = store.DeleteRegistrationsOf(ctx, s.st.Q(), id, false)
+		}
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -206,8 +230,15 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	}
 	joinTenant, joinDomain, joinMode, joining := "", "", "", false
 	if !org {
+		// A domain that joins its tenant is the organisation's own opt-in, and
+		// works under open and invite; closed turns every join off, which then
+		// leaves the person with the tenant the page named.
 		if joinTenant, joinDomain, joinMode, joining = s.joinOf(ctx, p.Email); joining {
-			p.TenantID = joinTenant
+			if s.RegistrationMode(ctx, joinTenant) == settings.RegClosed {
+				joining = false
+			} else {
+				p.TenantID = joinTenant
+			}
 		}
 	}
 	rules, err := s.Registration(ctx, p.TenantID)
@@ -223,7 +254,9 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		if !s.MailEnabled() || s.st.TenantDisabled(p.TenantID) {
 			return closedErr()
 		}
-	} else if !rules.Open {
+	} else if rules.Mode != settings.RegOpen {
+		return modeErr(rules.Mode)
+	} else if !rules.PasswordOpen {
 		return closedErr()
 	}
 	// 3. the captcha
@@ -566,7 +599,7 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, lang, ip string) (
 	// now decides (off falls back to the tenant's own registration).
 	joinMode := ""
 	if !org && reg.JoinDomain != "" {
-		if t, d, m, ok := s.joinOf(ctx, reg.Email); ok && t == reg.TenantID && d == reg.JoinDomain && s.MailEnabled() && !s.st.TenantDisabled(t) {
+		if t, d, m, ok := s.joinOf(ctx, reg.Email); ok && t == reg.TenantID && d == reg.JoinDomain && s.MailEnabled() && !s.st.TenantDisabled(t) && s.RegistrationMode(ctx, t) != settings.RegClosed {
 			joinMode = m
 		}
 	}
@@ -589,7 +622,9 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, lang, ip string) (
 		// Joined by the domain: the tenant's own registration is not asked.
 	} else if rules, err := s.Registration(ctx, reg.TenantID); err != nil {
 		return nil, err
-	} else if !rules.Open {
+	} else if rules.Mode != settings.RegOpen {
+		return nil, modeErr(rules.Mode)
+	} else if !rules.PasswordOpen {
 		return nil, closedErr()
 	} else if reg.JoinDomain != "" && len(rules.Domains) > 0 && !domainAllowed(reg.Email, rules.Domains) {
 		// A registration taken by its domain's join (which skipped the tenant's
@@ -1060,4 +1095,59 @@ func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, acce
 		return err
 	}
 	return s.sendMail(mail.KindReset, mail.PickLang(lang, ""), u.Email, mail.Vars{Link: links[0].URL, Hours: 1})
+}
+
+// codePeopleLimit is the refusal of an account that would take a tenant over
+// its quota.people.
+const codePeopleLimit = "people_limit"
+
+func errPeopleLimit() *Error {
+	return coded(409, codePeopleLimit, "This organization has reached the number of people it may have.")
+}
+
+// PeopleCap is the tenant's quota.people in force (nil: none). It reads the
+// settings, which may take a connection of the pool: call it before a
+// transaction, never inside one. A read that fails is an error: nobody is let
+// in without the cap being known.
+func (s *Service) PeopleCap(ctx context.Context, tenant string) (*int64, error) {
+	st := s.settings.Load()
+	if st == nil {
+		return nil, nil
+	}
+	e, err := st.Get(ctx, tenant, settings.QuotaPeople)
+	if err != nil {
+		return nil, err
+	}
+	var n int64
+	switch v := e.Value.(type) {
+	case int64:
+		n = v
+	case int:
+		n = int64(v)
+	case float64:
+		n = int64(v)
+	default:
+		return nil, nil
+	}
+	return &n, nil
+}
+
+// withinPeople refuses an account that took the tenant over limit (its
+// quota.people, read before the transaction; nil: none), called in the
+// transaction q that made the account, after the account was counted (so the
+// count includes it). Every way an account is made goes through CreateUser, so
+// this is the one place that holds the cap. first is the command line's account:
+// the very first of the tenant is not held to it. It touches nothing but q.
+func withinPeople(ctx context.Context, q store.Q, tenant string, limit *int64, first bool) error {
+	if limit == nil {
+		return nil
+	}
+	u, err := store.GetUsage(ctx, q, store.UsageTenant, tenant)
+	if err != nil {
+		return err
+	}
+	if u.People > *limit && !(first && u.People <= 1) {
+		return errPeopleLimit()
+	}
+	return nil
 }

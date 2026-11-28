@@ -92,6 +92,11 @@ describe("an organisation's own single sign-on", () => {
     expect(form.textContent).toContain(tp.org.slugHelp)
     expect(form.textContent).not.toContain(tp.slugHelp)
     expect(form.querySelector('[data-slot="org-trust"]')!.textContent).toBe(tp.org.trust)
+    // Whether a first sign-in makes an account is the organisation's registration mode, not a switch of the provider:
+    // a note says so and leads to the settings.
+    const note = form.querySelector<HTMLElement>('[data-slot="registration-note"]')!
+    expect(note.textContent).toContain(tp.registrationNote)
+    expect(note.querySelector('a')!.getAttribute('href')).toBe(`/admin/t/${tenant}/settings`)
     const field = (label: string) =>
       [...form.querySelectorAll('label')].find((l) => l.textContent?.startsWith(label))!.control as HTMLInputElement
     await type(field(tp.slug), 'acme-sso')
@@ -108,6 +113,7 @@ describe("an organisation's own single sign-on", () => {
       ['staff', 'admins'],
     ])
     expect(body.mergeVerifiedEmail).toBeUndefined()
+    expect('autoCreate' in body).toBe(false)
     await settle(() => section()!.querySelector('[data-provider="acme-sso"]') !== null, 'the new row')
   })
 

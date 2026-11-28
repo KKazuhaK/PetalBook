@@ -157,8 +157,9 @@ func TestAGitHubAccountConnectedOnlyForRepositoriesDoesNotSignIn(t *testing.T) {
 func TestConnectingRepositoriesNeverRemovesTheLastWayIn(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		admin := a.setup("root", pw)
-		saveGitHub(t, a, admin, map[string]any{"autoCreate": true, "github": map[string]any{"organizations": []string{"kazuhahub"}}})
+		saveGitHub(t, a, admin, nil)
 		a.fake.AddUser("new-gh")
 		a.fake.AddUser("other-gh")
 		a.fake.AddOrg("kazuhahub", "new-gh")
@@ -238,8 +239,9 @@ func TestUnlinkingGitHubDisconnectsAndUnlinks(t *testing.T) {
 func TestDeletingTheGitHubProviderAsksAboutThePeopleWhoSignInWithIt(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		admin := a.setup("root", pw)
-		saveGitHub(t, a, admin, map[string]any{"autoCreate": true, "github": map[string]any{"organizations": []string{"kazuhahub"}}})
+		saveGitHub(t, a, admin, nil)
 		a.fake.AddUser("gh-only")
 		a.fake.AddOrg("kazuhahub", "gh-only")
 		c := a.newClient("")

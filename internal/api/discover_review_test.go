@@ -19,7 +19,7 @@ func TestSignInsDoNotSpendTheTenantsOutboundShare(t *testing.T) {
 	idp := ssoIDP(t)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		f := newSSOFx(t, a, idp)
-		f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"autoCreate": true})
+		f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"_open": true})
 		share := func(v any) {
 			f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/rate.outboundPerMinute", map[string]any{"value": v}).want(t, 200, "")
 		}

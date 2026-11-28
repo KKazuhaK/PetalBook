@@ -122,7 +122,6 @@ export function adminProbes(fx: FixtureServer): Call[] {
     icon: '',
     enabled: true,
     order: 1,
-    autoCreate: false,
     mergeVerifiedEmail: false,
     tenant: '0000000000',
     tenants: 'all',

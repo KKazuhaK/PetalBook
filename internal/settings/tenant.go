@@ -264,6 +264,9 @@ func tenantEffective(d *Def, site SiteView, rules []*RuleView, tv *TenantView, n
 	if tv == nil {
 		tv = &TenantView{InEffect: true}
 	}
+	if d.TenantDefault != nil {
+		site.Value = d.TenantDefault
+	}
 	e := &Effective{Def: d, Site: site, Value: site.Value, Above: site.Lower, Source: Site, Tenant: tv}
 	views, chosen, next := ruleOf(rules, site.Lower.Mode == Lock, now)
 	if len(views) > 0 {

@@ -103,7 +103,7 @@ export const securityZhCN = {
   errors: {
     invalid: '有一个值不对。',
     local_admin_required: '没有带密码的可用管理员，不能开启“只许单点登录”。请先给一个管理员设置密码。',
-    sso_only_with_registration: '开放注册时不能开启“只许单点登录”。',
+    sso_only_with_registration: '允许自助创建组织时，不能开启“只许单点登录”。',
     captcha_site_key_required: '第三方验证码需要填站点密钥。',
     captcha_secret_required: '第三方验证码需要密钥。为别的提供方保存的密钥不算：换提供方时请在同一次保存里填新的密钥。',
     captcha_needs_public_url: '第三方验证码要核对主机名，所以服务器需要公开地址（--public-url）。',
@@ -222,8 +222,8 @@ export const securityZhCN = {
     enabledLabel: '启用',
     order: '顺序',
     orderHelp: '数字小的按钮在前。',
-    autoCreate: '第一次登录时自动建号',
-    autoCreateHelp: '没有人有这个身份时，建一个成员账号。默认关闭。',
+    registrationNote: '第一次登录是否建号，由它落到的组织的“注册方式”决定（不属于任何组织的人，看站点的）。',
+    registrationNoteLink: '注册设置',
     mergeVerifiedEmail: '信任这个提供方验证过的邮箱',
     mergeVerifiedEmailHelp:
       '开启后，这个 OpenID Connect 提供方标为已验证（email_verified）的邮箱，在这里也算已验证：新账号直接得到已验证的邮箱，未验证地占用这个邮箱的账号会失去它。它永远不会让人登录进已有账号：已经有这个邮箱的人，要在自己的账号里关联这个提供方。SAML 没有这样的声明，所以 SAML 提供方从不为邮箱担保。默认关闭；请只对你信任的提供方开启。',
@@ -267,8 +267,6 @@ export const securityZhCN = {
       appClient: '这个提供方就是服务器的 GitHub 应用：它的客户端是应用的客户端。请在“仓库”下改应用的设置。',
       clientId: '客户端 ID',
       clientSecret: '客户端密钥',
-      organizations: '组织',
-      organizationsHelp: '每行一个。不为空时，只有其中某个组织的成员能登录；开启自动建号时必须填写。',
       redirectUrl: '在 GitHub 登记的回调地址',
     },
     copy: '复制',
@@ -304,7 +302,6 @@ export const securityZhCN = {
       saml_needs_https:
         'SAML 需要 https 的公开地址（--public-url），因为从身份提供方跨站过来的 cookie 必须是 Secure 的。',
       saml_metadata_invalid: '元数据解析不了，或者里面没有签名证书、没有用于登录的重定向绑定。',
-      auto_create_needs_org: 'GitHub 提供方开启自动建号时必须指定组织，否则任何有 GitHub 账号的人都能建号。',
       public_url_required: '服务器没有公开地址（--public-url），不能添加提供方。',
       provider_in_use: '有账号只能用这个提供方登录。',
       not_found: '没有这个提供方。',

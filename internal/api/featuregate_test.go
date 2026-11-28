@@ -66,7 +66,7 @@ func TestTheSettingsAnswerSaysWhichFeaturesTheTenantHasAndIsRevalidated(t *testi
 		if tagB == "" || b.resp.Header.Get("Cache-Control") != "private, no-cache" || fb["features.tokens"] != true || fb["features.offline"] != true || fb["mail.ownSender"] != false {
 			t.Fatalf("%s: %s", tagB, b.raw)
 		}
-		if _, ok := fb["features.registration"]; !ok || fb["storage.assets"] != nil {
+		if _, ok := fb["features.mcp"]; !ok || fb["storage.assets"] != nil {
 			t.Fatalf("every feature and only features: %v", fb)
 		}
 		// Revalidated: the same version is a 304 with no body.

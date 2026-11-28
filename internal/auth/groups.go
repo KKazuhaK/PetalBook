@@ -170,9 +170,6 @@ func (s *Service) applyGroups(ctx context.Context, b *built, in *groupsInput) er
 		g.Map = slices.Clone(list)
 	}
 	if in.Allow != nil {
-		if kind == KindGitHub && len(*in.Allow) > 0 {
-			return providerInvalid("A GitHub provider is held to its organisations: groups.allow cannot be set.")
-		}
 		if len(*in.Allow) > maxGroupMap {
 			return providerInvalid("groups.allow has at most %d values.", maxGroupMap)
 		}
@@ -311,7 +308,8 @@ func (rt *providerRT) allowedByGroups(gc groupClaim) bool {
 		return false
 	}
 	for _, v := range gc.values {
-		if slices.Contains(g.Allow, v) {
+		// Organisation logins on the code host are not case-sensitive.
+		if rt.row.Kind == KindGitHub && slices.ContainsFunc(g.Allow, func(w string) bool { return strings.EqualFold(w, v) }) || slices.Contains(g.Allow, v) {
 			return true
 		}
 	}

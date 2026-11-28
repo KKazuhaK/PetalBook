@@ -97,8 +97,8 @@ func TestRegistrationRefusalsComeInTheContractsOrder(t *testing.T) {
 		srv := fakeMail(t)
 		root := a.setup("root", pw)
 		anon := a.newClient("")
-		// Closed: 403 before anything else, even with garbage fields.
-		reg(anon, map[string]any{"username": "!"}).want(t, 403, "registration_closed")
+		// By invitation only (the default): 403 before anything else, even with garbage fields.
+		reg(anon, map[string]any{"username": "!"}).want(t, 403, "invite_required")
 		openRegistration(t, root, srv)
 		root.putSetting("captcha.contexts", map[string]any{"register": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
 		// The captcha comes before the fields.
@@ -211,13 +211,13 @@ func TestClosingRegistrationCancelsThePendingOnes(t *testing.T) {
 		anon := a.newClient("")
 		reg(anon, nil).want(t, 202, "")
 		tok := srv.Wait(1)[0].Token(t)
-		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": false}).want(t, 200, "")
+		root.do("PUT", "/api/admin/settings/registration.mode", map[string]any{"value": "closed"}).want(t, 200, "")
 		if rowCount(t, a, `SELECT COUNT(*) FROM registrations`) != 0 {
 			t.Fatal("closing registration left a pending one")
 		}
 		anon.do("POST", "/api/register/confirm", map[string]any{"token": tok}).want(t, 404, "not_found")
 		// Reopening does not bring it back.
-		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
+		root.do("PUT", "/api/admin/settings/registration.mode", map[string]any{"value": "open"}).want(t, 200, "")
 		anon.do("POST", "/api/register/confirm", map[string]any{"token": tok}).want(t, 404, "not_found")
 		// Switching mail off closes it in effect, and cancels what is pending.
 		reg(anon, map[string]any{"username": "second", "email": "second@example.test"}).want(t, 202, "")
@@ -249,42 +249,35 @@ func TestAnExpiredRegistrationFreesItsUsernameAndItsLink(t *testing.T) {
 	})
 }
 
-func TestRegistrationNeedsMailAndSSOOnlyExcludesIt(t *testing.T) {
+func TestPasswordSignUpNeedsMailAndOpenDoesNot(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		srv := fakeMail(t)
 		root := a.setup("root", pw)
-		// Opening: no mail, no registration. Locked at the site for tenants, by default.
-		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
+		anon := a.newClient("")
+		// The mode may be opened without mail (an account of a sign-in needs
+		// none), but a password sign-up verifies its address by mail.
+		root.do("PUT", "/api/admin/settings/registration.mode", map[string]any{"value": "open"}).want(t, 200, "")
+		reg(anon, nil).want(t, 403, "registration_closed")
+		if g := anon.do("GET", "/api/register", nil).want(t, 200, ""); g.body["open"] != false || g.body["mode"] != "open" {
+			t.Fatal(g.raw)
+		}
 		enableMail(t, root, srv)
-		// ssoOnly stored on (with a provider so it can be set): opening is refused.
-		a.setSetting(t, "signin.ssoOnly", true)
-		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 409, "sso_only_with_registration")
-		a.setSetting(t, "signin.ssoOnly", false)
-		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
-		// The other direction: with registration open, ssoOnly cannot be switched on.
-		root.putSetting("signin.ssoOnly", true).want(t, 400, "sso_only_with_registration")
-		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": false}).want(t, 200, "")
+		reg(anon, nil).want(t, 202, "")
+		// ssoOnly and the open mode go together: the accounts of the site's
+		// sign-ins are made by them. Password registrations stay refused.
 		root.putSetting("signin.ssoOnly", true).want(t, 200, "")
 	})
 }
 
-func TestUnlockingRegistrationWhileATenantHasTrueStoredIsChecked(t *testing.T) {
+func TestAnOrganisationOpensItsOwnRegistration(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		srv := fakeMail(t)
 		f := newTenFx(t, a)
 		enableMail(t, f.root, srv)
-		// Open for tenant B at the site's pleasure, then lose the mail.
-		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
-		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
-		a.setSetting(t, "signin.ssoOnly", false)
-		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
-		f.root.do("PUT", "/api/admin/mail", map[string]any{"enabled": false}).want(t, 200, "")
-		// Unlocking now would let the stored true take effect with no mail.
-		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 409, "mail_not_configured")
-		enableMail(t, f.root, srv)
-		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
+		// The organisation's administrators open theirs; the site's stays what it is.
+		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/registration.mode", map[string]any{"value": "open"}).want(t, 200, "")
 		// A tenant registers in its own tenant, named by slug.
 		anon := a.newClient("")
 		reg(anon, map[string]any{"tenant": "acme", "username": "bee", "email": "bee@example.test"}).want(t, 202, "")
@@ -298,8 +291,8 @@ func TestUnlockingRegistrationWhileATenantHasTrueStoredIsChecked(t *testing.T) {
 		if !found {
 			t.Fatal("the account was not made in the tenant registered for")
 		}
-		// The default tenant is not open: 403 there, and 404 for an unknown or disabled slug.
-		reg(anon, map[string]any{"username": "cee"}).want(t, 403, "registration_closed")
+		// The default tenant takes the site's mode (invite): 403 there, and 404 for an unknown or disabled slug.
+		reg(anon, map[string]any{"username": "cee"}).want(t, 403, "invite_required")
 		reg(anon, map[string]any{"tenant": "nope"}).want(t, 404, "not_found")
 		anon.do("GET", "/api/register?tenant=nope", nil).want(t, 404, "not_found")
 		anon.do("GET", "/api/auth/providers?tenant=nope", nil).want(t, 404, "not_found")

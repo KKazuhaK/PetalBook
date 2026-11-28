@@ -86,7 +86,7 @@ func TestApprovingASocialRequestToJoin(t *testing.T) {
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		f := newJoinFx(t, a)
 		sf := &ssoFx{domFx: f.domFx, idp: idp}
-		f.root.do("POST", "/api/admin/providers", idp.providerBody("soc", map[string]any{"enabled": true, "class": "social", "autoCreate": true, "mergeVerifiedEmail": true})).want(t, 201, "")
+		f.root.do("POST", "/api/admin/providers", idp.providerBody("soc", map[string]any{"enabled": true, "class": "social", "mergeVerifiedEmail": true})).want(t, 201, "")
 		setJoin(f.admB, f.tenB, "acme.example", "request").want(t, 200, "")
 		ask := func(who, lang string) string {
 			t.Helper()

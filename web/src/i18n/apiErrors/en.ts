@@ -123,12 +123,11 @@ export const apiErrorsEn: ApiErrorTexts = {
   last_method: 'This is the last way to sign in. Set a password or link another sign-in method first.',
   github_app_client:
     "This provider's client is the GitHub App's: change it with the App's settings in the repository providers.",
-  auto_create_needs_org: 'Creating accounts automatically needs an organisation to be named first.',
   local_admin_required: 'An administrator who can sign in with a password has to exist first.',
   last_local_admin:
     'This organisation requires single sign-on: keep at least one enabled administrator of it with a password.',
   sso_only_with_registration:
-    'With password sign-in off nobody could finish registering. Turn open registration off first.',
+    'With password sign-in off nobody could finish registering an organisation. Turn organisation creation off first.',
   sso_provider_required:
     'Turn on a single sign-on for this organisation first (its own, or one the site offers it): otherwise its people could not sign in.',
   sso_required: 'This organisation signs its people in with single sign-on, not with a password.',
@@ -141,7 +140,10 @@ export const apiErrorsEn: ApiErrorTexts = {
 
   // Signing in and accounts.
   local_login_refused: 'This account cannot sign in with a password. Use the sign-in service.',
-  registration_closed: 'Registration is not open right now.',
+  registration_closed: 'Registration is closed here: no account can be made now, not even from an invitation.',
+  invite_required:
+    'Accounts here are made from an invitation. Open the link in yours, or ask an administrator to invite you.',
+  people_limit: 'This organisation has reached the number of people it may have.',
   password_reset_off: 'Password reset is not available.',
   email_domain_not_allowed: 'The domain of this email address is not allowed.',
   email_unverified: 'This email address has not been verified yet.',

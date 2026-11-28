@@ -56,5 +56,7 @@ and the known issues together.
   - [§15 Reserved: tables](design/reserved.md#15-reserved-tables)
 - [decisions-2026-11-24.md](design/decisions-2026-11-24.md): owner decisions of 2026-11-24
   - [§17 Owner decisions of 2026-11-24 (collected, placed by milestone)](design/decisions-2026-11-24.md#17-owner-decisions-of-2026-11-24-collected-placed-by-milestone): includes the 3.10 interface rework
+- [decisions-2026-11-27.md](design/decisions-2026-11-27.md): owner decisions of 2026-11-27
+  - [§18 The registration mode (open, invite, closed)](design/decisions-2026-11-27.md#18-the-registration-mode-open-invite-closed)
 
 See also [api.md](api.md) for the HTTP API reference.

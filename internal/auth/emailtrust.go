@@ -225,7 +225,7 @@ func (s *Service) mayUse(ctx context.Context, rt *providerRT, u store.User) erro
 }
 
 // tenantMayUse is what mayUse asks of the account's tenant alone: what an
-// account about to be made there (autoCreate, an invitation) is held to.
+// account about to be made there (a sign-in, an invitation) is held to.
 func (s *Service) tenantMayUse(ctx context.Context, rt *providerRT, tenant string) bool {
 	switch {
 	case rt.row.Owner != store.ProviderSite:

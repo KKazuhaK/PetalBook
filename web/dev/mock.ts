@@ -36,7 +36,7 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 //   MOCK_NARROW_ROLE=1   with MOCK_MEMBER_ADMIN: the role in Acme only reads
 //   MOCK_MEMBER_ADMIN=1  with MOCK_ORGS: a plain member who administers only Acme (the console opens in its scope)
 //   MOCK_SSO_DOMAINS=1   two email domains routed to single sign-on: the sign-in page asks for the address first
-//   MOCK_JOIN=1      registration is closed, but acme.example joins people to Acme at sign-up (3.6 d5); the waiting page
+//   MOCK_JOIN=1      Acme's registration mode is invite, and acme.example joins people to Acme at sign-up (3.6 d5); the waiting page
 //                    of a request is /register/waiting#demo-join
 function optionsFromEnv(): FixtureOptions {
   const mode = process.env.MOCK_MODE ?? 'single'
@@ -150,8 +150,9 @@ function seedAccounts(d: FixtureData) {
   if (process.env.MOCK_ORGS === '1') {
     d.auth.forgot = true
     d.auth.register = true
+    d.auth.registerMode = 'open'
     d.auth.orgCreation = true
-    for (const key of ['features.tenancy', 'features.registration', 'features.orgCreation']) d.features[key] = true
+    for (const key of ['features.tenancy', 'features.orgCreation']) d.features[key] = true
     for (const [slug, name] of [
       ['acme', 'Acme'],
       ['northwind', 'Northwind Traders International Holdings (Europe, Middle East and Africa)'],

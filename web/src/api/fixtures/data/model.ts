@@ -3,6 +3,7 @@
 
 import type {
   JoinStatus,
+  RegistrationMode,
   CaptchaProvider,
   ConsentInfo,
   DiscoveredSSO,
@@ -98,7 +99,10 @@ export interface AuthData {
   providers: ProviderRec[]
   loginMode: 'dual' | 'sso_first' | 'sso_redirect' | 'local_only'
   passkeys: boolean
+  // Password sign-up is offered (the registration mode is open and mail is on).
   register: boolean
+  // The registration mode of the page's tenant: what a person who cannot sign up is told.
+  registerMode: RegistrationMode
   forgot: boolean
   orgCreation: boolean
   // Some verified domain joins people to its organisation at sign-up (3.6 d5), by mode: an address there
@@ -136,7 +140,6 @@ export const DEFAULT_FEATURES: Record<string, boolean> = {
   'features.ownDaily': false,
   'features.ownSso': false,
   'features.passkeys': true,
-  'features.registration': false,
   'features.tenancy': false,
   'features.tokens': true,
   'mail.ownSender': false,
@@ -274,6 +277,7 @@ export function createData(options: FixtureOptions = {}): FixtureData {
       loginMode: options.loginMode ?? 'dual',
       passkeys: options.passkeys ?? true,
       register: false,
+      registerMode: 'invite',
       forgot: false,
       orgCreation: false,
       joinDomains: {},

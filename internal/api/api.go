@@ -829,6 +829,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusInsufficientStorage, "exports_full", "The exports already take the room they may; delete some, or wait for them to expire.")
 	case errors.Is(err, spaces.ErrOwnerRequired):
 		writeError(w, http.StatusConflict, "owner_required", "Nobody who owned the space can be put back: name an owner.")
+	case errors.Is(err, store.ErrPeopleLimit):
+		writeError(w, http.StatusConflict, "people_limit", "This organization has reached the number of people it may have.")
 	case errors.Is(err, spaces.ErrBusyItem):
 		writeError(w, http.StatusConflict, "busy", "The item is being moved, restored or purged right now.")
 	case errors.Is(err, store.ErrJobLocked):

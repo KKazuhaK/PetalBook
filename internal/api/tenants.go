@@ -28,13 +28,14 @@ type tenantRefResp struct {
 }
 
 type tenantResp struct {
-	ID           string `json:"id"`
-	Slug         string `json:"slug"`
-	Name         string `json:"name"`
-	Default      bool   `json:"default"`
-	Disabled     bool   `json:"disabled"`
+	ID       string `json:"id"`
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	Default  bool   `json:"default"`
+	Disabled bool   `json:"disabled"`
+	// Registration is the tenant's registration mode: open, invite or closed.
 	Registration struct {
-		Open bool `json:"open"`
+		Mode string `json:"mode"`
 	} `json:"registration"`
 	Quota map[string]*int64 `json:"quota"`
 	// Plan is the plan the tenant has, null for none.
@@ -64,12 +65,7 @@ func (s *server) toTenant(ctx context.Context, t store.Tenant, u store.Usage, pl
 	if r.Plan, err = s.planRef(ctx, t.ID, plans); err != nil {
 		return r, err
 	}
-	e, err := s.settings.Get(ctx, t.ID, "features.registration")
-	if err != nil {
-		return r, err
-	}
-	r.Registration.Open, _ = e.Value.(bool)
-	r.Registration.Open = r.Registration.Open && s.registrationReady()
+	r.Registration.Mode = s.auth.RegistrationMode(ctx, t.ID)
 	return r, nil
 }
 

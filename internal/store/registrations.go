@@ -121,9 +121,15 @@ func DeleteRegistration(ctx context.Context, q Q, id string) (bool, error) {
 	return n == 1, nil
 }
 
-// DeleteRegistrationsOf cancels every pending registration that joins a tenant.
-func DeleteRegistrationsOf(ctx context.Context, q Q, tenant string) (int64, error) {
-	res, err := q.Exec(ctx, `DELETE FROM registrations WHERE tenant_id = ? AND org_slug = ''`, tenant)
+// DeleteRegistrationsOf cancels the pending registrations that join a tenant:
+// every one, or with joins false only those that do not come by an email-domain
+// join.
+func DeleteRegistrationsOf(ctx context.Context, q Q, tenant string, joins bool) (int64, error) {
+	where := ""
+	if !joins {
+		where = " AND join_domain = ''"
+	}
+	res, err := q.Exec(ctx, `DELETE FROM registrations WHERE tenant_id = ? AND org_slug = ''`+where, tenant)
 	if err != nil {
 		return 0, err
 	}

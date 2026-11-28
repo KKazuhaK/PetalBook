@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
+import type { RegistrationMode } from '@/api/types'
 import type { FixtureOptions } from '@/api/fixtures/data/model'
 import { DEMO_MEMBER } from '@/api/fixtures/data/people'
 import type { FixtureServer } from '@/api/fixtures/server'
@@ -43,17 +44,20 @@ const text = () => document.body.textContent ?? ''
 const input = (selector: string) => document.querySelector<HTMLInputElement>(selector)!
 const submit = () => click(document.querySelector('form button[type="submit"]'))
 
-// What the site has switched on: mail (a password can be reset), registration, a terms page.
+// What the site has switched on: mail (a password can be reset), registration (the mode is open and mail is on; else
+// `registerMode` says what to tell a person), a terms page.
 interface Site {
   mail?: boolean
   registration?: boolean
+  registerMode?: RegistrationMode
   terms?: boolean
 }
-const site = ({ mail, registration, terms }: Site): FixtureOptions => ({
+const site = ({ mail, registration, registerMode, terms }: Site): FixtureOptions => ({
   mode: 'accounts',
   data: (d) => {
     d.auth.forgot = mail ?? false
     d.auth.register = registration ?? false
+    d.auth.registerMode = registerMode ?? (registration ? 'open' : 'invite')
     d.auth.termsUrl = terms ? 'https://notes.example.test/terms' : undefined
   },
 })
@@ -83,9 +87,17 @@ const fillRegistration = async () => {
 }
 
 describe('registration', () => {
-  it('says registration is closed while the site does not take registrations, and sends nothing', async () => {
+  it('says accounts are made from an invitation while the mode is invite, and sends nothing', async () => {
     await open('/register')
+    await settle(() => text().includes(tm.register.inviteOnly), 'the invitation-only page')
+    expect(text()).toContain(tm.register.inviteOnlyHelp)
+    expect(sentTo('register')).toHaveLength(0)
+  })
+
+  it('says registration is closed while the mode is closed, and sends nothing', async () => {
+    await open('/register', { registerMode: 'closed' })
     await settle(() => text().includes(tm.register.closed), 'the closed page')
+    expect(text()).toContain(tm.register.closedHelp)
     expect(sentTo('register')).toHaveLength(0)
   })
 

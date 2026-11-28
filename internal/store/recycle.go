@@ -71,6 +71,8 @@ var (
 	ErrRestoreConflict = errors.New("a space with that id exists")
 	// ErrBusyItem: the item is being restored, purged or moved.
 	ErrBusyItem = errors.New("the item is in use")
+	// ErrPeopleLimit: a person restored would take the tenant over its quota.people.
+	ErrPeopleLimit = errors.New("the tenant is at the number of people it may have")
 	// ErrNeedsPerson: a personal space is restored with its person.
 	ErrNeedsPerson = errors.New("a personal space is restored with its person")
 )

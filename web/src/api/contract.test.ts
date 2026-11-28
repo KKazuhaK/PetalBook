@@ -1517,6 +1517,7 @@ function suite(target: Target) {
           const anon = browser()
           expect((await call(anon, 'GET', '/api/register')).json).toEqual({
             open: false,
+            mode: 'invite',
             orgCreation: { open: false },
             domainJoin: false,
           })
@@ -1534,11 +1535,11 @@ function suite(target: Target) {
                 password: 'a-long-password',
               })
             ).json.error,
-          ).toBe('registration_closed')
+          ).toBe('invite_required')
           expect((await call(anon, 'POST', '/api/email/confirm', { token: 'nope' })).json.error).toBe('not_found')
           expect(
-            (await call(admin, 'PUT', '/api/admin/settings/features.registration', { value: true })).json.error,
-          ).toBe('mail_not_configured')
+            (await call(admin, 'PUT', '/api/admin/settings/registration.mode', { value: 'sometimes' })).json.error,
+          ).toBe('invalid')
           expect(
             (await call(admin, 'PUT', '/api/admin/mail', { security: 'none', host: 'mail.example.test' })).json.error,
           ).toBe('mail_insecure')
@@ -1820,9 +1821,10 @@ function suite(target: Target) {
           try {
             expect((await site('registration.perHour', { value: 0 })).json.error).toBe('invalid')
             expect((await site('no.such.setting', { value: 1 })).status).toBe(404)
-            // Registration cannot be opened while mail is not enabled; a tenant cannot touch what the site locks.
-            expect((await site('features.registration', { value: true })).json.error).toBe('mail_not_configured')
-            expect((await mine('features.registration', { value: true })).json.error).toBe('setting_locked')
+            // The registration mode is a choice of three, and the tenant's own (the site's does not bound it).
+            expect((await site('registration.mode', { value: 'sometimes' })).json.error).toBe('invalid')
+            expect((await mine('registration.mode', { value: 'open' })).status).toBe(200)
+            expect((await mine('registration.mode', { value: null })).status).toBe(200)
             // The site's rule for perHour: at most 50. A tenant above it is refused, below it is in effect.
             expect((await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })).status).toBe(200)
             expect((await mine('registration.perHour', { value: 80 })).json.error).toBe('setting_restricted')

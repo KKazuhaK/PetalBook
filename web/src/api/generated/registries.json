@@ -810,7 +810,7 @@
     }
   ],
   "settingKeys": [
-    "features.registration",
+    "registration.mode",
     "registration.domains",
     "registration.perHour",
     "legal.termsUrl",

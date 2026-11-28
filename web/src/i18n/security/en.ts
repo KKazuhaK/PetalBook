@@ -125,7 +125,7 @@ export const securityEn: SecurityMessages = {
     invalid: 'A value is not right.',
     local_admin_required:
       'No enabled administrator has a password, so “Single sign-on only” cannot be turned on. Give an administrator a password first.',
-    sso_only_with_registration: '“Single sign-on only” cannot be on while public registration is open.',
+    sso_only_with_registration: '“Single sign-on only” cannot be on while people can create organizations.',
     captcha_site_key_required: 'A third-party captcha needs a site key.',
     captcha_secret_required:
       'A third-party captcha needs a secret. One stored for another provider does not count: when you change provider, give the new secret in the same save.',
@@ -254,8 +254,9 @@ export const securityEn: SecurityMessages = {
     enabledLabel: 'Enabled',
     order: 'Order',
     orderHelp: 'Lower numbers come first.',
-    autoCreate: 'Create an account at the first sign-in',
-    autoCreateHelp: 'When nobody has the identity, make a member account. Off by default.',
+    registrationNote:
+      'Whether a first sign-in makes an account is decided by the registration mode of the organization it lands in (the site’s, for people who belong to none).',
+    registrationNoteLink: 'Registration settings',
     mergeVerifiedEmail: "Trust this provider's verified email addresses",
     mergeVerifiedEmailHelp:
       'When on, an address this OpenID Connect provider marks as verified (email_verified) counts as verified here: a new account gets it verified, and it moves from an account that has it unverified. It never signs anyone in to an existing account: who already has the address links this provider from their account. SAML has no such claim, so a SAML provider never vouches for an address. Off by default; only for providers you trust.',
@@ -302,9 +303,6 @@ export const securityEn: SecurityMessages = {
         'This provider is the GitHub App of the server: its client is the App’s. Change it with the App’s settings under Repositories.',
       clientId: 'Client ID',
       clientSecret: 'Client secret',
-      organizations: 'Organisations',
-      organizationsHelp:
-        'One per line. When not empty, only members of one of them may sign in; required when accounts are created automatically.',
       redirectUrl: 'Callback address to register at GitHub',
     },
     copy: 'Copy',
@@ -342,8 +340,6 @@ export const securityEn: SecurityMessages = {
         'SAML needs an https public address (--public-url): the cookie that crosses from the identity provider must be Secure.',
       saml_metadata_invalid:
         'The metadata cannot be parsed, has no signing certificate or has no redirect binding for sign-in.',
-      auto_create_needs_org:
-        'A GitHub provider that creates accounts must name an organisation: otherwise anyone with a GitHub account could make one.',
       public_url_required: 'The server has no public address (--public-url), so no provider can be added.',
       provider_in_use: 'Some accounts can only sign in with this provider.',
       not_found: 'There is no such provider.',

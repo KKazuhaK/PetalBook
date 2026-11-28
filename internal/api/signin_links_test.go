@@ -22,10 +22,11 @@ func TestACopiedIssuerNeverReachesAnotherProvidersAccounts(t *testing.T) {
 	f.idp.RedirectURIs = append(f.idp.RedirectURIs, testPublic+"/api/auth/oidc/dup/callback")
 	f.addUser("alice", testidp.Claims{"sub": "sub-alice", "preferred_username": "alice", "email": "alice@example.test", "name": "Alice A"})
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		ctx := context.Background()
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"autoCreate": true})).want(t, 201, "")
-		admin.do("POST", "/api/admin/providers", f.providerBody("dup", map[string]any{"autoCreate": true})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("one", nil)).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("dup", nil)).want(t, 201, "")
 
 		// The same issuer, the same subject, two providers: two accounts.
 		c1, c2 := a.newClient(""), a.newClient("")
@@ -235,9 +236,10 @@ func TestSAMLEmailIsRequiredFromTheAttributeOrAnEmailNameID(t *testing.T) {
 	t.Parallel()
 	idp := newFakeSAML(t, false)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
 		ctx := context.Background()
 		// No attributes given: the address attribute is mail.
-		b := idp.body(samlSlug, map[string]any{"autoCreate": true})
+		b := idp.body(samlSlug, nil)
 		b["saml"] = map[string]any{"metadataXml": idp.metadata}
 		a.clock.Advance(timeSince(a))
 		admin := a.setup("kazuha", pw)
@@ -323,7 +325,8 @@ func TestSAMLAddressIsTrustedOnlyWithTheOptInAndNeverTakenFromAVerifiedHolder(t 
 	t.Parallel()
 	idp := newFakeSAML(t, false)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
-		admin := samlFixture(t, a, idp, map[string]any{"autoCreate": true})
+		a.setSetting(t, "registration.mode", "open")
+		admin := samlFixture(t, a, idp, nil)
 		sign := func(nameID, mail string) (string, *client) {
 			t.Helper()
 			idp.reset()

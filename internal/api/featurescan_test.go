@@ -54,16 +54,15 @@ func TestNoHandlerChecksAFeatureTheTableCouldDeclare(t *testing.T) {
 	allowed := map[string]string{
 		"routes.go":          "the declarations of the table",
 		"features.go":        "the words of the refusals",
-		"settings.go":        "features.registration is a setting with checks of its own on a change; the list of what the web may read",
+		"settings.go":        "features.orgCreation and features.tenancy are settings with checks of their own on a change; the list of what the web may read",
 		"tenantoverview.go":  "the overview is not the audit's route: it shows a tenant's administrators the recent audit rows only while the tenant has features.tenantAudit",
-		"tenants.go":         "a tenant is shown with its effective registration, which is also held to mail being ready",
 		"github_installs.go": "an installation's callback is a public route: the feature is asked again there for the owner it is connected to",
 		"github_webhook.go":  "GitHub's webhook is a public route of no tenant: the site's own switch is asked there",
 		"domains.go":         "a domain's PATCH is features.domains' route; the one field of it that routes the domain to a sign-in provider also needs features.ownSso, asked for that field alone",
 		"capabilities.go":    "the preview of switching a feature off counts what each tenant uses of it: it reads the switch to know who has it, and gates nothing",
 	}
 	isKey := func(s string) bool { return strings.HasPrefix(s, "features.") || s == settings.MailOwnSender }
-	consts := []string{"RegistrationOpen", "OfflineCopies", "MailOwnSender"}
+	consts := []string{"OfflineCopies", "MailOwnSender"}
 	used := map[string]bool{}
 	files, err := filepath.Glob("*.go")
 	if err != nil {

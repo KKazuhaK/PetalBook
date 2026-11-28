@@ -20,7 +20,7 @@ func TestAGroupSyncNeverGivesASiteKey(t *testing.T) {
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		f := newSSOFx(t, a, idp)
-		id := f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"autoCreate": true})
+		id := f.orgProvider(t, f.admB, f.tenB, "acme-sso", map[string]any{"_open": true})
 		ops := f.admB.mkGroup(t, "Ops B", "synced")
 		crew := f.admB.mkGroup(t, "Crew B", "synced")
 		f.admB.do("PATCH", providersPath(f.tenB)+"/"+id, map[string]any{"groups": map[string]any{"enabled": true, "map": gmap("staff", ops, "crew", crew)}}).want(t, 200, "")
