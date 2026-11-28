@@ -60,16 +60,35 @@ func (s *server) featureGate(c *call, rt route) bool {
 		return true
 	}
 	f := rt.access.feature
-	if f != "" && !(rt.access.kind == kindKey && rt.access.key.Feature() == f) && !s.gateOne(c, f) {
+	tenant := s.gateTenant(c, rt)
+	if f != "" && !(rt.access.kind == kindKey && rt.access.key.Feature() == f) && !s.gateOne(c, tenant, f) {
 		return false
 	}
-	return rt.access.also == "" || s.gateOne(c, rt.access.also)
+	return rt.access.also == "" || s.gateOne(c, tenant, rt.access.also)
 }
 
-// gateOne checks one feature for the caller's tenant; it reports false after
-// answering.
-func (s *server) gateOne(c *call, f string) bool {
-	on, err := s.featureOn(c.r.Context(), c.tenant(), f)
+// gateTenant is the tenant whose features a route is held to: the {tenant} of
+// its path when the route has one and the caller holds the route's key there
+// (a site administrator who has not entered that tenant's scope acts on it),
+// else the tenant the request acts in. A {tenant} the caller may not reach is
+// left to the handler, which answers it as one that does not exist, so its
+// switches are never told.
+func (s *server) gateTenant(c *call, rt route) string {
+	p := c.r.PathValue("tenant")
+	if p == "" || p == c.tenant() || rt.access.kind != kindKey || !s.knownTenant(p) {
+		return c.tenant()
+	}
+	for _, k := range rt.access.keys() {
+		if c.p.Access.Can(k, p) {
+			return p
+		}
+	}
+	return c.tenant()
+}
+
+// gateOne checks one feature for a tenant; it reports false after answering.
+func (s *server) gateOne(c *call, tenant, f string) bool {
+	on, err := s.featureOn(c.r.Context(), tenant, f)
 	if err != nil {
 		// Not knowing is not "on": the handler does not run (as the hand checks it replaced answered).
 		s.fail(c.w, err)

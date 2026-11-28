@@ -27,6 +27,9 @@ import {
   type SettingStep,
 } from './settingsFold'
 import type {
+  DomainJoinMode,
+  JoinRequest,
+  JoinRequestList,
   AdminForge,
   AdminProviderItem,
   AdminProviderRow,
@@ -285,10 +288,31 @@ export const adminApi = {
     request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}/verify`, { method: 'POST' }),
   newDomainCode: (tenant: string, domain: string) =>
     request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}/code`, { method: 'POST' }),
-  patchDomain: (tenant: string, domain: string, input: { restrictOrgs?: boolean; provider?: string | null }) =>
-    request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}`, { method: 'PATCH', body: input }),
-  deleteDomain: (tenant: string, domain: string) =>
-    request<void>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}`, { method: 'DELETE' }),
+  // `confirm`: domain_join_off's token, when turning join off cancels requests that wait.
+  patchDomain: (
+    tenant: string,
+    domain: string,
+    input: { restrictOrgs?: boolean; provider?: string | null; join?: DomainJoinMode; confirm?: string },
+  ) => request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}`, { method: 'PATCH', body: input }),
+  deleteDomain: (tenant: string, domain: string, confirm?: string) =>
+    request<void>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}${confirm ? `?confirm=${enc(confirm)}` : ''}`, {
+      method: 'DELETE',
+    }),
+  // A tenant's requests to join by domain (3.6 d5): the waiting ones, or all; approve or deny one.
+  joinRequests: (tenant: string, params: { state?: 'pending' | 'all'; cursor?: string } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.state) q.set('state', params.state)
+    if (params.cursor) q.set('cursor', params.cursor)
+    const qs = q.toString()
+    return request<JoinRequestList>(`/admin/tenants/${enc(tenant)}/join-requests${qs ? `?${qs}` : ''}`, { signal })
+  },
+  approveJoin: (tenant: string, id: string) =>
+    request<JoinRequest>(`/admin/tenants/${enc(tenant)}/join-requests/${enc(id)}/approve`, {
+      method: 'POST',
+      body: {},
+    }),
+  denyJoin: (tenant: string, id: string) =>
+    request<JoinRequest>(`/admin/tenants/${enc(tenant)}/join-requests/${enc(id)}/deny`, { method: 'POST', body: {} }),
   // The site's: every tenant's claims, and the transfer of a verified one.
   siteDomains: (params: { verified?: boolean; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams()
@@ -909,9 +933,11 @@ export function useDomainChange(tenant: string) {
     mutationFn: (
       a:
         | { op: 'claim'; domain: string }
-        | { op: 'verify' | 'code' | 'delete'; domain: string }
+        | { op: 'verify' | 'code'; domain: string }
+        | { op: 'delete'; domain: string; confirm?: string }
         | { op: 'restrict'; domain: string; restrictOrgs: boolean }
-        | { op: 'route'; domain: string; provider: string | null },
+        | { op: 'route'; domain: string; provider: string | null }
+        | { op: 'join'; domain: string; join: DomainJoinMode; confirm?: string },
     ): Promise<TenantDomain | null> => {
       switch (a.op) {
         case 'claim':
@@ -924,13 +950,17 @@ export function useDomainChange(tenant: string) {
           return adminApi.patchDomain(tenant, a.domain, { restrictOrgs: a.restrictOrgs })
         case 'route':
           return adminApi.patchDomain(tenant, a.domain, { provider: a.provider })
+        case 'join':
+          return adminApi.patchDomain(tenant, a.domain, { join: a.join, ...(a.confirm ? { confirm: a.confirm } : {}) })
         case 'delete':
-          return adminApi.deleteDomain(tenant, a.domain).then(() => null)
+          return adminApi.deleteDomain(tenant, a.domain, a.confirm).then(() => null)
       }
     },
     onSuccess: (d, a) => {
       // A route shows on the provider too (its domains).
       if (a.op === 'route') void qc.invalidateQueries({ queryKey: keys.tenantProviders(tenant) })
+      // Turning join off, or removing the domain, cancels the requests that waited by it.
+      if (a.op === 'join' || a.op === 'delete') void qc.invalidateQueries({ queryKey: keys.joinRequests(tenant) })
       if (d) putDomain(qc, tenant, d)
       else
         qc.setQueryData<TenantDomainList>(keys.tenantDomains(tenant), (old) =>
@@ -939,6 +969,33 @@ export function useDomainChange(tenant: string) {
     },
     // A refused check may still have been recorded (another tenant holds the domain): the list is read again.
     onError: () => void qc.invalidateQueries({ queryKey: keys.tenantDomains(tenant) }),
+  })
+}
+
+// A tenant's requests to join by domain (3.6 d5), newest first: the waiting ones, or every one, page after page.
+export function useJoinRequests(tenant: string, all: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...keys.joinRequests(tenant), all ? 'all' : 'pending'],
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) =>
+      adminApi.joinRequests(tenant, { state: all ? 'all' : 'pending', cursor: pageParam || undefined }, signal),
+    getNextPageParam: (last) => last.next ?? undefined,
+    enabled: tenant !== '',
+    staleTime: 10_000,
+  })
+}
+export function useJoinDecision(tenant: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, approve }: { id: string; approve: boolean }) =>
+      approve ? adminApi.approveJoin(tenant, id) : adminApi.denyJoin(tenant, id),
+    // An approval makes an account: the people's lists and counts move too.
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.joinRequests(tenant) }),
+        qc.invalidateQueries({ queryKey: ['users'] }),
+        qc.invalidateQueries({ queryKey: keys.tenants }),
+      ]),
   })
 }
 

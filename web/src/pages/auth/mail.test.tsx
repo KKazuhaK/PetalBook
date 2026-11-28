@@ -7,7 +7,14 @@ import type { FixtureServer } from '@/api/fixtures/server'
 import { tm } from '@/i18n/mail'
 import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import LoginPage from './LoginPage'
-import { ForgotPage, RegisterConfirmPage, RegisterPage, ResetPasswordPage, VerifyEmailPage } from './MailPages'
+import {
+  ForgotPage,
+  RegisterConfirmPage,
+  RegisterPage,
+  RegisterWaitingPage,
+  ResetPasswordPage,
+  VerifyEmailPage,
+} from './MailPages'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
@@ -25,6 +32,7 @@ const routes = (
     <Route path="/login" element={<LoginPage />} />
     <Route path="/register" element={<RegisterPage />} />
     <Route path="/register/confirm" element={<RegisterConfirmPage />} />
+    <Route path="/register/waiting" element={<RegisterWaitingPage />} />
     <Route path="/verify-email" element={<VerifyEmailPage />} />
     <Route path="/forgot" element={<ForgotPage />} />
     <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -140,6 +148,67 @@ describe('registration', () => {
     })
     await settle(() => text().includes(tm.confirm.orgReady('Acme')), 'the welcome')
     expect(text()).toContain(tm.confirm.orgBody('Acme', 'acme'))
+  })
+
+  it('joining by email domain: the form is offered while registration is closed, and the link says which organisation was joined', async () => {
+    await open('/register', {
+      mail: true,
+      scene: (fx) => {
+        fx.data.auth.joinDomains['acme.example'] = { mode: 'auto', tenant: { slug: 'acme', name: 'Acme' } }
+      },
+    })
+    await settle(() => input('input[autocomplete="username"]') !== null, 'the form')
+    expect(text()).toContain(tm.register.domainOnly)
+    await type(input('input[autocomplete="username"]'), 'ann')
+    await type(input('input[autocomplete="email"]'), 'ann@acme.example')
+    const pw = [...document.querySelectorAll<HTMLInputElement>('input[type="password"]')]
+    await type(pw[0], 'a-long-password')
+    await type(pw[1], 'a-long-password')
+    await submit()
+    await settle(() => text().includes(tm.register.sentTitle), 'the confirmation notice')
+    expect(sentTo('register_join')).toHaveLength(1)
+    await m!.unmount()
+    await open('/register/confirm', {
+      mail: true,
+      token: 'tok',
+      scene: (fx) =>
+        fx.reply('POST', '/api/register/confirm', { ...signedIn(), joined: { name: 'Acme', slug: 'acme' } }),
+    })
+    await settle(() => text().includes(tm.confirm.joinedTitle('Acme')), 'the welcome')
+  })
+
+  it('a sign-up that asks to join goes to the waiting page, which withdraws the request', async () => {
+    await open('/register/confirm', {
+      mail: true,
+      token: 'jtok',
+      scene: (fx) => {
+        fx.data.auth.joinWaiting.jtok = {
+          state: 'pending',
+          tenant: { slug: 'acme', name: 'Acme' },
+          username: 'bob',
+          email: 'bob@acme.example',
+          created: '2026-11-20T08:00:00Z',
+          expires: '2026-12-20T08:00:00Z',
+          decidedAt: null,
+        }
+      },
+    })
+    await settle(() => text().includes(tm.waiting.pending('Acme')), 'the waiting page')
+    expect(document.querySelector('[data-slot="join-status"]')!.getAttribute('data-state')).toBe('pending')
+    expect(text()).toContain('bob@acme.example')
+    // Nobody is signed in by a request.
+    expect(m!.fx.data.auth.signedIn).toBeNull()
+    const button = (label: string) =>
+      [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label) ?? null
+    await click(button(tm.waiting.withdraw))
+    await settle(() => text().includes(tm.waiting.withdrawTitle), 'the question')
+    await click(
+      [...document.querySelectorAll('[role="group"] button')].find(
+        (b) => b.textContent?.trim() === tm.waiting.withdraw,
+      ),
+    )
+    await settle(() => text().includes(tm.waiting.withdrawn), 'withdrawn')
+    expect(m!.requests.some((r) => r.url === '/api/register/request/withdraw')).toBe(true)
   })
 
   it('a link that is not valid says so and offers the registration page', async () => {

@@ -821,6 +821,9 @@ func (s *Service) Sweep(ctx context.Context) {
 	if _, err := store.DeleteExpiredRegistrations(ctx, s.st.Q(), now); err != nil {
 		s.log.Warn("could not delete expired registrations", "error", err)
 	}
+	if err := store.SweepJoinRequests(ctx, s.st.Q(), now); err != nil {
+		s.log.Warn("could not sweep the requests to join", "error", err)
+	}
 	if err := s.CancelClosedRegistrations(ctx); err != nil {
 		s.log.Warn("could not cancel pending registrations of closed tenants", "error", err)
 	}

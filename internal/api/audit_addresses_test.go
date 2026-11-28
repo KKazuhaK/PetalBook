@@ -30,6 +30,11 @@ func TestAuditAddressKindsAreHiddenFromTenantAdministrators(t *testing.T) {
 			"registered":            {"email": secret("registered")},
 			"user_changed":          {"email": secret("user_changed"), "old": map[string]any{"email": secret("user_changed_old"), "name": "Old"}, "name": "New"},
 		}
+		// Joining by domain (3.6 d5): the address is on the tenant's domain while
+		// it holds it, and hidden as any other once it does not.
+		for _, kind := range []string{"join_auto", "join_requested", "join_approved", "join_denied", "join_withdrawn", "join_cancelled"} {
+			details[kind] = map[string]any{"email": secret(kind), "username": "someone", "domain": "joined.example"}
+		}
 		// The batches: each entry's user is as typed, an address or a username.
 		for _, kind := range []string{"members_batch", "group_members_batch", "invites_batch"} {
 			details[kind] = map[string]any{"rows": 2, "results": []map[string]any{

@@ -3,6 +3,7 @@ import { useSession } from '@/api/hooks'
 import { PageFallback } from '@/components/common'
 import { tsec } from '@/i18n/security'
 import { DomainsSection } from './DomainsSection'
+import { JoinRequests } from './JoinRequests'
 import { ProvidersSection } from './ProvidersSection'
 import { useScope } from './TenantScope'
 
@@ -24,11 +25,15 @@ export function TenantSignin({ tenant }: { tenant: string }) {
   const settings = useTenantSettings(tenant)
   const feature = (key: string) => settings.data?.settings.find((s) => s.key === key)?.effective
   const ssoOff = feature('features.ownSso') === false
+  const domainsOff = feature('features.domains') === false
   // Both share their cache with the sections' own: no request of their own.
   // The list also carries the site's SSO offered to the tenant, which its domains may use without its own (3.6 d4).
   const providers = useTenantProviders(tenant, settings.isSuccess)
   const domains = useTenantDomains(tenant)
   const verified = domains.data?.domains.some((d) => d.state === 'verified' || d.state === 'missing') ?? true
+  // Some verified domain asks for approval: the requests to join are shown (3.6 d5).
+  const asking =
+    domains.data?.domains.some((d) => d.join === 'request' && d.state !== 'unverified' && d.state !== 'lapsed') ?? false
   return (
     <div className="grid min-w-0 gap-8" data-slot="tenant-signin">
       {settings.isPending ? (
@@ -47,6 +52,7 @@ export function TenantSignin({ tenant }: { tenant: string }) {
         providers={ssoOff ? undefined : providers.data?.providers}
         offered={providers.data?.offered}
       />
+      {settings.isSuccess && !domainsOff && <JoinRequests tenant={tenant} asking={asking} />}
     </div>
   )
 }

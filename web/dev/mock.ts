@@ -36,6 +36,8 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 //   MOCK_NARROW_ROLE=1   with MOCK_MEMBER_ADMIN: the role in Acme only reads
 //   MOCK_MEMBER_ADMIN=1  with MOCK_ORGS: a plain member who administers only Acme (the console opens in its scope)
 //   MOCK_SSO_DOMAINS=1   two email domains routed to single sign-on: the sign-in page asks for the address first
+//   MOCK_JOIN=1      registration is closed, but acme.example joins people to Acme at sign-up (3.6 d5); the waiting page
+//                    of a request is /register/waiting#demo-join
 function optionsFromEnv(): FixtureOptions {
   const mode = process.env.MOCK_MODE ?? 'single'
   if (mode === 'single') return {}
@@ -157,6 +159,19 @@ function seedAccounts(d: FixtureData) {
       const id = `01TN${slug.toUpperCase().padEnd(6, 'X').slice(0, 6)}`
       d.admin.tenants.push({ ...d.admin.tenants[0], id, slug, name, default: false, origin: 'admin' })
       d.admin.scopeTenants.push(id)
+    }
+  }
+  if (process.env.MOCK_JOIN === '1') {
+    d.auth.forgot = true
+    d.auth.joinDomains['acme.example'] = { mode: 'request', tenant: { slug: 'acme', name: 'Acme' } }
+    d.auth.joinWaiting['demo-join'] = {
+      state: 'pending',
+      tenant: { slug: 'acme', name: 'Acme Corporation International (Asia Pacific)' },
+      username: 'margaret.oconnor-whitfield',
+      email: 'margaret.oconnor-whitfield@engineering.acme.example',
+      created: '2026-11-27T08:00:00Z',
+      expires: '2026-12-27T08:00:00Z',
+      decidedAt: null,
     }
   }
   if (process.env.MOCK_MEMBER_ADMIN === '1') {

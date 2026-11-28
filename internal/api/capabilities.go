@@ -35,6 +35,9 @@ var capabilityUse = map[string]func(s *server, ctx context.Context) (map[string]
 type capabilityCount struct {
 	Claims, Verified  int
 	Providers, Active int
+	// Requests are features.domains' pending requests to join by a domain
+	// (3.6 d5): turning the feature off leaves them waiting, without effect.
+	Requests int
 }
 
 // ownSSOUse counts the tenants' own sign-in providers, from memory.
@@ -51,9 +54,13 @@ func (s *server) domainUse(ctx context.Context) (map[string]capabilityCount, err
 	if err != nil {
 		return nil, err
 	}
+	joins, err := store.PendingJoinsByTenant(ctx, s.opt.Store.Q(), s.now())
+	if err != nil {
+		return nil, err
+	}
 	out := make(map[string]capabilityCount, len(rows))
 	for _, r := range rows {
-		out[r.TenantID] = capabilityCount{Claims: r.Claims, Verified: r.Verified}
+		out[r.TenantID] = capabilityCount{Claims: r.Claims, Verified: r.Verified, Requests: joins[r.TenantID]}
 	}
 	return out, nil
 }
@@ -107,6 +114,7 @@ type capabilityItem struct {
 	Verified  *int   `json:"verified,omitempty"`
 	Providers *int   `json:"providers,omitempty"`
 	Enabled   *int   `json:"enabled,omitempty"`
+	Requests  *int   `json:"requests,omitempty"`
 }
 
 // itemOf is the preview's line of a tenant's count of the feature key.
@@ -115,7 +123,7 @@ func itemOf(ref store.TenantRef, key string, n capabilityCount) capabilityItem {
 	if key == settings.FeatureOwnSSO {
 		it.Providers, it.Enabled = &n.Providers, &n.Active
 	} else {
-		it.Claims, it.Verified = &n.Claims, &n.Verified
+		it.Claims, it.Verified, it.Requests = &n.Claims, &n.Verified, &n.Requests
 	}
 	return it
 }
@@ -150,7 +158,7 @@ func (s *server) capabilityPlan(ctx context.Context, key, tenant string) (confir
 			continue
 		}
 		plan = append(plan, itemOf(ref, key, n))
-		parts = append(parts, ref.ID, strconv.Itoa(n.Claims), strconv.Itoa(n.Verified), strconv.Itoa(n.Providers), strconv.Itoa(n.Active))
+		parts = append(parts, ref.ID, strconv.Itoa(n.Claims), strconv.Itoa(n.Verified), strconv.Itoa(n.Providers), strconv.Itoa(n.Active), strconv.Itoa(n.Requests))
 	}
 	return confirmPlan{Plan: plan, Hash: hashOf(append([]string{key, tenant}, parts...)...)}, nil
 }

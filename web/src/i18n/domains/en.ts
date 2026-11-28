@@ -117,6 +117,54 @@ export const domainsEn: DomainsMessages = {
     done: (domain: string) => `Removed ${domain}`,
   },
   failed: 'That did not work',
+  // Joining by email domain (3.6 d5): each verified domain's join mode, and the requests that wait for approval.
+  join: {
+    label: (domain: string) => `How people with an address on ${domain} join`,
+    short: 'Joining at sign-up',
+    modes: { off: 'Off', auto: 'Join automatically', request: 'Ask, an administrator approves' },
+    help: 'People who sign up with an address on this domain either become members of this organization at once, or ask and wait for an administrator. Verified domains only; subdomains do not count.',
+    badge: { auto: 'Joins automatically', request: 'Approval needed' },
+    saved: 'Saved',
+  },
+  // Turning join off or removing the domain cancels the requests that wait (domain_join_off).
+  joinOff: {
+    title: (domain: string) => `Cancel the requests waiting on ${domain}?`,
+    body: (n: number) =>
+      `${n} ${n === 1 ? 'request to join is' : 'requests to join are'} waiting. If you go on, ${n === 1 ? 'it is' : 'they are'} cancelled: no account is made, and the usernames are free again.`,
+    loading: 'Counting the requests that wait…',
+    confirm: 'Go on',
+    cancel: 'Back',
+  },
+  requests: {
+    title: 'Requests to join',
+    help: 'People who signed up with an address on one of your verified domains and asked to join. Approving makes the account and emails them; denying emails them too, and frees the username.',
+    loadFailed: 'Could not read the requests to join',
+    empty: 'No request is waiting.',
+    emptyAll: 'There are no requests yet.',
+    showAll: 'Show decided ones too',
+    more: 'Load more',
+    line: (username: string, email: string) => `${username} · ${email}`,
+    asked: (when: string) => `Asked ${when}`,
+    expires: (when: string) => `Expires ${when}`,
+    decided: (when: string, by: string) => (by ? `${when} by ${by}` : when),
+    states: {
+      pending: 'Waiting',
+      approved: 'Approved',
+      denied: 'Denied',
+      withdrawn: 'Withdrawn',
+      expired: 'Expired',
+      cancelled: 'Cancelled',
+    },
+    approve: 'Approve',
+    deny: 'Deny',
+    approveLabel: (username: string) => `Approve ${username}`,
+    denyLabel: (username: string) => `Deny ${username}`,
+    approved: (username: string) => `Approved ${username}: the account is made`,
+    denied: (username: string) => `Denied ${username}`,
+    denyTitle: (username: string) => `Deny ${username}'s request?`,
+    denyBody: 'No account is made. They get an email, and the username is free again.',
+    cancel: 'Cancel',
+  },
   // Before a feature that is in use is switched off (change_capabilities).
   capability: {
     title: (feature: string) => `Turn off ${feature}?`,
@@ -124,6 +172,7 @@ export const domainsEn: DomainsMessages = {
     loading: 'Counting what would stop…',
     line: (domains: number, verified: number) =>
       `${domains} ${domains === 1 ? 'domain' : 'domains'}, ${verified} verified`,
+    requestsLine: (n: number) => `${n} ${n === 1 ? 'request' : 'requests'} to join waiting`,
     providersLine: (providers: number, enabled: number) =>
       `${providers} sign-in ${providers === 1 ? 'provider' : 'providers'}, ${enabled} on`,
     typeLabel: (n: number) => `Type ${n} to confirm`,

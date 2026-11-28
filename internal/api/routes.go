@@ -337,6 +337,10 @@ var routeTable = []route{
 	{"DELETE", "/api/admin/tenants/{tenant}/domains/{domain}", needs(authz.TenantDomainsManage), true, false, false, (*server).adminDeleteDomain},
 	{"GET", "/api/admin/domains", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminSiteDomains},
 	{"POST", "/api/admin/domains/{domain}/assign", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminAssignDomain},
+	// Requests to join a tenant by email domain (3.6 d5): its administrators list, approve and deny them.
+	{"GET", "/api/admin/tenants/{tenant}/join-requests", needs(authz.TenantUsersManage).on(settings.FeatureDomains), true, false, false, (*server).adminListJoinRequests},
+	{"POST", "/api/admin/tenants/{tenant}/join-requests/{id}/approve", needs(authz.TenantUsersManage).on(settings.FeatureDomains), true, false, false, (*server).adminApproveJoinRequest},
+	{"POST", "/api/admin/tenants/{tenant}/join-requests/{id}/deny", needs(authz.TenantUsersManage).on(settings.FeatureDomains), true, false, false, (*server).adminDenyJoinRequest},
 	{"GET", "/api/admin/tenants/{tenant}/secrets", needs(authz.TenantSettingsRead).always(), true, false, false, (*server).adminListTenantSecrets},
 	{"PUT", "/api/admin/tenants/{tenant}/secrets/{name}", needs(authz.TenantSettingsWrite).always(), true, false, false, (*server).adminPutTenantSecret},
 	{"DELETE", "/api/admin/tenants/{tenant}/secrets/{name}", needs(authz.TenantSettingsWrite).always(), true, false, false, (*server).adminDeleteTenantSecret},

@@ -39,3 +39,8 @@ export function fragmentToken(page: string): string {
 export function forgetFragmentToken(page: string) {
   held.delete(page)
 }
+// Hands a token one page read to the page it goes to next (a confirmation link whose sign-up became a request to
+// join opens the request's waiting page with the same token), as if that page's address had carried it.
+export function passFragmentToken(page: string, token: string) {
+  held.set(page, token)
+}

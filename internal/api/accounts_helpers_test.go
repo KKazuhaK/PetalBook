@@ -206,7 +206,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	dom := domains.New(domains.Options{Store: st, Resolver: dns, SiteHost: api.SiteHostOf(o.public), Now: clk.Now, Logger: log})
 	cfg := auth.Config{Logger: log, Store: st, Spaces: mgr, PublicURL: o.public, TrustedProxies: trusted, HTTPClient: o.httpc,
 		Password: fastPasswords, Now: clk.Now, OrgDomains: dom.OfTenant, ManagedDomain: dom.Managed,
-		RouteDomain: dom.Route, RoutedProviders: dom.RoutedProviders}
+		RouteDomain: dom.Route, RoutedProviders: dom.RoutedProviders, JoinDomain: dom.Join, JoiningTenants: dom.JoiningTenants}
 	if o.mod != nil {
 		o.mod(&cfg)
 	}

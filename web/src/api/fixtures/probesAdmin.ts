@@ -24,6 +24,8 @@ export const ADMIN_UNRECORDED: Record<string, string> = {
   'GET /api/admin/providers/company/test 200': 'needs a provider',
   'GET /api/admin/grants 200': 'needs an authorization client',
   'POST /api/admin/domains/{}/assign 200': 'needs a domain verified by DNS',
+  'POST /api/admin/tenants/{}/join-requests/{}/approve 200': 'needs mail and a domain verified by DNS',
+  'POST /api/admin/tenants/{}/join-requests/{}/deny 200': 'needs mail and a domain verified by DNS',
   'POST /api/admin/tenants/{}/providers 201': 'needs a provider',
   'GET /api/admin/tenants/{}/providers/{} 200': 'needs a provider',
   'PATCH /api/admin/tenants/{}/providers/{} 200': 'needs a provider',
@@ -299,6 +301,32 @@ export function adminProbes(fx: FixtureServer): Call[] {
     ['PATCH', `${T}/domains/probe.example`, { restrictOrgs: true }],
     ['GET', `${T}/domains`],
     ['GET', '/api/admin/domains'],
+    // Requests to join by domain (3.6 d5): the contract suite cannot make one (no mail, no DNS), so only the empty
+    // list is recorded; the two waiting here are made as a confirmed sign-up makes them.
+    [
+      'GET',
+      `${T}/join-requests`,
+      () => {
+        const one = (id: string, username: string) => ({
+          id,
+          username,
+          name: username,
+          email: `${username}@probe.example`,
+          domain: 'probe.example',
+          state: 'pending' as const,
+          created: at,
+          expires: at,
+          decidedAt: null,
+          decidedBy: null,
+          user: null,
+        })
+        d.admin.joinRequests['01TNTWO001'] = [one('01JRPROBE1', 'joiner'), one('01JRPROBE2', 'asker')]
+        return undefined
+      },
+    ],
+    ['POST', `${T}/join-requests/01JRPROBE1/approve`, {}],
+    ['POST', `${T}/join-requests/01JRPROBE2/deny`, {}],
+    ['GET', `${T}/join-requests?state=all`],
     // Only a verified domain moves; the contract suite cannot verify one, so it is made verified here, just before.
     [
       'POST',

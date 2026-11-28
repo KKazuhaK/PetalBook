@@ -197,10 +197,18 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	if err := s.allow(ctx, p.IP); err != nil {
 		return err
 	}
-	// 2. open for the tenant, or the site lets people make their own
+	// 2. open for the tenant, or the site lets people make their own, or the
+	// domain of the address joins its tenant (3.6 d5): that tenant then, as
+	// the domain's tenant decided, whichever tenant the page named
 	org := p.Org != nil
 	if org {
 		p.TenantID = store.DefaultTenantID
+	}
+	joinTenant, joinDomain, joinMode, joining := "", "", "", false
+	if !org {
+		if joinTenant, joinDomain, joinMode, joining = s.joinOf(ctx, p.Email); joining {
+			p.TenantID = joinTenant
+		}
 	}
 	rules, err := s.Registration(ctx, p.TenantID)
 	if err != nil {
@@ -209,6 +217,10 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	var orules OrgRules
 	if org {
 		if orules = s.OrgCreation(ctx); !orules.Open {
+			return closedErr()
+		}
+	} else if joining {
+		if !s.MailEnabled() || s.st.TenantDisabled(p.TenantID) {
 			return closedErr()
 		}
 	} else if !rules.Open {
@@ -251,7 +263,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		if err := s.orgCreationBlocked(ctx, email); err != nil {
 			return err
 		}
-	} else if len(rules.Domains) > 0 && !domainAllowed(email, rules.Domains) {
+	} else if !joining && len(rules.Domains) > 0 && !domainAllowed(email, rules.Domains) {
 		return coded(400, "email_domain_not_allowed", "Registration is open to some email domains only.")
 	} else if s.tenantSSOOnly(ctx, p.TenantID) {
 		// The tenant requires its single sign-on: its people come through it.
@@ -343,7 +355,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	tok := randomToken()
 	now := s.now().UTC()
 	r := store.Registration{TenantID: p.TenantID, Username: username, Name: name, Email: email, PasswordHash: hash, TokenHash: hashToken(tok),
-		Terms: terms, Created: now, Expires: now.Add(registrationTTL), OrgName: orgName, OrgSlug: orgSlug}
+		Terms: terms, Created: now, Expires: now.Add(registrationTTL), OrgName: orgName, OrgSlug: orgSlug, JoinDomain: joinDomain}
 	for attempt := 0; ; attempt++ {
 		r.ID = s.newID()
 		err = s.st.Tx(ctx, func(q store.Q) error { return store.InsertRegistration(ctx, q, r, now) })
@@ -370,8 +382,13 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		return nil
 	}
 	kind := mail.KindRegister
-	if org {
+	switch {
+	case org:
 		kind = mail.KindRegisterOrg
+	case joinMode == store.JoinModeRequest:
+		kind, orgName = mail.KindRegisterJoinRequest, s.tenantName(p.TenantID)
+	case joining:
+		kind, orgName = mail.KindRegisterJoin, s.tenantName(p.TenantID)
 	}
 	if err := s.sendMail(kind, lang, email, mail.Vars{Username: username, Org: orgName, Link: s.link("/register/confirm", tok), Hours: 24}); err != nil {
 		s.log.Warn("could not queue a registration message", "reason", err.Error())
@@ -379,8 +396,20 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	return nil
 }
 
-// domainAllowed compares in EmailKey form: a domain outside ASCII is compared
-// as its punycode.
+// inDomain says whether the address is of one of an organisation's verified
+// domains (keys, as internal/domains keeps them), exactly: a subdomain is
+// another domain, which the organisation has not verified.
+func inDomain(email string, domains []string) bool {
+	key, ok := store.EmailKey(email)
+	if !ok {
+		return false
+	}
+	return slices.Contains(domains, key[strings.LastIndex(key, "@")+1:])
+}
+
+// domainAllowed is registration.domains' rule (a domain or below it),
+// compared in EmailKey form: a domain outside ASCII is compared as its
+// punycode.
 func domainAllowed(email string, domains []string) bool {
 	key, ok := store.EmailKey(email)
 	if !ok {
@@ -488,14 +517,24 @@ func (s *Service) mailExisting(ctx context.Context, u store.User, lang, ip strin
 	return nil
 }
 
+// tenantName is a tenant's name, from memory.
+func (s *Service) tenantName(id string) string {
+	ref, _ := s.st.TenantRefOf(id)
+	return ref.Name
+}
+
 // Registered is what a followed registration link made: the account and its
 // session, and the organisation when it made one (Slug was taken in the
-// meantime when Renamed).
+// meantime when Renamed), or the organisation it joined by the domain of its
+// address (Joined). A registration that asks to join makes no account: its
+// Request is the request it became (3.6 d5), and User is nil.
 type Registered struct {
 	User    *store.User
 	Token   string
 	Org     *store.Tenant
 	Renamed bool
+	Joined  *store.TenantRef
+	Request *JoinStatus
 	// Held and HeldBy: as LoginResult's.
 	Held   bool
 	HeldBy string
@@ -504,7 +543,7 @@ type Registered struct {
 // RegisterConfirm makes the account a registration link is for, and signs it in.
 // A registration that asked for an organisation makes the tenant with it, in
 // one transaction, and the person is its administrator.
-func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*Registered, error) {
+func (s *Service) RegisterConfirm(ctx context.Context, token, lang, ip string) (*Registered, error) {
 	if err := s.gateToken(ctx, ip); err != nil {
 		return nil, err
 	}
@@ -523,6 +562,14 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*Regis
 	s.refundIP(ip)
 	org := reg.OrgSlug != ""
 	var orules OrgRules
+	// A registration that joins by its domain asks the domain again: its mode
+	// now decides (off falls back to the tenant's own registration).
+	joinMode := ""
+	if !org && reg.JoinDomain != "" {
+		if t, d, m, ok := s.joinOf(ctx, reg.Email); ok && t == reg.TenantID && d == reg.JoinDomain && s.MailEnabled() && !s.st.TenantDisabled(t) {
+			joinMode = m
+		}
+	}
 	if org {
 		if orules = s.OrgCreation(ctx); !orules.Open {
 			return nil, closedErr()
@@ -538,10 +585,17 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*Regis
 				return nil, errOrgLimit
 			}
 		}
+	} else if joinMode != "" {
+		// Joined by the domain: the tenant's own registration is not asked.
 	} else if rules, err := s.Registration(ctx, reg.TenantID); err != nil {
 		return nil, err
 	} else if !rules.Open {
 		return nil, closedErr()
+	} else if reg.JoinDomain != "" && len(rules.Domains) > 0 && !domainAllowed(reg.Email, rules.Domains) {
+		// A registration taken by its domain's join (which skipped the tenant's
+		// domain list) whose join is off now: the tenant's registration, with
+		// every rule of it.
+		return nil, coded(400, "email_domain_not_allowed", "Registration is open to some email domains only.")
 	}
 	st := s.sec(ctx)
 	if s.ssoOnlyInEffect(st) {
@@ -555,6 +609,13 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*Regis
 	}
 	if err := s.ssoRequired(ctx, reg.Email); err != nil {
 		return nil, err
+	}
+	if joinMode == store.JoinModeRequest {
+		req, err := s.requestJoin(ctx, reg, mail.PickLang(lang, ""), ip)
+		if err != nil {
+			return nil, err
+		}
+		return &Registered{Request: req}, nil
 	}
 	p := CreateParams{Username: reg.Username, Name: reg.Name, Email: reg.Email, EmailVerified: true, TakeUnverified: true, Role: "member",
 		PasswordHash: reg.PasswordHash, TenantID: reg.TenantID, RegistrationID: reg.ID, Terms: reg.Terms}
@@ -579,6 +640,15 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*Regis
 	}
 	res := &Registered{User: u, Token: tok, Held: held}
 	s.Audit(AuditEvent{Kind: "registered", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"email": reg.Email}})
+	if joinMode == store.JoinModeAuto {
+		ref, _ := s.st.TenantRefOf(u.TenantID)
+		res.Joined = &ref
+		err := notify.WithAudit(ctx, s.st.Q(), notify.JoinAuto, notify.Entry{Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Tenant: u.TenantID, Now: s.now(),
+			Detail: map[string]any{"username": u.Username, "email": reg.Email, "domain": reg.JoinDomain}})
+		if err != nil {
+			s.log.Warn("could not audit a join", "error", err)
+		}
+	}
 	if org {
 		t := p.NewTenant.Made
 		res.Org, res.Renamed = &t, t.Slug != reg.OrgSlug

@@ -833,10 +833,15 @@ A site administrator can also purge by hand, see `POST /api/admin/audit/purge`.
 | `token_revoked` | an API token was revoked through the server (once: revoking one already revoked writes nothing) | `token`, `name`, `by` (`user`, `admin`) |
 | `grant_revoked` | an OAuth grant was revoked through the server | `grant`, `client` (its name), `by` (`user`, `admin`) |
 | `dropped` | rows were lost because the queue was full | `count` |
-| `domain_added`, `domain_code_made`, `domain_changed`, `domain_removed` | a tenant's claim of an email domain was made, given a new code, changed (`restrictOrgs`) or removed | `domain`; `restrictOrgs`; `verified` (removed) |
+| `domain_added`, `domain_code_made`, `domain_changed`, `domain_removed` | a tenant's claim of an email domain was made, given a new code, changed (`restrictOrgs`, `provider`, `join`) or removed | `domain`; `restrictOrgs`, `provider`, `join`; `verified` (removed) |
 | `domain_checked`, `domain_verified` | a check by hand ("Check now") asked DNS; it verified the claim | `domain`, `result`, `via`, `seen`, `claimed` (another tenant holds it); `domain`, `via` |
 | `domain_missing`, `domain_lapsed` | the daily recheck first did not find a verified domain's record; 7 days later still not, and the claim lapsed (with a notification) | `domain`, `check`; `domain`, `missingSince`, `check` |
 | `domain_assigned`, `domain_unassigned` | a site administrator moved a verified domain to the tenant, or away from it (each tenant's row names only the domain) | `domain` |
+| `join_auto` | an address of a domain whose join is `auto` confirmed its registration: the account is in the tenant (3.6 d5) | `username`, `email`, `domain` |
+| `join_requested` | a confirmed registration became a request to join (with a notification to the tenant's administrators) | `request`, `username`, `email`, `domain` |
+| `join_approved`, `join_denied` | an administrator approved (the account is made; with a notification to it) or denied a request | `request`, `username`, `email`, `domain`; `role` (approved) |
+| `join_withdrawn` | the person withdrew their request from the waiting page | `request`, `username`, `email`, `domain` |
+| `join_cancelled` | a waiting request was cancelled because its domain went (one row each) | `request`, `username`, `email`, `domain`, `reason` (`join_off`, `removed`, `lapsed`, `moved`) |
 | `audit_purged` | a site administrator purged the log by hand (`POST /api/admin/audit/purge`); one row for each purge, written when its job ends, never deleted by a purge or by the retention trim | `category` (`all` for every one), `before` (RFC 3339), `deleted`, and `partial: true` when the purge did not finish |
 
 Each row has `at`, `kind`, `category`, `capacity` (`site_admin` or
@@ -5592,6 +5597,8 @@ kinds (a registry in the server's code, `store.NotifyKinds`):
 | `email_released` | an address the person held unverified moved to the account that proved it; written with the `email_released` row | `{"email"}` |
 | `link_reauth` | a linked account's tokens could not be renewed for good (the host revoked or ended the grant): the person connects it again; written once, by the write that marks the link `expired`; `ref` is the provider | `{"provider", "name", "login"}` |
 | `domain_lapsed` | an email domain the person's organisation had verified lapsed: the daily recheck did not find its DNS record for 7 days (see "Email domains and the SSO entry"); to each of the tenant's administrators, with the `domain_lapsed` audit row; `ref` is the domain's key | `{"domain", "missingSince"}` (`domain` as people read it) |
+| `join_requested` | someone with an address on a verified domain asked to join the person's organisation (see "Joining an organisation"); to each of the tenant's enabled administrators, with the `join_requested` audit row; `ref` is the request | `{"username", "name", "domain"}` |
+| `join_approved` | the person's request to join was approved, which made this account; with the `join_approved` audit row; `ref` is the request | `{"tenant", "by"}` (names) |
 | `viewed_as` | reserved: an administrator viewed the app as the person; made only once the owner decides the person is told (see "Viewing as a person"); it would be written with the `view_as_started` row | `{"by", "reason", "until"}` |
 
 There is no catch-all kind: each event of an account or a space is a kind of its
@@ -7240,9 +7247,12 @@ Public. `Cache-Control: no-store`. Answered from memory.
  "password": {"minLength": 8}}
 ```
 
-When `open` is `false` the other fields are absent. `GET /api/auth/providers`
-gains `register` (this boolean) and `forgot` (see "Password reset"), and takes
-the same `?tenant=`, so the sign-in page shows the links.
+When `open`, `orgCreation.open` and `domainJoin` are all `false` the other
+fields are absent. `domainJoin` (3.6 d5) is true when some verified domain
+joins people to its organisation at sign-up: an address on it registers there
+even while `open` is false (see "Joining an organisation"). `GET /api/auth/providers`
+gains `register` (this boolean, or `domainJoin`) and `forgot` (see "Password
+reset"), and takes the same `?tenant=`, so the sign-in page shows the links.
 
 #### `POST /api/register`
 
@@ -7255,7 +7265,9 @@ The server checks, in this order, and stops at the first refusal:
 
 1. The address's requests this minute (the shared allowance of 2.8):
    `429 rate_limited`.
-2. Registration open for the tenant: `403 registration_closed`.
+2. Registration open for the tenant: `403 registration_closed`. An address
+   whose domain joins an organisation (3.6 d5) registers in that organisation
+   instead, open or not; see "Joining an organisation".
 3. The `register` captcha context: `400 captcha_failed`.
 4. The fields: `400 invalid` (username form as for a User, name 1 to 80
    characters, the password rule of "Signing in", an address of at most 254
@@ -7294,7 +7306,10 @@ never becomes an account.
 Public. `{"token": "…"}`. Counts against the address's requests this minute.
 `201` with `{"user": {…}}` and a session cookie: a `member` of the tenant with
 `email` and `emailVerified: true`, the acceptance of the terms recorded (when and
-which addresses), and a personal space, as for an invite. Refusals:
+which addresses), and a personal space, as for an invite. A registration that
+joined by its address's domain adds `"joined": {"slug", "name"}`; one whose
+domain asks for approval makes no account and answers `202 {"request": …}`
+(see "Joining an organisation"). Refusals:
 `404 not_found` for a token unknown, used or expired (a failure of the
 address); `403 registration_closed` when registration was closed since (pending
 registrations are not honoured after closing); `409 exists` when the username
@@ -8496,10 +8511,19 @@ Their username stays taken while they are in the recycle bin.
 
 `action` is one of `delete_spaces`, `delete_users`, `purge`, `restore`,
 `evict`, `pin`, `unpin`, `disable_spaces`, `enable_spaces`, `disable_users`,
-`enable_users`, `export` (3.6 adds `change_capabilities` and `move_storage`,
+`enable_users`, `export` (3.6 adds `change_capabilities`, `domain_join_off`
+and `move_storage`,
 3.7 `manage_accounts`); with `spaces`, `users` or `items` (recycle items), at
 most 500, all in the caller's scope (`404` for any that is not: nothing is
 confirmed). For `delete_users`, also `heir` and `transfers` as above.
+
+`domain_join_off` (3.6 d5) is the preview of cancelling the requests to join
+that wait on a domain: `{"action": "domain_join_off", "tenant": "01JDT3NANT",
+"domain": "acme.example"}`, for whoever manages the tenant's domains (`404
+not_found` otherwise). `plan` is `[{"tenant", "domain", "requests"}]`, and the
+token is bound to the set of waiting requests. It goes as `confirm` with
+`PATCH …/domains/{domain}` `{"join": "off"}`, or as `?confirm=` with `DELETE
+…/domains/{domain}` (see "Joining an organisation").
 
 `change_capabilities` (3.6 d2) is the preview of switching a feature off while
 it is in use: `{"action": "change_capabilities", "key": "features.domains",
@@ -8509,7 +8533,8 @@ tenant; without it, the site's value). Only who may make that change gets it
 invalid` (today `features.domains` and, from 3.6 d3, `features.ownSso` have
 one). `plan` has one line per tenant that has the feature now and uses it:
 `{"tenant", "slug", "name", "feature", "domains", "verified"}` for
-`features.domains` (its claims, and how many are verified), `{"tenant",
+`features.domains` (its claims, how many are verified, and from 3.6 d5
+`requests`, its requests to join that wait), `{"tenant",
 "slug", "name", "feature", "providers", "enabled"}` for `features.ownSso` (its
 own sign-in providers, and how many are on). The token is
 not a bulk action's (`POST /api/admin/bulk` refuses it): it goes as `confirm`
@@ -10020,9 +10045,12 @@ bound by it):
   tenant is `404 not_found`, and an unverified domain `409 domain_required`.
   From d4 it may also name a site SSO provider offered to the tenant (then
   `features.ownSso` is not needed), and the sign-in page's discovery reads the
-  route (below). Deleting the provider clears it. `join` is
-  refused (`400 invalid`) until d5;
-- `DELETE …/domains/{domain}`: `204`.
+  route (below). Deleting the provider clears it. `{"join": "auto"}` (3.6 d5:
+  `off`, `auto` or `request`) is how people with an address on the domain join
+  the tenant at sign-up; see "Joining an organisation". Turning it `off` while
+  requests wait needs `confirm` (`domain_join_off`);
+- `DELETE …/domains/{domain}`: `204`. While requests to join by the domain
+  wait, it needs `?confirm=` (`domain_join_off`), and cancels them.
 
 `{domain}` takes any spelling of the domain (Unicode or punycode, any case); a
 claim another tenant holds is `404 not_found` as one that does not exist.
@@ -10033,7 +10061,7 @@ claim another tenant holds is `404 not_found` as one that does not exist.
  "checkedAt": "2026-11-23T09:00:00Z", "nextCheckAt": "2026-11-24T09:00:00Z",
  "codeExpires": "2026-11-30T08:00:00Z", "codeExpired": false,
  "lastCheck": {"at": "2026-11-23T09:00:00Z", "by": "manual", "result": "found", "via": "txt", "seen": [], "error": ""},
- "nextCheckAllowedAt": "2026-11-23T09:01:00Z", "restrictOrgs": false, "provider": null, "join": null,
+ "nextCheckAllowedAt": "2026-11-23T09:01:00Z", "restrictOrgs": false, "provider": null, "join": "off",
  "recordName": "_petalbook.xn--bcher-kva.example", "code": null, "records": null,
  "created": "2026-11-23T08:00:00Z"}
 ```
@@ -10128,10 +10156,10 @@ also to re-check a verified one):
   the database fails the timer (the due domains cannot be read, or a failed one
   cannot be moved on), it waits 5 seconds, doubled each time, at most 10
   minutes, instead of coming straight back.
-- The map of verified domains is in memory (domain → tenant, `restrictOrgs`;
-  provider and `join` with d3 and d5), read at start and again after every
-  change (a claim verified, removed, lapsed, assigned, `restrictOrgs` changed,
-  a tenant deleted). `auth`'s `OrgDomains` and the organisation sign-up's
+- The map of verified domains is in memory (domain → tenant, `restrictOrgs`,
+  provider and `join`), read at start and again after every change (a claim
+  verified, removed, lapsed, assigned, `restrictOrgs`, its provider or `join`
+  changed, a tenant deleted). `auth`'s `OrgDomains` and the organisation sign-up's
   `domain_managed` read it; a tenant whose `features.domains` is off has no
   domains there (nothing is deleted).
 
@@ -10616,59 +10644,131 @@ Each tenant chooses how people join it; any combination of these may be on:
 | Way | Setting | Default |
 |---|---|---|
 | (a) invite | always available (`/api/invites`, as 3.3) | — |
-| (b) an address of a verified domain joins at once | `join.domain: "auto"` | off |
-| (c) an address of a verified domain asks, an administrator approves | `join.domain: "request"` | off |
+| (b) an address of a verified domain joins at once | the domain's `join: "auto"` | off |
+| (c) an address of a verified domain asks, an administrator approves | the domain's `join: "request"` | off |
 | (d) signing in through the tenant's own SSO joins at once | the provider's `autoCreate`, with `jit.requireGroups` | as the provider |
 
-#### `GET /api/admin/tenants/{tenant}/join`, `PUT …/join`
+(b) and (c) are built in 3.6 d5, **at sign-up only**: 3.6 is one person, one
+tenant, so an existing account never joins another organisation (that is 3.7's
+membership, which keeps these endpoints). A social provider's `autoCreate`
+does not join by domain yet; nor is there a tenant-wide default, a `viewer`
+role of accounts, or `defaultRole` (the joined person is a `member`).
+
+**The mode is per verified domain** (`PATCH /api/admin/tenants/{tenant}/domains/{domain}`
+with `{"join": "off" | "auto" | "request"}`, `tenant.domains.manage`,
+`features.domains`; see "Email domains and the SSO entry"):
+
+- only a **verified** domain takes `auto` or `request` (`409 domain_required`);
+  `off` is the default, and any other word `400 invalid`;
+- the address must be on the domain **exactly**, as the address's key (the
+  domain in IDNA punycode, lower case): `a@eng.acme.example` does not join by
+  `acme.example`;
+- the domain's tenant must have `features.domains`; off, the domain joins
+  nobody (and its requests wait, without effect);
+- the mode is read from the in-memory map of verified domains, so a sign-up
+  asks no query of it;
+- turning it `off` while requests wait, and removing the domain, cancel them:
+  without `confirm` the answer is `409 confirm_required` with the plan
+  `[{"tenant", "domain", "requests": 2}]`; `POST /api/admin/confirm`
+  `{"action": "domain_join_off", "tenant", "domain"}` gives the token, sent as
+  `{"join": "off", "confirm": "c_…"}` or `DELETE …/domains/{domain}?confirm=c_…`.
+  `auto` from `request` keeps them waiting. The domain lapsing, or a site
+  administrator moving it to another tenant, cancels them without asking, and
+  turns its join `off` (the new holder turns it on itself).
+  Each cancelled request is audited (`join_cancelled`, with `reason`:
+  `join_off`, `removed`, `lapsed` or `moved`).
+- Turning `features.domains` off for a tenant counts its waiting requests in
+  the confirmation's plan (`requests`, beside `domains` and `verified`).
+
+**Signing up.** `POST /api/register` with an address whose domain joins a
+tenant registers in **that** tenant, whatever tenant the page named, and even
+while that tenant's (or the site's) registration is closed: mail must be on and
+the tenant enabled. The tenant's `registration.domains` is not asked (the
+domain is its own); its terms, its hour (`registration.perHour`) and its 1,000
+pending registrations are. An organisation that requires its single sign-on
+(`signin.ssoOnly`) answers `409 sso_required` with the `sso` entry, as for any
+password sign-up there. The message names the organisation. `GET /api/register`
+says `"domainJoin": true` when some domain joins people now, so the page offers
+the form while `open` is false; `/api/auth/providers`' `register` is then true.
+
+Following the link (`POST /api/register/confirm`) asks the domain's mode again:
+
+- **(b) `auto`**: the account is made in the tenant as a `member`, with the
+  address verified, and signed in, as any registration: `201` with
+  `"joined": {"slug": "acme", "name": "Acme"}`, so the page says which
+  organisation it joined. Audited as `registered` and `join_auto`.
+- **(c) `request`**: no account: the registration becomes a **join request**,
+  `202 {"request": JoinStatus}`, and nobody is signed in. The request holds the
+  username (registration answers `409 exists` for it) for **30 days**; then it
+  expires and the username is free. One address has one waiting request per
+  tenant (`409 join_pending`), and makes at most **3 requests a day**, in all
+  tenants, counted without a `+tag` of the address (`bob+x@` is `bob@`;
+  `429 rate_limited` with `Retry-After`). A tenant holds at most 1,000 waiting
+  requests (`429 join_limit` for the next one). The tenant's enabled
+  administrators get a `join_requested` notification; `join_requested` is
+  audited.
+- the mode `off` now: as a registration of the tenant, with all of its rules:
+  `403 registration_closed` unless the tenant's registration is open, and
+  `400 email_domain_not_allowed` when the address is not on its
+  `registration.domains`.
 
 ```json
-{"domain": "off", "defaultRole": "member"}
+{"state": "pending", "tenant": {"slug": "acme", "name": "Acme"}, "username": "bob",
+ "email": "bob@acme.example", "created": "2026-11-27T09:00:00Z",
+ "expires": "2026-12-27T09:00:00Z", "decidedAt": null}
 ```
 
-- `domain` (needs `signin.domains`): `off`, `auto` or `request`, for every verified domain of the
-  tenant; a domain's own `join` (`PATCH …/domains/{domain}`) overrides it
-  (`null` follows the tenant). (b) and (c) are one choice per domain.
-- `defaultRole`: `member` or `viewer`, the role of anyone who joins by (b), (c)
-  or (d). Invites carry their own role, as before. An administrator approving a
-  request may choose another.
-- **`viewer` is a new tenant role** (`role` on the User: `admin`, `member` or
-  `viewer`). A tenant viewer cannot create spaces in the tenant
-  (`403 forbidden`) and their effective permission in any of the tenant's
-  spaces is at most `viewer`, whatever their direct or group role; their
-  personal space is theirs as before. The permission cache keeps the cap with
-  the person's entry, so the check stays one lookup.
+`state` is `pending`, `approved`, `denied`, `withdrawn`, `expired` or
+`cancelled`.
 
-**(b) Automatic.** An account made with an address of the domain (registration
-after the address is confirmed, or `autoCreate` of a social provider that
-vouched for the address) is made in that tenant, whatever page it started on,
-with `defaultRole`; the person is told which tenant they joined. In 3.6 it does
-not move existing accounts (3.3 has no move); 3.7 adds a membership instead.
+**The waiting page** (`/register/waiting#<token>`, the registration link's
+token, which stays the request's capability):
 
-**(c) Request and approval.** Registering with an address of such a domain, once
-the address is confirmed, does not make the account yet: it makes a **join
-request** that holds the username (30 days, then it expires and the username is
-freed). The same for `autoCreate` of a social provider that vouched for the
-address: the person sees "waiting for approval" instead of a session.
+- `POST /api/register/request` `{"token"}`: `200` with the JoinStatus;
+  `404 not_found` for a token that is not one. Held to the address's minute and
+  failures, as the other links.
+- `POST /api/register/request/withdraw` `{"token"}`: withdraws a waiting
+  request: `200` with the JoinStatus, the username is free again;
+  `409 join_decided` when it is not waiting. Audited as `join_withdrawn`.
 
-- `GET /api/admin/tenants/{tenant}/join-requests?state=pending&cursor=&limit=`:
-  `{"requests": [{"id", "username", "name", "email", "via": "registration", "created", "expires", "state"}], "cursor": …}`,
-  newest first; `state` is `pending`, `approved`, `denied` or `expired`.
-- `POST …/join-requests/{id}/approve` (`{"role": "viewer"}`, optional): makes
-  the account with that role (default `defaultRole`) and a personal space, and
-  mails the person a link to sign in. `409 conflict` when the request is not
-  pending.
-- `POST …/join-requests/{id}/deny` (`{"reason": "…"}`, optional, mailed to the
-  person): frees the username.
-- `GET /api/join-requests/{id}` (public, by the id in the "waiting" page's
-  address, which is unguessable): `{"state", "tenant": {"name"}}`, so the page
-  can say what happened. `DELETE` withdraws it.
-- A tenant holds at most 1,000 pending requests (`429 rate_limited` for the
-  next one, which is answered to the person as "try again later").
-- The tenant's administrators get a notice in the app for each new request
-  (batched, at most one an hour).
-- In 3.7 a signed-in person also asks from the list of organisations they may
-  join; the endpoints stay the same.
+**The tenant's administrators** (`tenant.users.manage`, and `features.domains` of the tenant in the path, for
+a site administrator outside its scope too; `404 not_found` for another tenant,
+as for one that does not exist):
+
+- `GET /api/admin/tenants/{tenant}/join-requests?state=pending|all&cursor=&limit=`
+  (1 to 200, 50 by default): `{"items": [JoinRequest], "next": cursor | null}`,
+  newest first; `pending` (the default) lists those still waiting.
+- `POST …/join-requests/{id}/approve` (`{"role": "member"}`, optional; `member`
+  is the only role): makes the account in the tenant with the address verified
+  and the password chosen at sign-up, and a personal space, in one transaction
+  with the approval; the person is mailed a link to sign in, and the new account
+  gets a `join_approved` notification. `200` with the JoinRequest (`user` is the
+  account). `409 join_decided` when it is not waiting (decided, withdrawn,
+  cancelled or expired); `409 tenant_disabled` while the tenant is disabled;
+  `409 sso_required` while the tenant requires its
+  single sign-on (no password account is made: deny it, and the person signs in
+  through the SSO); `409 exists` or `409 email_taken` when the username or the
+  address was taken meanwhile. Audited as `join_approved`.
+- `POST …/join-requests/{id}/deny`: the username is free again, and the person
+  is mailed that it was not approved. `200` with the JoinRequest. Audited as
+  `join_denied`.
+
+```json
+{"id": "01JDQ…", "username": "bob", "name": "Bob", "email": "bob@acme.example",
+ "domain": "acme.example", "state": "approved", "created": "2026-11-27T09:00:00Z",
+ "expires": "2026-12-27T09:00:00Z", "decidedAt": "2026-11-27T10:00:00Z",
+ "decidedBy": {"id": "01JDP…", "name": "Ann"}, "user": "01JDQ…"}
+```
+
+A request that is no longer waiting keeps no password hash, and is deleted 30
+days after it ended (the daily sweep, which also writes the expired ones
+`expired`).
+
+Known item (left as it is in 3.6 d5): the hold of the username ends at the
+moment the request expires, while its row still reads `pending` (with its
+password hash) until the daily sweep writes it `expired`; in that window the
+username can be registered again, and the request can no longer be approved
+(`409 join_decided`).
 
 **(d) Joining through the tenant's SSO.** A tenant's SSO provider with
 `autoCreate` makes the account in its tenant at first sign-in (as 2.8 and
@@ -11112,12 +11212,16 @@ exist, a `before` that is not a time, or a `dry_run` that is not a boolean.
 | `domain_suffix` | 400 | claiming a public suffix (`co.uk`, `github.io`) |
 | `domain_code_expired` | 409 | checking an unverified claim whose code is older than 7 days |
 | `domain_exists`, `domain_verified` | 409 | claiming a domain the tenant has claimed already; asking a new code for a verified claim |
-| `domain_managed` | 409 | creating an organisation with an address of a domain with `restrictOrgs`; with `organization` (`slug`, `name`); `join` and `start` with d5 |
+| `domain_managed` | 409 | creating an organisation with an address of a domain with `restrictOrgs`; with `organization` (`slug`, `name`) |
+| `join_pending` | 409 | following a registration link that would ask to join an organisation where the address already has a request waiting |
+| `join_limit` | 429 | a tenant holds 1,000 requests to join waiting already |
+| `tenant_disabled` | 409 | approving a request to join a disabled tenant |
+| `join_decided` | 409 | approving, denying or withdrawing a request to join that is no longer waiting (decided, withdrawn, cancelled or expired) |
 | `email_taken` | 409 | setting an address another account holds, verified or not (also a deleted account until its purge) |
 | `email_not_ascii` | 400 | an address with characters outside ASCII while `users.emailNonAscii` is off; also asking to verify such a stored address then |
 | `feature_off` | 403 | the tenant does not have the feature (`features.*`) what was asked needs; with `feature` (and `permission`, the key, when a route's key needs it); the message is a capitalised sentence naming it ("The API tokens feature is turned off for this organization.") |
 | `takeover_required` | 403 | an administrator who is not a member of the space asked for what only taking it over gives (see "Taking over a space") |
-| `confirm_required` | 409 | a change of a feature, a plan or its assignment that stops something in use (`features.domains`, `features.ownSso`), now or at a later start or end of a rule, without the confirmation of `change_capabilities`; with `plan` |
+| `confirm_required` | 409 | a change of a feature, a plan or its assignment that stops something in use (`features.domains`, `features.ownSso`), now or at a later start or end of a rule, without the confirmation of `change_capabilities`; turning a domain's join off, or removing the domain, while requests to join by it wait, without the confirmation of `domain_join_off`; with `plan` |
 | `plan_in_use` | 409 | deleting a plan that tenants use; with `tenants` |
 | `partial_unsupported` | 409 | connecting a space to a host that cannot sync partially while `storage.partial.unsupported` is `refuse`; with `host` |
 | `storage_target_error` | 502 | the storage target refused to make a space's repository; with `reason`, `status` |

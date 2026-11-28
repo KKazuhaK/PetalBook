@@ -120,7 +120,7 @@ export function seedAdminDemo(d: FixtureData) {
     nextCheckAllowedAt: null,
     restrictOrgs: false,
     provider: null,
-    join: null,
+    join: 'off',
     recordName: `_petalbook.${key}`,
     code: null,
     records: null,
@@ -136,6 +136,7 @@ export function seedAdminDemo(d: FixtureData) {
       nextCheckAt: iso(t0 + day),
       lastCheck: found,
       restrictOrgs: true,
+      join: 'request',
     },
     {
       ...base('xn--bcher-kva.example', 'bücher.example'),
@@ -163,6 +164,31 @@ export function seedAdminDemo(d: FixtureData) {
       lastCheck: found,
     },
     { ...base('a-rather-long-subdomain-name.engineering.example-company.co.uk') },
+  ]
+  // People who signed up with an address on acme.example and asked to join (3.6 d5): two wait, one was approved.
+  const joiner = (id: string, username: string, name: string, ago: number) => ({
+    id,
+    username,
+    name,
+    email: `${username}@acme.example`,
+    domain: 'acme.example',
+    state: 'pending' as const,
+    created: iso(t0 - ago * day),
+    expires: iso(t0 + (30 - ago) * day),
+    decidedAt: null,
+    decidedBy: null,
+    user: null,
+  })
+  d.admin.joinRequests[DEFAULT_TENANT] = [
+    joiner('01JRDEMO01', 'li.wei', '李伟', 1),
+    joiner('01JRDEMO02', 'margaret.oconnor-whitfield', 'Margaret O’Connor-Whitfield', 3),
+    {
+      ...joiner('01JRDEMO03', 'sam', 'Sam', 6),
+      state: 'approved',
+      decidedAt: iso(t0 - 5 * day),
+      decidedBy: { id: me.id, name: me.name },
+      user: '01JUDEMO03',
+    },
   ]
   // The default tenant's own single sign-on (3.6 d3): one provider, acme.example routed to it.
   d.admin.providers.push(

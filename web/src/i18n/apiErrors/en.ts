@@ -102,7 +102,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   apple_key_invalid: 'The key must be the .p8 file Apple gave.',
   saml_metadata_invalid: "The sign-in service's metadata cannot be used.",
   saml_needs_https: 'SAML needs an https public address.',
-  domain_required: 'A provider owned by a tenant needs the tenant to have a verified domain first.',
+  domain_required: 'Verify the domain first: this needs a verified domain.',
   domain_public:
     'That is a public mail service’s domain: anyone can have an address there, so no organization can claim it.',
   domain_suffix:
@@ -114,6 +114,11 @@ export const apiErrorsEn: ApiErrorTexts = {
   domain_verified: 'The domain is verified: its record stays as it is.',
   domain_managed:
     'An organization manages the addresses of this email domain. Ask it to add you instead of making another.',
+  join_pending:
+    'You have asked to join this organization already. Wait for its answer, or withdraw that request first.',
+  join_decided: 'This request is no longer waiting: it was decided, withdrawn or cancelled, or it expired.',
+  join_limit: 'This organization has too many requests to join waiting. Try again later.',
+  tenant_disabled: 'This organization is disabled: nobody joins it now.',
   already_linked: 'You already have an account linked at this provider. Unlink it first to link another.',
   last_method: 'This is the last way to sign in. Set a password or link another sign-in method first.',
   github_app_client:

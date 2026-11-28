@@ -63,6 +63,13 @@ const (
 	// {"domain", "missingSince"}; ref is the domain's key). Sent to the
 	// tenant's administrators.
 	NotifyDomainLapsed = "domain_lapsed"
+	// NotifyJoinRequested: someone asked to join the person's organisation by
+	// the domain of their address (3.6 d5; payload {"username", "name",
+	// "domain"}; ref is the request). Sent to the tenant's administrators.
+	NotifyJoinRequested = "join_requested"
+	// NotifyJoinApproved: the person's request to join an organisation was
+	// approved, which made their account (payload {"tenant", "by"}).
+	NotifyJoinApproved = "join_approved"
 )
 
 // NotifyKind is one entry of the registry.
@@ -89,6 +96,8 @@ var NotifyKinds = []NotifyKind{
 	{NotifyViewedAs, false, ""},
 	{NotifyLinkReauth, false, "the renewal of a linked account's tokens failing for good"},
 	{NotifyDomainLapsed, false, "the daily recheck of an organisation's verified email domains"},
+	{NotifyJoinRequested, false, "a request to join an organisation by email domain"},
+	{NotifyJoinApproved, false, "an administrator approving a request to join"},
 }
 
 // KnownNotifyKind says whether the registry has the kind.

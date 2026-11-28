@@ -35,6 +35,8 @@ export const notifyEn: NotifyMessages = {
     viewed_as: 'Viewed as you',
     link_reauth: 'Linked accounts',
     domain_lapsed: 'Email domains',
+    join_requested: 'Requests to join',
+    join_approved: 'Joined',
   },
   unreadMark: 'Unread',
   moreProblems: (n: number) => (n === 1 ? 'And 1 more space has problems.' : `And ${n} more spaces have problems.`),
@@ -107,6 +109,15 @@ export const notifyEn: NotifyMessages = {
         since
           ? `Its DNS record has been missing since ${since}, so the claim lapsed. Publish the record again with a new code and check it.`
           : 'Its DNS record went missing for 7 days, so the claim lapsed. Publish the record again with a new code and check it.',
+    },
+    joinRequested: {
+      title: (name: string) => `${name} asks to join`,
+      body: (domain: string) =>
+        `They signed up with an address on ${domain}. Approve or deny the request in the organization's sign-in settings.`,
+    },
+    joinApproved: {
+      title: (tenant: string) => `Welcome to ${tenant}`,
+      body: (by: string) => (by ? `${by} approved your request to join.` : 'Your request to join was approved.'),
     },
     viewedAs: {
       title: (by: string) => (by ? `${by} viewed the app as you` : 'An administrator viewed the app as you'),

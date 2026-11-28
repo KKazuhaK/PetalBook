@@ -271,9 +271,11 @@ func RecheckDomain(ctx context.Context, q Q, r DomainRow, lastCheck string, at, 
 }
 
 // LapseDomain cancels a verified claim whose record has been missing too long,
-// if it is still the one read. The row stays, lapsed, so its tenant sees why.
+// if it is still the one read. The row stays, lapsed, so its tenant sees why;
+// it joins nobody any more (join_mode off) until verified and turned on again.
 func LapseDomain(ctx context.Context, q Q, r DomainRow, lastCheck string, at time.Time) (bool, error) {
-	res, err := q.Exec(ctx, `UPDATE tenant_domains SET verified_at = 0, lapsed_at = ?, next_check_at = 0, last_check = ?, checked_at = ?, updated = ?
+	res, err := q.Exec(ctx, `UPDATE tenant_domains SET verified_at = 0, lapsed_at = ?, next_check_at = 0, last_check = ?, checked_at = ?, updated = ?,
+		join_mode = ''
 		WHERE tenant_id = ? AND domain = ? AND verified_at = ?`,
 		ms(at), lastCheck, ms(at), ms(at), r.TenantID, r.Domain, ms(r.VerifiedAt))
 	if err != nil {
@@ -305,7 +307,8 @@ func DeleteDomain(ctx context.Context, q Q, tenantID, domain string) (bool, erro
 // administrator's transfer), in one transaction: the holder's claim goes, and
 // the target's becomes the verified one, with the holder's code, so the record
 // in DNS stays good. It returns the tenant that held it; ErrNotFound when none
-// holds it verified. Assigning it to its holder changes nothing.
+// holds it verified. Assigning it to its holder changes nothing. It joins
+// nobody at its new holder (join_mode off) until that tenant turns it on.
 func AssignDomain(ctx context.Context, q Q, domain, to, by string, now time.Time) (from string, err error) {
 	err = atomically(ctx, q, func(q Q) error {
 		h, err := VerifiedHolder(ctx, q, domain)
@@ -322,7 +325,7 @@ func AssignDomain(ctx context.Context, q Q, domain, to, by string, now time.Time
 		_, err = q.Exec(ctx, `INSERT INTO tenant_domains(`+domainCols+`) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, '', '', 0, ?, ?, ?)
 			ON CONFLICT (tenant_id, domain) DO UPDATE SET code_hash = excluded.code_hash, code_expires = excluded.code_expires,
 			verified_at = excluded.verified_at, lapsed_at = 0, checked_at = excluded.checked_at, missing_since = excluded.missing_since,
-			last_check = excluded.last_check, next_check_at = excluded.next_check_at, updated = excluded.updated`,
+			last_check = excluded.last_check, next_check_at = excluded.next_check_at, updated = excluded.updated, join_mode = ''`,
 			to, domain, h.CodeHash, optMS(h.CodeExpires), ms(now), optMS(h.CheckedAt), optMS(h.MissingSince), h.LastCheck, optMS(h.NextCheckAt), by, ms(now), ms(now))
 		return err
 	})
@@ -358,4 +361,22 @@ func DomainRoutes(ctx context.Context, q Q) (map[string][]string, error) {
 		out[p] = append(out[p], d)
 	}
 	return out, rows.Err()
+}
+
+// The join modes of a domain (3.6 d5): how people with an address on it join
+// its tenant when they sign up. Off is the empty string in the row.
+const (
+	JoinModeOff     = ""
+	JoinModeAuto    = "auto"
+	JoinModeRequest = "request"
+)
+
+// SetDomainJoin sets a tenant's domain's join mode.
+func SetDomainJoin(ctx context.Context, q Q, tenantID, domain, mode string, now time.Time) (bool, error) {
+	res, err := q.Exec(ctx, `UPDATE tenant_domains SET join_mode = ?, updated = ? WHERE tenant_id = ? AND domain = ?`, mode, ms(now), tenantID, domain)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }

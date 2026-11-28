@@ -2,6 +2,7 @@
 // decides anything; the routes read and write these arrays.
 
 import type {
+  JoinStatus,
   CaptchaProvider,
   ConsentInfo,
   DiscoveredSSO,
@@ -100,6 +101,11 @@ export interface AuthData {
   register: boolean
   forgot: boolean
   orgCreation: boolean
+  // Some verified domain joins people to its organisation at sign-up (3.6 d5), by mode: an address there
+  // registers in it even while `register` is false.
+  joinDomains: Record<string, { mode: 'auto' | 'request'; tenant: { slug: string; name: string } }>
+  // The requests to join that sign-ups became, by the registration link's token (the waiting page).
+  joinWaiting: Record<string, JoinStatus>
   // The page the registration form links to for the terms.
   termsUrl?: string
   // The invite that exists from the start.
@@ -270,6 +276,8 @@ export function createData(options: FixtureOptions = {}): FixtureData {
       register: false,
       forgot: false,
       orgCreation: false,
+      joinDomains: {},
+      joinWaiting: {},
       invite: options.invite ?? null,
       ssoDomains: options.ssoDomains ?? {},
       captcha: null,

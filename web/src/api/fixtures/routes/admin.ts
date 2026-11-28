@@ -4,6 +4,10 @@
 // server's refusal says it with `fx.fail`.
 
 import type {
+  DomainJoinMode,
+  JoinOffPlanLine,
+  JoinRequest,
+  JoinRequestList,
   AuthProvider,
   AdminSpace,
   AdminStorageBody,
@@ -247,12 +251,23 @@ export function newDomain(key: string, at: string, codeExpires: string): TenantD
     nextCheckAllowedAt: null,
     restrictOrgs: false,
     provider: null,
-    join: null,
+    join: 'off',
     recordName: `_petalbook.${key}`,
     code: null,
     records: null,
     created: at,
   }
+}
+// An administrator approves (the account is made, a member of the tenant) or denies a request that waits.
+function decideJoin(c: Ctx, approve: boolean): JoinRequest {
+  const j = find(A(c).joinRequests[c.params.id] ?? [], (x) => x.id === c.params.req, 'the request')
+  if (j.state !== 'pending') throw new Refusal(409, 'join_decided', 'This request is no longer waiting.')
+  const me = c.data.auth.users.find((u) => u.id === c.data.auth.signedIn)
+  j.state = approve ? 'approved' : 'denied'
+  j.decidedAt = rfc3339(c.now())
+  j.decidedBy = me ? { id: me.id, name: me.name } : null
+  if (approve) j.user = newId(c.data, '01JU')
+  return { ...j }
 }
 // As a list shows it: never the code.
 const listed = (d: TenantDomain): TenantDomain => ({ ...d, code: null, records: null })
@@ -363,13 +378,46 @@ function capabilityLines(c: Ctx, tenant?: string, key = 'features.domains'): Cap
         feature: 'features.domains',
         domains: list.length,
         verified: list.filter((d) => d.verifiedAt).length,
+        requests: waitingJoins(c, id).length,
       }
     })
+}
+
+// The requests to join a tenant that wait (by one of its domains, or any).
+function waitingJoins(c: Ctx, tenant: string, domain?: string): JoinRequest[] {
+  return (A(c).joinRequests[tenant] ?? []).filter((j) => j.state === 'pending' && (!domain || j.domain === domain))
+}
+// Turning a domain's join off, or removing it, while requests wait needs domain_join_off's confirmation first; with
+// it, they are cancelled.
+function joinOff(c: Ctx, domain: string, confirm: string | undefined) {
+  const waiting = waitingJoins(c, c.params.id, domain)
+  if (waiting.length === 0) return
+  if (!confirm) {
+    const line: JoinOffPlanLine = { tenant: c.params.id, domain, requests: waiting.length }
+    throw new Refusal(409, 'confirm_required', 'People are waiting to join by this domain', { plan: [line] })
+  }
+  for (const j of waiting) {
+    j.state = 'cancelled'
+    j.decidedAt = rfc3339(c.now())
+  }
 }
 
 function confirmPlan(c: Ctx): ConfirmResult {
   const b = c.body as { action: string; spaces?: string[]; users?: string[]; items?: string[]; heir?: string }
   const token = `c_${newId(c.data, '')}`
+  if (b.action === 'domain_join_off') {
+    const { tenant = '', domain = '' } = c.body as { tenant?: string; domain?: string }
+    const line: JoinOffPlanLine = { tenant, domain, requests: waitingJoins(c, tenant, domain).length }
+    return {
+      confirm: token,
+      expires: rfc3339(c.now() + 600_000),
+      count: 2,
+      plan: [line] as unknown as ConfirmResult['plan'],
+      bytes: 0,
+      needsHeir: [],
+      blockers: [],
+    }
+  }
   if (b.action === 'change_capabilities') {
     const plan = capabilityLines(c, (c.body as { tenant?: string }).tenant, (c.body as { key?: string }).key)
     return {
@@ -1201,7 +1249,15 @@ export const adminRoutes: Route[] = [
     '/api/admin/tenants/:id/domains/:domain',
     (c) => {
       const d = domainOf(c)
-      const b = c.body as { restrictOrgs?: boolean; provider?: string | null }
+      const b = c.body as { restrictOrgs?: boolean; provider?: string | null; join?: DomainJoinMode; confirm?: string }
+      if (b.join !== undefined) {
+        if (!['off', 'auto', 'request'].includes(b.join))
+          throw new Refusal(400, 'invalid', 'Join is off, auto or request.')
+        if (b.join !== 'off' && !d.verifiedAt)
+          throw new Refusal(409, 'domain_required', 'Verify the domain first: people join by a verified domain only.')
+        if (b.join === 'off') joinOff(c, d.domain, b.confirm)
+        d.join = b.join
+      }
       if (b.restrictOrgs !== undefined) d.restrictOrgs = b.restrictOrgs === true
       if (b.provider !== undefined) {
         if (b.provider !== null) find(tenantProvidersOf(c), (p) => p.id === b.provider, 'the provider')
@@ -1217,10 +1273,23 @@ export const adminRoutes: Route[] = [
     '/api/admin/tenants/:id/domains/:domain',
     (c) => {
       const d = domainOf(c)
+      joinOff(c, d.domain, c.query.get('confirm') ?? undefined)
       remove(domainsOf(c, c.params.id), d)
       return reply(204)
     },
   ],
+  // --- a tenant's requests to join by domain (3.6 d5) ---
+  [
+    'GET',
+    '/api/admin/tenants/:id/join-requests',
+    (c) => {
+      const all = c.query.get('state') === 'all'
+      const items = (A(c).joinRequests[c.params.id] ?? []).filter((j) => all || j.state === 'pending')
+      return { items: items.map((j) => ({ ...j })), next: null } satisfies JoinRequestList
+    },
+  ],
+  ['POST', '/api/admin/tenants/:id/join-requests/:req/approve', (c) => decideJoin(c, true)],
+  ['POST', '/api/admin/tenants/:id/join-requests/:req/deny', (c) => decideJoin(c, false)],
   [
     'GET',
     '/api/admin/domains',

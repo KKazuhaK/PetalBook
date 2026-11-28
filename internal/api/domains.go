@@ -74,9 +74,10 @@ type domainResp struct {
 	NextCheckAllowedAt *string `json:"nextCheckAllowedAt"`
 	RestrictOrgs       bool    `json:"restrictOrgs"`
 	// Provider is the id of the tenant's own sign-in provider the domain
-	// routes to (3.6 d3; null for none). Join (d5) is reserved: null.
+	// routes to (3.6 d3; null for none). Join is how people of the domain
+	// join the tenant at sign-up (3.6 d5): off, auto or request.
 	Provider *string `json:"provider"`
-	Join     *string `json:"join"`
+	Join     string  `json:"join"`
 	// RecordName is where the record goes. Code and Records are given only by
 	// the answer that made the code (the claim, a new code): it is stored as a
 	// hash, so it is shown that once; otherwise null.
@@ -117,7 +118,7 @@ func (s *server) domainOf(r store.DomainRow, code string) domainResp {
 	out := domainResp{Domain: r.Domain, Display: domains.Display(r.Domain), MixedScript: domains.MixedScript(r.Domain), State: domainState(r),
 		VerifiedAt: optTime(r.VerifiedAt), MissingSince: optTime(r.MissingSince), LapsedAt: optTime(r.LapsedAt), CheckedAt: optTime(r.CheckedAt),
 		NextCheckAt: optTime(r.NextCheckAt), CodeExpires: optTime(r.CodeExpires), LastCheck: checkOf(domains.ParseCheck(r.LastCheck)),
-		RestrictOrgs: r.RestrictOrgs, RecordName: domains.RecordName(r.Domain), Created: rfc3339(r.Created)}
+		RestrictOrgs: r.RestrictOrgs, Join: domains.JoinModeName(r.JoinMode), RecordName: domains.RecordName(r.Domain), Created: rfc3339(r.Created)}
 	if r.ProviderID != "" {
 		p := r.ProviderID
 		out.Provider = &p
@@ -254,10 +255,13 @@ func (s *server) adminVerifyDomain(c *call) {
 	writeJSON(c.w, http.StatusOK, s.domainOf(res.Row, ""))
 }
 
-// adminPatchDomain is PATCH …/domains/{domain} {"restrictOrgs", "provider"},
-// either or both: provider routes a verified domain to one of the tenant's
-// own sign-in providers (its id; null for none), which needs
-// tenant.signin.manage and features.ownSso too (3.6 d3).
+// adminPatchDomain is PATCH …/domains/{domain} {"restrictOrgs", "provider",
+// "join"}, any of them: provider routes a verified domain to one of the
+// tenant's own sign-in providers (its id; null for none), which needs
+// tenant.signin.manage and features.ownSso too (3.6 d3); join is how people
+// of the domain join the tenant at sign-up (off, auto, request; 3.6 d5).
+// Turning join off while requests wait cancels them, which needs the
+// confirmation (domain_join_off, in "confirm").
 func (s *server) adminPatchDomain(c *call) {
 	t, ok := s.domainTenant(c)
 	if !ok {
@@ -269,6 +273,7 @@ func (s *server) adminPatchDomain(c *call) {
 	}
 	var restrict bool
 	var provider *string
+	var join, confirm string
 	setProvider := false
 	for k, v := range raw {
 		switch k {
@@ -283,14 +288,32 @@ func (s *server) adminPatchDomain(c *call) {
 				writeError(c.w, http.StatusBadRequest, "invalid", "Provider is the id of one of the organisation's sign-in providers, or null.")
 				return
 			}
+		case "join":
+			if json.Unmarshal(v, &join) != nil {
+				writeError(c.w, http.StatusBadRequest, "invalid", "Join is off, auto or request.")
+				return
+			}
+			if _, ok := domains.JoinModeOf(join); !ok {
+				writeError(c.w, http.StatusBadRequest, "invalid", "Join is off, auto or request.")
+				return
+			}
+		case "confirm":
+			if json.Unmarshal(v, &confirm) != nil {
+				writeError(c.w, http.StatusBadRequest, "invalid", "Confirm is the token of POST /api/admin/confirm.")
+				return
+			}
 		default:
-			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown field "+k+": only restrictOrgs and provider can be changed.")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown field "+k+": only restrictOrgs, provider and join can be changed.")
 			return
 		}
 	}
 	_, setRestrict := raw["restrictOrgs"]
-	if !setRestrict && !setProvider {
-		writeError(c.w, http.StatusBadRequest, "invalid", "Give restrictOrgs or provider.")
+	_, setJoin := raw["join"]
+	if !setRestrict && !setProvider && !setJoin {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give restrictOrgs, provider or join.")
+		return
+	}
+	if setJoin && join == "off" && !s.joinOffGate(c, t, c.r.PathValue("domain"), confirm) {
 		return
 	}
 	pid := ""
@@ -331,6 +354,12 @@ func (s *server) adminPatchDomain(c *call) {
 			return
 		}
 	}
+	if setJoin {
+		if r, err = s.domains.SetJoin(c.r.Context(), t, c.r.PathValue("domain"), join, domains.Who{ID: c.user().ID, IP: s.auth.ClientAddr(c.r)}); err != nil {
+			s.failDomain(c, err)
+			return
+		}
+	}
 	if setRestrict {
 		if r, err = s.domains.SetRestrict(c.r.Context(), t, c.r.PathValue("domain"), restrict); err != nil {
 			s.failDomain(c, err)
@@ -341,6 +370,9 @@ func (s *server) adminPatchDomain(c *call) {
 	if setRestrict {
 		detail["restrictOrgs"] = restrict
 	}
+	if setJoin {
+		detail["join"] = join
+	}
 	if setProvider {
 		detail["provider"] = provider
 	}
@@ -348,19 +380,80 @@ func (s *server) adminPatchDomain(c *call) {
 	writeJSON(c.w, http.StatusOK, s.domainOf(r, ""))
 }
 
-// adminDeleteDomain is DELETE …/domains/{domain}.
+// adminDeleteDomain is DELETE …/domains/{domain}[?confirm=]: removing a
+// domain people asked to join by cancels their requests, which needs the
+// confirmation (domain_join_off).
 func (s *server) adminDeleteDomain(c *call) {
 	t, ok := s.domainTenant(c)
 	if !ok {
 		return
 	}
-	r, err := s.domains.Remove(c.r.Context(), t, c.r.PathValue("domain"))
+	if !s.joinOffGate(c, t, c.r.PathValue("domain"), c.r.URL.Query().Get("confirm")) {
+		return
+	}
+	r, err := s.domains.Remove(c.r.Context(), t, c.r.PathValue("domain"), domains.Who{ID: c.user().ID, IP: s.auth.ClientAddr(c.r)})
 	if err != nil {
 		s.failDomain(c, err)
 		return
 	}
 	s.audit(c, auth.AuditEvent{Kind: "domain_removed", Actor: c.user().ID, Tenant: t, Detail: map[string]any{"domain": r.Domain, "verified": r.Verified()}})
 	c.w.WriteHeader(http.StatusNoContent)
+}
+
+// joinOffPlan is the confirmation's plan of domain_join_off: the pending
+// requests of the tenant's domain that turning its join off, or removing it,
+// would cancel. The caller must manage the tenant's domains (404 otherwise).
+func (s *server) joinOffPlan(c *call, req confirmRequest) (confirmPlan, bool) {
+	if req.Tenant == "" || !c.p.Access.Can(authz.TenantDomainsManage, req.Tenant) || !s.knownTenant(req.Tenant) {
+		writeError(c.w, http.StatusNotFound, "not_found", "No such domain.")
+		return confirmPlan{}, false
+	}
+	key, ok := domains.Key(req.Domain)
+	if !ok {
+		writeError(c.w, http.StatusNotFound, "not_found", "No such domain.")
+		return confirmPlan{}, false
+	}
+	ids, err := s.domains.PendingJoins(c.r.Context(), req.Tenant, key)
+	if err != nil {
+		s.fail(c.w, err)
+		return confirmPlan{}, false
+	}
+	n := len(ids)
+	plan := []any{joinOffItem{Tenant: req.Tenant, Domain: key, Requests: n}}
+	return confirmPlan{Plan: plan, Hash: hashOf(append([]string{req.Tenant, key}, ids...)...)}, true
+}
+
+// joinOffItem is the line of domain_join_off's plan.
+type joinOffItem struct {
+	Tenant   string `json:"tenant"`
+	Domain   string `json:"domain"`
+	Requests int    `json:"requests"`
+}
+
+// joinOffGate is the check before a change that cancels a domain's pending
+// requests to join (its join turned off, or its removal): none pending, it
+// goes ahead; else it needs the confirmation, and without one is answered 409
+// confirm_required with the plan. It reports false after answering.
+func (s *server) joinOffGate(c *call, tenant, domain, tok string) bool {
+	ids, err := s.domains.PendingJoins(c.r.Context(), tenant, domain)
+	if err != nil {
+		s.fail(c.w, err)
+		return false
+	}
+	if len(ids) == 0 {
+		return true
+	}
+	req := confirmRequest{Action: "domain_join_off", Tenant: tenant, Domain: domain}
+	if tok == "" {
+		p, ok := s.joinOffPlan(c, req)
+		if !ok {
+			return false
+		}
+		writeJSON(c.w, http.StatusConflict, errorBody{Error: "confirm_required", Plan: p.Plan,
+			Message: "People are waiting to join by this domain: ask POST /api/admin/confirm (domain_join_off) for what would be cancelled, and send its confirm."})
+		return false
+	}
+	return s.useConfirm(c, tok, req)
 }
 
 // adminSiteDomains is GET /api/admin/domains: every tenant's claims, by

@@ -29,12 +29,25 @@ var (
 	EmailReleased    = Event{store.NotifyEmailReleased, "email_released"}
 	ViewedAs         = Event{store.NotifyViewedAs, "view_as_started"}
 	DomainLapsed     = Event{store.NotifyDomainLapsed, "domain_lapsed"}
+	// JoinRequested: someone whose address is on a verified domain asks to
+	// join the tenant (3.6 d5); its administrators are told.
+	JoinRequested = Event{store.NotifyJoinRequested, "join_requested"}
+	// JoinApproved: an administrator approved a request; the account it made is told.
+	JoinApproved = Event{store.NotifyJoinApproved, "join_approved"}
 )
 
 // The events that are an audit row only (no one is told).
 var (
 	// DomainMissing: the daily recheck no longer finds a verified domain's record.
 	DomainMissing = Event{"", "domain_missing"}
+	// The other ends of a request to join (3.6 d5): an account made by
+	// joining automatically, a denial (the person, who has no account, is
+	// mailed), the person withdrawing, and the domain going (removed, lapsed,
+	// moved, or its join turned off).
+	JoinAuto      = Event{"", "join_auto"}
+	JoinDenied    = Event{"", "join_denied"}
+	JoinWithdrawn = Event{"", "join_withdrawn"}
+	JoinCancelled = Event{"", "join_cancelled"}
 )
 
 // Entry is what happened.

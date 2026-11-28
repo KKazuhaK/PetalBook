@@ -175,6 +175,24 @@ function probes(fx: FixtureServer): Call[] {
     ['GET', '/api/register'],
     ['POST', '/api/register', { username: 'tang', email: 'tang@example.test', password: 'a-long-password' }],
     ['POST', '/api/register/confirm', { token: 'tok' }],
+    // The waiting page of a sign-up that asked to join (3.6 d5): its request is made here, as a confirmation makes one.
+    [
+      'POST',
+      '/api/register/request',
+      () => {
+        fx.data.auth.joinWaiting.jtok = {
+          state: 'pending',
+          tenant: { slug: 'acme', name: 'Acme' },
+          username: 'joiner',
+          email: 'joiner@acme.example',
+          created: '2026-11-20T08:00:00Z',
+          expires: '2026-12-20T08:00:00Z',
+          decidedAt: null,
+        }
+        return { token: 'jtok' }
+      },
+    ],
+    ['POST', '/api/register/request/withdraw', { token: 'jtok' }],
     ['POST', '/api/password/forgot', { login: 'admin' }],
     ['POST', '/api/password/reset/check', { token: 'tok' }],
     ['POST', '/api/password/reset', { token: 'tok', password: 'a-long-password' }],
@@ -296,6 +314,8 @@ const UNRECORDED: Record<string, string> = {
   'POST /api/account/passkeys/finish 200': 'needs a passkey',
   'POST /api/register 202': 'needs mail',
   'POST /api/register/confirm 200': 'needs mail',
+  'POST /api/register/request 200': 'needs mail and a domain verified by DNS',
+  'POST /api/register/request/withdraw 200': 'needs mail and a domain verified by DNS',
   'POST /api/password/forgot 202': 'needs mail',
   'POST /api/password/reset/check 200': 'needs mail',
   'GET /api/oauth/consent 200': 'needs an authorization client',

@@ -4,6 +4,7 @@
 
 import registries from '../../generated/registries.json' with { type: 'json' }
 import type {
+  JoinRequest,
   PermissionKey,
   AdminDailyBody,
   AdminGrant,
@@ -72,6 +73,8 @@ export interface AdminData {
   secrets: { site: Record<string, SecretMeta>; tenants: Record<string, Record<string, SecretMeta>> }
   // Each tenant's claimed email domains (3.6 d2), by tenant id.
   domains: Record<string, TenantDomain[]>
+  // Each tenant's requests to join by domain (3.6 d5), by tenant id, newest first.
+  joinRequests: Record<string, JoinRequest[]>
   // The domains whose record "Check now" finds (the fixtures' DNS).
   publishedDomains: string[]
   // The host of the server's public address, which a CNAME points under ('' for none, as the contract's server).
@@ -154,6 +157,7 @@ export function createAdminData(now: number, admin: { id: string; username: stri
       tenants: {},
     },
     domains: {},
+    joinRequests: {},
     publishedDomains: [],
     siteHost: '',
     mail: {
