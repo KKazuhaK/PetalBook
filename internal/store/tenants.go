@@ -185,6 +185,11 @@ type ErrTenantNotEmpty struct{ Users, Spaces, Groups, Invites, Recycle int }
 
 func (*ErrTenantNotEmpty) Error() string { return "the tenant is not empty" }
 
+// ErrTenantTargetInUse is the refusal of deleting a tenant one of whose storage
+// targets a remote still names (remotes.target_id): the remote has to be
+// moved or disconnected first.
+var ErrTenantTargetInUse = errors.New("a remote still uses one of the tenant's storage targets")
+
 // ErrTenantLimit is the refusal of the 1,001st tenant.
 var ErrTenantLimit = errors.New("too many tenants")
 
@@ -491,6 +496,18 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 			return err
 		}
 		if _, err := q.Exec(ctx, `DELETE FROM provider_installations WHERE owner_tenant = ?`, id); err != nil {
+			return err
+		}
+		// Its own storage targets (no foreign key on the owner; their sharing goes
+		// with them), unless a remote still names one.
+		var used int
+		if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM remotes WHERE target_id IN (SELECT id FROM storage_targets WHERE owner = ?) LIMIT 1) r`, id).Scan(&used); err != nil {
+			return err
+		}
+		if used > 0 {
+			return ErrTenantTargetInUse
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM storage_targets WHERE owner = ?`, id); err != nil {
 			return err
 		}
 		// Its custom roles, and the grants of any role held in it, go with it.

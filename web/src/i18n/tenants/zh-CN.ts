@@ -223,6 +223,10 @@ export const tenantsZhCN = {
     fromFlag: '由命令行参数设定，这里只读',
     choices: {
       'storage.assets': { space: '放在空间自己的仓库里', repository: '放在单独的附件仓库里' },
+      'storage.partial.unsupported': {
+        allow: '允许：完整克隆',
+        refuse: '拒绝：不连接这样的远端',
+      },
       'registration.mode': {
         open: '开放：谁都能建号',
         invite: '凭邀请：只有邀请链接能建号',
@@ -333,6 +337,12 @@ export const tenantsZhCN = {
       'features.ownDaily': '租户自己的每日一句接口与语句',
       'features.githubConnect': '把 GitHub App 装到自己的 GitHub 账号上',
       'storage.mode': '新空间可以在哪里同步',
+      'storage.partial.unsupported': '不支持部分同步的远端',
+      'mail.useSite': '没有自己的发信设置时借用全站的发信',
+      'daily.useSiteApis': '使用全站的每日一句接口',
+      'connections.useSiteApps': '通过全站配置的应用连接',
+      'outbound.perMinute': '所有租户合计每分钟的对外调用',
+      'outbound.tenantPerMinute': '一个租户每分钟可用的对外调用份额',
       'storage.pinnedBytes': '租户管理员可以固定的磁盘（字节）',
       'quota.people': '租户里的人数',
       'quota.spaces': '租户里的空间数',
@@ -456,6 +466,18 @@ export const tenantsZhCN = {
         '新建并同步到平台的空间，附件是放在空间自己的仓库，还是放在单独的附件仓库（<名字>-assets）。默认是单独的仓库。顺序：全站锁定 > 全站为某个租户强制 > 全站默认 > 租户默认 > 空间所有者；没有远端的空间附件始终在空间里。租户的限额表关掉附件仓库时只能放在空间里。',
       'storage.assets.ownStorageExempt':
         '开着（默认）：所有者把空间放在自己存储位置上时，不受全站对附件位置的规则约束，由所有者自己决定。关掉：全站的默认或锁定对这些空间同样有效。这个存储位置功能随 3.6 一起到来，在那之前这个开关只是先存着。',
+      'storage.partial.unsupported':
+        '把空间连到不支持部分同步的远端时怎么办。允许（默认）：完整克隆。拒绝：不让连接；已经连上的空间照常工作。拒绝更严格。暂未生效。',
+      'mail.useSite':
+        '开着（默认）：没有自己发信设置的组织，用全站的发信设置，显示组织的名字。关掉：设置好自己的之前不发信。要强制关掉，全站必须把它锁定为关（对所有人，或用规则只对某个组织）；没锁定的“关”，组织可以自己改回开。暂未生效。',
+      'daily.useSiteApis':
+        '开着（默认）：组织的空间可以选用全站的每日一句接口，用全站的额度。关掉：只能用自己的。要强制关掉，全站必须把它锁定为关（对所有人，或用规则只对某个组织）；没锁定的“关”，组织可以自己改回开。暂未生效。',
+      'connections.useSiteApps':
+        '开着（默认）：没有自己连接应用的组织，其成员通过全站配置的应用连接。关掉：添加自己的之前不能连接。要强制关掉，全站必须把它锁定为关（对所有人，或用规则只对某个组织）；没锁定的“关”，组织可以自己改回开。暂未生效。',
+      'outbound.perMinute':
+        '服务器为租户自己的配置（发信、验证码、每日一句、各平台检查）每分钟向外发出的请求总数。超过时请求不会发出。暂未生效。',
+      'outbound.tenantPerMinute':
+        '一个租户每分钟最多能用上面总数中的多少，除非给该租户的规则另外设了对外调用。暂未生效。',
     } as Record<string, string>,
   },
   secrets: {

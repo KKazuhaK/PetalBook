@@ -404,6 +404,10 @@ CREATE TABLE layered_settings (
   ends     BIGINT,
   set_by   TEXT COLLATE "C" NOT NULL DEFAULT '',
   updated  BIGINT NOT NULL,
+  -- The reason shown to a tenant's administrators beside what the rule
+  -- leaves them (docs/api.md, "Forced, minimum, default"); '' for none, at
+  -- most 200 characters. Nothing reads or writes it through the API yet.
+  note     TEXT COLLATE "C" NOT NULL DEFAULT '' CHECK (length(note) <= 200),
   PRIMARY KEY (layer, layer_id, key, source),
   CHECK (ends IS NULL OR starts IS NULL OR ends > starts)
 );
@@ -984,7 +988,21 @@ CREATE TABLE provider_shares (
 );
 CREATE INDEX provider_shares_tenant ON provider_shares(tenant_id);
 
--- Where the spaces of an owner ('site' or a tenant id) get repositories made automatically.
+-- Where the spaces of an owner ('site' or a tenant id) get repositories made
+-- automatically (3.6: a tenant's own storage target; nothing reads the columns
+-- after namespace_id yet).
+--   app:        for a GitHub target, whose App made the installation: 'site'
+--               (an installation of the site's App shared with the tenant),
+--               'tenant' (the tenant's own App); '' for the others.
+--   prefix:     put before a space's slug in the name of its repository.
+--   state:      'checking' (a check is under way or has not run), 'ok' or
+--               'broken'; state_error is what the last failed check said and
+--               checked_at when it last ran (0: never).
+--   in_use:     1 for the target new spaces go to (a tenant has one), 0 for an
+--               old one kept only for the spaces still on it.
+--   updated_by: the person who last changed it ('' for the system).
+-- The tenants a site-owned target is shared with are in storage_target_shares.
+-- There is no foreign key on owner: DeleteTenant deletes a tenant's targets.
 CREATE TABLE storage_targets (
   id              TEXT COLLATE "C" PRIMARY KEY,
   owner           TEXT COLLATE "C" NOT NULL,
@@ -992,8 +1010,52 @@ CREATE TABLE storage_targets (
   installation_id BIGINT NOT NULL DEFAULT 0,
   namespace       TEXT COLLATE "C" NOT NULL,
   namespace_id    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  app             TEXT COLLATE "C" NOT NULL DEFAULT '' CHECK (app IN ('', 'site', 'tenant')),
+  prefix          TEXT COLLATE "C" NOT NULL DEFAULT '',
+  state           TEXT COLLATE "C" NOT NULL DEFAULT 'checking' CHECK (state IN ('checking', 'ok', 'broken')),
+  state_error     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  checked_at      BIGINT NOT NULL DEFAULT 0,
+  in_use          BIGINT NOT NULL DEFAULT 1 CHECK (in_use IN (0, 1)),
+  updated_by      TEXT COLLATE "C" NOT NULL DEFAULT '',
   created         BIGINT NOT NULL,
   updated         BIGINT NOT NULL
+);
+CREATE INDEX storage_targets_owner ON storage_targets(owner);
+
+-- A target of the site offered to a tenant (as provider_shares does for sign-in).
+CREATE TABLE storage_target_shares (
+  target_id TEXT COLLATE "C" NOT NULL REFERENCES storage_targets(id) ON DELETE CASCADE,
+  tenant_id TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  PRIMARY KEY (target_id, tenant_id)
+);
+CREATE INDEX storage_target_shares_tenant ON storage_target_shares(tenant_id);
+
+-- What a tenant keeps of its own integrations that is not a secret: kind
+-- 'smtp', 'captcha', 'daily', 'github', 'gitlab' or 'gitea', and id told apart
+-- among several of a kind ('' for the kinds a tenant has one of). config is
+-- JSON, owned by the code of the kind. The secrets of an integration are in
+-- secrets (scope 'tenant'). The per-tenant counterpart of site_records.
+CREATE TABLE tenant_integrations (
+  tenant_id  TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind       TEXT COLLATE "C" NOT NULL CHECK (kind <> ''),
+  id         TEXT COLLATE "C" NOT NULL DEFAULT '',
+  config     TEXT COLLATE "C" NOT NULL DEFAULT '{}',
+  updated_by TEXT COLLATE "C" NOT NULL DEFAULT '',
+  updated    BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, kind, id)
+);
+
+-- What a tenant used, a row per day and key (docs/api.md, "Storage of this
+-- section"): the usage export's rows. day is the UTC date, 'YYYY-MM-DD'. The
+-- counters (apiRequests, mcpRequests, mail, outgoing) are added to as they
+-- happen; the totals (people, spaces, bytes, pinnedBytes) are set by the daily
+-- recount. The keys are store.UsageKey*.
+CREATE TABLE tenant_usage_daily (
+  tenant_id TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  day       TEXT COLLATE "C" NOT NULL CHECK (length(day) = 10),
+  key       TEXT COLLATE "C" NOT NULL,
+  value     BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (tenant_id, day, key)
 );
 
 -- An identity provider's group claim value mapped to a PetalBook group.

@@ -31,21 +31,31 @@ const (
 // Source is where a rule comes from (the Source constants; "" is manual).
 // Starts and Ends are the window of a rule for a tenant: it counts from
 // Starts up to, not including, Ends; the zero time is none.
+//
+// Note is the reason shown beside the rule, at most MaxLayeredNote characters
+// ("" for none); the table refuses a longer one. A write replaces the stored
+// note only when NoteSet is true: a writer that builds a fresh row (a plan's or
+// billing's rule, a lock change) leaves the note as it was.
 type LayeredRow struct {
 	Layer, LayerID, Key, Source string
 	Value, Lower                string
 	Starts, Ends                time.Time
 	SetBy                       string
 	Updated                     time.Time
+	Note                        string
+	NoteSet                     bool
 }
 
-const layeredCols = `layer, layer_id, key, source, value, lower, starts, ends, set_by, updated`
+// MaxLayeredNote is the most characters of a rule's note.
+const MaxLayeredNote = 200
+
+const layeredCols = `layer, layer_id, key, source, value, lower, starts, ends, set_by, updated, note`
 
 func scanLayered(sc interface{ Scan(...any) error }) (LayeredRow, error) {
 	var r LayeredRow
 	var st, en sql.NullInt64
 	var up int64
-	err := sc.Scan(&r.Layer, &r.LayerID, &r.Key, &r.Source, &r.Value, &r.Lower, &st, &en, &r.SetBy, &up)
+	err := sc.Scan(&r.Layer, &r.LayerID, &r.Key, &r.Source, &r.Value, &r.Lower, &st, &en, &r.SetBy, &up, &r.Note)
 	if st.Valid {
 		r.Starts = fromMS(st.Int64)
 	}
@@ -112,10 +122,13 @@ func GetLayered(ctx context.Context, q Q, layer, layerID, key, source string) (*
 // layer id, key and source. The writes of layered_settings are counted once a
 // transaction by its caller (BumpSettingsRev).
 func PutLayered(ctx context.Context, q Q, r LayeredRow) error {
-	_, err := q.Exec(ctx, `INSERT INTO layered_settings(`+layeredCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (layer, layer_id, key, source) DO UPDATE SET value = excluded.value, lower = excluded.lower,
-		starts = excluded.starts, ends = excluded.ends, set_by = excluded.set_by, updated = excluded.updated`,
-		r.Layer, r.LayerID, r.Key, sourceOf(r), r.Value, r.Lower, nullMS(r.Starts), nullMS(r.Ends), r.SetBy, ms(r.Updated))
+	set := `value = excluded.value, lower = excluded.lower, starts = excluded.starts, ends = excluded.ends, set_by = excluded.set_by, updated = excluded.updated`
+	if r.NoteSet {
+		set += `, note = excluded.note`
+	}
+	_, err := q.Exec(ctx, `INSERT INTO layered_settings(`+layeredCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (layer, layer_id, key, source) DO UPDATE SET `+set,
+		r.Layer, r.LayerID, r.Key, sourceOf(r), r.Value, r.Lower, nullMS(r.Starts), nullMS(r.Ends), r.SetBy, ms(r.Updated), r.Note)
 	return err
 }
 
@@ -143,7 +156,8 @@ func DeleteManualRules(ctx context.Context, q Q, tenant string) ([]LayeredRow, e
 
 // PutLayeredFields writes a tenant administrator's change to a tenant's own
 // record: the value when setValue, the rule when setLower. The other field of
-// an existing record is kept.
+// an existing record is kept; the note is replaced only when setLower and
+// r.NoteSet.
 func PutLayeredFields(ctx context.Context, q Q, r LayeredRow, setValue, setLower bool) error {
 	set := `updated = excluded.updated`
 	if setValue {
@@ -151,10 +165,13 @@ func PutLayeredFields(ctx context.Context, q Q, r LayeredRow, setValue, setLower
 	}
 	if setLower {
 		set += `, lower = excluded.lower`
+		if r.NoteSet {
+			set += `, note = excluded.note`
+		}
 	}
-	_, err := q.Exec(ctx, `INSERT INTO layered_settings(layer, layer_id, key, source, value, lower, set_by, updated) VALUES (?, ?, ?, 'manual', ?, ?, ?, ?)
+	_, err := q.Exec(ctx, `INSERT INTO layered_settings(layer, layer_id, key, source, value, lower, set_by, updated, note) VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?)
 		ON CONFLICT (layer, layer_id, key, source) DO UPDATE SET `+set,
-		r.Layer, r.LayerID, r.Key, r.Value, r.Lower, r.SetBy, ms(r.Updated))
+		r.Layer, r.LayerID, r.Key, r.Value, r.Lower, r.SetBy, ms(r.Updated), r.Note)
 	return err
 }
 

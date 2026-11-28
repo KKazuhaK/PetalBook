@@ -9747,6 +9747,9 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | `quota.spacesPerPerson`, `.bytesPerPerson`, `.pagesPerPerson` | limit | S, T, P |
 | `rate.apiPerMinute`, `.mcpPerMinute`, `.mailPerDay`, `.outboundPerMinute` | limit or none | S + rule |
 | `storage.mode` | choice `server`, `own`, `tenant` | S, T |
+| `storage.partial.unsupported` | choice `allow` < `refuse`, default `allow` | S, T |
+| `mail.useSite`, `daily.useSiteApis`, `connections.useSiteApps` | boolean, default on | S, T |
+| `outbound.perMinute`, `outbound.tenantPerMinute` | limit, 1 or more, default 600 and 120 | S! (the cap counts the requests made for every tenant's configuration together) |
 | `storage.assets` | choice `space` < `repository` | S, T, Sp (the owner's request when the space is made) |
 | `storage.assets.ownStorageExempt`, `storage.pinnedBytes` | boolean, limit | S + rule |
 | `storage.remotes.require`, `.scope`, `.graceDays`, `storage.localSpaces.maxBytes` | text, choice, limits | S, T (the site's lock: a tenant may only tighten) |
@@ -9763,6 +9766,15 @@ Notes:
   3.1 does; the site may loosen each to `allow` (the site's value is a default)
   or lock it. 3.1's `storage.remotes.require` is derived from `storage.mode`
   (see "Storage modes").
+- The keys `storage.partial.unsupported`, `mail.useSite`, `daily.useSiteApis`,
+  `connections.useSiteApps`, `outbound.perMinute` and `outbound.tenantPerMinute`
+  are in the registry, with their defaults, before the features that read them
+  are built; until then nothing reads them (their help says "not in effect
+  yet"). The three `useSite` switches default to on, which is what a tenant
+  gets today. A site administrator who wants one off for a tenant has to
+  **lock** it off (a rule for the tenant, or the site's lock): an off that is
+  not locked is only a default, and the tenant's administrators can turn it
+  back on.
 - `storage.partial.unsupported` (owner, 2026-11-23) is the only partial-sync
   policy. With `refuse`, connecting a space to a host that 3.5's detection found
   unable to filter (`partialSync: "no"`) answers `409 partial_unsupported` with
@@ -11354,14 +11366,31 @@ SQLite and PostgreSQL.
   `tenant_usage_daily` (tenant, day, key, value; primary key
   `(tenant_id, day, key)`). 3.3's `tenants.quota` columns are dropped (the
   totals are `quota.people`, `quota.spaces`, `quota.bytes` and `quota.pages`).
-- Settings: `layered_settings.note`, `.set_by`, `.site_lock`.
+- Settings: `layered_settings.note` (text, at most 200 characters, `''` for
+  none), `.set_by`, `.site_lock`.
+- Shapes reserved ahead of their features (nothing reads them yet):
+  `tenant_integrations` (tenant, kind, id, JSON config, updated by, updated;
+  primary key `(tenant_id, kind, id)`, deleted with the tenant; the sealed
+  secrets stay in `secrets`); `tenant_usage_daily` with `day` as the UTC date
+  `YYYY-MM-DD` and the keys `people`, `spaces`, `bytes`, `pinnedBytes`,
+  `apiRequests`, `mcpRequests`, `mail` and `outgoing`, counted by one
+  `INSERT … ON CONFLICT DO UPDATE SET value = value + excluded.value`;
+  `storage_targets` with `app`, `prefix`, `state` (`checking`, `ok`, `broken`),
+  `state_error`, `checked_at`, `in_use` and `updated_by`, and
+  `storage_target_shares` (target, tenant) for a site target offered to tenants
+  (only a target owned by `site` can be shared; `DeleteTenant` refuses while a
+  remote's `target_id` names one of the tenant's targets).
 - Tenant-owned: `tenant_mail`, `tenant_captcha`, `tenant_daily` (and its
   interfaces and lines, by tenant), `github_apps` (owner `site` or a tenant;
   the site's App moves into it from `site_records`, where 2.7 keeps it),
   `tenant_domains` (tenant, domain, code hash, code expires, verified, checked,
   missing since, last check JSON, provider, join, restrict orgs; unique on
-  verified domain), `storage_targets` (id, tenant, kind, host, owner or
-  namespace, installation, app, sealed token, prefix, state, in use), each with
+  verified domain), `storage_targets` (id, owner (`site` or a tenant), provider
+  id, installation, namespace and its id, `app`, prefix, state with its error
+  and check time, in use, `updated_by`, created, updated; the kind and host are
+  the provider's, read through `provider_id`, and a GitLab or Gitea token is a
+  sealed secret of the tenant in `secrets`, not a column; a site target is
+  offered to tenants through `storage_target_shares`), each with
   `updated_by` and `updated_at`; `site_records` key `publicMailDomains`.
   `github_apps` is the GitHub provider's table; 3.8's providers have their own.
 - Sign-in: `providers.owner` and `providers.signin`, one `linked_accounts` row per (provider, person) (unique `(provider_id, subject)` and `(provider_id, user_id)`); `provider_installations` name the App
