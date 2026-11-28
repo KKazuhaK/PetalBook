@@ -2,6 +2,11 @@ package api_test
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -55,5 +60,58 @@ func TestPinningIsHeldToThePinnedBytesOfTheTenant(t *testing.T) {
 		_, other := auditTenant(t, a, root, "initech")
 		pin(other, s2, false).want(t, 404, "not_found")
 		adm.do("PUT", "/api/admin/spaces/"+s2+"/storage", map[string]any{"exempt": true}).want(t, 403, "forbidden")
+	})
+}
+
+// Pins that arrive together cannot take more than the limit: the check and the
+// pin are one step.
+func TestConcurrentPinsStayWithinTheLimit(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		root := a.setup("root", pw)
+		root.putSetting("features.tenancy", true).want(t, 200, "")
+		tenB, adm := auditTenant(t, a, root, "globex")
+		root.do("PUT", "/api/admin/tenants/"+tenB+"/settings/storage.pinnedBytes", map[string]any{"siteRule": map[string]any{"value": 150}}).want(t, 200, "")
+		var ids []string
+		for i := range 8 {
+			id := adm.do("POST", "/api/spaces", map[string]any{"name": fmt.Sprintf("S%d", i)}).want(t, 201, "").body["id"].(string)
+			if _, err := a.st.Q().Exec(context.Background(), `UPDATE spaces SET size_bytes = 60 WHERE id = ?`, id); err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, id)
+		}
+		var wg sync.WaitGroup
+		codes := make(chan int, len(ids))
+		for _, id := range ids {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				req := httptest.NewRequest("PUT", "/api/admin/spaces/"+id+"/storage", strings.NewReader(`{"pin":true}`))
+				req.Host = strings.TrimPrefix(strings.TrimPrefix(a.public, "https://"), "http://")
+				req.Header.Set("Content-Type", "application/json")
+				for _, ck := range adm.cookies {
+					req.AddCookie(&http.Cookie{Name: ck.Name, Value: ck.Value})
+				}
+				rec := httptest.NewRecorder()
+				a.h.ServeHTTP(rec, req)
+				codes <- rec.Code
+			}()
+		}
+		wg.Wait()
+		close(codes)
+		ok := 0
+		for c := range codes {
+			if c == 200 {
+				ok++
+			} else if c != 409 {
+				t.Fatalf("status %d", c)
+			}
+		}
+		if ok != 2 {
+			t.Fatalf("%d spaces pinned, 150 bytes hold two of 60", ok)
+		}
+		if n := rowCount(t, a, `SELECT COUNT(*) FROM spaces WHERE pinned <> 0 AND tenant_id = ?`, tenB); n != 2 {
+			t.Fatalf("%d pinned in the database", n)
+		}
 	})
 }

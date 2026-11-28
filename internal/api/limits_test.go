@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"petalbook.app/server/internal/auth"
@@ -16,6 +17,7 @@ type limitFx struct {
 	root         *client
 	tenA, tenB   string
 	tokA, tokB   *client // bearer clients
+	admB         *client // the administrator of tenant B
 	cookA        *client // the web session of tenant A's person
 	sidA, sidB   string
 	pagesA, pagB string
@@ -25,8 +27,8 @@ func newLimitFx(t *testing.T, a *acc) *limitFx {
 	t.Helper()
 	f := &limitFx{a: a, root: a.setup("root", pw), tenA: store.DefaultTenantID}
 	f.root.putSetting("features.tenancy", true).want(t, 200, "")
-	var admB *client
-	f.tenB, admB = auditTenant(t, a, f.root, "globex")
+	f.tenB, f.admB = auditTenant(t, a, f.root, "globex")
+	admB := f.admB
 	mem := a.addUser("mem", pw, "member")
 	f.cookA = mem
 	f.sidA = mem.do("POST", "/api/spaces", map[string]any{"name": "A"}).want(t, 201, "").body["id"].(string)
@@ -222,6 +224,38 @@ func TestAMailLimitPerDayHoldsTheSiteMailerForATenant(t *testing.T) {
 		a.clock.Advance(25 * 3600e9) // the next day
 		if got := invite("four@example.test"); got != "sent" {
 			t.Fatalf("%s", got)
+		}
+	})
+}
+
+// Closing the handler writes what was counted: a stop loses none of the minute.
+func TestClosingTheHandlerWritesTheCounts(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newLimitFx(t, a)
+		for range 7 {
+			f.tokA.do("GET", f.pagesA, nil).want(t, 200, "")
+		}
+		a.h.Close()
+		if got := dayRows(t, a, f.tenA)[store.UsageKeyAPIRequests]; got != 7 {
+			t.Fatalf("%d counted after Close, want 7", got)
+		}
+	})
+}
+
+// An export is as current as the request: the tenant's counters still in
+// memory are in it, and another tenant's rows (here, a tenant that is gone) can
+// neither hold it back nor fail it.
+func TestAnExportHasTheCountsStillInMemory(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newLimitFx(t, a)
+		for range 5 {
+			f.tokB.do("GET", f.pagB, nil).want(t, 200, "")
+		}
+		code, _, raw := rawGet(f.admB, exportPath(f.tenB, ""))
+		if code != 200 || !strings.Contains(raw, ",apiRequests,5") {
+			t.Fatalf("%d %q", code, raw)
 		}
 	})
 }

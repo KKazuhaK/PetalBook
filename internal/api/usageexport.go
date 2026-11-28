@@ -88,7 +88,7 @@ func (s *server) adminUsageExport(c *call) {
 		return
 	}
 	if s.limits != nil {
-		if err := s.limits.meter.Flush(ctx, s.opt.Store); err != nil {
+		if err := s.limits.meter.FlushTenant(ctx, s.opt.Store, id); err != nil {
 			s.fail(c.w, err)
 			return
 		}

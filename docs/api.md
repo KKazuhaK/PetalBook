@@ -9618,7 +9618,8 @@ day and key (`people`, `spaces`, `bytes`, `pinnedBytes`, `apiRequests`,
   `{"tenant", "day", "key", "value"}` a line; `application/x-ndjson`). Both are
   attachments. Days with nothing counted have no rows, and a range with none
   is a file with the header only (CSV) or empty (JSON Lines).
-- The counters in memory are written first, so that today's row is current.
+- The tenant's counters in memory are written first, so that today's row is
+  current; another tenant's rows are not touched.
 - Audited (`usage_exported`, with the days, the format and the number of rows).
 - The tenant page of the site's administrators (usage) and the usage page of a
   tenant's console have the days, the format and the download.
@@ -9628,19 +9629,31 @@ day and key (`people`, `spaces`, `bytes`, `pinnedBytes`, `apiRequests`,
 `tenant_usage_daily` has a row for each tenant, day (UTC) and key. Two kinds:
 
 - **Counted as it happens**: `apiRequests` (requests made with an API token),
-  `mcpRequests` (requests to `/mcp`), `mail` (messages the site's mailer queued
-  for the tenant's people; a message with no tenant, such as a refused new
-  organisation's, is not counted) and `outgoing` (reserved: nothing counts it
+  `mcpRequests` (requests to `/mcp`), `mail` (every message the site's mailer
+  queued, invitations included, charged to one tenant as below) and `outgoing`
+  (reserved: nothing counts it
   until the outgoing calls limit is built). The counts are kept in memory,
   never in the database per request, and written in one transaction every
-  minute and when the server stops. **A crash loses at most what was counted
+  minute, when the server stops (again once its background work has ended) and
+  for the tenant when an export is made. **A crash loses at most what was counted
   since the last write: a minute.** A request refused with `429` is not counted;
   the requests of the web app's own session cookie are not counted either.
 - **Totals the recount sets**: `people`, `spaces`, `bytes` and `pinnedBytes`
   (the disk of the pinned spaces: the measured size of the clone, else what the
   quotas count of it), set from the usage rows and the spaces when the server
   starts and every hour after, replacing the day's earlier values. The last
-  value of a day is that day's.
+  value of a day is that day's. Only a value that changed since the recount last
+  wrote it is written (it remembers, and reads the day's rows once, at the start
+  and at midnight); a tenant deleted meanwhile is skipped.
+
+**Whom a message is charged to.** The tenant of the person it is for (an
+invitation: the tenant that invites; a verification, an administrator's reset
+link: the person's). Mail anyone can ask for without signing in is charged so
+that the counts tell nothing of other tenants: a registration is charged to the
+tenant the registration asked for, whether or not the address already has an
+account (an address with nothing to send is still counted), and a request to
+reset a password is charged to no tenant (the site's own mail), since it may
+name accounts of several. A message of no tenant is not counted and not limited.
 
 #### The per-minute and per-day limits
 
@@ -9653,13 +9666,26 @@ count is one fixed minute per tenant, in memory, so one tenant's requests never
 use another's, and nothing is read from the database for it (the limit comes
 from the settings' cache). `0` allows none; no value is no limit.
 
-`rate.mailPerDay` holds the site's mailer for the tenant's people: a message
-over the day's limit is not queued, and what asked for it answers `429
-rate_limited` with `Retry-After` until the UTC day ends (the flows that never say
-whether an address exists keep saying the same, and log it). The day's count is
-the written value plus the unwritten one, read outside any transaction, and only
-for a tenant that has a limit. Going over a limit writes `quota_exceeded` at most
-once a day for the tenant and key.
+`rate.mailPerDay` holds the site's mailer for the tenant: a message over the
+day's limit is not queued, and what asked for it answers `429 rate_limited` with
+`Retry-After` until the UTC day ends. A bulk invitation stops at the limit: the
+rows it did not send say `mail: "limited"` and carry the link to hand over, as for
+a full queue. The flows that never say whether an address exists keep saying the
+same, and log it. **Security mail is counted but never held to the limit**:
+a verification (`verify`, `email_claim`), a reset (`reset`, `reset_sso`) and a
+registration's messages (`register_*`), so that anonymous requests cannot use up
+a tenant's allowance and lock its people out of their passwords. The slot is
+taken in memory in one step on top of the day's written count (read outside any
+transaction, and only for a tenant that has a limit), so concurrent messages
+cannot pass the limit together, and it is given back if the message is not queued.
+Going over a limit writes `quota_exceeded` at most once a day for the tenant and
+key.
+
+The allowance tables hold 20,000 tenants at a time: the tenants that have a limit
+and made a request counted by it in the last minute. Beyond that, a tenant's count
+is kept in a fixed 1 MiB sketch shared by the overflow, so **past 20,000 such
+tenants in one minute the counts are approximate, and err only toward refusing
+early**; memory stays bounded.
 
 ### The billing boundary
 
@@ -9947,7 +9973,9 @@ Notes:
   administrators for their tenant's spaces (another tenant's space is `404`);
   `exempt` in the same body is the site's (`403 forbidden` for a tenant's
   administrator). A site administrator is not held to the limit, and a space
-  already pinned is not counted twice. Evicting is open to tenant
+  already pinned is not counted twice. The check and the pin are one transaction
+  that locks the tenant's row, so pins at once cannot pass the limit together
+  (the limit itself is read before it). Evicting is open to tenant
   administrators (it only frees the server's disk).
 - `storage.assets` at the space layer is the owner's choice for their space (a
   record of the state database, as 3.1's per-space values, not `space.yml`).

@@ -149,12 +149,8 @@ func (s *server) adminPutSpaceStorage(c *call) {
 			return
 		}
 	}
-	if req.Pin != nil && *req.Pin && !sp.Storage.Pinned && !s.pinWithin(c, sp.ID, sp.TenantID) {
-		return
-	}
 	if req.Pin != nil {
-		if err := s.spaces.SetPinned(ctx, id, *req.Pin); err != nil {
-			s.fail(c.w, err)
+		if !s.setPin(c, sp, *req.Pin) {
 			return
 		}
 	}
@@ -204,35 +200,31 @@ func (s *server) storageStatus(ctx context.Context) (any, error) {
 	}, nil
 }
 
-// pinWithin says whether pinning the space keeps its tenant's pins within
-// storage.pinnedBytes, answering 409 quota_exceeded (quota "pinnedBytes") when
-// it does not: a tenant's administrators pin the disk the pinned spaces of the
-// tenant take, at most that limit (0 by default: they cannot pin until the
-// site allows it). A site administrator is not held to it. The limit is read
-// from the settings' cache, the sums from two indexed reads; neither happens in
-// a transaction.
-func (s *server) pinWithin(c *call, id, tenant string) bool {
-	if c.siteWide(authz.SiteStorageManage) || s.settings == nil {
-		return true
-	}
+// setPin pins or unpins a space. A tenant's administrators pin the disk the
+// pinned spaces of the tenant take, at most storage.pinnedBytes (0 by default: they
+// cannot pin until the site allows it); over it the answer is 409 quota_exceeded
+// (quota "pinnedBytes") and nothing is pinned. A site administrator is not held
+// to it, and a space already pinned is not looked at again. The limit is read from
+// the settings' cache before the pin, and the check and the pin are one
+// transaction (spaces.PinWithin), so that pins at once cannot pass it together.
+func (s *server) setPin(c *call, sp store.AdminSpace, pin bool) bool {
 	ctx := c.r.Context()
-	limit, _ := s.settings.LimitOf(ctx, tenant, settings.StoragePinnedBytes)
-	q := s.opt.Store.Q()
-	pinned, err := store.PinnedBytes(ctx, q, tenant, id)
-	if err != nil {
-		s.fail(c.w, err)
-		return false
-	}
-	size, err := store.SpaceDiskBytes(ctx, q, id)
-	if err != nil {
-		s.fail(c.w, err)
-		return false
-	}
-	used := pinned + size
-	if limit > 0 && used <= limit {
+	if !pin || sp.Storage.Pinned || c.siteWide(authz.SiteStorageManage) || s.settings == nil {
+		if err := s.spaces.SetPinned(ctx, sp.ID, pin); err != nil {
+			s.fail(c.w, err)
+			return false
+		}
 		return true
 	}
-	writeJSON(c.w, http.StatusConflict, errorBody{Error: "quota_exceeded", Quota: "pinnedBytes", Limit: &limit, Used: &used,
-		Message: "Pinning this space would keep more of the server's disk than this organisation may pin."})
-	return false
+	limit, _ := s.settings.LimitOf(ctx, sp.TenantID, settings.StoragePinnedBytes)
+	pinned, used, err := s.spaces.PinWithin(ctx, sp.ID, sp.TenantID, limit)
+	if err != nil {
+		s.fail(c.w, err)
+		return false
+	}
+	if !pinned {
+		writeJSON(c.w, http.StatusConflict, errorBody{Error: "quota_exceeded", Quota: "pinnedBytes", Limit: &limit, Used: &used,
+			Message: "Pinning this space would keep more of the server's disk than this organisation may pin."})
+	}
+	return pinned
 }

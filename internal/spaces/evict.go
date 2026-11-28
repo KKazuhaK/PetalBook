@@ -1236,13 +1236,38 @@ func (m *Manager) SetPinned(ctx context.Context, id string, pinned bool) error {
 		}
 		return err
 	}
-	m.notePinned(id, pinned)
 	if pinned {
-		if rem, err := store.GetRemote(ctx, m.opt.Store.Q(), id, store.RoleContent); err == nil && rem.Connected() {
-			m.makeFullSoon(id)
-		}
+		m.afterPin(ctx, id)
+	} else {
+		m.notePinned(id, false)
 	}
 	return nil
+}
+
+// PinWithin is SetPinned(true) held to a limit: the space is pinned only if its
+// tenant's pins, with this one, stay within limit, checked and set in one
+// transaction. It reports whether it pinned, and what the pins would take.
+func (m *Manager) PinWithin(ctx context.Context, id, tenant string, limit int64) (bool, int64, error) {
+	pinned, used, err := store.PinSpaceWithin(ctx, m.opt.Store.Q(), id, tenant, limit)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return false, 0, ErrNotFound
+		}
+		return false, 0, err
+	}
+	if pinned {
+		m.afterPin(ctx, id)
+	}
+	return pinned, used, nil
+}
+
+// afterPin is what pinning does besides the row: the manager's note of it, and
+// the clone made full when the remote can be reached.
+func (m *Manager) afterPin(ctx context.Context, id string) {
+	m.notePinned(id, true)
+	if rem, err := store.GetRemote(ctx, m.opt.Store.Q(), id, store.RoleContent); err == nil && rem.Connected() {
+		m.makeFullSoon(id)
+	}
 }
 
 // SetExempt leaves one space out of the requirement of a remote.

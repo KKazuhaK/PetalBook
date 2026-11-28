@@ -236,6 +236,16 @@ func (s *server) close() {
 	s.bgCancel()
 	s.jobs.Close() // stops the running jobs and waits for them
 	s.bg.Wait()
+	// What was counted since the meter's own last flush (it ran when the
+	// background work was told to stop): the server has stopped answering by now,
+	// and the database is still open.
+	if s.limits != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := s.limits.meter.Flush(ctx, s.opt.Store); err != nil {
+			s.log.Warn("could not write the tenants' daily usage when closing", "error", err)
+		}
+		cancel()
+	}
 }
 
 // New returns the handler for every endpoint.
