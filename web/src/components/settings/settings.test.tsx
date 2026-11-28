@@ -106,7 +106,7 @@ describe('the settings dialog, accounts mode, administrator', () => {
 
   it('security: the password form is not on the page until the button is pressed', async () => {
     await open('/settings/security')
-    await settle(() => panelText().includes(ts.methods.title), 'security loaded')
+    await settle(() => panelText().includes(ts.identities.link('Company SSO')), 'security loaded')
     expect(heading()).toBe(t.settingsUi.sections.security)
     expect(panelText()).toContain(ts.identities.link('Company SSO'))
     expect(document.querySelector('input[type="password"]')).toBeNull()
