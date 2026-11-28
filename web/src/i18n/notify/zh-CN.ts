@@ -34,6 +34,7 @@ export const notifyZhCN = {
     email_released: '邮箱',
     viewed_as: '以你的身份查看',
     link_reauth: '关联账号',
+    domain_lapsed: '邮箱域名',
   },
   unreadMark: '未读',
   moreProblems: (n: number) => `还有 ${n} 个空间有问题。`,
@@ -99,6 +100,13 @@ export const notifyZhCN = {
         login
           ? `${login} 的授权无法续期：访问已被撤销或已到期。通过它同步的空间会等你重新连接后再继续。`
           : '授权已被撤销或已到期。通过它同步的空间会等你重新连接后再继续。',
+    },
+    domainLapsed: {
+      title: (domain: string) => `${domain} 已不再处于已验证状态`,
+      body: (since: string) =>
+        since
+          ? `从 ${since} 起就找不到它的 DNS 记录，认领已失效。请生成新的验证码，重新发布记录并检查。`
+          : '连续 7 天找不到它的 DNS 记录，认领已失效。请生成新的验证码，重新发布记录并检查。',
     },
     viewedAs: {
       title: (by: string) => (by ? `${by} 以你的身份查看了应用` : '管理员以你的身份查看了应用'),

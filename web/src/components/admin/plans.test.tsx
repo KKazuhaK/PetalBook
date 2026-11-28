@@ -2,7 +2,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import type { FixtureData } from '@/api/fixtures/data/model'
+import { newDomain } from '@/api/fixtures/routes/admin'
 import { SidebarProvider } from '@/components/ui/sidebar'
+import { tdom } from '@/i18n/domains'
 import { tt } from '@/i18n/tenants'
 import { click, installDomShims, mount, settle, type, type FxMounted, openTenantPage } from '@/testing/harness'
 import { addPlan, ownRule, tenancyOn, DEFAULT_TENANT } from '@/testing/adminScene'
@@ -164,6 +166,34 @@ describe('the plan of a tenant', () => {
     expect(document.querySelector('[data-slot="tenant-plan"]')!.textContent).toContain(
       tp.tenantPlan.cleared(tt.settings.names['quota.people']),
     )
+  })
+})
+
+describe('a plan that switches off a feature the tenant uses', () => {
+  it('shows what stops, asks for the count, and sends the change again with the confirmation', async () => {
+    await open('/admin/tenants', (d) => {
+      addPlan(d, 'basic', 'Basic', { rules: { 'features.domains': { value: false, lower: { mode: 'lock' } } } })
+      d.admin.domains[DEFAULT_TENANT] = [newDomain('acme.example', '2026-11-20T08:00:00Z', '2026-11-20T08:00:00Z')]
+    })
+    await openTenantPage(`${tt.list.open}: Default`, tt.detail.tabs.plan)
+    await settle(
+      () => document.querySelector('[data-slot="tenant-plan"] option[value="basic"]') !== null,
+      'the plan block',
+    )
+    await type(document.querySelector<HTMLSelectElement>('[data-slot="tenant-plan"] select')!, 'basic')
+    await click(button(tp.tenantPlan.change))
+    await settle(() => document.querySelector('[data-slot="plan-change"]') !== null, 'the confirmation')
+    await click(button(tp.tenantPlan.confirm, dlg()))
+    await settle(
+      () => document.querySelector('[data-slot="capability-plan"] [data-slot="plan-line"]') !== null,
+      'the preview',
+    )
+    const box = document.querySelector<HTMLElement>('[role="dialog"]')!
+    await type(box.querySelector<HTMLInputElement>('input')!, '1')
+    await click(button(tdom.capability.confirm, box))
+    await settle(() => document.querySelector('[data-slot="capability-plan"]') === null, 'the dialog closes')
+    const puts = writes('PUT', '/api/admin/tenants/0000000000/plan')
+    expect(puts.map((b) => b.confirm ?? null)).toEqual([null, expect.stringMatching(/^c_/)])
   })
 })
 

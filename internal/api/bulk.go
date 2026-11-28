@@ -155,6 +155,10 @@ func (s *server) adminBulk(c *call) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such confirmation: it was used, has expired, or is not yours.")
 		return
 	}
+	if confirmActions[e.req.Action] == "key" {
+		writeError(c.w, http.StatusBadRequest, "invalid", "This confirmation is of a setting's change: send it as confirm with the change.")
+		return
+	}
 	// The plan is made again from the records now; what it was made from must be
 	// what it is.
 	plan, ok := s.planFor(c, e.req)

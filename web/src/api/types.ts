@@ -970,6 +970,16 @@ export type ErrorCode =
   | 'already_linked'
   | 'github_app_client'
   | 'domain_required'
+  // The email domains (3.6 d2).
+  | 'domain_public'
+  | 'domain_suffix'
+  | 'domain_exists'
+  | 'domain_limit'
+  | 'domain_claimed'
+  | 'domain_code_expired'
+  | 'domain_verified'
+  | 'domain_managed'
+  | 'confirm_required'
   | 'provider_in_use'
   | 'group_not_found'
   | 'group_synced'
@@ -2466,12 +2476,25 @@ export type ConfirmAction =
   | 'enable_users'
   | 'export'
 export interface ConfirmRequest {
-  action: ConfirmAction
+  // change_capabilities is not a bulk action: switching a feature off that is in use, `key` the feature, `tenant` a
+  // site rule's tenant (none: the site's value); its token goes with the setting's change.
+  action: ConfirmAction | 'change_capabilities'
   spaces?: string[]
   users?: string[]
   items?: string[]
   heir?: string
   transfers?: Record<string, string>
+  key?: string
+  tenant?: string
+}
+// One line of change_capabilities' plan: a tenant that uses the feature, and how much of it.
+export interface CapabilityPlanLine {
+  tenant: string
+  slug: string
+  name: string
+  feature: string
+  domains: number
+  verified: number
 }
 // One line of a confirmation's plan: the preview of a deletion, or what an action does to one thing.
 export type ConfirmPlanLine = (
@@ -2480,6 +2503,7 @@ export type ConfirmPlanLine = (
   | { space: { id: string; name: string }; action: string }
   | { user: { id: string; username: string }; action: string }
   | { item: string; kind: RecycleKind; name: string; bytes: number; action: string; deletedAt: string }
+  | CapabilityPlanLine
 ) &
   Record<string, unknown>
 export interface ConfirmResult {
@@ -2623,6 +2647,7 @@ export const NOTIFY_KINDS = [
   'email_released',
   'viewed_as',
   'link_reauth',
+  'domain_lapsed',
 ] as const
 export type NotifyKind = (typeof NOTIFY_KINDS)[number]
 
@@ -2664,4 +2689,53 @@ export interface SecretMeta {
   name: string
   set: boolean
   updatedAt?: string
+}
+
+// An email domain a tenant claimed (3.6 d2, docs/api.md "Email domains and the SSO entry"). `domain` is the key (IDNA,
+// punycode, lower case), `display` the same as people read it. `code` and `records` come only with the answer that
+// made the code: it is kept as a hash, so it is shown that once. `missing` is verified, but the daily recheck has not
+// found the record since `missingSince`; `lapsed` the recheck cancelled it.
+export type DomainState = 'unverified' | 'verified' | 'missing' | 'lapsed'
+export type DomainCheckResult = 'found' | 'missing' | 'wrong_value' | 'dns_error'
+export interface DomainCheck {
+  at: string
+  by: 'manual' | 'daily'
+  result: DomainCheckResult
+  via: '' | 'txt' | 'cname'
+  seen: string[]
+  error: string
+}
+export interface DomainRecords {
+  txt: { name: string; value: string }
+  cname: { name: string; target: string } | null
+}
+export interface TenantDomain {
+  domain: string
+  display: string
+  // A label mixes scripts (a Cyrillic а in a Latin name): a lookalike to warn of, not a refusal.
+  mixedScript: boolean
+  state: DomainState
+  verifiedAt: string | null
+  missingSince: string | null
+  lapsedAt: string | null
+  checkedAt: string | null
+  nextCheckAt: string | null
+  codeExpires: string | null
+  codeExpired: boolean
+  lastCheck: DomainCheck | null
+  nextCheckAllowedAt: string | null
+  restrictOrgs: boolean
+  // Reserved: the provider sign-in is routed to (3.6 d3), how people join (d5).
+  provider: string | null
+  join: string | null
+  recordName: string
+  code: string | null
+  records: DomainRecords | null
+  created: string
+  // The claim's tenant, in the site's list only.
+  tenant?: { id: string; slug: string; name: string }
+}
+export interface TenantDomainList {
+  domains: TenantDomain[]
+  siteHost: string
 }

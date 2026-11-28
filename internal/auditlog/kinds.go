@@ -40,6 +40,19 @@ var registered = []Kind{
 	{Name: "mail_changed", Category: Security, Visibility: Site, AddressFields: []string{"from", "to"}},
 	{Name: "mail_test", Category: Security, Visibility: Site, AddressFields: []string{"to"}},
 	{Name: "secret_changed", Category: Security},
+	// Email domains (3.6 d2): claims, codes, every check by hand, verifying,
+	// the recheck's findings, and a site administrator's transfers (each
+	// tenant sees its own side of one, never the other tenant).
+	{Name: "domain_added", Category: Security},
+	{Name: "domain_code_made", Category: Security},
+	{Name: "domain_checked", Category: Security},
+	{Name: "domain_verified", Category: Security},
+	{Name: "domain_changed", Category: Security},
+	{Name: "domain_removed", Category: Security},
+	{Name: "domain_missing", Category: Security},
+	{Name: "domain_lapsed", Category: Security},
+	{Name: "domain_assigned", Category: Security},
+	{Name: "domain_unassigned", Category: Security},
 
 	// admin: settings, rules, plans, people, invites, groups, roles, tenants,
 	// tokens and grants.

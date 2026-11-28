@@ -35,6 +35,17 @@ func (s *Service) SetBilling(ctx context.Context, tenant, by string, rules map[s
 		if !ok || !d.PerTenant() {
 			return &Error{Code: CodeNotFound, Msg: key + ": no such setting"}
 		}
+		// A feature the tenant uses is not switched off by billing: nobody is
+		// there to confirm what would stop (UseGuard).
+		if g := s.guard.Load(); g != nil && d.Kind == Bool {
+			if off, err := s.BillingSwitchesOff(ctx, tenant, key, r); err != nil {
+				return err
+			} else if off {
+				if err := (*g)(ctx, tenant, key); err != nil {
+					return err
+				}
+			}
+		}
 		row, err := s.ruleRow(ctx, d, store.LayeredSite, tenant, tenant, store.SourceBilling, by, r)
 		if err != nil {
 			return err

@@ -34,6 +34,7 @@ export const notifyEn: NotifyMessages = {
     email_released: 'Email address',
     viewed_as: 'Viewed as you',
     link_reauth: 'Linked accounts',
+    domain_lapsed: 'Email domains',
   },
   unreadMark: 'Unread',
   moreProblems: (n: number) => (n === 1 ? 'And 1 more space has problems.' : `And ${n} more spaces have problems.`),
@@ -99,6 +100,13 @@ export const notifyEn: NotifyMessages = {
         login
           ? `${login} could not be renewed: the access was revoked or has ended. Spaces that sync through it wait until you connect again.`
           : 'The access was revoked or has ended. Spaces that sync through it wait until you connect again.',
+    },
+    domainLapsed: {
+      title: (domain: string) => `${domain} is no longer verified`,
+      body: (since: string) =>
+        since
+          ? `Its DNS record has been missing since ${since}, so the claim lapsed. Publish the record again with a new code and check it.`
+          : 'Its DNS record went missing for 7 days, so the claim lapsed. Publish the record again with a new code and check it.',
     },
     viewedAs: {
       title: (by: string) => (by ? `${by} viewed the app as you` : 'An administrator viewed the app as you'),

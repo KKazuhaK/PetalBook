@@ -20,6 +20,8 @@ import (
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/dailyfetch"
+	"petalbook.app/server/internal/domains"
+	"petalbook.app/server/internal/domains/domainstest"
 	"petalbook.app/server/internal/drafts"
 	"petalbook.app/server/internal/forge"
 	"petalbook.app/server/internal/forge/forgetest"
@@ -80,6 +82,10 @@ type acc struct {
 	// providers an administrator sets up.
 	gl, gt *forgetest.Fake
 	fm     *forge.Manager
+	// dns is the DNS the email domains' checks ask; domains the service (its
+	// recheck is run by the tests, RecheckDue).
+	dns     *domainstest.Fake
+	domains *domains.Service
 }
 
 type accOpts struct {
@@ -196,8 +202,10 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(testWriter{t}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	dns := domainstest.New()
+	dom := domains.New(domains.Options{Store: st, Resolver: dns, SiteHost: api.SiteHostOf(o.public), Now: clk.Now, Logger: log})
 	cfg := auth.Config{Logger: log, Store: st, Spaces: mgr, PublicURL: o.public, TrustedProxies: trusted, HTTPClient: o.httpc,
-		Password: fastPasswords, Now: clk.Now}
+		Password: fastPasswords, Now: clk.Now, OrgDomains: dom.OfTenant, ManagedDomain: dom.Managed}
 	if o.mod != nil {
 		o.mod(&cfg)
 	}
@@ -254,7 +262,8 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 			t.Fatal(err)
 		}
 	}
-	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch, Connections: reg, Now: clk.Now, PrefsQuiet: o.prefsQuiet}
+	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch, Connections: reg, Now: clk.Now, PrefsQuiet: o.prefsQuiet,
+		Domains: dom}
 	if o.maxSpaces > 0 {
 		n := o.maxSpaces // --max-spaces given: the site's quota.spacesPerPerson
 		opts.MaxSpaces = &n
@@ -263,7 +272,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	// Registered after the manager's: cleanups run last first, so the handler's
 	// background work has ended before the spaces under it are closed.
 	t.Cleanup(h.Close)
-	return &acc{apiOpts: opts, t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc, linkTokens: linkTokens, gl: gl, gt: gt, fm: fm}
+	return &acc{apiOpts: opts, t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc, linkTokens: linkTokens, gl: gl, gt: gt, fm: fm, dns: dns, domains: dom}
 }
 
 // client is a browser: it keeps cookies and has an address.

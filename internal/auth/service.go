@@ -95,8 +95,12 @@ type Config struct {
 	// no tenant-owned sign-in provider can be turned on and none vouches for an
 	// address (see orgSignInGate, trustsEmail).
 	OrgDomains func(ctx context.Context, tenantID string) []string
-	Logger     *slog.Logger
-	Now        func() time.Time
+	// ManagedDomain is the tenant that holds the domain of an address verified
+	// and keeps others from making organisations on it ("" for none): the
+	// in-memory map of internal/domains, asked by orgCreationBlocked.
+	ManagedDomain func(ctx context.Context, email string) string
+	Logger        *slog.Logger
+	Now           func() time.Time
 }
 
 // Service is safe for concurrent use.

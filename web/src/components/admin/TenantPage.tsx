@@ -15,6 +15,7 @@ import { adminPath, adminTenantPath } from '@/lib/urls'
 import { formatUsed, share } from '@/lib/usage'
 import { AdminPageHeader } from './AdminPageHeader'
 import { AdminTabs } from './AdminTabs'
+import { DomainsSection } from './DomainsSection'
 import { SecretsSection } from './SecretsSection'
 import { TenantLayer } from './SettingsPanel'
 import { SpacesPanel } from './SpacesPanel'
@@ -27,7 +28,7 @@ const AuditSection = lazy(() => import('./AuditSection').then((m) => ({ default:
 const td = tt.detail
 const to = td.overview
 
-export const TENANT_TABS = ['overview', 'members', 'spaces', 'settings', 'plan', 'audit', 'danger'] as const
+export const TENANT_TABS = ['overview', 'members', 'spaces', 'settings', 'plan', 'audit', 'signin', 'danger'] as const
 type TenantTab = (typeof TENANT_TABS)[number]
 // The tabs that show the tenant's own people, spaces and log: they read in the tenant's scope, as its administrator
 // would, so they are the pages of the console and are never repeated here.
@@ -68,6 +69,8 @@ export function TenantPage({ id, tab }: { id: string; tab?: string }) {
         <AuditSection />
       </Suspense>
     ),
+    // Sign-in: the tenant's email domains (3.6 d2); SSO (d3) and joining (d5) come here too.
+    signin: () => <DomainsSection tenant={tenant.id} />,
     danger: () => <TenantEditor tenant={tenant} onGone={() => navigate(adminPath('tenants', 'tenants'))} />,
   }
   return (

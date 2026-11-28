@@ -342,6 +342,7 @@ export const tenantsZhCN = {
       'features.orgCreation': '允许大家自己创建组织',
       'orgCreation.perPerson': '每人可创建的组织数',
       'orgCreation.perHour': '每小时创建的组织数（全服务器）',
+      'domains.checksPerMinute': '每分钟检查邮箱域名的次数（全服务器）',
       'orgCreation.plan': '新组织起步时的计划',
       'features.passkeys': '允许用 passkey 登录',
       'signin.mode': '登录页的方式',
@@ -381,6 +382,8 @@ export const tenantsZhCN = {
         '默认关闭。开启后，注册页提供“创建我自己的组织”：填写名称和地址，确认邮箱，就成为新租户的管理员（绝不会是站点管理员）。需要先开启多租户开关并配置发信。仅站点管理员可改。',
       'orgCreation.perPerson':
         '每个账号最多可创建这么多个组织；0 表示不允许。统计的是该账号创建的组织数，登录后创建（3.7）上线后才真正起作用：一次注册最多创建一个。仅站点管理员可改。',
+      'domains.checksPerMinute':
+        '所有组织合计，每分钟可以对认领的邮箱域名点「立即检查」的次数。每个域名还要间隔一分钟，每个组织每小时最多 20 次。',
       'orgCreation.perHour': '留空（默认）表示不限。超过后请求照常应答，邮件里会说明没有创建组织。',
       'orgCreation.plan':
         '大家自己创建的组织起步时使用的计划（填计划的标识）；留空表示没有计划。计划里的规则立即生效。',
@@ -509,6 +512,7 @@ export const tenantsZhCN = {
       settings: '设置',
       plan: '套餐与规则',
       audit: '审计',
+      signin: '登录',
       danger: '危险操作',
     },
     overview: {

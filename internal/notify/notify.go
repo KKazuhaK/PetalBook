@@ -28,6 +28,13 @@ var (
 	PasswordSet      = Event{store.NotifyPasswordSet, "password_set_by_admin"}
 	EmailReleased    = Event{store.NotifyEmailReleased, "email_released"}
 	ViewedAs         = Event{store.NotifyViewedAs, "view_as_started"}
+	DomainLapsed     = Event{store.NotifyDomainLapsed, "domain_lapsed"}
+)
+
+// The events that are an audit row only (no one is told).
+var (
+	// DomainMissing: the daily recheck no longer finds a verified domain's record.
+	DomainMissing = Event{"", "domain_missing"}
 )
 
 // Entry is what happened.

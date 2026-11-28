@@ -763,7 +763,7 @@ and keeps it. The categories:
 
 | Category | Kinds | Switch |
 |---|---|---|
-| `security` | sign-in failures (`login_failed`, `rate_limited`, `lockout`, `passkey_clone`), passkeys, identities, addresses, passwords, `sessions_ended`, sign-in providers, mail, `secret_changed` | core: always written |
+| `security` | sign-in failures (`login_failed`, `rate_limited`, `lockout`, `passkey_clone`), passkeys, identities, addresses, passwords, `sessions_ended`, sign-in providers, mail, `secret_changed`, email domains (`domain_*`) | core: always written |
 | `admin` | settings and rules, plans, tenants, people, invites, groups, tokens and grants, bulk jobs | core |
 | `data` | deleting, restoring and purging spaces, `space_taken_over`, `space_transferred`, space and page views, exports, `audit_downloaded` | core |
 | `system` | `dropped`, `audit_purged` | core |
@@ -819,6 +819,10 @@ A site administrator can also purge by hand, see `POST /api/admin/audit/purge`.
 | `token_revoked` | an API token was revoked through the server (once: revoking one already revoked writes nothing) | `token`, `name`, `by` (`user`, `admin`) |
 | `grant_revoked` | an OAuth grant was revoked through the server | `grant`, `client` (its name), `by` (`user`, `admin`) |
 | `dropped` | rows were lost because the queue was full | `count` |
+| `domain_added`, `domain_code_made`, `domain_changed`, `domain_removed` | a tenant's claim of an email domain was made, given a new code, changed (`restrictOrgs`) or removed | `domain`; `restrictOrgs`; `verified` (removed) |
+| `domain_checked`, `domain_verified` | a check by hand ("Check now") asked DNS; it verified the claim | `domain`, `result`, `via`, `seen`, `claimed` (another tenant holds it); `domain`, `via` |
+| `domain_missing`, `domain_lapsed` | the daily recheck first did not find a verified domain's record; 7 days later still not, and the claim lapsed (with a notification) | `domain`, `check`; `domain`, `missingSince`, `check` |
+| `domain_assigned`, `domain_unassigned` | a site administrator moved a verified domain to the tenant, or away from it (each tenant's row names only the domain) | `domain` |
 | `audit_purged` | a site administrator purged the log by hand (`POST /api/admin/audit/purge`); one row for each purge, written when its job ends, never deleted by a purge or by the retention trim | `category` (`all` for every one), `before` (RFC 3339), `deleted`, and `partial: true` when the purge did not finish |
 
 Each row has `at`, `kind`, `category`, `capacity` (`site_admin` or
@@ -5568,6 +5572,7 @@ kinds (a registry in the server's code, `store.NotifyKinds`):
 | `password_set` | an administrator gave the person a temporary password; written with the `password_set_by_admin` row | `{"by"}` |
 | `email_released` | an address the person held unverified moved to the account that proved it; written with the `email_released` row | `{"email"}` |
 | `link_reauth` | a linked account's tokens could not be renewed for good (the host revoked or ended the grant): the person connects it again; written once, by the write that marks the link `expired`; `ref` is the provider | `{"provider", "name", "login"}` |
+| `domain_lapsed` | an email domain the person's organisation had verified lapsed: the daily recheck did not find its DNS record for 7 days (see "Email domains and the SSO entry"); to each of the tenant's administrators, with the `domain_lapsed` audit row; `ref` is the domain's key | `{"domain", "missingSince"}` (`domain` as people read it) |
 | `viewed_as` | reserved: an administrator viewed the app as the person; made only once the owner decides the person is told (see "Viewing as a person"); it would be written with the `view_as_started` row | `{"by", "reason", "until"}` |
 
 There is no catch-all kind: each event of an account or a space is a kind of its
@@ -8477,6 +8482,35 @@ Their username stays taken while they are in the recycle bin.
 most 500, all in the caller's scope (`404` for any that is not: nothing is
 confirmed). For `delete_users`, also `heir` and `transfers` as above.
 
+`change_capabilities` (3.6 d2) is the preview of switching a feature off while
+it is in use: `{"action": "change_capabilities", "key": "features.domains",
+"tenant": "01JDT3NANT"}` (`tenant` for a site administrator's rule for one
+tenant; without it, the site's value). Only who may make that change gets it
+(`404 not_found` otherwise); a feature with no count of its use is `400
+invalid` (today only `features.domains` has one). `plan` has one line per
+tenant that has the feature now and uses it:
+`{"tenant", "slug", "name", "feature", "domains", "verified"}`. The token is
+not a bulk action's (`POST /api/admin/bulk` refuses it): it goes as `confirm`
+with the change itself, `PUT /api/admin/settings/{key}` or
+`PUT /api/admin/tenants/{tenant}/settings/{key}` (`{"value": false, "confirm":
+"c_…"}`, or `{"siteRule": {"value": false}, "confirm": …}`). What decides is
+the value each tenant that uses the feature gets, before and after the change,
+now and at every start and end of a rule's window either way (a rule dated to
+switch it off later, or a site value of `false` under a rule that holds the
+tenant on until a date), whatever words the change uses (a value, a rule, a
+lock, a restriction to `[false]`). A change that switches it off for one of
+them, now or later, without a token answers `409 confirm_required` with `plan`
+(those tenants' lines); a token whose plan changed, `409 confirm_stale`. The
+same holds for a plan: `PUT /api/admin/tenants/{tenant}/plan` (`{"plan": …,
+"confirm": …}`, with the tenant's token) when the new plan, or the manual rules
+the change clears, leave the feature off, and `PATCH /api/admin/plans/{slug}`
+(`{"rules": …, "confirm": …}`, with the site's token) for every tenant on the
+plan. Plans keep carrying features. Billing (the internal writer, which has
+nobody to confirm) is refused (`confirm_required`) a rule that would switch a
+feature off for a tenant that uses it. Nothing stored is deleted: the domains
+have no effect while the feature is off, and work again as they were when it
+is on.
+
 `200`:
 
 ```json
@@ -9512,6 +9546,7 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | `daily.own`, `daily.api`, `daily.default` | boolean, boolean, document | S, T, Sp |
 | `daily.languages`, `recycle.days`, `exports.maxBytes`, `users.*` | list, limits, choices | S! (`exports.days`: S + rule) |
 | `signin.*`, `sessions.*`, `captcha.*` | sign-in policy | S! (the sign-in page comes before any tenant is known) |
+| `domains.checksPerMinute` | limit, 1 to 100,000, default 60: the checks of claimed email domains people may ask for in a minute, on the whole server | S! (the server's own resolver asks DNS for every tenant) |
 
 Notes:
 
@@ -9861,25 +9896,58 @@ A tenant with the feature `features.domains` claims the email domains its
 people use; a **verified** claim routes sign-in for those addresses to the
 tenant's SSO.
 
-- `GET /api/admin/tenants/{tenant}/domains`, `POST …/domains` (`{"domain": "acme.example"}`),
-  `POST …/domains/{domain}/verify` (check now), `POST …/domains/{domain}/code`
-  (a new code), `DELETE …/domains/{domain}`, `PATCH …/domains/{domain}`
-  (`{"provider": slug, "join": null, "restrictOrgs": false}`; `join` and
-  `restrictOrgs`, see "Joining an organisation" and "Organisation sign-up").
+Built in 3.6 d2 (the claim, the check, the recheck, `restrictOrgs`; the
+provider routing is d3, `join` d5). The routes need `tenant.domains.manage`
+(every tenant administrator holds it) and the feature `features.domains`
+(`403 feature_off` while it is off for the tenant; a site administrator is not
+bound by it):
+
+- `GET /api/admin/tenants/{tenant}/domains`: `{"domains": [Domain], "siteHost": "notes.example.org"}`,
+  by domain;
+- `POST …/domains` (`{"domain": "acme.example"}`): `201` with the Domain, its
+  `code` and `records`;
+- `POST …/domains/{domain}/verify` (check now): `200` with the Domain;
+- `POST …/domains/{domain}/code` (a new code, for a claim that is not
+  verified; `409 domain_verified` for one that is): `200` with the Domain, its
+  `code` and `records`;
+- `PATCH …/domains/{domain}` (`{"restrictOrgs": true}`): `200` with the Domain;
+  `provider` and `join` are refused (`400 invalid`) until d3 and d5;
+- `DELETE …/domains/{domain}`: `204`.
+
+`{domain}` takes any spelling of the domain (Unicode or punycode, any case); a
+claim another tenant holds is `404 not_found` as one that does not exist.
 
 ```json
-{"domain": "acme.example", "state": "verified", "code": "k3v9q2…", "codeExpires": "2026-11-30T08:00:00Z",
- "records": {"txt": {"name": "_petalbook.acme.example", "value": "petalbook-verify=k3v9q2…"},
-             "cname": {"name": "_petalbook.acme.example", "target": "k3v9q2….verify.notes.example.org"}},
- "verifiedAt": "2026-11-23T09:00:00Z", "checkedAt": "2026-11-23T09:00:00Z", "missingSince": null,
- "lastCheck": {"at": "2026-11-23T09:00:00Z", "by": "manual", "result": "found", "seen": []},
- "nextCheckAllowedAt": "2026-11-23T09:01:00Z",
- "provider": "acme-entra", "join": null, "restrictOrgs": false}
+{"domain": "xn--bcher-kva.example", "display": "bücher.example", "state": "verified",
+ "verifiedAt": "2026-11-23T09:00:00Z", "missingSince": null, "lapsedAt": null,
+ "checkedAt": "2026-11-23T09:00:00Z", "nextCheckAt": "2026-11-24T09:00:00Z",
+ "codeExpires": "2026-11-30T08:00:00Z", "codeExpired": false,
+ "lastCheck": {"at": "2026-11-23T09:00:00Z", "by": "manual", "result": "found", "via": "txt", "seen": [], "error": ""},
+ "nextCheckAllowedAt": "2026-11-23T09:01:00Z", "restrictOrgs": false, "provider": null, "join": null,
+ "recordName": "_petalbook.xn--bcher-kva.example", "code": null, "records": null,
+ "created": "2026-11-23T08:00:00Z"}
 ```
 
-**Verification by DNS.** A claim is made unverified, with a code (20 random
-characters of `a-z0-9`, stored as a hash after it is shown; `code` is returned
-while the claim is unverified). Either record proves it:
+- `domain` is the key: the IDNA (UTS #46) form in punycode, lower case, without
+  the root's dot; `display` is the same as people read it. Two spellings of one
+  domain are one claim (`409 domain_exists`). `mixedScript` is true when a label
+  mixes scripts beyond what UTS #39's "highly restrictive" level allows (a
+  Cyrillic `а` in `аpple.example`): a warning the pages show, not a refusal.
+  It misses a lookalike written in one script only (an all-Cyrillic `аре.com`).
+- `state` is `unverified`, `verified`, `missing` (verified, and the daily
+  recheck has not found the record since `missingSince`), or `lapsed` (the
+  recheck cancelled it at `lapsedAt`: as unverified, it needs a valid code and a
+  check).
+- `code` and `records` are given only by the answer that made the code; the
+  code is stored as a hash, so a lost code is replaced with `POST …/code`.
+  `records.cname` is `null` when the server has no `--public-url`, or its host
+  is an IP address or a name with one label; a Unicode host is given in punycode.
+- `nextCheckAllowedAt` is a minute after the last check by hand (`null` when
+  the last check was the daily one).
+
+**Verification by DNS.** A claim is made unverified, with a code (26
+characters of `a-z2-7`, 128 random bits, a DNS label, stored as a hash after
+it is shown). Either record proves it:
 
 - **TXT** (the default the page shows): `_petalbook.<domain>` with a value
   `petalbook-verify=<code>`;
@@ -9888,34 +9956,44 @@ while the claim is unverified). Either record proves it:
   is compared; it is never resolved further, so the server needs no DNS for
   `verify.<site domain>` and nothing is served there.
 
-A lookup asks for the TXT and the CNAME of `_petalbook.<domain>` through the
-system resolver (one outgoing request of the tenant each). The code is valid
-for 7 days from when it was made; a check of an unverified claim whose code has
-expired answers `409 domain_code_expired`, and `POST …/code` makes a new one
-(the old one stops counting). A verified claim keeps no code. An unverified
-claim does nothing at all.
+A lookup asks for the TXT of `_petalbook.<domain>` and, when that does not
+hold the code, its CNAME, through the system resolver; one check counts as one
+outgoing request of the tenant (`rate.outboundPerMinute`, when it has a limit).
+The code is valid for 7 days from when it was made; a check of an unverified
+claim whose code has expired answers `409 domain_code_expired` before DNS is
+asked, and `POST …/code` makes a new one (the old one stops counting). A
+verified claim keeps its code's hash: the daily recheck looks for the same
+record. An unverified claim does nothing at all.
 
 **Check now** (`POST …/domains/{domain}/verify`, for an unverified claim and
 also to re-check a verified one):
 
 - Limits: once a minute per domain, 20 an hour per tenant, and
-  `domains.checksPerMinute` on the server (site only, 60 by default). Over any
-  of them: `429 rate_limited` with `Retry-After` in seconds (the page counts
-  down on the button, from `nextCheckAllowedAt`). A refused check looks
-  nothing up and writes nothing.
+  `domains.checksPerMinute` on the server (site only, 60 by default), and the
+  tenant's outbound share. Over any of them: `429 rate_limited` with
+  `Retry-After` in seconds (the page counts down on the button, from
+  `nextCheckAllowedAt` or `Retry-After`). A refused check looks nothing up,
+  writes nothing and spends nothing: every limit is asked before any is spent.
+  The minute of a domain is the domain's, whichever tenant asks.
 - `200` with the claim and `lastCheck`: `result` is `found` (the record is
-  there with this code: an unverified claim becomes verified), `missing` (no
-  TXT or CNAME at that name), or `wrong_value` (records are there but none
-  holds this code; `seen` lists up to 5 of them, each cut to 255 bytes, so the
-  administrator sees a typo or an old code). A DNS failure is `result:
-  "dns_error"` and changes nothing. A `found` for a domain another tenant holds
-  verified answers `409 domain_claimed` instead.
-- Every manual check is audited (`domain_checked`, with `result`). It does not
-  move the daily check.
-- A claim is for exactly that domain (subdomains are claimed one by one). Public
-  mail domains (a list shipped with the server and kept by site administrators:
-  `gmail.com`, `outlook.com`, `qq.com`, `163.com`, …) cannot be claimed
-  (`400 domain_public`).
+  there with this code: an unverified claim becomes verified; `via` is `txt` or
+  `cname`), `missing` (no TXT or CNAME at that name), or `wrong_value` (a
+  `petalbook-verify=` TXT or a CNAME is there but none holds this code; `seen`
+  lists up to 5 of them, each cut to 255 bytes, so the administrator sees a
+  typo or an old code). A DNS failure is `result: "dns_error"` (with `error`)
+  and changes nothing. A `found` for a domain another tenant holds verified
+  answers `409 domain_claimed` instead (the check is recorded on the claim).
+- Every manual check is audited (`domain_checked`, with `domain`, `result`,
+  `via`, `seen`, and `claimed: true` for a refused one); a verification also
+  writes `domain_verified`. It does not move the daily check; a `found` of a
+  verified claim clears `missingSince`.
+- A claim is for exactly that domain (subdomains are claimed one by one), and
+  so is everything a verified one does: a restriction, an SSO's trust of an
+  address, never a subdomain's address. Public mail domains (a list shipped
+  with the server, not editable: `gmail.com`, `outlook.com`, `qq.com`, `163.com`,
+  …) cannot be claimed (`400 domain_public`), nor can a public suffix of the
+  Public Suffix List, ICANN's or a private one (`co.uk`, `com.cn`, `github.io`:
+  `400 domain_suffix`); a name below one (`acme.co.uk`) can.
 - **Two tenants and one domain**: any number of tenants may hold an unverified
   claim; at most one claim of a domain is verified. The first to verify has it;
   a later `verify` that finds its own record answers `409 domain_claimed` (it
@@ -9923,17 +10001,49 @@ also to re-check a verified one):
   A site administrator may move a verified claim
   (`POST /api/admin/domains/{domain}/assign`), and sees every claim
   (`GET /api/admin/domains`).
-- **Verified claims are checked again every day** by a background job (spread
-  over the day, one domain at a time, counted against the tenant's outbound
-  share). `missingSince` is set at the first check that finds no record with
-  the code; a record found again clears it. A record missing on every check for
-  **7 days in a row** cancels the claim: it becomes unverified (with a new
-  code), routing, joining and `restrictOrgs` stop at once, the tenant's
-  administrators get a notice in the app and by mail, and `domain_lapsed` is
-  audited. A DNS failure is neither found nor missing and does not count.
-  Manual checks feed the same state (a `found` clears `missingSince`).
-- The map of verified domains is in memory (domain → tenant, provider, `join`,
-  `restrictOrgs`), rebuilt on change.
+- **Verified claims are checked again every day**, each a day after its last
+  check (so they are spread as their verifications were), by one timer that
+  sleeps until the soonest is due and is woken by a change: nothing polls. It
+  takes at most 50 due domains a pass, one at a time, and counts each against
+  the tenant's outbound share (over it, that domain waits a minute). A tenant
+  whose `features.domains` is off is not looked up; its domains wait a day.
+  `missingSince` is set at the first recheck that finds no record with the code
+  (or a wrong value), audited once as `domain_missing`; a record found again
+  clears it. A recheck that still does not find it **7 days** after
+  `missingSince` cancels the claim: it becomes `lapsed` (unverified; a new code
+  and a check verify it again), routing, joining and `restrictOrgs` stop at
+  once, the tenant's administrators get a `domain_lapsed` notification, and
+  `domain_lapsed` is audited, in one transaction. A DNS failure is neither found
+  nor missing and does not count; that domain is asked again in an hour. While
+  the database fails the timer (the due domains cannot be read, or a failed one
+  cannot be moved on), it waits 5 seconds, doubled each time, at most 10
+  minutes, instead of coming straight back.
+- The map of verified domains is in memory (domain → tenant, `restrictOrgs`;
+  provider and `join` with d3 and d5), read at start and again after every
+  change (a claim verified, removed, lapsed, assigned, `restrictOrgs` changed,
+  a tenant deleted). `auth`'s `OrgDomains` and the organisation sign-up's
+  `domain_managed` read it; a tenant whose `features.domains` is off has no
+  domains there (nothing is deleted).
+
+**The site's list and transfer** (`site.tenants.manage`):
+
+- `GET /api/admin/domains?verified=true&cursor=&limit=` (1 to 500, 100 by
+  default): every tenant's claims, by domain then tenant, each Domain with
+  `tenant: {id, slug, name}`; `next` is the cursor of the next page or `null`.
+- `POST /api/admin/domains/{domain}/assign` (`{"tenant": id}`): moves a
+  verified domain to the tenant, in one transaction: the holder's claim is
+  deleted, the target's becomes the verified one, with the holder's code hash
+  and recheck state, so the record in DNS keeps counting. `404 not_found` when
+  no tenant holds the domain verified, or the tenant does not exist. The holder's
+  audit gets `domain_unassigned` and the target's `domain_assigned`, each with
+  `domain` only: neither names the other tenant.
+
+**Organisation sign-up on a restricted domain.** `restrictOrgs: true` on a
+verified domain makes `POST /api/register` with an `org` and an address of that
+domain (exactly that domain) answer `409 domain_managed` with
+`organization: {"slug", "name"}` of the tenant that holds it, from the
+in-memory map, before anything is written. It says nothing of whether the
+address has an account. Joining the tenant is d5.
 
 **The sign-in page asks for the email or username first** when the server has
 any verified domain with SSO (`GET /api/auth/providers` gains `"identifierFirst": true`
@@ -10525,6 +10635,7 @@ held by the built-in site administrator only: no custom role may hold it.
 | `tenant.tokens.revoke` | tenant | — | Revoke people's API tokens and app authorizations |
 | `tenant.permissions.read` | tenant | — | List the permission keys |
 | `tenant.github.manage` | tenant | — | Install the site's GitHub App on the organisation's GitHub account, and see, change or disconnect the organisation's installations |
+| `tenant.domains.manage` | tenant | `features.domains` | Claim the organisation's email domains, verify them by DNS, keep others from making organisations on them, and remove them |
 | `space.read` | space | — | See pages, history, attachments and search |
 | `space.write` | space | — | Create, change, move and delete pages and folders |
 | `space.members.manage` | space | — | Add, change and remove the members of the space |
@@ -10811,13 +10922,15 @@ exist, a `before` that is not a time, or a `dry_run` that is not a boolean.
 |---|---|---|
 | `setting_locked`, `setting_restricted` | 409 | as 3.3; `setting_restricted` also for a value looser than a `tighten`; `setting_locked` also for a tenant value a site administrator locked (`reason.by: "site"`) |
 | `domain_public` | 400 | claiming a public mail domain |
+| `domain_suffix` | 400 | claiming a public suffix (`co.uk`, `github.io`) |
 | `domain_code_expired` | 409 | checking an unverified claim whose code is older than 7 days |
-| `domain_managed` | 409 | creating an organisation with an address of a domain with `restrictOrgs`; with `tenant`, `join`, `start` |
+| `domain_exists`, `domain_verified` | 409 | claiming a domain the tenant has claimed already; asking a new code for a verified claim |
+| `domain_managed` | 409 | creating an organisation with an address of a domain with `restrictOrgs`; with `organization` (`slug`, `name`); `join` and `start` with d5 |
 | `email_taken` | 409 | setting an address another account holds, verified or not (also a deleted account until its purge) |
 | `email_not_ascii` | 400 | an address with characters outside ASCII while `users.emailNonAscii` is off; also asking to verify such a stored address then |
 | `feature_off` | 403 | the tenant does not have the feature (`features.*`) what was asked needs; with `feature` (and `permission`, the key, when a route's key needs it); the message is a capitalised sentence naming it ("The API tokens feature is turned off for this organization.") |
 | `takeover_required` | 403 | an administrator who is not a member of the space asked for what only taking it over gives (see "Taking over a space") |
-| `confirm_required` | 409 | a change of feature or plan that stops something in use, without a confirmation; with `plan` |
+| `confirm_required` | 409 | a change of a feature, a plan or its assignment that stops something in use (`features.domains`), now or at a later start or end of a rule, without the confirmation of `change_capabilities`; with `plan` |
 | `plan_in_use` | 409 | deleting a plan that tenants use; with `tenants` |
 | `partial_unsupported` | 409 | connecting a space to a host that cannot sync partially while `storage.partial.unsupported` is `refuse`; with `host` |
 | `storage_target_error` | 502 | the storage target refused to make a space's repository; with `reason`, `status` |

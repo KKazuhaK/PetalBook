@@ -55,6 +55,9 @@ type Service struct {
 	bind map[string]SiteBinding
 	now  func() time.Time
 
+	// guard is the check of a billing rule that would switch a feature off (UseGuard).
+	guard atomic.Pointer[func(ctx context.Context, tenant, key string) error]
+
 	// beforeTenantWrite, set by tests only, runs in a tenant administrator's
 	// transaction just before its write.
 	beforeTenantWrite func()
@@ -873,4 +876,11 @@ func describe(d *Def, l Lower) string {
 func itoa(n int64) string {
 	b, _ := json.Marshal(n)
 	return string(b)
+}
+
+func isNotFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
+
+func jsonOf(v any) (string, error) {
+	b, err := json.Marshal(v)
+	return string(b), err
 }

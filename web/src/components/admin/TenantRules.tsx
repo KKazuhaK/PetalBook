@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { DataTable, RowAction, type Column } from '@/components/ui/data-table'
 import { RuleDialog, inBytes, nameOf } from './RuleDialog'
 import { settingError } from './SettingsPanel'
+import { needsCapabilityConfirm, useCapabilityConfirm } from './CapabilityConfirm'
 import { formatBytes } from '@/lib/bytes'
 import { absoluteTime } from '@/lib/time'
 import { useTablePrefs } from '@/lib/tablePrefs'
@@ -262,24 +263,37 @@ function TenantRuleDialog({
   const put = usePutSetting()
   const [error, setError] = useState('')
   const manual = s.tenant?.rules?.find((r) => r.source === 'manual')
+  // A rule that switches off a feature the tenant uses goes through its preview and a second confirmation.
+  const capability = useCapabilityConfirm(() => onSaved())
   const send = (siteRule: RuleWrite | null) => {
     setError('')
-    put.mutate(
-      { tenant: tenant.id, key: s.key, siteRule },
-      { onSuccess: (r) => onSaved(r.warning), onError: (e) => setError(settingError(e)) },
-    )
+    const change = { tenant: tenant.id, key: s.key, siteRule }
+    put.mutate(change, {
+      onSuccess: (r) => onSaved(r.warning),
+      onError: (e) =>
+        needsCapabilityConfirm(e)
+          ? capability.ask({
+              key: change.key,
+              tenant: change.tenant,
+              send: (confirm) => put.mutateAsync({ ...change, confirm }),
+            })
+          : setError(settingError(e)),
+    })
   }
   return (
-    <RuleDialog
-      setting={s}
-      rule={manual ?? null}
-      start={s.effective}
-      windows
-      pending={put.isPending}
-      error={error}
-      onRemove={manual ? () => send(null) : undefined}
-      onSubmit={send}
-      onClose={onClose}
-    />
+    <>
+      {capability.dialog}
+      <RuleDialog
+        setting={s}
+        rule={manual ?? null}
+        start={s.effective}
+        windows
+        pending={put.isPending}
+        error={error}
+        onRemove={manual ? () => send(null) : undefined}
+        onSubmit={send}
+        onClose={onClose}
+      />
+    </>
   )
 }

@@ -20,6 +20,7 @@ import { AdminPageActions } from './AdminPageHeader'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { TenantRulesBlock, lowerText, showValue, windowText } from './TenantRules'
 import { nameOf } from './RuleDialog'
+import { needsCapabilityConfirm, refusedFeature, useCapabilityConfirm } from './CapabilityConfirm'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
@@ -453,6 +454,8 @@ export function TenantPlanBlock({ tenant }: { tenant: Tenant }) {
     .filter((x) => !!x.rule)
   const names = new Map((plans.data ?? []).map((p) => [p.slug, p.name]))
   const target = picked ? (names.get(picked) ?? picked) : tp.none
+  // A plan that switches off a feature the tenant uses goes through its preview and a second confirmation.
+  const capability = useCapabilityConfirm(() => setMessage({ tone: 'info', text: tp.changedNone }))
   const change = () => {
     put.mutate(
       { tenant: tenant.id, plan: picked || null },
@@ -465,9 +468,15 @@ export function TenantPlanBlock({ tenant }: { tenant: Tenant }) {
             text: r.cleared.length ? `${head}. ${tp.cleared(joinList(r.cleared.map((c) => nameOf(c.key))))}` : head,
           })
         },
-        onError: () => {
+        onError: (e) => {
           setAsking(false)
-          setMessage({ tone: 'error', text: tp.failed })
+          if (needsCapabilityConfirm(e))
+            capability.ask({
+              key: refusedFeature(e),
+              tenant: tenant.id,
+              send: (confirm) => put.mutateAsync({ tenant: tenant.id, plan: picked || null, confirm }),
+            })
+          else setMessage({ tone: 'error', text: tp.failed })
         },
       },
     )
@@ -479,6 +488,7 @@ export function TenantPlanBlock({ tenant }: { tenant: Tenant }) {
         <p className="text-xs text-muted-foreground">{tt.plans.help}</p>
       </div>
       <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
+      {capability.dialog}
       <div className="flex flex-wrap items-end gap-3">
         <div className="grid min-w-0 flex-1 basis-48 gap-1.5 sm:max-w-xs">
           <Label htmlFor={`plan-${tenant.id}`}>{tp.label}</Label>

@@ -1,6 +1,7 @@
 import type { NotificationItem } from '@/api/types'
 import { settingsPath } from '@/components/settings/sections'
-import { spaceUrls } from '@/lib/urls'
+import { absoluteTime } from '@/lib/time'
+import { adminPath, spaceUrls } from '@/lib/urls'
 import { tn } from '@/i18n/notify'
 
 // The sentence of a notification and where it leads, from the kind and the facts the server stored. A kind this client
@@ -74,6 +75,13 @@ export function describeNotification(n: NotificationItem): Described {
         title: p2.linkReauth.title(str(p.name, str(p.provider))),
         body: p2.linkReauth.body(str(p.login)),
         to: settingsPath('connections'),
+      }
+    // An email domain the person's organisation had verified lapsed: its record was missing for 7 days.
+    case 'domain_lapsed':
+      return {
+        title: p2.domainLapsed.title(str(p.domain, n.ref)),
+        body: p2.domainLapsed.body(str(p.missingSince) ? absoluteTime(str(p.missingSince)) : ''),
+        to: adminPath('settings', 'signin'),
       }
     // An administrator viewed the app as the person (made only once the owner decides the person is told).
     case 'viewed_as':

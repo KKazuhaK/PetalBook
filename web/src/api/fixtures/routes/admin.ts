@@ -7,6 +7,7 @@ import type {
   AdminSpace,
   AdminStorageBody,
   AuditItem,
+  CapabilityPlanLine,
   ConfirmResult,
   DailyApi,
   Group,
@@ -20,6 +21,7 @@ import type {
   StoragePerson,
   SpaceDeletionPreview,
   Tenant,
+  TenantDomain,
   TenantSetting,
   User,
   UserDeletionPlan,
@@ -185,6 +187,63 @@ function secretsOf(c: Ctx, tenant?: string) {
   return rows
 }
 
+// --- email domains ---
+
+function domainsOf(c: Ctx, tenant: string): TenantDomain[] {
+  return (A(c).domains[tenant] ??= [])
+}
+function domainOf(c: Ctx): TenantDomain {
+  const key = decodeURIComponent(c.params.domain).toLowerCase()
+  return find(domainsOf(c, c.params.id), (d) => d.domain === key || d.display === key, 'the domain')
+}
+// A code of the right form, the same for the same input (the fixtures have no randomness of their own).
+function codeFor(seed: string): string {
+  let h = 2166136261
+  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0
+  const abc = 'abcdefghijklmnopqrstuvwxyz234567'
+  let out = ''
+  for (let i = 0; i < 26; i++) {
+    h = Math.imul(h ^ i, 16777619) >>> 0
+    out += abc[h % 32]
+  }
+  return out
+}
+export function newDomain(key: string, at: string, codeExpires: string): TenantDomain {
+  return {
+    domain: key,
+    display: key,
+    mixedScript: false,
+    state: 'unverified',
+    verifiedAt: null,
+    missingSince: null,
+    lapsedAt: null,
+    checkedAt: null,
+    nextCheckAt: null,
+    codeExpires,
+    codeExpired: false,
+    lastCheck: null,
+    nextCheckAllowedAt: null,
+    restrictOrgs: false,
+    provider: null,
+    join: null,
+    recordName: `_petalbook.${key}`,
+    code: null,
+    records: null,
+    created: at,
+  }
+}
+// As a list shows it: never the code.
+const listed = (d: TenantDomain): TenantDomain => ({ ...d, code: null, records: null })
+// The CNAME only when the server has a public address (A(c).siteHost), as the server's.
+const withCode = (c: Ctx, d: TenantDomain, code: string): TenantDomain => ({
+  ...d,
+  code,
+  records: {
+    txt: { name: d.recordName, value: `petalbook-verify=${code}` },
+    cname: A(c).siteHost ? { name: d.recordName, target: `${code}.verify.${A(c).siteHost}` } : null,
+  },
+})
+
 // What deleting a person does, worked out from the spaces they own: the ones nobody else is in go to the bin with
 // them, the shared ones go to the heir named (and need one when none is).
 function deletionPlan(c: Ctx, u: UserRec, heir?: string): UserDeletionPlan {
@@ -228,9 +287,56 @@ function spacePreview(c: Ctx, s: SpaceData): SpaceDeletionPreview {
 
 // --- a confirmed action ---------------------------------------------------------------------------------------------
 
+// Switching features.domains off while tenants have domains needs change_capabilities' confirmation first.
+function capabilityRefusal(c: Ctx, tenant?: string) {
+  const b = c.body as { value?: unknown; siteRule?: { value?: unknown } | null; confirm?: string }
+  if (c.params.key !== 'features.domains' || b.confirm) return
+  if (b.value !== false && b.siteRule?.value !== false) return
+  refuseOff(c, capabilityLines(c, tenant))
+}
+// A plan whose rule has features.domains off, given to (or changed for) tenants that have domains.
+function planRefusal(c: Ctx, rules: Record<string, unknown> | undefined, tenants: string[]) {
+  const r = rules?.['features.domains'] as { value?: unknown } | null | undefined
+  if ((c.body as { confirm?: string }).confirm || r?.value !== false) return
+  refuseOff(
+    c,
+    capabilityLines(c).filter((l) => tenants.includes(l.tenant)),
+  )
+}
+function refuseOff(_c: Ctx, lines: CapabilityPlanLine[]) {
+  if (lines.length) throw new Refusal(409, 'confirm_required', 'The feature is in use', { plan: lines })
+}
+function capabilityLines(c: Ctx, tenant?: string): CapabilityPlanLine[] {
+  return Object.entries(A(c).domains)
+    .filter(([id, list]) => list.length > 0 && (!tenant || id === tenant))
+    .map(([id, list]) => {
+      const t = A(c).tenants.find((x) => x.id === id)
+      return {
+        tenant: id,
+        slug: t?.slug ?? id,
+        name: t?.name ?? id,
+        feature: 'features.domains',
+        domains: list.length,
+        verified: list.filter((d) => d.verifiedAt).length,
+      }
+    })
+}
+
 function confirmPlan(c: Ctx): ConfirmResult {
   const b = c.body as { action: string; spaces?: string[]; users?: string[]; items?: string[]; heir?: string }
   const token = `c_${newId(c.data, '')}`
+  if (b.action === 'change_capabilities') {
+    const plan = capabilityLines(c, (c.body as { tenant?: string }).tenant)
+    return {
+      confirm: token,
+      expires: rfc3339(c.now() + 600_000),
+      count: 2,
+      plan: plan as unknown as ConfirmResult['plan'],
+      bytes: 0,
+      needsHeir: [],
+      blockers: [],
+    }
+  }
   A(c).confirms[token] = { action: b.action, spaces: b.spaces ?? [], users: b.users ?? [], items: b.items ?? [] }
   const spaces = (b.spaces ?? []).map((id) => {
     const s = spacesOf(c).find((x) => x.info.id === id)
@@ -917,6 +1023,7 @@ export const adminRoutes: Route[] = [
     (c) => {
       const t = find(A(c).tenants, (x) => x.id === c.params.id, 'the tenant')
       const plan = c.body.plan ? find(A(c).plans, (p) => p.slug === c.body.plan, 'the plan') : null
+      planRefusal(c, plan?.rules as Record<string, unknown> | undefined, [t.id])
       t.plan = plan ? { slug: plan.slug, name: plan.name } : null
       return { plan: t.plan, cleared: [] }
     },
@@ -934,6 +1041,7 @@ export const adminRoutes: Route[] = [
     'PUT',
     '/api/admin/tenants/:id/settings/:key',
     (c) => {
+      capabilityRefusal(c, c.params.id)
       const def = siteOf(c, c.params.key)
       const rules = (A(c).tenantRules[c.params.id] ??= {})
       const own = (rules[def.key] ??= { value: null, lower: null, inEffect: true, siteLocked: false })
@@ -976,6 +1084,122 @@ export const adminRoutes: Route[] = [
       return tenantSetting(c, c.params.id, def)
     },
   ],
+  // --- a tenant's email domains: a claim shows its records once; "Check now" finds the record when the test or the
+  // demo marked the domain published (`published`), and waits a minute after each check ---
+  [
+    'GET',
+    '/api/admin/tenants/:id/domains',
+    (c) => ({ domains: domainsOf(c, c.params.id).map(listed), siteHost: A(c).siteHost }),
+  ],
+  [
+    'POST',
+    '/api/admin/tenants/:id/domains',
+    (c) => {
+      const b = c.body as { domain?: string }
+      const key = (b.domain ?? '').trim().toLowerCase().replace(/\.$/, '')
+      if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(key)) throw new Refusal(400, 'invalid', 'Not a domain')
+      const list = domainsOf(c, c.params.id)
+      if (list.some((d) => d.domain === key)) throw new Refusal(409, 'domain_exists', 'Claimed already')
+      const at = c.now()
+      const d = newDomain(key, rfc3339(at), rfc3339(at + 7 * 86_400_000))
+      list.push(d)
+      list.sort((a, b) => (a.domain < b.domain ? -1 : 1))
+      return reply(201, withCode(c, d, codeFor(key)))
+    },
+  ],
+  [
+    'POST',
+    '/api/admin/tenants/:id/domains/:domain/verify',
+    (c) => {
+      const d = domainOf(c)
+      const at = rfc3339(c.now())
+      if (d.nextCheckAllowedAt && d.nextCheckAllowedAt > at)
+        throw new Refusal(429, 'rate_limited', 'Checked a moment ago')
+      if (d.state !== 'verified' && d.state !== 'missing' && d.codeExpired)
+        throw new Refusal(409, 'domain_code_expired', 'The code expired')
+      const found = A(c).publishedDomains.includes(d.domain)
+      d.lastCheck = {
+        at,
+        by: 'manual',
+        result: found ? 'found' : 'missing',
+        via: found ? 'txt' : '',
+        seen: [],
+        error: '',
+      }
+      d.checkedAt = at
+      d.nextCheckAllowedAt = rfc3339(c.now() + 60_000)
+      if (found) {
+        d.missingSince = null
+        if (d.state !== 'verified') {
+          d.state = 'verified'
+          d.verifiedAt = at
+          d.lapsedAt = null
+          d.nextCheckAt = rfc3339(c.now() + 86_400_000)
+        }
+      }
+      return listed(d)
+    },
+  ],
+  [
+    'POST',
+    '/api/admin/tenants/:id/domains/:domain/code',
+    (c) => {
+      const d = domainOf(c)
+      if (d.state === 'verified' || d.state === 'missing') throw new Refusal(409, 'domain_verified', 'Verified')
+      d.codeExpires = rfc3339(c.now() + 7 * 86_400_000)
+      d.codeExpired = false
+      return withCode(c, d, codeFor(d.domain + d.codeExpires))
+    },
+  ],
+  [
+    'PATCH',
+    '/api/admin/tenants/:id/domains/:domain',
+    (c) => {
+      const d = domainOf(c)
+      d.restrictOrgs = (c.body as { restrictOrgs?: boolean }).restrictOrgs === true
+      return listed(d)
+    },
+  ],
+  [
+    'DELETE',
+    '/api/admin/tenants/:id/domains/:domain',
+    (c) => {
+      const d = domainOf(c)
+      remove(domainsOf(c, c.params.id), d)
+      return reply(204)
+    },
+  ],
+  [
+    'GET',
+    '/api/admin/domains',
+    (c) => {
+      const rows = Object.entries(A(c).domains).flatMap(([id, list]) => {
+        const t = A(c).tenants.find((x) => x.id === id)
+        return list.map((d) => ({ ...listed(d), tenant: { id, slug: t?.slug ?? '', name: t?.name ?? '' } }))
+      })
+      const shown = c.query.get('verified') === 'true' ? rows.filter((d) => d.verifiedAt) : rows
+      return { domains: shown.sort((a, b) => (a.domain < b.domain ? -1 : 1)), next: null }
+    },
+  ],
+  [
+    'POST',
+    '/api/admin/domains/:domain/assign',
+    (c) => {
+      const to = (c.body as { tenant?: string }).tenant ?? ''
+      const from = Object.keys(A(c).domains).find((id) =>
+        A(c).domains[id].some((d) => d.domain === c.params.domain && d.verifiedAt),
+      )
+      if (!from) throw new Refusal(404, 'not_found', 'No organization has verified that domain')
+      const d = find(A(c).domains[from], (x) => x.domain === c.params.domain, 'the domain')
+      remove(A(c).domains[from], d)
+      const list = domainsOf(c, to)
+      const had = list.find((x) => x.domain === d.domain)
+      if (had) remove(list, had)
+      list.push(d)
+      const t = A(c).tenants.find((x) => x.id === to)
+      return { ...listed(d), tenant: { id: to, slug: t?.slug ?? '', name: t?.name ?? '' } }
+    },
+  ],
   ['GET', '/api/admin/tenants/:id/secrets', (c) => ({ secrets: Object.values(secretsOf(c, c.params.id)) })],
   [
     'PUT',
@@ -1015,6 +1239,7 @@ export const adminRoutes: Route[] = [
     'PUT',
     '/api/admin/settings/:key',
     (c) => {
+      capabilityRefusal(c)
       const s = siteOf(c, c.params.key)
       if ('value' in c.body) s.site.value = c.body.value
       if ('lower' in c.body) s.site.lower = c.body.lower ?? { mode: 'allow' }
@@ -1044,6 +1269,14 @@ export const adminRoutes: Route[] = [
     (c) => {
       const p = find(A(c).plans, (x) => x.slug === c.params.slug, 'the plan')
       const { rules, ...rest } = c.body
+      delete rest.confirm
+      planRefusal(
+        c,
+        rules,
+        A(c)
+          .tenants.filter((t) => t.plan?.slug === p.slug)
+          .map((t) => t.id),
+      )
       Object.assign(p, rest)
       for (const [k, v] of Object.entries((rules ?? {}) as Record<string, unknown>)) {
         if (v === null) delete p.rules[k]

@@ -763,6 +763,7 @@
      "deleted?": "number",
      "description?": "string",
      "disabled?": "boolean",
+     "domain?": "string",
      "dryRun?": "boolean",
      "email?": "string",
      "export?": "string",
@@ -874,6 +875,8 @@
       "string"
      ],
      "remoteExempt?": "boolean",
+     "restrictOrgs?": "boolean",
+     "result?": "string",
      "results?": [
       {
        "role": "string",
@@ -1038,6 +1041,7 @@
      "users?": [
       "string"
      ],
+     "verified?": "boolean",
      "window?": {
       "from": "null|string",
       "until": "string"
@@ -1176,6 +1180,50 @@
     "text": "string"
    }
   ]
+ },
+ "GET /api/admin/domains 200": {
+  "domains": [
+   {
+    "checkedAt": "null|string",
+    "code": "null",
+    "codeExpired": "boolean",
+    "codeExpires": "string",
+    "created": "string",
+    "display": "string",
+    "domain": "string",
+    "join": "null",
+    "lapsedAt": "null",
+    "lastCheck": {
+     "$or": [
+      "null",
+      {
+       "at": "string",
+       "by": "string",
+       "error": "string",
+       "result": "string",
+       "seen": [],
+       "via": "string"
+      }
+     ]
+    },
+    "missingSince": "null",
+    "mixedScript": "boolean",
+    "nextCheckAllowedAt": "null|string",
+    "nextCheckAt": "null",
+    "provider": "null",
+    "recordName": "string",
+    "records": "null",
+    "restrictOrgs": "boolean",
+    "state": "string",
+    "tenant": {
+     "id": "string",
+     "name": "string",
+     "slug": "string"
+    },
+    "verifiedAt": "null"
+   }
+  ],
+  "next": "null"
  },
  "GET /api/admin/exports 200": {
   "items": [
@@ -2019,6 +2067,45 @@
  "GET /api/admin/tenants/{}/capabilities 404": {
   "error": "string",
   "message": "string"
+ },
+ "GET /api/admin/tenants/{}/domains 200": {
+  "domains": [
+   {
+    "checkedAt": "null|string",
+    "code": "null",
+    "codeExpired": "boolean",
+    "codeExpires": "string",
+    "created": "string",
+    "display": "string",
+    "domain": "string",
+    "join": "null",
+    "lapsedAt": "null",
+    "lastCheck": {
+     "$or": [
+      "null",
+      {
+       "at": "string",
+       "by": "string",
+       "error": "string",
+       "result": "string",
+       "seen": [],
+       "via": "string"
+      }
+     ]
+    },
+    "missingSince": "null",
+    "mixedScript": "boolean",
+    "nextCheckAllowedAt": "null|string",
+    "nextCheckAt": "null",
+    "provider": "null",
+    "recordName": "string",
+    "records": "null",
+    "restrictOrgs": "boolean",
+    "state": "string",
+    "verifiedAt": "null"
+   }
+  ],
+  "siteHost": "string"
  },
  "GET /api/admin/tenants/{}/limits 404": {
   "error": "string",
@@ -4159,6 +4246,35 @@
   "error": "string",
   "message": "string"
  },
+ "PATCH /api/admin/tenants/{}/domains/{} 200": {
+  "checkedAt": "string",
+  "code": "null",
+  "codeExpired": "boolean",
+  "codeExpires": "string",
+  "created": "string",
+  "display": "string",
+  "domain": "string",
+  "join": "null",
+  "lapsedAt": "null",
+  "lastCheck": {
+   "at": "string",
+   "by": "string",
+   "error": "string",
+   "result": "string",
+   "seen": [],
+   "via": "string"
+  },
+  "missingSince": "null",
+  "mixedScript": "boolean",
+  "nextCheckAllowedAt": "string",
+  "nextCheckAt": "null",
+  "provider": "null",
+  "recordName": "string",
+  "records": "null",
+  "restrictOrgs": "boolean",
+  "state": "string",
+  "verifiedAt": "null"
+ },
  "PATCH /api/prefs 200": {
   "personal": "boolean"
  },
@@ -4580,6 +4696,10 @@
   "ok": "boolean",
   "url": "string"
  },
+ "POST /api/admin/domains/{}/assign 404": {
+  "error": "string",
+  "message": "string"
+ },
  "POST /api/admin/exports 202": {
   "job": {
    "bytesDone": "number",
@@ -4885,6 +5005,110 @@
   "message": "string"
  },
  "POST /api/admin/tenants 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/tenants/{}/domains 201": {
+  "checkedAt": "null",
+  "code": "string",
+  "codeExpired": "boolean",
+  "codeExpires": "string",
+  "created": "string",
+  "display": "string",
+  "domain": "string",
+  "join": "null",
+  "lapsedAt": "null",
+  "lastCheck": "null",
+  "missingSince": "null",
+  "mixedScript": "boolean",
+  "nextCheckAllowedAt": "null",
+  "nextCheckAt": "null",
+  "provider": "null",
+  "recordName": "string",
+  "records": {
+   "cname": "null",
+   "txt": {
+    "name": "string",
+    "value": "string"
+   }
+  },
+  "restrictOrgs": "boolean",
+  "state": "string",
+  "verifiedAt": "null"
+ },
+ "POST /api/admin/tenants/{}/domains 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/tenants/{}/domains 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/tenants/{}/domains/{}/code 200": {
+  "checkedAt": "string",
+  "code": "string",
+  "codeExpired": "boolean",
+  "codeExpires": "string",
+  "created": "string",
+  "display": "string",
+  "domain": "string",
+  "join": "null",
+  "lapsedAt": "null",
+  "lastCheck": {
+   "at": "string",
+   "by": "string",
+   "error": "string",
+   "result": "string",
+   "seen": [],
+   "via": "string"
+  },
+  "missingSince": "null",
+  "mixedScript": "boolean",
+  "nextCheckAllowedAt": "string",
+  "nextCheckAt": "null",
+  "provider": "null",
+  "recordName": "string",
+  "records": {
+   "cname": "null",
+   "txt": {
+    "name": "string",
+    "value": "string"
+   }
+  },
+  "restrictOrgs": "boolean",
+  "state": "string",
+  "verifiedAt": "null"
+ },
+ "POST /api/admin/tenants/{}/domains/{}/verify 200": {
+  "checkedAt": "string",
+  "code": "null",
+  "codeExpired": "boolean",
+  "codeExpires": "string",
+  "created": "string",
+  "display": "string",
+  "domain": "string",
+  "join": "null",
+  "lapsedAt": "null",
+  "lastCheck": {
+   "at": "string",
+   "by": "string",
+   "error": "string",
+   "result": "string",
+   "seen": [],
+   "via": "string"
+  },
+  "missingSince": "null",
+  "mixedScript": "boolean",
+  "nextCheckAllowedAt": "string",
+  "nextCheckAt": "null",
+  "provider": "null",
+  "recordName": "string",
+  "records": "null",
+  "restrictOrgs": "boolean",
+  "state": "string",
+  "verifiedAt": "null"
+ },
+ "POST /api/admin/tenants/{}/domains/{}/verify 429": {
   "error": "string",
   "message": "string"
  },

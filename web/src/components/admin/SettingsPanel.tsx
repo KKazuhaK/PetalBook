@@ -18,6 +18,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { tt } from '@/i18n/tenants'
 import { SecretsSection } from './SecretsSection'
+import { needsCapabilityConfirm, useCapabilityConfirm } from './CapabilityConfirm'
 
 const ts = tt.settings
 
@@ -281,15 +282,18 @@ export function SiteRow({
   const doc = s.kind === 'doc'
   const dirtyValue = !doc && !s.site.fromFlag && !same(value, s.site.value)
   const dirtyLower = !same(lower, s.site.lower)
+  // A feature in use is switched off only after its preview and a second confirmation.
+  const capability = useCapabilityConfirm(() => setMessage({ tone: 'info', text: ts.saved }))
   const save = () => {
     setMessage(null)
-    put.mutate(
-      { key: s.key, ...(dirtyValue ? { value } : {}), ...(dirtyLower ? { lower } : {}) },
-      {
-        onSuccess: (r) => setMessage({ tone: 'info', text: r.affected ? ts.affected(r.affected) : ts.saved }),
-        onError: (e) => setMessage({ tone: 'error', text: settingError(e) }),
-      },
-    )
+    const change = { key: s.key, ...(dirtyValue ? { value } : {}), ...(dirtyLower ? { lower } : {}) }
+    put.mutate(change, {
+      onSuccess: (r) => setMessage({ tone: 'info', text: r.affected ? ts.affected(r.affected) : ts.saved }),
+      onError: (e) =>
+        needsCapabilityConfirm(e)
+          ? capability.ask({ key: change.key, send: (confirm) => put.mutateAsync({ ...change, confirm }) })
+          : setMessage({ tone: 'error', text: settingError(e) }),
+    })
   }
   return (
     <li className={ROW} data-slot="setting-row" data-key={s.key}>
@@ -302,6 +306,7 @@ export function SiteRow({
         </div>
         {(help ?? ts.helps[s.key]) && <p className="text-xs text-muted-foreground">{help ?? ts.helps[s.key]}</p>}
         <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
+        {capability.dialog}
       </div>
       <div className={CONTROLS}>
         <Cell label={doc ? '' : ts.value}>
@@ -373,23 +378,29 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
   // A lock always names a value: following, while forced, forces the value in effect, never null.
   const forcing = canForce && siteLock
   const sent = follow ? (forcing ? s.effective : null) : value
+  const capability = useCapabilityConfirm(() => setMessage({ tone: 'info', text: ts.saved }))
   const save = () => {
     setMessage(null)
-    put.mutate(
-      {
-        tenant,
-        key: s.key,
-        // Forcing always names the value it forces (what the row shows), so a lock never changes what the tenant gets.
-        ...(dirtyValue || (forcing && dirtySiteLock) ? { value: sent } : {}),
-        ...(dirtyLower ? { lower } : {}),
-        // While locked for the tenant, a new value is the locked one: it goes with siteLock.
-        ...(dirtySiteLock || (forcing && dirtyValue) ? { siteLock } : {}),
-      },
-      {
-        onSuccess: () => setMessage({ tone: 'info', text: ts.saved }),
-        onError: (e) => setMessage({ tone: 'error', text: settingError(e) }),
-      },
-    )
+    const change = {
+      tenant,
+      key: s.key,
+      // Forcing always names the value it forces (what the row shows), so a lock never changes what the tenant gets.
+      ...(dirtyValue || (forcing && dirtySiteLock) ? { value: sent } : {}),
+      ...(dirtyLower ? { lower } : {}),
+      // While locked for the tenant, a new value is the locked one: it goes with siteLock.
+      ...(dirtySiteLock || (forcing && dirtyValue) ? { siteLock } : {}),
+    }
+    put.mutate(change, {
+      onSuccess: () => setMessage({ tone: 'info', text: ts.saved }),
+      onError: (e) =>
+        needsCapabilityConfirm(e)
+          ? capability.ask({
+              key: change.key,
+              tenant: change.tenant,
+              send: (confirm) => put.mutateAsync({ ...change, confirm }),
+            })
+          : setMessage({ tone: 'error', text: settingError(e) }),
+    })
   }
   const kept = mine && mine.value != null && !mine.inEffect
   return (
@@ -407,6 +418,7 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
         </div>
         {ts.helps[s.key] && <p className="text-xs text-muted-foreground">{ts.helps[s.key]}</p>}
         {kept && <p className="text-xs text-muted-foreground">{ts.keptHint}</p>}
+        {capability.dialog}
         {canForce && (
           <div className="pt-1">
             <label className="flex min-h-10 items-center gap-2 text-sm lg:min-h-0">

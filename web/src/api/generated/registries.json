@@ -281,6 +281,13 @@
       "builtInOnly": false
     },
     {
+      "name": "tenant.domains.manage",
+      "scope": "tenant",
+      "feature": "features.domains",
+      "description": "Claim the organisation's email domains, verify them by DNS, keep others from making organisations on them, and remove them",
+      "builtInOnly": false
+    },
+    {
       "name": "space.read",
       "scope": "space",
       "feature": "",
@@ -327,6 +334,46 @@
         {
           "name": "connection_provider_changed",
           "site": true
+        },
+        {
+          "name": "domain_added",
+          "site": false
+        },
+        {
+          "name": "domain_assigned",
+          "site": false
+        },
+        {
+          "name": "domain_changed",
+          "site": false
+        },
+        {
+          "name": "domain_checked",
+          "site": false
+        },
+        {
+          "name": "domain_code_made",
+          "site": false
+        },
+        {
+          "name": "domain_lapsed",
+          "site": false
+        },
+        {
+          "name": "domain_missing",
+          "site": false
+        },
+        {
+          "name": "domain_removed",
+          "site": false
+        },
+        {
+          "name": "domain_unassigned",
+          "site": false
+        },
+        {
+          "name": "domain_verified",
+          "site": false
         },
         {
           "name": "email_added",
@@ -752,6 +799,7 @@
     "orgCreation.perPerson",
     "orgCreation.perHour",
     "orgCreation.plan",
+    "domains.checksPerMinute",
     "signin.mode",
     "signin.ssoOnly",
     "signin.passkeyRoles",

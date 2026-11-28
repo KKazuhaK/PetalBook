@@ -77,6 +77,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   not_fixable: 'This kind of problem cannot be fixed here.',
   remote_required: 'This space needs a remote repository first.',
   confirm_stale: 'Things changed after the confirmation. Confirm again.',
+  confirm_required: 'This feature is in use. Look at what would stop, then confirm.',
 
   // Settings.
   setting_locked: 'This setting is locked by the level above and cannot be changed.',
@@ -102,6 +103,17 @@ export const apiErrorsEn: ApiErrorTexts = {
   saml_metadata_invalid: "The sign-in service's metadata cannot be used.",
   saml_needs_https: 'SAML needs an https public address.',
   domain_required: 'A provider owned by a tenant needs the tenant to have a verified domain first.',
+  domain_public:
+    'That is a public mail service’s domain: anyone can have an address there, so no organization can claim it.',
+  domain_suffix:
+    'That is a public suffix (such as co.uk or github.io), under which anyone can register a name. Claim your own domain below it.',
+  domain_exists: 'This organization has claimed that domain already.',
+  domain_limit: 'An organization can claim at most 20 domains.',
+  domain_claimed: 'Another organization has verified this domain. A site administrator can transfer it.',
+  domain_code_expired: 'The verification code has expired. Make a new one and publish it.',
+  domain_verified: 'The domain is verified: its record stays as it is.',
+  domain_managed:
+    'An organization manages the addresses of this email domain. Ask it to add you instead of making another.',
   already_linked: 'You already have an account linked at this provider. Unlink it first to link another.',
   last_method: 'This is the last way to sign in. Set a password or link another sign-in method first.',
   github_app_client:

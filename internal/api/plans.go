@@ -238,6 +238,9 @@ func (s *server) adminPatchPlan(c *call) {
 		Name        *string                   `json:"name"`
 		Description *string                   `json:"description"`
 		Rules       map[string]*settings.Rule `json:"rules"`
+		// Confirm is change_capabilities' token, when the rules switch a feature
+		// off for a tenant on the plan that uses it.
+		Confirm string `json:"confirm"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
@@ -255,6 +258,9 @@ func (s *server) adminPatchPlan(c *call) {
 	before, err := s.settings.PlanRules(ctx, p.ID)
 	if err != nil {
 		s.fail(c.w, err)
+		return
+	}
+	if len(req.Rules) > 0 && !s.planGate(c, p.ID, req.Rules, false, "", s.settings.TenantsOfPlan(p.ID), req.Confirm) {
 		return
 	}
 	// The keys given are set; a key with null leaves the plan.
@@ -363,6 +369,11 @@ func (s *server) adminPutTenantPlan(c *call) {
 	id := ""
 	if plan != nil {
 		id = plan.ID
+	}
+	// A plan without a feature the tenant uses (or the manual rule that held it
+	// on, which the change clears) needs the confirmation.
+	if !s.planGate(c, id, nil, true, t.ID, []string{t.ID}, req.Confirm) {
+		return
 	}
 	cleared, err := s.settings.SetTenantPlan(ctx, t.ID, id)
 	if errors.Is(err, store.ErrNotFound) {

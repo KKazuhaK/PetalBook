@@ -1,0 +1,401 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
+	"petalbook.app/server/internal/domains"
+	"petalbook.app/server/internal/store"
+)
+
+// The email domains a tenant claims and verifies by DNS (3.6 d2, docs/api.md
+// "Email domains"). The rules are internal/domains'; here are the routes:
+// a tenant's administrators manage their own tenant's (tenant.domains.manage,
+// features.domains), a site administrator any tenant's, and the site's list
+// and transfer are the site's (site.tenants.manage).
+
+type domainTXTResp struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type domainCNAMEResp struct {
+	Name   string `json:"name"`
+	Target string `json:"target"`
+}
+
+// domainRecordsResp are the records that prove a claim, with its code: the
+// CNAME only when the server has a public address.
+type domainRecordsResp struct {
+	TXT   domainTXTResp    `json:"txt"`
+	CNAME *domainCNAMEResp `json:"cname"`
+}
+
+type domainCheckResp struct {
+	At     string   `json:"at"`
+	By     string   `json:"by"`
+	Result string   `json:"result"`
+	Via    string   `json:"via"`
+	Seen   []string `json:"seen"`
+	Error  string   `json:"error"`
+}
+
+type domainTenantResp struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+type domainResp struct {
+	Domain  string `json:"domain"`
+	Display string `json:"display"`
+	// MixedScript warns that a label mixes scripts (a lookalike of another name).
+	MixedScript  bool             `json:"mixedScript"`
+	State        string           `json:"state"`
+	VerifiedAt   *string          `json:"verifiedAt"`
+	MissingSince *string          `json:"missingSince"`
+	LapsedAt     *string          `json:"lapsedAt"`
+	CheckedAt    *string          `json:"checkedAt"`
+	NextCheckAt  *string          `json:"nextCheckAt"`
+	CodeExpires  *string          `json:"codeExpires"`
+	CodeExpired  bool             `json:"codeExpired"`
+	LastCheck    *domainCheckResp `json:"lastCheck"`
+	// NextCheckAllowedAt is when "Check now" may be asked again after the
+	// last check by hand (null when none was made by hand).
+	NextCheckAllowedAt *string `json:"nextCheckAllowedAt"`
+	RestrictOrgs       bool    `json:"restrictOrgs"`
+	// Provider (3.6 d3) and Join (d5) are reserved: null.
+	Provider *string `json:"provider"`
+	Join     *string `json:"join"`
+	// RecordName is where the record goes. Code and Records are given only by
+	// the answer that made the code (the claim, a new code): it is stored as a
+	// hash, so it is shown that once; otherwise null.
+	RecordName string             `json:"recordName"`
+	Code       *string            `json:"code"`
+	Records    *domainRecordsResp `json:"records"`
+	Created    string             `json:"created"`
+	// Tenant is the claim's tenant, in the site's list only.
+	Tenant *domainTenantResp `json:"tenant,omitempty"`
+}
+
+// domainState is a claim's state: verified (and missing, while the recheck
+// does not find its record), lapsed (the recheck cancelled it), or unverified.
+func domainState(r store.DomainRow) string {
+	switch {
+	case r.Verified() && !r.MissingSince.IsZero():
+		return "missing"
+	case r.Verified():
+		return "verified"
+	case !r.LapsedAt.IsZero():
+		return "lapsed"
+	}
+	return "unverified"
+}
+
+func checkOf(c *domains.Check) *domainCheckResp {
+	if c == nil {
+		return nil
+	}
+	seen := c.Seen
+	if seen == nil {
+		seen = []string{}
+	}
+	return &domainCheckResp{At: rfc3339(c.At), By: c.By, Result: c.Result, Via: c.Via, Seen: seen, Error: c.Error}
+}
+
+func (s *server) domainOf(r store.DomainRow, code string) domainResp {
+	out := domainResp{Domain: r.Domain, Display: domains.Display(r.Domain), MixedScript: domains.MixedScript(r.Domain), State: domainState(r),
+		VerifiedAt: optTime(r.VerifiedAt), MissingSince: optTime(r.MissingSince), LapsedAt: optTime(r.LapsedAt), CheckedAt: optTime(r.CheckedAt),
+		NextCheckAt: optTime(r.NextCheckAt), CodeExpires: optTime(r.CodeExpires), LastCheck: checkOf(domains.ParseCheck(r.LastCheck)),
+		RestrictOrgs: r.RestrictOrgs, RecordName: domains.RecordName(r.Domain), Created: rfc3339(r.Created)}
+	if !r.Verified() {
+		out.CodeExpired = !r.CodeExpires.After(s.now())
+	}
+	if lc := out.LastCheck; lc != nil && lc.By == domains.ByManual {
+		if c := domains.ParseCheck(r.LastCheck); c != nil {
+			out.NextCheckAllowedAt = optTime(c.At.Add(time.Minute))
+		}
+	}
+	if code != "" {
+		out.Code = &code
+		out.Records = &domainRecordsResp{TXT: domainTXTResp{domains.RecordName(r.Domain), domains.TXTValue(code)}}
+		if h := s.domains.SiteHost(); h != "" {
+			out.Records.CNAME = &domainCNAMEResp{domains.RecordName(r.Domain), domains.CNAMETarget(code, h)}
+		}
+	}
+	return out
+}
+
+// failDomain answers a refusal of internal/domains (429 with Retry-After).
+func (s *server) failDomain(c *call, err error) {
+	var de *domains.Error
+	if !errors.As(err, &de) {
+		s.fail(c.w, err)
+		return
+	}
+	if de.Status == http.StatusTooManyRequests {
+		c.w.Header().Set("Retry-After", strconv.Itoa(max(int((de.RetryAfter+time.Second-1)/time.Second), 1)))
+	}
+	writeError(c.w, de.Status, de.Code, de.Msg)
+}
+
+// domainTenant is the {tenant} of a domain route: one the caller may manage
+// the domains of, else not found.
+func (s *server) domainTenant(c *call) (string, bool) {
+	id := c.r.PathValue("tenant")
+	if !c.p.Access.Can(authz.TenantDomainsManage, id) || !s.knownTenant(id) {
+		tenantNotFound(c)
+		return "", false
+	}
+	return id, true
+}
+
+// adminListDomains is GET /api/admin/tenants/{tenant}/domains.
+func (s *server) adminListDomains(c *call) {
+	t, ok := s.domainTenant(c)
+	if !ok {
+		return
+	}
+	rows, err := store.TenantDomains(c.r.Context(), s.opt.Store.Q(), t)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	out := make([]domainResp, len(rows))
+	for i, r := range rows {
+		out[i] = s.domainOf(r, "")
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		Domains  []domainResp `json:"domains"`
+		SiteHost string       `json:"siteHost"`
+	}{out, s.domains.SiteHost()})
+}
+
+// adminClaimDomain is POST /api/admin/tenants/{tenant}/domains {"domain"}.
+func (s *server) adminClaimDomain(c *call) {
+	t, ok := s.domainTenant(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if !s.readJSON(c.w, c.r, &req, false) {
+		return
+	}
+	cl, err := s.domains.Claim(c.r.Context(), t, req.Domain, c.user().ID)
+	if err != nil {
+		s.failDomain(c, err)
+		return
+	}
+	s.audit(c, auth.AuditEvent{Kind: "domain_added", Actor: c.user().ID, Tenant: t, Detail: map[string]any{"domain": cl.Row.Domain}})
+	writeJSON(c.w, http.StatusCreated, s.domainOf(cl.Row, cl.Code))
+}
+
+// adminDomainCode is POST …/domains/{domain}/code: a new code for a claim
+// that is not verified.
+func (s *server) adminDomainCode(c *call) {
+	t, ok := s.domainTenant(c)
+	if !ok {
+		return
+	}
+	cl, err := s.domains.NewCode(c.r.Context(), t, c.r.PathValue("domain"))
+	if err != nil {
+		s.failDomain(c, err)
+		return
+	}
+	s.audit(c, auth.AuditEvent{Kind: "domain_code_made", Actor: c.user().ID, Tenant: t, Detail: map[string]any{"domain": cl.Row.Domain}})
+	writeJSON(c.w, http.StatusOK, s.domainOf(cl.Row, cl.Code))
+}
+
+// adminVerifyDomain is POST …/domains/{domain}/verify: "Check now".
+func (s *server) adminVerifyDomain(c *call) {
+	t, ok := s.domainTenant(c)
+	if !ok {
+		return
+	}
+	res, err := s.domains.Verify(c.r.Context(), t, c.r.PathValue("domain"))
+	if res.Check.Result != "" {
+		// Every check that asked DNS is audited, a refused verification too.
+		detail := map[string]any{"domain": res.Row.Domain, "result": res.Check.Result}
+		if res.Check.Via != "" {
+			detail["via"] = res.Check.Via
+		}
+		if len(res.Check.Seen) > 0 {
+			detail["seen"] = res.Check.Seen
+		}
+		if res.Claimed {
+			detail["claimed"] = true
+		}
+		s.audit(c, auth.AuditEvent{Kind: "domain_checked", Actor: c.user().ID, Tenant: t, Detail: detail})
+		if res.Verified {
+			s.audit(c, auth.AuditEvent{Kind: "domain_verified", Actor: c.user().ID, Tenant: t, Detail: map[string]any{"domain": res.Row.Domain, "via": res.Check.Via}})
+		}
+	}
+	if err != nil {
+		s.failDomain(c, err)
+		return
+	}
+	// The claim, with this check as its lastCheck (verified now if it found the record).
+	writeJSON(c.w, http.StatusOK, s.domainOf(res.Row, ""))
+}
+
+// adminPatchDomain is PATCH …/domains/{domain} {"restrictOrgs"}.
+func (s *server) adminPatchDomain(c *call) {
+	t, ok := s.domainTenant(c)
+	if !ok {
+		return
+	}
+	var raw map[string]json.RawMessage
+	if !s.readJSON(c.w, c.r, &raw, false) {
+		return
+	}
+	var restrict bool
+	for k, v := range raw {
+		if k != "restrictOrgs" {
+			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown field "+k+": only restrictOrgs can be changed.")
+			return
+		}
+		if json.Unmarshal(v, &restrict) != nil {
+			writeError(c.w, http.StatusBadRequest, "invalid", "RestrictOrgs is true or false.")
+			return
+		}
+	}
+	if _, ok := raw["restrictOrgs"]; !ok {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give restrictOrgs.")
+		return
+	}
+	r, err := s.domains.SetRestrict(c.r.Context(), t, c.r.PathValue("domain"), restrict)
+	if err != nil {
+		s.failDomain(c, err)
+		return
+	}
+	s.audit(c, auth.AuditEvent{Kind: "domain_changed", Actor: c.user().ID, Tenant: t, Detail: map[string]any{"domain": r.Domain, "restrictOrgs": restrict}})
+	writeJSON(c.w, http.StatusOK, s.domainOf(r, ""))
+}
+
+// adminDeleteDomain is DELETE …/domains/{domain}.
+func (s *server) adminDeleteDomain(c *call) {
+	t, ok := s.domainTenant(c)
+	if !ok {
+		return
+	}
+	r, err := s.domains.Remove(c.r.Context(), t, c.r.PathValue("domain"))
+	if err != nil {
+		s.failDomain(c, err)
+		return
+	}
+	s.audit(c, auth.AuditEvent{Kind: "domain_removed", Actor: c.user().ID, Tenant: t, Detail: map[string]any{"domain": r.Domain, "verified": r.Verified()}})
+	c.w.WriteHeader(http.StatusNoContent)
+}
+
+// adminSiteDomains is GET /api/admin/domains: every tenant's claims, by
+// domain (?verified=true for the held ones), in pages.
+func (s *server) adminSiteDomains(c *call) {
+	q := c.r.URL.Query()
+	limit := 100
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 500 {
+			writeError(c.w, http.StatusBadRequest, "invalid", "Limit must be from 1 to 500.")
+			return
+		}
+		limit = n
+	}
+	f := store.DomainFilter{Limit: limit + 1}
+	switch q.Get("verified") {
+	case "", "false":
+	case "true":
+		f.VerifiedOnly = true
+	default:
+		writeError(c.w, http.StatusBadRequest, "invalid", "Verified is true or false.")
+		return
+	}
+	if cur := q.Get("cursor"); cur != "" {
+		d, t, ok := strings.Cut(cur, "/")
+		if !ok || d == "" || t == "" {
+			writeError(c.w, http.StatusBadRequest, "invalid", "That is not a cursor of this list.")
+			return
+		}
+		f.AfterDomain, f.AfterTenant = d, t
+	}
+	rows, err := store.ListDomains(c.r.Context(), s.opt.Store.Q(), f)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	var next *string
+	if len(rows) > limit {
+		rows = rows[:limit]
+		last := rows[len(rows)-1]
+		n := last.Domain + "/" + last.TenantID
+		next = &n
+	}
+	out := make([]domainResp, len(rows))
+	for i, r := range rows {
+		out[i] = s.domainOf(r, "")
+		ref, _ := s.opt.Store.TenantRefOf(r.TenantID)
+		out[i].Tenant = &domainTenantResp{r.TenantID, ref.Slug, ref.Name}
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		Domains []domainResp `json:"domains"`
+		Next    *string      `json:"next"`
+	}{out, next})
+}
+
+// SiteHostOf is the host name of the public address, which a CNAME record of
+// a domain claim points under ("" without one).
+// An IP address, or a name that is not a domain one could claim (localhost),
+// has none: a CNAME points at a name. A Unicode name is given as punycode.
+func SiteHostOf(publicURL string) string {
+	u, err := url.Parse(publicURL)
+	if err != nil {
+		return ""
+	}
+	h := u.Hostname()
+	if h == "" || net.ParseIP(h) != nil {
+		return ""
+	}
+	k, ok := domains.Key(h)
+	if !ok {
+		return ""
+	}
+	return k
+}
+
+// adminAssignDomain is POST /api/admin/domains/{domain}/assign {"tenant"}: a
+// site administrator moves a verified domain to another tenant. Each tenant's
+// audit says its side only.
+func (s *server) adminAssignDomain(c *call) {
+	var req struct {
+		Tenant string `json:"tenant"`
+	}
+	if !s.readJSON(c.w, c.r, &req, false) {
+		return
+	}
+	if !s.knownTenant(req.Tenant) {
+		tenantNotFound(c)
+		return
+	}
+	from, r, err := s.domains.Assign(c.r.Context(), c.r.PathValue("domain"), req.Tenant, c.user().ID)
+	if err != nil {
+		s.failDomain(c, err)
+		return
+	}
+	if from != req.Tenant {
+		s.audit(c, auth.AuditEvent{Kind: "domain_unassigned", Actor: c.user().ID, Tenant: from, Detail: map[string]any{"domain": r.Domain}})
+		s.audit(c, auth.AuditEvent{Kind: "domain_assigned", Actor: c.user().ID, Tenant: req.Tenant, Detail: map[string]any{"domain": r.Domain}})
+	}
+	out := s.domainOf(r, "")
+	ref, _ := s.opt.Store.TenantRefOf(r.TenantID)
+	out.Tenant = &domainTenantResp{r.TenantID, ref.Slug, ref.Name}
+	writeJSON(c.w, http.StatusOK, out)
+}
