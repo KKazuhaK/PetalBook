@@ -19,17 +19,31 @@ import (
 // in use is changed directly.
 //
 // Features that have a count of their use: features.domains (the tenants'
-// claimed email domains). The others are added with the first thing of theirs
+// claimed email domains) and features.ownSso (the tenants' own sign-in
+// providers, 3.6 d3). The others are added with the first thing of theirs
 // that can be counted.
 
 // capabilityUse counts what a feature's tenants use of it.
 var capabilityUse = map[string]func(s *server, ctx context.Context) (map[string]capabilityCount, error){
 	settings.FeatureDomains: (*server).domainUse,
+	settings.FeatureOwnSSO:  (*server).ownSSOUse,
 }
 
-// capabilityCount is what one tenant would lose.
+// capabilityCount is what one tenant would lose: of features.domains its
+// claims and how many are verified, of features.ownSso its providers and how
+// many are enabled (the counts of the other feature are 0).
 type capabilityCount struct {
-	Claims, Verified int
+	Claims, Verified  int
+	Providers, Active int
+}
+
+// ownSSOUse counts the tenants' own sign-in providers, from memory.
+func (s *server) ownSSOUse(ctx context.Context) (map[string]capabilityCount, error) {
+	out := map[string]capabilityCount{}
+	for t, n := range s.auth.ProviderUse() {
+		out[t] = capabilityCount{Providers: n[0], Active: n[1]}
+	}
+	return out, nil
 }
 
 func (s *server) domainUse(ctx context.Context) (map[string]capabilityCount, error) {
@@ -39,7 +53,7 @@ func (s *server) domainUse(ctx context.Context) (map[string]capabilityCount, err
 	}
 	out := make(map[string]capabilityCount, len(rows))
 	for _, r := range rows {
-		out[r.TenantID] = capabilityCount{r.Claims, r.Verified}
+		out[r.TenantID] = capabilityCount{Claims: r.Claims, Verified: r.Verified}
 	}
 	return out, nil
 }
@@ -82,14 +96,28 @@ func (s *server) switchesOff(ctx context.Context, key, tenant string, ch setting
 	return using, nil
 }
 
-// capabilityItem is one tenant of the preview.
+// capabilityItem is one tenant of the preview: domains and verified for
+// features.domains, providers and enabled for features.ownSso.
 type capabilityItem struct {
-	Tenant   string `json:"tenant"`
-	Slug     string `json:"slug"`
-	Name     string `json:"name"`
-	Feature  string `json:"feature"`
-	Claims   int    `json:"domains"`
-	Verified int    `json:"verified"`
+	Tenant    string `json:"tenant"`
+	Slug      string `json:"slug"`
+	Name      string `json:"name"`
+	Feature   string `json:"feature"`
+	Claims    *int   `json:"domains,omitempty"`
+	Verified  *int   `json:"verified,omitempty"`
+	Providers *int   `json:"providers,omitempty"`
+	Enabled   *int   `json:"enabled,omitempty"`
+}
+
+// itemOf is the preview's line of a tenant's count of the feature key.
+func itemOf(ref store.TenantRef, key string, n capabilityCount) capabilityItem {
+	it := capabilityItem{Tenant: ref.ID, Slug: ref.Slug, Name: ref.Name, Feature: key}
+	if key == settings.FeatureOwnSSO {
+		it.Providers, it.Enabled = &n.Providers, &n.Active
+	} else {
+		it.Claims, it.Verified = &n.Claims, &n.Verified
+	}
+	return it
 }
 
 // capabilityPlan is the preview of switching a feature off: for the site
@@ -121,8 +149,8 @@ func (s *server) capabilityPlan(ctx context.Context, key, tenant string) (confir
 		if !on {
 			continue
 		}
-		plan = append(plan, capabilityItem{ref.ID, ref.Slug, ref.Name, key, n.Claims, n.Verified})
-		parts = append(parts, ref.ID, strconv.Itoa(n.Claims), strconv.Itoa(n.Verified))
+		plan = append(plan, itemOf(ref, key, n))
+		parts = append(parts, ref.ID, strconv.Itoa(n.Claims), strconv.Itoa(n.Verified), strconv.Itoa(n.Providers), strconv.Itoa(n.Active))
 	}
 	return confirmPlan{Plan: plan, Hash: hashOf(append([]string{key, tenant}, parts...)...)}, nil
 }

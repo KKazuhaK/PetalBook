@@ -959,9 +959,10 @@ CREATE INDEX github_pending_claims_tenant ON github_pending_claims(owner_tenant)
 CREATE INDEX github_pending_claims_user ON github_pending_claims(owner_user) WHERE owner_user IS NOT NULL;
 CREATE INDEX github_pending_claims_expires ON github_pending_claims(expires);
 
--- A site provider shared with a tenant (reserved for org sign-in, 3.6 d): a
--- tenant reaches only what is shared with it. GitHub installations are never
--- shared; each has its own owner (provider_installations).
+-- A site SSO provider offered to a list of tenants (3.6 d3): with
+-- config.offer = 'list' only the people of these tenants sign in through it;
+-- otherwise it is offered to all and has no rows here. GitHub installations
+-- are never shared; each has its own owner (provider_installations).
 CREATE TABLE provider_shares (
   provider_id     TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
   tenant_id       TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -1052,8 +1053,9 @@ CREATE TABLE retired_usernames (
 -- recheck cancelled it. checked_at and last_check (JSON) are the latest check,
 -- by hand or by the recheck; missing_since when the recheck first did not find
 -- the record (0: found). next_check_at is when the recheck looks again (0: not
--- verified). provider_id (3.6 d3), join_mode (d5) and managed (3.7) are
--- reserved; managed is always 0 until then.
+-- verified). provider_id is the tenant's own sign-in provider the domain
+-- routes to ('' for none; 3.6 d3, cleared when the provider is deleted);
+-- join_mode (d5) and managed (3.7) are reserved; managed is always 0 until then.
 CREATE TABLE tenant_domains (
   tenant_id     TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   domain        TEXT COLLATE "C" NOT NULL,
@@ -1080,6 +1082,9 @@ CREATE UNIQUE INDEX tenant_domains_verified ON tenant_domains(domain) WHERE veri
 CREATE INDEX tenant_domains_domain ON tenant_domains(domain, tenant_id);
 -- The recheck's timer: the next one due, and those due now.
 CREATE INDEX tenant_domains_due ON tenant_domains(next_check_at, tenant_id, domain) WHERE verified_at > 0;
+-- The domains routed to a sign-in provider (3.6 d3): its view, and clearing
+-- them when it is deleted.
+CREATE INDEX tenant_domains_provider ON tenant_domains(provider_id, domain) WHERE provider_id <> '';
 
 -- Background work, one row per job whatever its kind (internal/jobs): a bulk
 -- action over many spaces, people or items now; exports, recycle actions,

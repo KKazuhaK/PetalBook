@@ -873,6 +873,18 @@ func (s *Service) PublicInfo(ctx context.Context) PublicInfo {
 	return info
 }
 
+// PublicInfoFor is PublicInfo for the sign-in page of one tenant: the
+// providers its people may use (PublicProvidersFor). The mode is the site's,
+// as the server enforces it (signin.mode stays site-only), even when the
+// tenant's list is empty: a looser hint than what is enforced would mislead.
+func (s *Service) PublicInfoFor(ctx context.Context, tenant string) PublicInfo {
+	st := s.sec(ctx)
+	info := PublicInfo{Providers: s.PublicProvidersFor(ctx, tenant), Mode: s.effectiveMode(st)}
+	info.Local, info.SSO = info.Mode != ModeSSORedirect, info.Mode != ModeLocalOnly
+	info.Passkey = s.passkeysOn(st)
+	return info
+}
+
 // waysToSignIn counts the ways a person could sign in once the identity without
 // is gone, counting only those that work now: a password or a passkey when
 // password sign-in is not refused to them, and an identity of a provider that

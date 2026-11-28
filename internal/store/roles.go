@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"petalbook.app/server/internal/authz"
@@ -293,4 +294,28 @@ func HeldRoles(ctx context.Context, q Q, userID string) ([]HeldRole, error) {
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// GroupsHoldingSiteRoles is which of the groups ids hold a role of the site
+// (a grant of a role whose scope is site): a person put in one holds site
+// keys (3.6 d3: a tenant's sign-in provider never syncs anyone into one).
+func GroupsHoldingSiteRoles(ctx context.Context, q Q, ids []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for i := 0; i < len(ids); i += 200 {
+		chunk := ids[i:min(i+200, len(ids))]
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, len(chunk))
+		for j, id := range chunk {
+			args[j] = id
+		}
+		l, err := strCol(ctx, q, `SELECT DISTINCT g.subject_id FROM role_grants g JOIN roles r ON r.id = g.role_id
+			WHERE g.subject_kind = 'group' AND r.scope = 'site' AND g.subject_id IN (`+ph+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range l {
+			out[id] = true
+		}
+	}
+	return out, nil
 }

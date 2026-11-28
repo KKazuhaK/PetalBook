@@ -284,7 +284,7 @@ export const adminApi = {
     request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}/verify`, { method: 'POST' }),
   newDomainCode: (tenant: string, domain: string) =>
     request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}/code`, { method: 'POST' }),
-  patchDomain: (tenant: string, domain: string, input: { restrictOrgs: boolean }) =>
+  patchDomain: (tenant: string, domain: string, input: { restrictOrgs?: boolean; provider?: string | null }) =>
     request<TenantDomain>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}`, { method: 'PATCH', body: input }),
   deleteDomain: (tenant: string, domain: string) =>
     request<void>(`/admin/tenants/${enc(tenant)}/domains/${enc(domain)}`, { method: 'DELETE' }),
@@ -401,6 +401,27 @@ export const adminApi = {
   testAuthProvider: (id: string) => request<{ url: string }>(`/admin/providers/${enc(id)}/test`, { method: 'POST' }),
   authProviderTestResult: (id: string, signal?: AbortSignal) =>
     request<{ result: ProviderTestResult | null }>(`/admin/providers/${enc(id)}/test`, { signal }),
+  // --- a tenant's own single sign-on (3.6 d3): the same Provider, owned by the tenant ---
+  tenantProviders: (tenant: string, signal?: AbortSignal) =>
+    request<{ providers: AuthProvider[] }>(`/admin/tenants/${enc(tenant)}/providers`, { signal }),
+  createTenantProvider: (tenant: string, input: ProviderInput) =>
+    request<AuthProvider>(`/admin/tenants/${enc(tenant)}/providers`, { method: 'POST', body: input }),
+  patchTenantProvider: (tenant: string, id: string, input: ProviderInput) =>
+    request<AuthProvider>(`/admin/tenants/${enc(tenant)}/providers/${enc(id)}`, { method: 'PATCH', body: input }),
+  deleteTenantProvider: (tenant: string, id: string, force = false) =>
+    request<void>(`/admin/tenants/${enc(tenant)}/providers/${enc(id)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
+  checkTenantProvider: (tenant: string, id: string) =>
+    request<AuthProvider>(`/admin/tenants/${enc(tenant)}/providers/${enc(id)}/check`, { method: 'POST' }),
+  // A test sign-in that comes back to `back` (a console address) with ?provider_test=<id>.
+  testTenantProvider: (tenant: string, id: string, back: string) =>
+    request<{ url: string }>(`/admin/tenants/${enc(tenant)}/providers/${enc(id)}/test`, {
+      method: 'POST',
+      body: { return: back },
+    }),
+  tenantProviderTestResult: (tenant: string, id: string, signal?: AbortSignal) =>
+    request<{ result: ProviderTestResult | null }>(`/admin/tenants/${enc(tenant)}/providers/${enc(id)}/test`, {
+      signal,
+    }),
   audit: (params: Partial<AuditFilters> & { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const q = auditQuery(params)
     if (params.cursor) q.set('cursor', params.cursor)
@@ -886,7 +907,8 @@ export function useDomainChange(tenant: string) {
       a:
         | { op: 'claim'; domain: string }
         | { op: 'verify' | 'code' | 'delete'; domain: string }
-        | { op: 'restrict'; domain: string; restrictOrgs: boolean },
+        | { op: 'restrict'; domain: string; restrictOrgs: boolean }
+        | { op: 'route'; domain: string; provider: string | null },
     ): Promise<TenantDomain | null> => {
       switch (a.op) {
         case 'claim':
@@ -897,11 +919,15 @@ export function useDomainChange(tenant: string) {
           return adminApi.newDomainCode(tenant, a.domain)
         case 'restrict':
           return adminApi.patchDomain(tenant, a.domain, { restrictOrgs: a.restrictOrgs })
+        case 'route':
+          return adminApi.patchDomain(tenant, a.domain, { provider: a.provider })
         case 'delete':
           return adminApi.deleteDomain(tenant, a.domain).then(() => null)
       }
     },
     onSuccess: (d, a) => {
+      // A route shows on the provider too (its domains).
+      if (a.op === 'route') void qc.invalidateQueries({ queryKey: keys.tenantProviders(tenant) })
       if (d) putDomain(qc, tenant, d)
       else
         qc.setQueryData<TenantDomainList>(keys.tenantDomains(tenant), (old) =>
@@ -1299,6 +1325,16 @@ export function useAuthProviders() {
     queryKey: keys.adminProviders,
     queryFn: ({ signal }) => adminApi.authProviders(signal),
     staleTime: 15_000,
+  })
+}
+
+// A tenant's own sign-in providers (3.6 d3); off (no request) while `enabled` is false: the feature is off.
+export function useTenantProviders(tenant: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.tenantProviders(tenant),
+    queryFn: ({ signal }) => adminApi.tenantProviders(tenant, signal),
+    staleTime: 15_000,
+    enabled: enabled && tenant !== '',
   })
 }
 

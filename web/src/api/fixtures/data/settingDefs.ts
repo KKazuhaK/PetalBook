@@ -221,6 +221,12 @@ export const SETTING_DEFS: SiteSetting[] = [
     site: { value: true, lower: { mode: 'allow' } },
   },
   {
+    key: 'signin.social',
+    kind: 'list',
+    layers: ['site', 'tenant'],
+    site: { value: ['*'], lower: { mode: 'allow' } },
+  },
+  {
     key: 'signin.mode',
     kind: 'choice',
     layers: ['site'],
@@ -433,6 +439,7 @@ export const TENANT_KEYS: string[] = [
   'audit.downloads',
   'audit.api',
   'accounts.multipleEmails',
+  'signin.social',
   'features.ownSso',
   'features.domains',
   'features.managedAccounts',

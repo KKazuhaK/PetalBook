@@ -24,6 +24,13 @@ export const ADMIN_UNRECORDED: Record<string, string> = {
   'GET /api/admin/providers/company/test 200': 'needs a provider',
   'GET /api/admin/grants 200': 'needs an authorization client',
   'POST /api/admin/domains/{}/assign 200': 'needs a domain verified by DNS',
+  'POST /api/admin/tenants/{}/providers 201': 'needs a provider',
+  'GET /api/admin/tenants/{}/providers/{} 200': 'needs a provider',
+  'PATCH /api/admin/tenants/{}/providers/{} 200': 'needs a provider',
+  'POST /api/admin/tenants/{}/providers/{}/check 200': 'needs a provider',
+  'POST /api/admin/tenants/{}/providers/{}/test 200': 'needs a provider',
+  'GET /api/admin/tenants/{}/providers/{}/test 200': 'needs a provider',
+  'DELETE /api/admin/tenants/{}/providers/{} 204': 'needs a provider',
 
   'PUT /api/admin/daily/providers/hitokoto 200': 'no contract case changes a provider yet',
 }
@@ -115,7 +122,10 @@ export function adminProbes(fx: FixtureServer): Call[] {
     order: 1,
     autoCreate: false,
     mergeVerifiedEmail: false,
-    groups: { enabled: false, claim: '', missing: 'keep', map: [] },
+    tenant: '0000000000',
+    tenants: 'all',
+    domains: [],
+    groups: { enabled: false, claim: '', missing: 'keep', map: [], allow: [] },
     oidc: {
       issuer: 'https://idp.example',
       clientId: 'c',
@@ -127,6 +137,16 @@ export function adminProbes(fx: FixtureServer): Call[] {
     people: 0,
     created: at,
     updated: at,
+  })
+  // A tenant's own provider (3.6 d3), as its administrators' POST makes one.
+  d.admin.providers.push({
+    ...d.admin.providers[d.admin.providers.length - 1],
+    id: '01SSPROBE1',
+    owner: '01TNTWO001',
+    slug: 'team-sso',
+    name: 'Two SSO',
+    tenant: '01TNTWO001',
+    tenants: null,
   })
   const extra = sharedSpace(d, 'editor').info.id
   const me = { id: d.auth.users[0].id, username: d.auth.users[0].username }
@@ -293,6 +313,21 @@ export function adminProbes(fx: FixtureServer): Call[] {
         return { tenant: '0000000000' }
       },
     ],
+    // A tenant's own single sign-on (3.6 d3): the contract suite has no identity provider, so only the list and the
+    // routing of a domain to none are recorded.
+    ['GET', `${T}/providers`],
+    [
+      'POST',
+      `${T}/providers`,
+      { slug: 'team-new', kind: 'oidc', name: 'New', oidc: { issuer: 'https://idp.example', clientId: 'c' } },
+    ],
+    ['GET', `${T}/providers/01SSPROBE1`],
+    ['PATCH', `${T}/providers/01SSPROBE1`, { name: 'Two' }],
+    ['POST', `${T}/providers/01SSPROBE1/check`],
+    ['POST', `${T}/providers/01SSPROBE1/test`, { return: '/admin/t/01TNTWO001/settings/signin' }],
+    ['GET', `${T}/providers/01SSPROBE1/test`],
+    ['PATCH', `${T}/domains/probe.example`, { provider: null }],
+    ['DELETE', `${T}/providers/01SSPROBE1`],
     ['DELETE', `${T}/domains/probe.example`],
     ['GET', `${T}/secrets`],
     ['PUT', `${T}/secrets/mail.password`, { value: 'x' }],

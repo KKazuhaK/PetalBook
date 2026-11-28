@@ -43,6 +43,7 @@ export type PermissionKey =
   | 'tenant.permissions.read'
   | 'tenant.github.manage'
   | 'tenant.domains.manage'
+  | 'tenant.signin.manage'
   | 'space.read'
   | 'space.write'
   | 'space.members.manage'

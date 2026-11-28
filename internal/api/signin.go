@@ -102,7 +102,13 @@ func (s *server) getAuthProviders(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	// Without ?tenant the page is everyone's: the site's enabled providers.
+	// With it, what that tenant's people may use (3.6 d3): the social ones it
+	// allows, the site's SSO offered to it, and its own.
 	info := s.auth.PublicInfo(c.r.Context())
+	if c.r.URL.Query().Has("tenant") {
+		info = s.auth.PublicInfoFor(c.r.Context(), tenant)
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Providers []auth.PublicProvider `json:"providers"`
 		LoginMode string                `json:"loginMode"`

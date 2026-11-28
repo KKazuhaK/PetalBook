@@ -696,7 +696,11 @@ func Public(ip netip.Addr) bool {
 	if b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0d && b[3] == 0xb8 {
 		return false
 	}
-	if b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b || b[0] == 0x20 && b[1] == 0x02 {
+	// NAT64 (64:ff9b::/96 and the local 64:ff9b:1::/48, both under
+	// 64:ff9b::/32), 6to4 (2002::/16) and Teredo (2001::/32) carry an IPv4
+	// address a relay reaches for us, a private one included.
+	if b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b || b[0] == 0x20 && b[1] == 0x02 ||
+		b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && b[3] == 0x00 {
 		return false
 	}
 	return true

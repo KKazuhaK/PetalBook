@@ -4,6 +4,7 @@
 // server's refusal says it with `fx.fail`.
 
 import type {
+  AuthProvider,
   AdminSpace,
   AdminStorageBody,
   AuditItem,
@@ -15,6 +16,7 @@ import type {
   PermissionKey,
   Job,
   PersonUsage,
+  ProviderInput,
   RecycleItem,
   RestoreResult,
   SiteSetting,
@@ -43,6 +45,7 @@ import { add, find, newId, paged, Refusal, remove, reply, rfc3339, type Ctx, typ
 import { forgeCheck, forgeCreate, forgeDelete, forgeGet, forgePatch, isForge, repoItems } from './connections.ts'
 
 const now = (c: Ctx) => rfc3339(c.now())
+type ProviderInputLike = ProviderInput & { slug?: string }
 const A = (c: Ctx) => c.data.admin
 // Every space of the server: the ones the signed-in person belongs to, and the ones they only administer.
 const spacesOf = (c: Ctx) => [...c.data.spaces, ...A(c).otherSpaces]
@@ -187,6 +190,25 @@ function secretsOf(c: Ctx, tenant?: string) {
   return rows
 }
 
+// --- a tenant's own single sign-on (3.6 d3): the same providers, owned by the tenant ---
+
+function tenantProvidersOf(c: Ctx): AuthProvider[] {
+  return A(c).providers.filter((p) => p.owner === c.params.id)
+}
+// A provider as the server shows it: with the tenant's verified domains routed to it.
+function withRoutes(c: Ctx, p: AuthProvider): AuthProvider {
+  const routed = (A(c).domains[p.owner] ?? []).filter((d) => d.provider === p.id).map((d) => d.domain)
+  return { ...p, domains: routed.sort() }
+}
+function tenantProvider(c: Ctx): AuthProvider {
+  return find(tenantProvidersOf(c), (p) => p.id === c.params.provider, 'the provider')
+}
+// Turned on only once the tenant has a verified domain.
+function needDomain(c: Ctx, on: boolean | undefined) {
+  if (on && !(A(c).domains[c.params.id] ?? []).some((d) => d.verifiedAt))
+    throw new Refusal(409, 'domain_required', 'Verify a domain for this organisation first.')
+}
+
 // --- email domains ---
 
 function domainsOf(c: Ctx, tenant: string): TenantDomain[] {
@@ -287,26 +309,49 @@ function spacePreview(c: Ctx, s: SpaceData): SpaceDeletionPreview {
 
 // --- a confirmed action ---------------------------------------------------------------------------------------------
 
-// Switching features.domains off while tenants have domains needs change_capabilities' confirmation first.
+// The features whose use is counted: switching one off while a tenant uses it needs change_capabilities'
+// confirmation first (features.domains: its claims; features.ownSso: its own sign-in providers, 3.6 d3).
+const COUNTED = ['features.domains', 'features.ownSso']
+
+// Switching a counted feature off while tenants use it needs change_capabilities' confirmation first.
 function capabilityRefusal(c: Ctx, tenant?: string) {
   const b = c.body as { value?: unknown; siteRule?: { value?: unknown } | null; confirm?: string }
-  if (c.params.key !== 'features.domains' || b.confirm) return
+  if (!COUNTED.includes(c.params.key) || b.confirm) return
   if (b.value !== false && b.siteRule?.value !== false) return
-  refuseOff(c, capabilityLines(c, tenant))
+  refuseOff(c, capabilityLines(c, tenant, c.params.key))
 }
-// A plan whose rule has features.domains off, given to (or changed for) tenants that have domains.
+// A plan whose rule has a counted feature off, given to (or changed for) tenants that use it.
 function planRefusal(c: Ctx, rules: Record<string, unknown> | undefined, tenants: string[]) {
-  const r = rules?.['features.domains'] as { value?: unknown } | null | undefined
-  if ((c.body as { confirm?: string }).confirm || r?.value !== false) return
-  refuseOff(
-    c,
-    capabilityLines(c).filter((l) => tenants.includes(l.tenant)),
-  )
+  if ((c.body as { confirm?: string }).confirm) return
+  for (const key of COUNTED) {
+    const r = rules?.[key] as { value?: unknown } | null | undefined
+    if (r?.value !== false) continue
+    refuseOff(
+      c,
+      capabilityLines(c, undefined, key).filter((l) => tenants.includes(l.tenant)),
+    )
+  }
 }
 function refuseOff(_c: Ctx, lines: CapabilityPlanLine[]) {
   if (lines.length) throw new Refusal(409, 'confirm_required', 'The feature is in use', { plan: lines })
 }
-function capabilityLines(c: Ctx, tenant?: string): CapabilityPlanLine[] {
+function capabilityLines(c: Ctx, tenant?: string, key = 'features.domains'): CapabilityPlanLine[] {
+  if (key === 'features.ownSso') {
+    const by = new Map<string, AuthProvider[]>()
+    for (const p of A(c).providers)
+      if (p.owner !== 'site' && (!tenant || p.owner === tenant)) by.set(p.owner, [...(by.get(p.owner) ?? []), p])
+    return [...by].map(([id, list]) => {
+      const t = A(c).tenants.find((x) => x.id === id)
+      return {
+        tenant: id,
+        slug: t?.slug ?? id,
+        name: t?.name ?? id,
+        feature: key,
+        providers: list.length,
+        enabled: list.filter((p) => p.enabled).length,
+      }
+    })
+  }
   return Object.entries(A(c).domains)
     .filter(([id, list]) => list.length > 0 && (!tenant || id === tenant))
     .map(([id, list]) => {
@@ -326,7 +371,7 @@ function confirmPlan(c: Ctx): ConfirmResult {
   const b = c.body as { action: string; spaces?: string[]; users?: string[]; items?: string[]; heir?: string }
   const token = `c_${newId(c.data, '')}`
   if (b.action === 'change_capabilities') {
-    const plan = capabilityLines(c, (c.body as { tenant?: string }).tenant)
+    const plan = capabilityLines(c, (c.body as { tenant?: string }).tenant, (c.body as { key?: string }).key)
     return {
       confirm: token,
       expires: rfc3339(c.now() + 600_000),
@@ -1156,7 +1201,14 @@ export const adminRoutes: Route[] = [
     '/api/admin/tenants/:id/domains/:domain',
     (c) => {
       const d = domainOf(c)
-      d.restrictOrgs = (c.body as { restrictOrgs?: boolean }).restrictOrgs === true
+      const b = c.body as { restrictOrgs?: boolean; provider?: string | null }
+      if (b.restrictOrgs !== undefined) d.restrictOrgs = b.restrictOrgs === true
+      if (b.provider !== undefined) {
+        if (b.provider !== null) find(tenantProvidersOf(c), (p) => p.id === b.provider, 'the provider')
+        if (b.provider !== null && !d.verifiedAt)
+          throw new Refusal(409, 'domain_required', 'Verify the domain first: only a verified domain is routed.')
+        d.provider = b.provider
+      }
       return listed(d)
     },
   ],
@@ -1530,6 +1582,91 @@ export const adminRoutes: Route[] = [
     (c) => {
       const result = A(c).providerTests[c.params.id] ?? null
       delete A(c).providerTests[c.params.id]
+      return { result }
+    },
+  ],
+
+  // --- a tenant's own single sign-on ---
+  [
+    'GET',
+    '/api/admin/tenants/:id/providers',
+    (c) => ({ providers: tenantProvidersOf(c).map((p) => withRoutes(c, p)) }),
+  ],
+  [
+    'POST',
+    '/api/admin/tenants/:id/providers',
+    (c) => {
+      const b = c.body as ProviderInputLike
+      if (b.template !== undefined || (b.kind !== 'oidc' && b.kind !== 'saml'))
+        throw new Refusal(400, 'invalid', "An organisation's single sign-on is OpenID Connect or SAML.")
+      // Its slug starts with its tenant's and a hyphen (acme-okta).
+      const t = A(c).tenants.find((x) => x.id === c.params.id)
+      if (t && !(b.slug ?? '').startsWith(`${t.slug}-`))
+        throw new Refusal(400, 'invalid', "An organisation's provider slug starts with its own slug and a hyphen.")
+      needDomain(c, b.enabled)
+      if (A(c).providers.some((x) => x.slug === b.slug)) throw new Refusal(409, 'exists', 'That slug is taken.')
+      const p = makeProvider(
+        { ...b, owner: c.params.id, class: 'sso', enabled: b.enabled === true },
+        now(c),
+        A(c).providers.length + 1,
+        newId(c.data, '01SS'),
+      )
+      return reply(201, withRoutes(c, add(A(c).providers, p)))
+    },
+  ],
+  ['GET', '/api/admin/tenants/:id/providers/:provider', (c) => withRoutes(c, tenantProvider(c))],
+  [
+    'PATCH',
+    '/api/admin/tenants/:id/providers/:provider',
+    (c) => {
+      const p = tenantProvider(c)
+      const b = c.body as ProviderInputLike
+      if (b.enabled && !p.enabled) needDomain(c, true)
+      return withRoutes(c, changeProvider(p, b, now(c)))
+    },
+  ],
+  [
+    'DELETE',
+    '/api/admin/tenants/:id/providers/:provider',
+    (c) => {
+      const p = tenantProvider(c)
+      for (const d of A(c).domains[c.params.id] ?? []) if (d.provider === p.id) d.provider = null
+      return remove(A(c).providers, p)
+    },
+  ],
+  [
+    'POST',
+    '/api/admin/tenants/:id/providers/:provider/check',
+    (c) => {
+      const p = tenantProvider(c)
+      p.status = { ok: true, checked: now(c), message: '' }
+      return withRoutes(c, p)
+    },
+  ],
+  [
+    'POST',
+    '/api/admin/tenants/:id/providers/:provider/test',
+    (c) => {
+      const p = tenantProvider(c)
+      A(c).providerTests[p.id] = {
+        subject: `${p.slug}|subject-1`,
+        email: 'tester@example.test',
+        emailTrusted: true,
+        name: 'Test Person',
+        username: 'tester',
+        at: now(c),
+      }
+      const back = (c.body as { return?: string } | undefined)?.return ?? '/admin/settings/signin'
+      return { url: `${back}?provider_test=${p.id}` }
+    },
+  ],
+  [
+    'GET',
+    '/api/admin/tenants/:id/providers/:provider/test',
+    (c) => {
+      tenantProvider(c)
+      const result = A(c).providerTests[c.params.provider] ?? null
+      delete A(c).providerTests[c.params.provider]
       return { result }
     },
   ],

@@ -5,6 +5,16 @@ import type { DomainsMessages } from '../domainsTypes.ts'
 
 export const domainsEn: DomainsMessages = {
   title: 'Email domains',
+  // The organization console's Sign-in tab: its single sign-on and its email domains.
+  signinTab: 'Sign-in',
+  // A verified domain routed to one of the organization's own sign-in providers (3.6 d3).
+  route: {
+    label: (domain: string) => `Sign-in provider for ${domain}`,
+    short: 'Sign-in provider',
+    none: 'Not routed',
+    help: 'People signing in with an address on this domain are sent to this provider (that step of the sign-in page comes next).',
+    saved: 'Saved',
+  },
   help: 'Claim the email domains your people use, then publish a DNS record to prove you manage each. Only that exact domain counts: claim subdomains one by one. A claim that is not verified does nothing.',
   featureOff: 'The email domains feature is off for this organization: the claims are kept and have no effect.',
   loadFailed: "Could not read this organization's domains",
@@ -112,6 +122,8 @@ export const domainsEn: DomainsMessages = {
     loading: 'Counting what would stop…',
     line: (domains: number, verified: number) =>
       `${domains} ${domains === 1 ? 'domain' : 'domains'}, ${verified} verified`,
+    providersLine: (providers: number, enabled: number) =>
+      `${providers} sign-in ${providers === 1 ? 'provider' : 'providers'}, ${enabled} on`,
     typeLabel: (n: number) => `Type ${n} to confirm`,
     confirm: 'Turn off',
     cancel: 'Cancel',

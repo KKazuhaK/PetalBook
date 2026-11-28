@@ -71,7 +71,7 @@ func TestACopiedIssuerNeverReachesAnotherProvidersAccounts(t *testing.T) {
 			t.Fatal(err)
 		}
 		admin.do("PATCH", "/api/admin/providers/"+orgID, map[string]any{"enabled": true}).want(t, 409, "domain_required")
-		admin.do("POST", "/api/admin/providers", f.providerBody("two", map[string]any{"owner": org, "enabled": true})).want(t, 409, "domain_required")
+		admin.do("POST", "/api/admin/providers", f.providerBody("acme-two", map[string]any{"owner": org, "enabled": true})).want(t, 409, "domain_required")
 		pub := a.newClient("").do("GET", "/api/auth/providers", nil).want(t, 200, "")
 		if n := len(pub.body["providers"].([]any)); n != 2 {
 			t.Fatalf("the sign-in page lists %d providers: %s", n, pub.raw)

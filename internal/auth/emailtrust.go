@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"slices"
 	"strings"
 
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -143,6 +145,9 @@ func (s *Service) orgSignInGate(ctx context.Context, owner string) error {
 	if owner == "" || owner == store.ProviderSite {
 		return nil
 	}
+	if !s.ownSSOOn(ctx, owner) {
+		return coded(403, "feature_off", "This organisation does not have its own single sign-on (features.ownSso).")
+	}
 	if len(s.orgDomains(ctx, owner)) == 0 {
 		return coded(409, "domain_required", "Verify a domain for this organisation first: its single sign-on can be turned on only once it has one.")
 	}
@@ -150,12 +155,94 @@ func (s *Service) orgSignInGate(ctx context.Context, owner string) error {
 }
 
 // signInOn says whether a provider may be used to sign in now: it is enabled,
-// and a tenant's also has a verified domain.
+// and a tenant's also has features.ownSso and a verified domain. Switching
+// the feature off (or the domain lapsing) stops its sign-ins at once and
+// deletes nothing: they work again as they were when it is back.
 func (s *Service) signInOn(ctx context.Context, rt *providerRT) bool {
 	if !rt.row.Enabled {
 		return false
 	}
+	if rt.row.Owner == store.ProviderSite {
+		return true
+	}
 	return s.orgSignInGate(ctx, rt.row.Owner) == nil
+}
+
+// ownSSOOn says whether the tenant has features.ownSso; a read that fails
+// is off (the sign-in is refused, never let through).
+func (s *Service) ownSSOOn(ctx context.Context, tenant string) bool {
+	st := s.settings.Load()
+	if st == nil {
+		return true
+	}
+	on, err := st.Feature(ctx, tenant, settings.FeatureOwnSSO)
+	return on && err == nil
+}
+
+// mayUse says whether the account u may sign in (or link, or be made)
+// through the provider, once the provider has said who it is (3.6 d3):
+//
+//   - a tenant's own provider: only an account of that tenant, and never a
+//     site administrator (the tenant's administrators control the provider,
+//     and could point it at an identity provider of their own);
+//   - a site SSO provider offered to a list: only an account of a tenant on it;
+//   - a site social provider: only when the account's tenant allows it
+//     (signin.social).
+//
+// The refusal is not_allowed, audited with the account.
+func (s *Service) mayUse(ctx context.Context, rt *providerRT, u store.User) error {
+	if rt.row.Owner != store.ProviderSite {
+		if u.TenantID != rt.row.Owner || u.IsSiteAdmin() {
+			return notAllowed(&u)
+		}
+		sub, err := s.SubjectOf(ctx, u)
+		if err != nil {
+			return err
+		}
+		if !sub.Site.Empty() { // a custom role of the site
+			return notAllowed(&u)
+		}
+		return nil
+	}
+	// A site administrator always signs in through the site's own SSO,
+	// whatever its list of tenants says: the list cannot lock them out.
+	if rt.row.Class == ClassSSO && u.IsSiteAdmin() {
+		return nil
+	}
+	if !s.tenantMayUse(ctx, rt, u.TenantID) {
+		return notAllowed(&u)
+	}
+	return nil
+}
+
+// tenantMayUse is what mayUse asks of the account's tenant alone: what an
+// account about to be made there (autoCreate, an invitation) is held to.
+func (s *Service) tenantMayUse(ctx context.Context, rt *providerRT, tenant string) bool {
+	switch {
+	case rt.row.Owner != store.ProviderSite:
+		return tenant == rt.row.Owner
+	case rt.row.Class == ClassSSO:
+		return rt.cfg.Offer != OfferList || s.provs.sharedWith(rt.row.ID, tenant)
+	case rt.row.Class == ClassSocial:
+		return s.socialAllowed(ctx, tenant, rt.row.Slug)
+	}
+	return true
+}
+
+// socialAllowed says whether the tenant's people may use the site's social
+// provider with the slug (signin.social: its slugs, or "*"). A read that
+// fails allows nothing.
+func (s *Service) socialAllowed(ctx context.Context, tenant, slug string) bool {
+	st := s.settings.Load()
+	if st == nil {
+		return true
+	}
+	e, err := st.Get(ctx, tenant, settings.SigninSocial)
+	if err != nil {
+		return false
+	}
+	l := stringList(e.Value)
+	return slices.Contains(l, "*") || slices.Contains(l, slug)
 }
 
 // trustSource fills what the provider's own configuration says into what a

@@ -2,6 +2,16 @@
 
 export const domainsZhCN = {
   title: '邮箱域名',
+  // 组织控制台的「登录」页：单点登录和邮箱域名。
+  signinTab: '登录',
+  // 把已验证的域名路由到组织自己的登录提供方（3.6 d3）。
+  route: {
+    label: (domain: string) => `${domain} 的登录提供方`,
+    short: '登录提供方',
+    none: '不路由',
+    help: '用这个域名的邮箱登录时会被带到这个提供方（登录页的这一步随后上线）。',
+    saved: '已保存',
+  },
   help: '认领组织成员使用的邮箱域名，再发布一条 DNS 记录来证明你管理着它。只认这一个域名：子域名要分别认领。未验证的认领不起任何作用。',
   featureOff: '这个组织的「邮箱域名」功能已关闭：认领都还保留着，但不起作用。',
   loadFailed: '读不出这个组织的域名',
@@ -105,6 +115,7 @@ export const domainsZhCN = {
     help: '这项功能正在使用中。关闭后下面这些组织里的内容会停止起作用，但都不会被删除：重新打开时一切照旧。',
     loading: '正在统计会停止的内容…',
     line: (domains: number, verified: number) => `${domains} 个域名，其中 ${verified} 个已验证`,
+    providersLine: (providers: number, enabled: number) => `${providers} 个登录提供方，其中 ${enabled} 个已启用`,
     typeLabel: (n: number) => `输入 ${n} 以确认`,
     confirm: '关闭',
     cancel: '取消',

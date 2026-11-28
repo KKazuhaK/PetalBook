@@ -1430,6 +1430,8 @@ export interface GroupsMapping {
   claim: string
   missing: 'keep' | 'clear'
   map: { value: string; groupId: string }[]
+  // Only people whose claim names one of these sign in, at every sign-in (3.6 d3); [] lets everyone through.
+  allow: string[]
 }
 
 // --- administration (docs/api.md, "Administration") -----------------------------------
@@ -1919,6 +1921,12 @@ export interface AuthProvider {
   order: number
   autoCreate: boolean
   mergeVerifiedEmail: boolean
+  // The tenant autoCreate makes accounts in (a tenant's own provider: that tenant).
+  tenant: string
+  // A site SSO provider is offered to every tenant ('all') or a list of tenant ids; null for any other (3.6 d3).
+  tenants: 'all' | string[] | null
+  // The verified domains of a tenant's own provider routed to it ([] for any other).
+  domains: string[]
   groups: GroupsMapping
   oidc?: OidcSettings
   saml?: SamlSettings
@@ -1948,6 +1956,7 @@ export interface ProviderInput {
   order?: number
   autoCreate?: boolean
   mergeVerifiedEmail?: boolean
+  tenants?: 'all' | string[]
   groups?: Partial<GroupsMapping>
   oidc?: Partial<Pick<OidcSettings, 'issuer' | 'clientId' | 'scopes'>> & { clientSecret?: string }
   saml?: Partial<
@@ -2488,13 +2497,16 @@ export interface ConfirmRequest {
   tenant?: string
 }
 // One line of change_capabilities' plan: a tenant that uses the feature, and how much of it.
+// One tenant of the preview: its claims of features.domains, or its own sign-in providers of features.ownSso.
 export interface CapabilityPlanLine {
   tenant: string
   slug: string
   name: string
   feature: string
-  domains: number
-  verified: number
+  domains?: number
+  verified?: number
+  providers?: number
+  enabled?: number
 }
 // One line of a confirmation's plan: the preview of a deletion, or what an action does to one thing.
 export type ConfirmPlanLine = (

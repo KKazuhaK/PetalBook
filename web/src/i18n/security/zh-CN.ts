@@ -115,6 +115,17 @@ export const securityZhCN = {
   providers: {
     title: '登录提供方',
     help: '单点登录用的 OpenID Connect、SAML 和 GitHub 提供方，最多 50 个。',
+    // 组织自己的单点登录（3.6 d3）。
+    org: {
+      title: '组织的单点登录',
+      help: '组织自己的 OpenID Connect 或 SAML 提供方，最多 50 个。它只能登录、创建本组织的账号，组映射只指向本组织的组，也绝不会登录站点管理员。',
+      featureOff: '这个组织的「单点登录」功能已关闭：提供方都还保留着，但不能登录。',
+      needDomain: '先在下面验证一个邮箱域名，提供方才能启用。',
+      trust: '只信任本组织已验证域名上的邮箱地址（逐个精确匹配，子域名要单独验证）。',
+      slugHelp:
+        '以本组织的标识加连字符开头，例如 acme-okta；其余是小写字母、数字和连字符，最多 32 个字符。它在回调地址里，创建后不能改。',
+      domains: (list: string) => `路由的域名：${list}`,
+    },
     empty: '还没有提供方。',
     add: '添加提供方',
     loadFailed: '无法读取提供方',
@@ -385,6 +396,9 @@ export const securityZhCN = {
       provider_created: '添加提供方',
       provider_changed: '修改提供方',
       provider_deleted: '删除提供方',
+      tenant_provider_created: '添加组织的登录提供方',
+      tenant_provider_changed: '修改组织的登录提供方',
+      tenant_provider_deleted: '删除组织的登录提供方',
       plan_created: '创建套餐',
       plan_changed: '修改套餐',
       plan_deleted: '删除套餐',

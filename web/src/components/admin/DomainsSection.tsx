@@ -3,7 +3,7 @@ import { Copy, Plus, RefreshCw, ShieldCheck, Trash2, TriangleAlert } from 'lucid
 import { toast } from 'sonner'
 import { useDomainChange, useTenantDomains, useTenantSettings } from '@/api/admin'
 import { ApiError } from '@/api/client'
-import type { DomainCheck, TenantDomain } from '@/api/types'
+import type { AuthProvider, DomainCheck, TenantDomain } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { tdom } from '@/i18n/domains'
 import { absoluteTime, relativeTime } from '@/lib/time'
@@ -50,7 +51,9 @@ function useNowUntil(deadline: number): [number, () => void] {
   return [now, () => setNow(Date.now())]
 }
 
-export function DomainsSection({ tenant }: { tenant: string }) {
+// `providers`: the tenant's own sign-in providers a verified domain may be routed to (3.6 d3); left out while the
+// organisation has no single sign-on of its own, and then no routing is shown.
+export function DomainsSection({ tenant, providers }: { tenant: string; providers?: AuthProvider[] }) {
   const q = useTenantDomains(tenant)
   const settings = useTenantSettings(tenant)
   const off = settings.data?.settings.find((s) => s.key === 'features.domains')?.effective === false
@@ -82,6 +85,7 @@ export function DomainsSection({ tenant }: { tenant: string }) {
               key={d.domain}
               tenant={tenant}
               d={d}
+              providers={providers}
               wait={cool(d)}
               onCooldown={(at) => {
                 setCooldown((c) => ({ ...c, [d.domain]: at }))
@@ -277,11 +281,13 @@ function CheckLine({ c }: { c: DomainCheck }) {
 function DomainCard({
   tenant,
   d,
+  providers,
   wait,
   onCooldown,
 }: {
   tenant: string
   d: TenantDomain
+  providers?: AuthProvider[]
   wait: number
   onCooldown: (until: number) => void
 }) {
@@ -289,6 +295,7 @@ function DomainCard({
   const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
   const [removing, setRemoving] = useState(false)
   const restrictId = useId()
+  const routeId = useId()
   const held = d.state === 'verified' || d.state === 'missing'
   const busy = change.isPending
   const fail = (e: unknown) => {
@@ -320,6 +327,13 @@ function DomainCard({
     change.mutate(
       { op: 'restrict', domain: d.domain, restrictOrgs: on },
       { onSuccess: () => setMessage({ tone: 'info', text: on ? td.restrict.on : td.restrict.off }), onError: fail },
+    )
+  }
+  const route = (provider: string | null) => {
+    setMessage(null)
+    change.mutate(
+      { op: 'route', domain: d.domain, provider },
+      { onSuccess: () => setMessage({ tone: 'info', text: td.route.saved }), onError: fail },
     )
   }
   const remove = () =>
@@ -371,6 +385,27 @@ function DomainCard({
         </label>
         <p className="text-xs text-muted-foreground">{td.restrict.help}</p>
       </div>
+      {held && providers && providers.length > 0 && (
+        <div className="grid min-w-0 gap-1.5" data-slot="domain-route">
+          <Label htmlFor={routeId}>{td.route.short}</Label>
+          <NativeSelect
+            id={routeId}
+            aria-label={td.route.label(d.display)}
+            className="w-full sm:max-w-xs"
+            value={d.provider ?? ''}
+            disabled={busy}
+            onChange={(e) => route(e.target.value === '' ? null : e.target.value)}
+          >
+            <option value="">{td.route.none}</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </NativeSelect>
+          <p className="text-xs text-muted-foreground">{td.route.help}</p>
+        </div>
+      )}
       <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap">
         <Button

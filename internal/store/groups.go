@@ -853,9 +853,14 @@ func UserGroupIDs(ctx context.Context, q Q, userID string) ([]string, error) {
 	return strCol(ctx, q, `SELECT DISTINCT group_id FROM group_members WHERE user_id = ?`, userID)
 }
 
-// GroupSources returns the source of each of ids that is a group.
-func GroupSources(ctx context.Context, q Q, ids []string) (map[string]string, error) {
-	out := map[string]string{}
+// GroupSource is a group's source and tenant (GroupSources).
+type GroupSource struct {
+	Source, TenantID string
+}
+
+// GroupSources returns the source and the tenant of each of ids that is a group.
+func GroupSources(ctx context.Context, q Q, ids []string) (map[string]GroupSource, error) {
+	out := map[string]GroupSource{}
 	for i := 0; i < len(ids); i += 200 {
 		chunk := ids[i:min(i+200, len(ids))]
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
@@ -863,17 +868,18 @@ func GroupSources(ctx context.Context, q Q, ids []string) (map[string]string, er
 		for j, id := range chunk {
 			args[j] = id
 		}
-		rows, err := q.Query(ctx, `SELECT id, source FROM groups WHERE id IN (`+ph+`)`, args...)
+		rows, err := q.Query(ctx, `SELECT id, source, tenant_id FROM groups WHERE id IN (`+ph+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
-			var id, src string
-			if err := rows.Scan(&id, &src); err != nil {
+			var id string
+			var g GroupSource
+			if err := rows.Scan(&id, &g.Source, &g.TenantID); err != nil {
 				rows.Close()
 				return nil, err
 			}
-			out[id] = src
+			out[id] = g
 		}
 		err = rows.Err()
 		rows.Close()

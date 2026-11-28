@@ -327,16 +327,24 @@ function fromTemplate(input: ProviderInput & { slug?: string }): ProviderInput &
 
 // A sign-in provider as the console lists it, made from what a person typed: the secrets only as "set", and the
 // addresses the identity provider needs worked out from the slug.
-export function makeProvider(given: ProviderInput & { slug?: string }, at: string, order: number): AuthProvider {
+export function makeProvider(
+  given: ProviderInput & { slug?: string },
+  at: string,
+  order: number,
+  id?: string,
+): AuthProvider {
   const input = fromTemplate(given)
   const kind = input.kind ?? 'oidc'
   const url = `${SITE}/api/auth/${kind}/${input.slug}`
+  const owner = input.owner ?? 'site'
+  const cls = input.class ?? (kind === 'github' ? 'social' : 'sso')
   const p: AuthProvider = {
-    id: input.slug,
-    owner: input.owner ?? 'site',
+    // A site provider's id is its slug; a tenant's is made for it.
+    id: id ?? input.slug,
+    owner,
     slug: input.slug,
     kind,
-    class: input.class ?? (kind === 'github' ? 'social' : 'sso'),
+    class: cls,
     template: given.template && kind === 'oidc' ? given.template : '',
     name: input.name ?? input.slug,
     icon: input.icon ?? '',
@@ -344,7 +352,10 @@ export function makeProvider(given: ProviderInput & { slug?: string }, at: strin
     order: input.order ?? order,
     autoCreate: input.autoCreate ?? false,
     mergeVerifiedEmail: input.mergeVerifiedEmail ?? false,
-    groups: { enabled: false, claim: '', missing: 'keep', map: [], ...input.groups },
+    tenant: owner === 'site' ? '0000000000' : owner,
+    tenants: owner === 'site' && cls === 'sso' ? (input.tenants ?? 'all') : null,
+    domains: [],
+    groups: { enabled: false, claim: '', missing: 'keep', map: [], allow: [], ...input.groups },
     status: { ok: true, checked: at, message: '' },
     people: 0,
     created: at,

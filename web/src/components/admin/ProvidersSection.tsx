@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   ArrowLeft,
   ChevronDown,
@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { adminApi, useAuthProviders, useProviderTemplates, useSyncedGroups } from '@/api/admin'
+import { adminApi, useAuthProviders, useProviderTemplates, useSyncedGroups, useTenantProviders } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import { useSearchParams } from 'react-router'
 import { keys } from '@/api/hooks'
@@ -58,6 +58,46 @@ import { RequiredMark } from '@/components/ui/field-mark'
 
 const tp = tsec.providers
 const KINDS: readonly ProviderKind[] = ['oidc', 'saml', 'github']
+// An organisation's own single sign-on is OpenID Connect or SAML (3.6 d3).
+const ORG_KINDS: readonly ProviderKind[] = ['oidc', 'saml']
+
+// Where the section's providers live: the site's (/api/admin/providers), or one tenant's own
+// (/api/admin/tenants/{tenant}/providers, 3.6 d3). Every part of the section calls through this.
+interface ProviderApi {
+  tenant: string | null
+  create: (input: ProviderInput) => Promise<AuthProvider>
+  patch: (id: string, input: ProviderInput) => Promise<AuthProvider>
+  remove: (id: string, force: boolean) => Promise<void>
+  check: (id: string) => Promise<AuthProvider>
+  test: (id: string) => Promise<{ url: string }>
+  testResult: (id: string) => Promise<{ result: ProviderTestResult | null }>
+}
+
+const siteApi: ProviderApi = {
+  tenant: null,
+  create: (input) => adminApi.createAuthProvider(input),
+  patch: (id, input) => adminApi.patchAuthProvider(id, input),
+  remove: (id, force) => adminApi.deleteAuthProvider(id, force),
+  check: (id) => adminApi.checkAuthProvider(id),
+  test: (id) => adminApi.testAuthProvider(id),
+  testResult: (id) => adminApi.authProviderTestResult(id),
+}
+
+function tenantApi(tenant: string): ProviderApi {
+  return {
+    tenant,
+    create: (input) => adminApi.createTenantProvider(tenant, input),
+    patch: (id, input) => adminApi.patchTenantProvider(tenant, id, input),
+    remove: (id, force) => adminApi.deleteTenantProvider(tenant, id, force),
+    check: (id) => adminApi.checkTenantProvider(tenant, id),
+    // The test comes back to the page it was started on, in the same scope.
+    test: (id) => adminApi.testTenantProvider(tenant, id, window.location.pathname),
+    testResult: (id) => adminApi.tenantProviderTestResult(tenant, id),
+  }
+}
+
+const ProviderScope = createContext<ProviderApi>(siteApi)
+const useProviderApi = () => useContext(ProviderScope)
 
 // What a refusal of the provider endpoints says, in words.
 function refusal(e: unknown): string {
@@ -69,13 +109,76 @@ function refusal(e: unknown): string {
   return e.message || tp.errors.unknown
 }
 
-export function ProvidersSection() {
+// The site's sign-in providers; with `tenant`, that tenant's own single sign-on (OpenID Connect and SAML only, no
+// templates). `off`: the tenant's features.ownSso is off (its providers are kept and shown, none can be added).
+export function ProvidersSection({
+  tenant,
+  off = false,
+  children,
+}: {
+  tenant?: string
+  off?: boolean
+  children?: ReactNode
+}) {
+  return tenant ? (
+    <TenantProviders tenant={tenant} off={off}>
+      {children}
+    </TenantProviders>
+  ) : (
+    <SiteProviders />
+  )
+}
+
+function SiteProviders() {
   const providers = useAuthProviders()
+  return (
+    <ProviderScope.Provider value={siteApi}>
+      <ProvidersBody providers={providers} title={tp.title} help={tp.help} id="security-providers" />
+    </ProviderScope.Provider>
+  )
+}
+
+function TenantProviders({ tenant, off, children }: { tenant: string; off: boolean; children?: ReactNode }) {
+  const providers = useTenantProviders(tenant, !off)
+  const [api] = useState(() => tenantApi(tenant))
+  return (
+    <ProviderScope.Provider value={api}>
+      <ProvidersBody providers={providers} title={tp.org.title} help={tp.org.help} id="org-providers" off={off}>
+        {children}
+      </ProvidersBody>
+    </ProviderScope.Provider>
+  )
+}
+
+function ProvidersBody({
+  providers,
+  title,
+  help,
+  id,
+  off = false,
+  children,
+}: {
+  providers: ReturnType<typeof useAuthProviders>
+  title: string
+  help: string
+  id: string
+  off?: boolean
+  children?: ReactNode
+}) {
   const [editing, setEditing] = useState<AuthProvider | 'new' | null>(null)
   const [deleting, setDeleting] = useState<AuthProvider | null>(null)
   const list = providers.data?.providers ?? []
+  if (off)
+    return (
+      <SettingsSection title={title} description={help} id={id}>
+        <p className="text-sm text-muted-foreground" data-slot="feature-off">
+          {tp.org.featureOff}
+        </p>
+      </SettingsSection>
+    )
   return (
-    <SettingsSection title={tp.title} description={tp.help} id="security-providers">
+    <SettingsSection title={title} description={help} id={id}>
+      {children}
       <div>
         <Button type="button" onClick={() => setEditing('new')}>
           <Plus aria-hidden="true" />
@@ -122,6 +225,7 @@ export function ProvidersSection() {
 // Where a test sign-in comes back to: `?provider_test=<id>` (the result is read once) or `?sso_error=<code>`. Both are
 // shown, then taken out of the address.
 function TestOutcome() {
+  const api = useProviderApi()
   const [params, setParams] = useSearchParams()
   const [arrival] = useState(() => ({ id: params.get('provider_test'), error: params.get('sso_error') }))
   const [result, setResult] = useState<ProviderTestResult | null>(null)
@@ -143,8 +247,8 @@ function TestOutcome() {
     // Read once: the server forgets the result, so a second read (a remount) would find nothing.
     if (read.current) return
     read.current = true
-    adminApi
-      .authProviderTestResult(arrival.id)
+    api
+      .testResult(arrival.id)
       .then((r) => (r.result ? setResult(r.result) : setMessage(tp.testNone)))
       .catch((e) => setMessage(`${tp.testFailed}: ${refusal(e)}`))
     // Once, on arrival.
@@ -194,7 +298,12 @@ function TestOutcome() {
 // What changing a provider changes elsewhere: the settings page (is there a provider at all) and what the sign-in page draws.
 function useChanged() {
   const qc = useQueryClient()
+  const { tenant } = useProviderApi()
   return () => {
+    if (tenant) {
+      void qc.invalidateQueries({ queryKey: keys.tenantProviders(tenant) })
+      void qc.invalidateQueries({ queryKey: keys.tenantDomains(tenant) })
+    }
     void qc.invalidateQueries({ queryKey: keys.adminProviders })
     void qc.invalidateQueries({ queryKey: keys.adminSecurity })
     void qc.invalidateQueries({ queryKey: ['admin', 'audit'] })
@@ -203,6 +312,7 @@ function useChanged() {
 }
 
 function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => void; onDelete: () => void }) {
+  const api = useProviderApi()
   const changed = useChanged()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -241,13 +351,18 @@ function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => v
           {!p.status.ok && p.status.message && (
             <div className="text-xs break-words text-destructive">{p.status.message}</div>
           )}
+          {(p.domains?.length ?? 0) > 0 && (
+            <div className="text-xs break-all text-muted-foreground" data-slot="routed-domains">
+              {tp.org.domains(p.domains.join(', '))}
+            </div>
+          )}
         </div>
         <label className="flex items-center gap-2 text-sm">
           <Switch
             checked={p.enabled}
             disabled={busy}
             aria-label={t.fmt.labelled(p.enabled ? tp.enabled : tp.disabled, p.name)}
-            onCheckedChange={(on) => void run(() => adminApi.patchAuthProvider(p.id, { enabled: on }))}
+            onCheckedChange={(on) => void run(() => api.patch(p.id, { enabled: on }))}
           />
           <span className="text-xs text-muted-foreground">{p.enabled ? tp.enabled : tp.disabled}</span>
         </label>
@@ -270,7 +385,7 @@ function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => v
           size="sm"
           disabled={busy}
           aria-label={tp.refreshFor(p.name)}
-          onClick={() => void run(() => adminApi.checkAuthProvider(p.id), tp.refreshed)}
+          onClick={() => void run(() => api.check(p.id), tp.refreshed)}
         >
           <RefreshCw aria-hidden="true" />
           {busy ? tp.refreshing : tp.refresh}
@@ -283,7 +398,7 @@ function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => v
           aria-label={tp.testFor(p.name)}
           onClick={() =>
             void run(async () => {
-              const { url } = await adminApi.testAuthProvider(p.id)
+              const { url } = await api.test(p.id)
               window.location.assign(url)
             })
           }
@@ -309,6 +424,7 @@ function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => v
 }
 
 function DeleteDialog({ provider, onClose }: { provider: AuthProvider | null; onClose: () => void }) {
+  const api = useProviderApi()
   const changed = useChanged()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -324,7 +440,7 @@ function DeleteDialog({ provider, onClose }: { provider: AuthProvider | null; on
     setBusy(true)
     setError('')
     try {
-      await adminApi.deleteAuthProvider(provider.id, force)
+      await api.remove(provider.id, force)
       changed()
       toast.success(tp.deleted)
       close()
@@ -386,7 +502,14 @@ interface F {
     allowIdpInitiated: boolean
   }
   github: { baseUrl: string; clientId: string; secret: string | null; organizations: string }
-  groups: { enabled: boolean; claim: string; missing: 'keep' | 'clear'; map: { value: string; groupId: string }[] }
+  groups: {
+    enabled: boolean
+    claim: string
+    missing: 'keep' | 'clear'
+    map: { value: string; groupId: string }[]
+    // The allowlist, one value per line.
+    allow: string
+  }
 }
 
 const blank = (): F => ({
@@ -413,7 +536,7 @@ const blank = (): F => ({
     allowIdpInitiated: false,
   },
   github: { baseUrl: 'https://github.com', clientId: '', secret: null, organizations: '' },
-  groups: { enabled: false, claim: 'groups', missing: 'keep', map: [] },
+  groups: { enabled: false, claim: 'groups', missing: 'keep', map: [], allow: '' },
 })
 
 function formOf(p: AuthProvider): F {
@@ -452,6 +575,7 @@ function formOf(p: AuthProvider): F {
     claim: p.groups.claim,
     missing: p.groups.missing,
     map: p.groups.map.map((e) => ({ ...e })),
+    allow: (p.groups.allow ?? []).join('\n'),
   }
   if (p.github)
     f.github = {
@@ -493,6 +617,7 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
   if (f.groups.missing !== (gb?.missing ?? 'keep')) groups.missing = f.groups.missing
   const rows = f.groups.map.filter((e) => e.value !== '' || e.groupId !== '')
   if (JSON.stringify(rows) !== JSON.stringify(gb?.map ?? [])) groups.map = rows
+  if (f.kind !== 'github' && f.groups.allow.trim() !== (gb?.allow ?? '').trim()) groups.allow = lines(f.groups.allow)
   if (Object.keys(groups).length > 0) out.groups = groups
   if (f.kind === 'oidc') {
     const o = f.oidc
@@ -539,6 +664,8 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
 }
 
 function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDone: () => void }) {
+  const api = useProviderApi()
+  const org = api.tenant !== null
   const changed = useChanged()
   const [f, setF] = useState<F>(() => (initial ? formOf(initial) : blank()))
   const [busy, setBusy] = useState(false)
@@ -547,6 +674,8 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
   const set = (patch: Partial<F>) => setF((x) => ({ ...x, ...patch }))
   const edit = initial !== null
   const input = inputOf(f, initial)
+  // The site's trust switch is not an organisation's: its provider vouches for its verified domains.
+  if (org) delete input.mergeVerifiedEmail
   const dirty = Object.keys(input).length > 0
 
   const submit = async (e: FormEvent) => {
@@ -555,9 +684,7 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
     setBusy(true)
     setError('')
     try {
-      const saved = edit
-        ? await adminApi.patchAuthProvider(initial.id, input)
-        : await adminApi.createAuthProvider(input)
+      const saved = edit ? await api.patch(initial.id, input) : await api.create(input)
       changed()
       toast.success(edit ? tp.updated : tp.created)
       // Stored but not reachable: it stays off, and the person is told why.
@@ -585,7 +712,7 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
           <Field
             label={tp.slug}
             requiredMark
-            help={tp.slugHelp}
+            help={org ? tp.org.slugHelp : tp.slugHelp}
             value={f.slug}
             onChange={(e) => set({ slug: e.target.value })}
             autoComplete="off"
@@ -604,7 +731,7 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
             disabled={edit}
             onChange={(e) => set({ kind: e.target.value as ProviderKind })}
           >
-            {KINDS.map((k) => (
+            {(org ? ORG_KINDS : KINDS).map((k) => (
               <option key={k} value={k}>
                 {tp.kinds[k]}
               </option>
@@ -612,7 +739,8 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
           </NativeSelect>
           {edit && <p className="text-xs text-muted-foreground">{tp.kindFixed}</p>}
         </div>
-        <div className="grid gap-1.5">
+        {/* An organisation's own provider is its single sign-on: no class to choose. */}
+        <div className={org ? 'hidden' : 'grid gap-1.5'}>
           <Label htmlFor="provider-class">{tp.classLabel}</Label>
           <NativeSelect
             id="provider-class"
@@ -654,12 +782,18 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
           checked={f.autoCreate}
           onChange={(on) => set({ autoCreate: on })}
         />
-        <Check
-          label={tp.mergeVerifiedEmail}
-          help={tp.mergeVerifiedEmailHelp}
-          checked={f.mergeVerifiedEmail}
-          onChange={(on) => set({ mergeVerifiedEmail: on })}
-        />
+        {org ? (
+          <p className="text-xs text-muted-foreground" data-slot="org-trust">
+            {tp.org.trust}
+          </p>
+        ) : (
+          <Check
+            label={tp.mergeVerifiedEmail}
+            help={tp.mergeVerifiedEmailHelp}
+            checked={f.mergeVerifiedEmail}
+            onChange={(on) => set({ mergeVerifiedEmail: on })}
+          />
+        )}
       </fieldset>
 
       {f.kind === 'oidc' && <OidcFields f={f} set={set} initial={initial} />}
@@ -734,6 +868,22 @@ function GroupsFields({ f, set }: { f: F; set: (p: Partial<F>) => void }) {
         </NativeSelect>
         <p className="text-xs text-muted-foreground">{tgp.missingHelp}</p>
       </div>
+      {f.kind !== 'github' && (
+        <div className="grid gap-1.5">
+          <Label htmlFor="groups-allow">{tgp.allow}</Label>
+          <Textarea
+            id="groups-allow"
+            value={g.allow}
+            onChange={(e) => up({ allow: e.target.value })}
+            rows={3}
+            autoComplete="off"
+            spellCheck={false}
+            className="font-mono text-base break-all sm:text-sm"
+            data-slot="groups-allow"
+          />
+          <p className="text-xs text-muted-foreground">{tgp.allowHelp}</p>
+        </div>
+      )}
       <div className="grid gap-2" data-slot="groups-map">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <span className="text-sm font-medium">
@@ -1203,7 +1353,9 @@ const templateName = (id: string) => TEMPLATE_NAMES[id] ?? id
 // "Add a sign-in method": first a template (the common ones, the rest under "More templates") or a custom provider,
 // then the few fields that one needs.
 function NewProvider({ onDone }: { onDone: () => void }) {
-  const [step, setStep] = useState<ProviderTemplate | 'pick' | 'custom'>('pick')
+  const org = useProviderApi().tenant !== null
+  // Templates are the site's social sign-in: an organisation goes straight to its own provider.
+  const [step, setStep] = useState<ProviderTemplate | 'pick' | 'custom'>(org ? 'custom' : 'pick')
   const title = step === 'pick' ? tp.pickTitle : step === 'custom' ? tp.createTitle : tp.templateTitle(step.name)
   return (
     <>
@@ -1215,12 +1367,14 @@ function NewProvider({ onDone }: { onDone: () => void }) {
         <TemplatePicker onPick={setStep} onCustom={() => setStep('custom')} />
       ) : (
         <>
-          <div>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setStep('pick')}>
-              <ArrowLeft aria-hidden="true" />
-              {tp.back}
-            </Button>
-          </div>
+          {!org && (
+            <div>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setStep('pick')}>
+                <ArrowLeft aria-hidden="true" />
+                {tp.back}
+              </Button>
+            </div>
+          )}
           {step === 'custom' ? (
             <ProviderForm initial={null} onDone={onDone} />
           ) : (

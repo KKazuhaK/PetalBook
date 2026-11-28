@@ -297,6 +297,7 @@ export const tenantsEn: TenantsMessages = {
     names: {
       'features.registration': 'Open registration',
       'registration.domains': 'Email domains registration allows',
+      'signin.social': 'Social sign-in its people may use',
       'registration.perHour': 'Registrations per hour',
       'legal.termsUrl': 'Terms of service link',
       'legal.privacyUrl': 'Privacy policy link',

@@ -15,7 +15,7 @@ import { adminPath, adminTenantPath } from '@/lib/urls'
 import { formatUsed, share } from '@/lib/usage'
 import { AdminPageHeader } from './AdminPageHeader'
 import { AdminTabs } from './AdminTabs'
-import { DomainsSection } from './DomainsSection'
+import { TenantSignin } from './OrgDomains'
 import { SecretsSection } from './SecretsSection'
 import { TenantLayer } from './SettingsPanel'
 import { SpacesPanel } from './SpacesPanel'
@@ -69,8 +69,8 @@ export function TenantPage({ id, tab }: { id: string; tab?: string }) {
         <AuditSection />
       </Suspense>
     ),
-    // Sign-in: the tenant's email domains (3.6 d2); SSO (d3) and joining (d5) come here too.
-    signin: () => <DomainsSection tenant={tenant.id} />,
+    // Sign-in: the tenant's own SSO (3.6 d3) and its email domains (d2); joining (d5) comes here too.
+    signin: () => <TenantSignin tenant={tenant.id} />,
     danger: () => <TenantEditor tenant={tenant} onGone={() => navigate(adminPath('tenants', 'tenants'))} />,
   }
   return (

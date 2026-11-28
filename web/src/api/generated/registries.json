@@ -288,6 +288,13 @@
       "builtInOnly": false
     },
     {
+      "name": "tenant.signin.manage",
+      "scope": "tenant",
+      "feature": "features.ownSso",
+      "description": "Add, change, test and remove the organisation's own single sign-on providers (OpenID Connect and SAML), and route its verified domains to them",
+      "builtInOnly": false
+    },
+    {
       "name": "space.read",
       "scope": "space",
       "feature": "",
@@ -477,6 +484,18 @@
         },
         {
           "name": "sessions_ended",
+          "site": false
+        },
+        {
+          "name": "tenant_provider_changed",
+          "site": false
+        },
+        {
+          "name": "tenant_provider_created",
+          "site": false
+        },
+        {
+          "name": "tenant_provider_deleted",
           "site": false
         }
       ]
@@ -800,6 +819,7 @@
     "orgCreation.perHour",
     "orgCreation.plan",
     "domains.checksPerMinute",
+    "signin.social",
     "signin.mode",
     "signin.ssoOnly",
     "signin.passkeyRoles",
