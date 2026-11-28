@@ -326,6 +326,16 @@ func (m *Manager) buildStorage(ctx context.Context, eff map[string]*settings.Eff
 	} else if !errors.Is(err, store.ErrNotFound) {
 		m.log.Warn("could not read when the remote requirement took its form", "error", err)
 	}
+	if s.Remotes.Require == nil {
+		// No requirement of its own: the modes the site allows may imply one. It
+		// took its present form when the rule on storage.mode was last written.
+		if r := m.derivedRequire(eff); r != "" {
+			s.Remotes.Require = &r
+			if row, err := store.GetLayered(ctx, m.opt.Store.Q(), string(settings.Site), "", settings.StorageMode, store.SourceManual); err == nil {
+				s.Remotes.Since = row.Updated.UTC().Truncate(time.Millisecond)
+			}
+		}
+	}
 	s.Hosts.Allowed, _ = eff[settings.StorageHosts].Value.([]string)
 	s.Hosts.Allowed = append([]string{}, s.Hosts.Allowed...)
 	s.LocalSpaces.MaxBytes = num(settings.StorageLocalMaxBytes)

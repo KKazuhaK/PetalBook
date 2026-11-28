@@ -213,6 +213,9 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 	if err != nil {
 		return Info{}, err
 	}
+	if err := m.CheckPartial(ctx, tenantID, g.Provider); err != nil {
+		return Info{}, err
+	}
 	assetsOptional := false // a repository the request did not ask for: the space does without one that cannot be had
 	switch a := g.Assets; {
 	case a == nil:

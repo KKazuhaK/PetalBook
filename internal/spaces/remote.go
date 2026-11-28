@@ -436,6 +436,9 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 		if err != nil {
 			return nil, err
 		}
+		if err := m.CheckPartial(ctx, sp.TenantID, req.Provider); err != nil {
+			return nil, err
+		}
 		if req.Via == connections.ViaUser {
 			if err := m.sameTenant(ctx, req.Provider, sp.TenantID, req.UserID); err != nil {
 				return nil, err

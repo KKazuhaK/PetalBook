@@ -751,6 +751,9 @@ func (s *server) createSpace(c *call) {
 		Name    string `json:"name"`
 		Inbox   string `json:"inbox"`
 		Storage *struct {
+			// Mode is where the space is stored (docs/api.md, "Storage modes"):
+			// server, own or tenant; absent is the default in effect.
+			Mode string `json:"mode"`
 			Sync *struct {
 				Provider    string `json:"provider"`
 				Owner       string `json:"owner"`
@@ -783,6 +786,14 @@ func (s *server) createSpace(c *call) {
 	sync := req.Storage != nil && req.Storage.Sync != nil
 	if req.Remote != nil && sync {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Give remote or storage.sync, not both.")
+		return
+	}
+	asked := ""
+	if req.Storage != nil {
+		asked = req.Storage.Mode
+	}
+	if _, err := s.spaces.ResolveMode(c.r.Context(), c.user().ID, c.tenant(), asked, sync || req.Remote != nil); err != nil {
+		s.fail(c.w, err)
 		return
 	}
 	if r := req.Remote; r != nil {
