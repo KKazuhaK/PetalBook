@@ -82,37 +82,63 @@ func (s *Service) AdminCreateUser(ctx context.Context, actor store.User, access 
 	}
 	// Where the organisation requires its SSO for the person, the account has no
 	// password and waits for the SSO's first sign-in, which finds it by its
-	// address: so it needs one.
+	// address. So it needs one the organisation's SSO can vouch for (a verified
+	// domain of the tenant, or one routed to it): any other address could never
+	// be claimed, and would only be kept from every other sign-in.
 	viaSSO := s.localRefused(ctx, s.sec(ctx), tenantID, p.Role, site)
-	if viaSSO && strings.TrimSpace(p.Email) == "" {
-		return nil, errf(Invalid, "An email address is needed: this person signs in with the organisation's single sign-on, which finds the account by it.")
+	if viaSSO {
+		switch {
+		case tenantID == store.DefaultTenantID:
+			return nil, coded(400, "sso_default_tenant", "People of the default tenant cannot be made by hand while single sign-on is required: they sign in with it themselves, as the registration mode allows.")
+		case strings.TrimSpace(p.Email) == "":
+			return nil, errf(Invalid, "An email address is needed: this person signs in with the organisation's single sign-on, which finds the account by it.")
+		}
+		e, err := s.cleanEmailFor(ctx, p.Email)
+		if err != nil {
+			return nil, err
+		}
+		if !s.ssoCanVouch(ctx, tenantID, e) {
+			return nil, coded(400, "email_domain_not_verified", "This address is not on a verified domain of the organisation, so its single sign-on could never match it. Verify the domain first.")
+		}
 	}
-	u, err := s.CreateUser(ctx, CreateParams{Username: p.Username, Name: p.Name, Email: p.Email, Role: p.Role, TenantID: tenantID, SiteAdmin: site})
+	// What lets the person in is written with the account, in its transaction.
+	var tok string
+	cp := CreateParams{Username: p.Username, Name: p.Name, Email: p.Email, Role: p.Role, TenantID: tenantID, SiteAdmin: site}
+	cp.AfterCreate = func(ctx context.Context, q store.Q, u store.User) (err error) {
+		if viaSSO {
+			return store.SetAwaitingSSO(ctx, q, u.ID, u.TenantID, s.now())
+		}
+		tok, err = s.newEmailToken(ctx, q, store.TokenWelcome, u.ID, u.Email, welcomeTTL)
+		return err
+	}
+	u, err := s.CreateUser(ctx, cp)
 	if err != nil {
 		return nil, err
 	}
 	out := &AdminCreated{User: u, SignIn: SignInLink, Mail: MailNone}
 	if viaSSO {
 		out.SignIn = SignInSSO
-		if err := store.SetAwaitingSSO(ctx, s.st.Q(), u.ID, u.TenantID, s.now()); err != nil {
-			return nil, err
-		}
 		return out, nil
-	}
-	// The link the administrator copies, and, when mail can reach the person,
-	// one of its own for the mail.
-	var tok string
-	if err := s.st.Tx(ctx, func(q store.Q) (err error) {
-		tok, err = s.newEmailToken(ctx, q, store.TokenWelcome, u.ID, u.Email, welcomeTTL)
-		return err
-	}); err != nil {
-		return nil, err
 	}
 	out.Link, out.Expires = s.link("/reset-password", tok), s.now().Add(welcomeTTL).UTC()
 	if u.Email != "" && s.MailEnabled() {
 		out.Mail = s.mailWelcome(ctx, *u, p.Lang)
 	}
 	return out, nil
+}
+
+// ssoCanVouch says whether the tenant's single sign-on may vouch for the
+// address: it is on a domain the tenant verified, or on one routed to the
+// tenant (a site SSO offered to it), the two ways claimWaiting finds it.
+func (s *Service) ssoCanVouch(ctx context.Context, tenantID, email string) bool {
+	if inDomains(email, s.orgDomains(ctx, tenantID)) {
+		return true
+	}
+	if s.cfg.RouteDomain == nil {
+		return false
+	}
+	routed, _, ok := s.cfg.RouteDomain(ctx, email)
+	return ok && routed == tenantID
 }
 
 // mailWelcome sends the person the link that sets their password and proves
@@ -148,6 +174,11 @@ func (s *Service) mailWelcome(ctx context.Context, u store.User, lang string) st
 func siteAdminFor(access authz.Subject, tenantID, role string, siteAdmin *bool) (bool, error) {
 	admins := access.Can(authz.SiteAdminsManage, "")
 	site := store.IsAdminRole(role) && admins && tenantID == store.DefaultTenantID
+	// An administrator of the default tenant made by one who manages site
+	// administrators would silently be one of the server: it has to be said.
+	if site && siteAdmin == nil {
+		return false, coded(400, "site_admin_explicit", "An administrator of the default tenant is an administrator of the whole server: send siteAdmin true to make one, or false for an administrator of the default tenant only.")
+	}
 	if siteAdmin != nil {
 		if *siteAdmin && (!admins || !store.IsAdminRole(role)) {
 			return false, errf(Forbidden, "Only a site administrator can make a site administrator.")

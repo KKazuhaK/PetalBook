@@ -1463,8 +1463,9 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 // tenant's single sign-on (store.SetAwaitingSSO): the identity is attached to
 // it, its address is marked verified by the provider, and the wait ends. All
 // of these must hold, else nothing is claimed:
-//   - the provider is the tenant's own SSO (OIDC or SAML), or a site SSO that
-//     routes the address's verified domain to that tenant (d2, d4);
+//   - the provider is the tenant's own SSO (a tenant can own only OIDC or
+//     SAML), or a site SSO that routes the address's verified domain to that
+//     tenant (d2, d4);
 //   - the sign-in's address is one the provider vouches for under the trust
 //     rules (emailtrust.go: for a tenant's SSO only its verified domains), is
 //     not an Apple relay, and is the account's address;
@@ -1473,7 +1474,7 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 //
 // The site's social providers and the custom OAuth2 kind never claim.
 func (s *Service) claimWaiting(ctx context.Context, rt *providerRT, c claimed, email string, row *store.EmailRow, ip string) (*store.User, bool, error) {
-	if row.UserDeleted || !c.emailVerified || !matchesByAddress(c.src) || (rt.row.Kind != KindOIDC && rt.row.Kind != KindSAML) {
+	if row.UserDeleted || !c.emailVerified || !matchesByAddress(c.src) {
 		return nil, false, nil
 	}
 	tenant, err := store.AwaitingSSO(ctx, s.st.Q(), row.UserID)

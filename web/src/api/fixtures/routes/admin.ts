@@ -634,6 +634,8 @@ export const adminRoutes: Route[] = [
       const acting = /^tenant:(.+)$/.exec(c.fx.requests.at(-1)?.scope ?? '')?.[1]
       const tenant = A(c).tenants.find((t) => t.id === (c.body.tenant ?? acting ?? DEFAULT_TENANT))
       if (!tenant) throw new Refusal(404, 'not_found', 'No such tenant.')
+      if (role === 'admin' && tenant.default && signedIn(c.data).siteAdmin && c.body.siteAdmin === undefined)
+        throw new Refusal(400, 'site_admin_explicit', 'Say whether this makes a site administrator.')
       const me = signedIn(c.data)
       const rec: UserRec = {
         ...me,
@@ -643,7 +645,7 @@ export const adminRoutes: Route[] = [
         email,
         emailVerified: false,
         role,
-        siteAdmin: role === 'admin' && tenant.default && me.siteAdmin,
+        siteAdmin: role === 'admin' && tenant.default && c.body.siteAdmin === true,
         passkeys: undefined,
         password: '',
         tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },

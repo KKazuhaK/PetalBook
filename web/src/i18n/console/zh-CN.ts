@@ -110,6 +110,7 @@ export const consoleZhCN = {
       role: '角色',
       tenant: '租户',
       tenantDefault: (name: string) => `${name}（个人账号）`,
+      siteAdminWarning: '这会创建一个站点管理员：可以管理整个服务器的人。',
       submit: '创建账号',
       creating: '正在创建…',
       cancel: '取消',

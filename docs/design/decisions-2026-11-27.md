@@ -42,7 +42,10 @@ password self-registration, is replaced by a three-way setting,
     person's language. The address starts unverified; only the mailed link verifies it,
     a copied one does not. Where the tenant requires its SSO for the person
     (`signin.ssoOnly`, and `signin.ssoOnlyAdmins` for an administrator) no link is made.
-    The account (its address is required) is marked as awaiting its first sign-in
+    The address is required and must be on a verified domain of the tenant, or one routed to
+    it (`email_domain_not_verified`); none is made in the default tenant
+    (`sso_default_tenant`). An administrator of the default tenant made by hand must say
+    `siteAdmin` (`site_admin_explicit`). The account is marked as awaiting its first sign-in
     (`awaiting_sso`), and that sign-in claims it: the identity is attached, the address is
     marked verified by the provider, the wait ends, and `identity_linked` (`sso_claim`)
     and the login are audited. It claims only through the tenant's own SSO (OIDC or SAML)

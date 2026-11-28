@@ -144,6 +144,12 @@ export const apiErrorsEn: ApiErrorTexts = {
   invite_required:
     'Accounts here are made from an invitation. Open the link in yours, or ask an administrator to invite you.',
   people_limit: 'This organisation has reached the number of people it may have.',
+  email_domain_not_verified:
+    'This address is not on a verified domain of the organisation, so its single sign-on could never match it. Verify the domain first.',
+  sso_default_tenant:
+    'People of the default tenant cannot be made by hand while single sign-on is required: they sign in with it themselves.',
+  site_admin_explicit:
+    'An administrator of the default tenant is an administrator of the whole server: say so to make one.',
   password_reset_off: 'Password reset is not available.',
   email_domain_not_allowed: 'The domain of this email address is not allowed.',
   email_unverified: 'This email address has not been verified yet.',

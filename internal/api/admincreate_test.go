@@ -123,7 +123,7 @@ func TestASiteAdministratorMakesAccountsInTheDefaultTenantOrAnOrganisation(t *te
 		// In an organisation's scope nothing reaches another one, and a site administrator is not made there.
 		f.root.do("POST", adminUsers, map[string]any{"username": "c2", "email": "c2@mail.test", "tenant": f.tenC}, "PetalBook-Scope", "tenant:"+f.tenB).want(t, 404, "not_found")
 		// A site administrator, made by who manages them.
-		r = f.root.do("POST", adminUsers, map[string]any{"username": "d2", "email": "d2@mail.test", "role": "admin"}).want(t, 201, "")
+		r = f.root.do("POST", adminUsers, map[string]any{"username": "d2", "email": "d2@mail.test", "role": "admin", "siteAdmin": true}).want(t, 201, "")
 		if r.user()["siteAdmin"] != true {
 			t.Fatalf("an administrator of the default tenant is one of the server: %s", r.raw)
 		}

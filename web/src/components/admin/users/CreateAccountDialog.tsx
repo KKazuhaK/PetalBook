@@ -42,6 +42,8 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
   const list = tenants.data ?? []
   // The default tenant is the first, and is where the person lands until another is picked.
   const chosen = tenant || list.find((x) => x.default)?.id || ''
+  // An administrator of the default tenant, made across the site, is one of the whole server.
+  const makesSiteAdmin = across && role === 'admin' && list.find((x) => x.id === chosen)?.default === true
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -56,6 +58,7 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
           email: email.trim() || undefined,
           role,
           tenant: across && chosen ? chosen : undefined,
+          siteAdmin: makesSiteAdmin ? true : undefined,
         }),
       )
       setMade(res)
@@ -124,6 +127,15 @@ export function CreateAccountDialog({ across, onClose }: { across: boolean; onCl
                 </div>
               )}
             </div>
+            {makesSiteAdmin && (
+              <p
+                role="status"
+                data-slot="site-admin-warning"
+                className="rounded-md border border-brand/40 bg-brand/5 px-3 py-2 text-sm"
+              >
+                {d.siteAdminWarning}
+              </p>
+            )}
             <FormMessage>{error}</FormMessage>
             <DialogFooter>
               <Button type="button" variant="outline" className="h-10 sm:h-9" onClick={onClose}>

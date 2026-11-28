@@ -183,6 +183,7 @@ export const adminApi = {
     email?: string
     role?: Role
     tenant?: string
+    siteAdmin?: boolean
     lang?: string
   }) => request<CreatedAccount>('/admin/users', { method: 'POST', body: input }),
   invites: (signal?: AbortSignal) => request<{ invites: Invite[] }>('/invites', { signal }),

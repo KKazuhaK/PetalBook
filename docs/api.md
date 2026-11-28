@@ -1209,10 +1209,13 @@ administrator's own, or the one the `PetalBook-Scope` header names (see "Acting
 scope"). A **site administrator** may make accounts in the default tenant (personal
 accounts) or in any organisation; an **organisation administrator** only in their own
 (another tenant is `404 not_found`, as a tenant that does not exist). Either may
-grant `member` or `admin`. `siteAdmin` follows an invite's rule: an administrator
-made in the default tenant by a site administrator is one of the server unless
-`siteAdmin: false` says otherwise; only someone who manages site administrators
-(`site.admins.manage`) may send `true` (`403 forbidden`). A disabled tenant is
+grant `member` or `admin`. `siteAdmin` follows an
+invite's rule, but has to be said: an administrator of the default tenant made by
+someone who manages site administrators (`site.admins.manage`) is one of the whole
+server, so `role: "admin"` there without `siteAdmin` is `400 site_admin_explicit`;
+`siteAdmin: true` makes a site administrator, `false` an administrator of the default
+tenant only. Only someone who manages site administrators may send `true` (`403
+forbidden`). A disabled tenant is
 `409`.
 
 The administrator never learns a password. The account starts with none and an
@@ -1227,7 +1230,7 @@ The administrator never learns a password. The account starts with none and an
   (`POST /api/password/reset/check` and `POST /api/password/reset` take its token,
   as for a reset). It works once and for 7 days, and it is shown only in this answer;
   the server keeps a hash. It does **not** verify the address (nothing says it
-  reached it). Giving the person a temporary password, or any password change, ends it.
+  reached it). Giving the person a temporary password, or any password change, ends it. Until it is used, "forgot password" for the account (once its address is verified by a site administrator) sends an ordinary reset link, not "sign in with your provider".
 - `mail` says whether the same was **mailed**: `sent` (mail is on and the account has
   an address: the person gets the message in their language, with a link of its own,
   and following that one **verifies the address** as well as setting the password;
@@ -1237,8 +1240,13 @@ The administrator never learns a password. The account starts with none and an
 - `signIn` is `sso`, with `link` and `expires` `null`, when the tenant requires its
   single sign-on for this person: `signin.ssoOnly` on and the person a member, or an
   administrator while `signin.ssoOnlyAdmins` is on (a site administrator keeps the
-  password). No password link is made, since a password is refused there, and the
-  address is required (`400 invalid` without one). The account is marked as
+  password). No password link is made, since a password is refused there. The address
+  is required (`400 invalid` without one) and must be one the organisation's SSO can
+  vouch for: on a domain the tenant verified, or one routed to it (`400
+  email_domain_not_verified` otherwise: any other address could never be claimed, and
+  would only be kept from every other sign-in). In the default tenant no such account
+  is made (`400 sso_default_tenant`): with the site's own `ssoOnly`, personal accounts
+  sign in through the SSO themselves, as the registration mode allows. The account is marked as
   **awaiting its first sign-in**, which claims it (below).
 
 **The first SSO sign-in claims it.** A sign-in that finds no identity link attaches its
@@ -1257,7 +1265,7 @@ refused as `email_in_use` (`?sso_error=email_in_use`).
 Audit: `user_created` (the actor, the person, the tenant; `role`, `siteAdmin`, `email`,
 `signIn`, `mail`), and `password_reset` with `by: "welcome"` when the person sets the
 password. Errors: `400 invalid` (username, address, role), `403 forbidden`, `404
-not_found` (the tenant), `409 exists`, `409 email_taken`, `409 people_limit`.
+not_found` (the tenant), `400 email_domain_not_verified`, `400 sso_default_tenant`, `400 site_admin_explicit`, `409 exists`, `409 email_taken`, `409 people_limit`.
 
 ### `POST /api/invites`
 
@@ -7896,6 +7904,9 @@ not fill the log).
 | `setting_rule_needs_max` | 400 | a plan's or billing's rule with a value but no maximum or lock, for a limit the tenant also sets (`quota.*PerPerson`, `files.maxBytes`, `registration.perHour`): it would not cap the tenant |
 | `registration_closed` | 403 | making an account while the tenant's `registration.mode` is `closed` (password registration or its confirmation, accepting an invite, an organisation's creation while it is off), or while password registration needs mail and mail is not enabled |
 | `invite_required` | 403 | registering (or confirming a registration) while the tenant's mode is `invite` and no invitation or domain join applies; the same word is the `?sso_error=` of a sign-in |
+| `email_domain_not_verified` | 400 | an account made by hand for an SSO-only tenant with an address no verified or routed domain of the tenant covers |
+| `sso_default_tenant` | 400 | an account made by hand in the default tenant while single sign-on is required of it |
+| `site_admin_explicit` | 400 | an administrator of the default tenant made by hand without saying whether it is a site administrator (`siteAdmin`) |
 | `people_limit` | 409 | an account that would take its tenant over `quota.people`: accepting an invite, confirming a registration, approving a join request, restoring a person from the recycle bin (the item stays in the bin); `?sso_error=people_limit` for a sign-in |
 | `password_reset_off` | 403 | asking for a reset while mail is not enabled |
 | `mail_not_configured` | 409 | opening registration, asking for a verification, or sending a reset while mail is not enabled |

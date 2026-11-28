@@ -903,7 +903,25 @@ func (s *Service) Forgot(ctx context.Context, p ForgotParams) error {
 // person could not already use.
 func (s *Service) canUsePassword(ctx context.Context, q store.Q, u store.User) (bool, error) {
 	if _, err := store.GetPasswordHash(ctx, q, u.ID); errors.Is(err, store.ErrNotFound) {
-		return false, nil
+		// An account an administrator made has none until its person uses the
+		// link it was given (still open), has no sign-in of any provider, and
+		// where no SSO is required for it, a password is one the person could
+		// use: a reset sets it.
+		open := 0
+		for _, kind := range []string{store.TokenWelcome, store.TokenWelcomeMail} {
+			n, err := store.CountEmailTokens(ctx, q, u.ID, kind, s.now())
+			if err != nil {
+				return false, err
+			}
+			open += n
+		}
+		if open == 0 {
+			return false, nil
+		}
+		if links, err := store.ListLinks(ctx, q, u.ID); err != nil || len(links) > 0 {
+			return false, err
+		}
+		return !s.localRefusedUser(ctx, s.sec(ctx), &u), nil
 	} else if err != nil {
 		return false, err
 	}

@@ -103,6 +103,24 @@ describe('Create account', () => {
     await settle(() => document.body.textContent!.includes('erin'), 'the person in the list')
   })
 
+  it('warns, and says so to the server, when the account is an administrator of the default tenant', async () => {
+    await open()
+    await click(button(tc.users.create))
+    await settle(() => dlg() !== null, 'the dialog')
+    await settle(
+      () => dlg()!.querySelector<HTMLSelectElement>('#create-account-tenant')!.options.length > 0,
+      'the tenants',
+    )
+    expect(dlg()!.querySelector('[data-slot="site-admin-warning"]')).toBeNull()
+    await type(dlg()!.querySelector<HTMLSelectElement>('#create-account-role')!, 'admin')
+    await settle(() => dlg()!.querySelector('[data-slot="site-admin-warning"]') !== null, 'the warning')
+    expect(dlg()!.querySelector('[data-slot="site-admin-warning"]')!.textContent).toBe(d.siteAdminWarning)
+    await type(input(d.username), 'erin')
+    await click(button(d.submit, dlg()!))
+    await settle(() => dlg()!.textContent!.includes(d.linkTitle), 'the link')
+    expect(JSON.parse(posts()[0].body!).siteAdmin).toBe(true)
+  })
+
   it('says the link was mailed when the server did', async () => {
     await open(undefined, {
       fx: (mm) => mm.fx.reply('POST', '/api/admin/users', mailedAnswer('sent'), { status: 201 }),

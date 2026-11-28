@@ -135,7 +135,7 @@ CREATE UNIQUE INDEX user_emails_primary ON user_emails(user_id) WHERE is_primary
 -- account's. tenant_id is the tenant it waits in.
 CREATE TABLE awaiting_sso (
   user_id   TEXT COLLATE "C" PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  tenant_id TEXT COLLATE "C" NOT NULL,
+  tenant_id TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   created   BIGINT NOT NULL
 );
 
