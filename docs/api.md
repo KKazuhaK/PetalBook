@@ -9649,11 +9649,15 @@ day and key (`people`, `spaces`, `bytes`, `pinnedBytes`, `apiRequests`,
 **Whom a message is charged to.** The tenant of the person it is for (an
 invitation: the tenant that invites; a verification, an administrator's reset
 link: the person's). Mail anyone can ask for without signing in is charged so
-that the counts tell nothing of other tenants: a registration is charged to the
-tenant the registration asked for, whether or not the address already has an
-account (an address with nothing to send is still counted), and a request to
-reset a password is charged to no tenant (the site's own mail), since it may
-name accounts of several. A message of no tenant is not counted and not limited.
+that the counts tell nothing of other tenants: **a registration is charged by
+the request, not by what becomes of it**. Once it has passed its checks and the
+address's allowance, it counts one message to the tenant the page named (none, for
+an organisation of the person's own), and what is sent for it is not counted again.
+It is the same one for a new address, an address of a live, a disabled or a deleted
+account, an address that cannot be mailed, and an organisation whose caps are
+reached. A request to reset a password is charged to no tenant (the site's own
+mail), in every case, since it may name accounts of several. A message of no tenant
+is not counted and not limited.
 
 #### The per-minute and per-day limits
 

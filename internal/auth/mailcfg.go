@@ -362,14 +362,14 @@ func (s *Service) reserveMail(tenant, kind string) (release func(), err error) {
 	if tenant == "" || m == nil {
 		return func() {}, nil
 	}
-	release = func() { m.Add(tenant, usage.Mail, -1) }
 	limit, limited := int64(0), false
 	if st != nil && !securityMail[kind] {
 		limit, limited = st.LimitOf(context.Background(), tenant, settings.RateMailPerDay)
 	}
 	if !limited {
-		m.Add(tenant, usage.Mail, 1)
-		return release, nil
+		d := m.Today()
+		m.AddAt(d, tenant, usage.Mail, 1)
+		return func() { m.AddAt(d, tenant, usage.Mail, -1) }, nil
 	}
 	now := s.now().UTC()
 	for range 3 {
@@ -378,18 +378,28 @@ func (s *Service) reserveMail(tenant, kind string) (release func(), err error) {
 		if err != nil {
 			return nil, err
 		}
-		ok, stale := m.Reserve(tenant, usage.Mail, 1, sent, limit, gen)
+		d, ok, stale := m.Reserve(tenant, usage.Mail, 1, sent, limit, gen)
 		if stale {
 			continue
 		}
 		if ok {
-			return release, nil
+			// Given back on the day it was taken, if the message is not queued after all.
+			return func() { m.AddAt(d, tenant, usage.Mail, -1) }, nil
 		}
 		s.OverLimit(tenant, settings.RateMailPerDay, limit)
 		return nil, retryAfter(now.Truncate(24 * time.Hour).Add(24 * time.Hour).Sub(now))
 	}
 	// A flush ended each time we looked: hold the message back rather than guess.
 	return nil, retryAfter(time.Second)
+}
+
+// chargeMail counts one message against a tenant's day without sending one (""
+// is no tenant: nothing is counted). It is for a request charged by what was
+// asked, whatever is sent for it.
+func (s *Service) chargeMail(tenant string) {
+	if m := s.meter.Load(); m != nil && tenant != "" {
+		m.Add(tenant, usage.Mail, 1)
+	}
 }
 
 // enqueueFor queues a message for a tenant's account of the day: every message of

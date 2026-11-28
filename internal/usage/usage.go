@@ -152,19 +152,30 @@ func (m *Meter) Gen() uint64 {
 // meter holds is added to it, in one step under the lock, so that concurrent
 // requests cannot both take the last slot. stale is true when a flush ended
 // since gen was read (written may then lack or repeat what it wrote): read the
-// row again and retry. Undo a reservation with Add(…, -n).
-func (m *Meter) Reserve(tenant string, key int, n, written, limit int64, gen uint64) (ok, stale bool) {
+// row again and retry. The day is the one the slot was taken on: undo a
+// reservation with AddAt(day, …, -n), which is right even after midnight.
+func (m *Meter) Reserve(tenant string, key int, n, written, limit int64, gen uint64) (day int64, ok, stale bool) {
 	d := dayNumber(m.now())
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if gen != m.gen {
-		return false, true
+		return d, false, true
 	}
 	if written+m.pendingLocked(d, tenant, key)+n > limit {
-		return false, false
+		return d, false, false
 	}
 	m.addLocked(d, tenant, key, n)
-	return true, false
+	return d, true, false
+}
+
+// Today is the day number Add counts on now (see AddAt).
+func (m *Meter) Today() int64 { return dayNumber(m.now()) }
+
+// AddAt counts n on a given day (a number from Today or Reserve).
+func (m *Meter) AddAt(day int64, tenant string, key int, n int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.addLocked(day, tenant, key, n)
 }
 
 // take empties the counters into rows, which stay visible to Pending; with a
@@ -229,8 +240,7 @@ func (m *Meter) flush(ctx context.Context, st *store.Store, tenant string) error
 	defer m.flushMu.Unlock()
 	rows := m.take(tenant)
 	if len(rows) == 0 {
-		m.done()
-		return nil
+		return nil // nothing written: nothing for Reserve to be told of
 	}
 	write := func(q store.Q, rs []row) error {
 		for _, r := range rs {

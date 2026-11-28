@@ -271,7 +271,7 @@ func TestReserveTakesTheLastSlotOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if ok, _ := m.Reserve("t", usage.Mail, 1, 4, 10, gen); ok { // 4 are written already
+			if _, ok, _ := m.Reserve("t", usage.Mail, 1, 4, 10, gen); ok { // 4 are written already
 				took.Add(1)
 			}
 		}()
@@ -280,11 +280,12 @@ func TestReserveTakesTheLastSlotOnce(t *testing.T) {
 	if took.Load() != 6 {
 		t.Fatalf("%d reservations, 6 slots were left", took.Load())
 	}
-	m.Add("t", usage.Mail, -1) // undone
-	if ok, _ := m.Reserve("t", usage.Mail, 1, 4, 10, gen); !ok {
+	d, _, _ := m.Reserve("t", usage.Mail, 1, 4, 10, gen) // refused: the day of the attempt
+	m.AddAt(d, "t", usage.Mail, -1)                      // one of the six is given back
+	if _, ok, _ := m.Reserve("t", usage.Mail, 1, 4, 10, gen); !ok {
 		t.Fatal("the undone slot was not free")
 	}
-	if ok, stale := m.Reserve("t", usage.Mail, 1, 4, 10, gen+1); ok || !stale {
+	if _, ok, stale := m.Reserve("t", usage.Mail, 1, 4, 10, gen+1); ok || !stale {
 		t.Fatal("a stale row was taken as current")
 	}
 }
@@ -306,6 +307,38 @@ func TestFlushTenantWritesOnlyThatTenant(t *testing.T) {
 		}
 		if m.Pending(store.DefaultTenantID, usage.APIRequests) != 3 {
 			t.Fatal("the other tenant's count was taken")
+		}
+	})
+}
+
+// A flush with nothing to write does not tell Reserve that a flush ended; one
+// that writes does. And a slot given back after midnight is given back on the day
+// it was taken.
+func TestGenChangesOnlyWhenRowsAreWritten(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Date(2026, 3, 5, 23, 59, 59, 0, time.UTC)
+		m := usage.NewMeter(func() time.Time { return now })
+		g := m.Gen()
+		if err := m.Flush(ctx, st); err != nil || m.Gen() != g {
+			t.Fatalf("an empty flush changed gen: %v", err)
+		}
+		d, ok, _ := m.Reserve("t", usage.Mail, 1, 0, 10, g)
+		if !ok {
+			t.Fatal("not reserved")
+		}
+		now = now.Add(2 * time.Second) // midnight passes
+		m.AddAt(d, store.DefaultTenantID, usage.Mail, 0)
+		m.AddAt(d, "t", usage.Mail, -1) // given back on its own day
+		m.Add(store.DefaultTenantID, usage.Mail, 2)
+		if p := m.Pending(store.DefaultTenantID, usage.Mail); p != 2 {
+			t.Fatalf("today's pending %d", p)
+		}
+		if err := m.Flush(ctx, st); err != nil || m.Gen() == g {
+			t.Fatalf("a flush that wrote did not change gen: %v", err)
+		}
+		if got := value(t, st, store.DefaultTenantID, "2026-03-06", store.UsageKeyMail); got != 2 {
+			t.Fatalf("%d", got)
 		}
 	})
 }
