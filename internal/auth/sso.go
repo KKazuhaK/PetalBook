@@ -1340,8 +1340,8 @@ func githubAPIBase(baseURL string) string {
 
 func (s *Service) githubOAuth(rt *providerRT) *oauth2.Config {
 	scopes := []string{"read:user", "user:email"}
-	if _, on := rt.groupsOn(); on {
-		scopes = append(scopes, "read:org") // the groups are the organisations
+	if _, read := rt.groupsRead(); read {
+		scopes = append(scopes, "read:org") // the groups are the organisations, for the sync or the allowlist
 	}
 	b := rt.cfg.BaseURL
 	return &oauth2.Config{ClientID: rt.cfg.ClientID, ClientSecret: rt.secret, RedirectURL: s.redirectURL(rt), Scopes: scopes,
@@ -1411,7 +1411,7 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 			}
 		}
 	}
-	_, wantGroups := rt.groupsOn()
+	_, wantGroups := rt.groupsRead()
 	var gc groupClaim
 	if wantGroups {
 		// The organisations are the groups claim: read when groups are on,

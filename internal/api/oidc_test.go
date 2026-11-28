@@ -169,7 +169,7 @@ func TestOIDCSetupCreatesTheAdministrator(t *testing.T) {
 	eachAccounts(t, f.opts(true), func(t *testing.T, a *acc) {
 		c := a.newClient("")
 		tok := a.auth.SetupToken()
-		// Auto-create never makes the first account: a plain sign-in finds nobody.
+		// A sign-in never makes the first account: a plain sign-in finds nobody.
 		if loc := f.signIn(t, c, "alice", map[string]any{}); loc != "/login?sso_error=no_account" {
 			t.Fatal(loc)
 		}
@@ -221,7 +221,7 @@ func TestOIDCSetupCreatesTheAdministrator(t *testing.T) {
 	})
 }
 
-func TestOIDCLoginAndAutoCreate(t *testing.T) {
+func TestOIDCLoginAndTheRegistrationMode(t *testing.T) {
 	t.Parallel()
 	f := newFakeIDP(t)
 	for _, auto := range []bool{false, true} {
@@ -232,12 +232,12 @@ func TestOIDCLoginAndAutoCreate(t *testing.T) {
 			loc := f.signIn(t, c, "alice", map[string]any{})
 			if !auto {
 				if loc != "/login?sso_error=invite_required" || signedInAs(t, c) != "" {
-					t.Fatalf("auto-create off: %s", loc)
+					t.Fatalf("mode invite: %s", loc)
 				}
 				return
 			}
 			if loc != "/" || signedInAs(t, c) != "alice" {
-				t.Fatalf("auto-create on: %s %q", loc, signedInAs(t, c))
+				t.Fatalf("mode open: %s %q", loc, signedInAs(t, c))
 			}
 			u := c.do("GET", "/api/session", nil).user()
 			if u["role"] != "member" || u["name"] != "Alice A" {
@@ -294,7 +294,7 @@ func TestOIDCNeverMatchesAccountsByEmail(t *testing.T) {
 				t.Fatal("signed into an account because the email matched")
 			}
 			if auto && got != "alice" {
-				t.Fatalf("auto-create: %q", got)
+				t.Fatalf("sign-in made: %q", got)
 			}
 			if !auto && got != "" {
 				t.Fatalf("%q", got)

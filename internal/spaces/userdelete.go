@@ -15,6 +15,7 @@ import (
 	"errors"
 	"time"
 
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -134,7 +135,13 @@ func (m *Manager) restoreUserItem(ctx context.Context, it *store.RecycleItem) (*
 	var out store.UserRestoreOutcome
 	err := m.opt.Store.Tx(ctx, func(q store.Q) error {
 		var err error
-		out, err = store.RestoreUserRows(ctx, q, it, m.opt.Now())
+		var max *int64
+		if e, gerr := settings.Of(m.opt.Store).Get(ctx, it.TenantID, settings.QuotaPeople); gerr == nil && e != nil {
+			if n, ok := e.Value.(int64); ok {
+				max = &n
+			}
+		}
+		out, err = store.RestoreUserRows(ctx, q, it, m.opt.Now(), max)
 		return err
 	})
 	if err != nil {

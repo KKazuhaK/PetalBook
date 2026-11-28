@@ -157,9 +157,9 @@ func TestTwoTenantsOnTheSameIssuerStayApart(t *testing.T) {
 	})
 }
 
-// autoCreate makes the account in the provider's tenant: a member, never an
+// An open mode makes the account in the provider's tenant: a member, never an
 // administrator, whatever the provider's jit tenant would say.
-func TestAutoCreateLandsInTheProvidersTenant(t *testing.T) {
+func TestAnOpenOrganisationSignInLandsInTheProvidersTenant(t *testing.T) {
 	t.Parallel()
 	idp := ssoIDP(t)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
@@ -361,7 +361,7 @@ func TestASiteProviderOfferedToAList(t *testing.T) {
 		if loc := idp.signIn2(t, c, "corp", "carol", nil); loc != "/login?sso_error=not_allowed" {
 			t.Fatal(loc)
 		}
-		// autoCreate into C, which is not on the list: refused.
+		// an account in C, which is not on the list: refused.
 		idp.addUser("frank", testidp.Claims{"sub": "sub-frank", "preferred_username": "frank"})
 		if loc := idp.signIn2(t, a.newClient(""), "corp", "frank", nil); loc != "/login?sso_error=not_allowed" {
 			t.Fatal(loc)

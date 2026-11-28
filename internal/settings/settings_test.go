@@ -158,7 +158,7 @@ func TestRegistrationModeIsTheTenantsOwn(t *testing.T) {
 		if err := s.SetTenant(ctx, ten, settings.RegistrationMode, settings.Change{HasValue: true, Value: settings.RegOpen}); err != nil {
 			t.Fatalf("the site's mode does not bound an organisation's: %v", err)
 		}
-		if e, _ := s.Get(ctx, ten, settings.RegistrationMode); e.Value != settings.RegOpen || e.Site.Value != settings.RegClosed {
+		if e, _ := s.Get(ctx, ten, settings.RegistrationMode); e.Value != settings.RegOpen || e.Site.Value != settings.RegInvite {
 			t.Fatalf("%+v", e)
 		}
 		if e, _ := s.Get(ctx, "", settings.RegistrationMode); e.Value != settings.RegClosed {

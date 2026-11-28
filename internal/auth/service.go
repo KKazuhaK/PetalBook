@@ -818,13 +818,6 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			} else if barred {
 				return errRetiredName
 			}
-			// The first account, and an organisation's own administrator, are
-			// not held to a cap that is no one's yet.
-			if !p.Setup && !p.FirstOK && p.NewTenant == nil {
-				if err := s.withinPeople(ctx, q, cand.TenantID); err != nil {
-					return err
-				}
-			}
 			// The row without its address, then the address by the rules of
 			// every address (store.SetPrimaryEmail), in the same transaction.
 			// It checks who holds the address in this transaction; another
@@ -834,6 +827,16 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			row.Email, row.EmailVerified = "", false
 			if err := store.InsertUser(ctx, q, row); err != nil {
 				return err
+			}
+			// The cap is checked after the row is counted: the insert locks the
+			// tenant's usage row until the transaction ends, so concurrent accounts
+			// of one tenant count one after the other (READ COMMITTED included).
+			// The first account, and an organisation's own administrator, are not
+			// held to a cap that is no one's yet.
+			if !p.Setup && p.NewTenant == nil {
+				if err := s.withinPeople(ctx, q, cand.TenantID, p.FirstOK); err != nil {
+					return err
+				}
 			}
 			if cand.Email != "" {
 				r, err := store.SetPrimaryEmail(ctx, q, cand.ID, cand.Email, cand.EmailVerified, p.VerifiedBy,

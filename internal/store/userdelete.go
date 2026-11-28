@@ -532,12 +532,12 @@ type UserRestoreOutcome struct {
 	GroupMembers int
 }
 
-// RestoreUserRows brings a person back as they were before they were disabled
+// RestoreUserRows (maxPeople: the tenant's quota.people, nil for none) brings a person back as they were before they were disabled
 // for the deletion: their group memberships that still can be (a group that is
 // gone is listed), and enabled or disabled as they were. The item stays (its
 // state restoring) until the spaces recycled with them are back; the caller
 // deletes it (DeleteRecycleItemIn). Call it inside Tx.
-func RestoreUserRows(ctx context.Context, q Q, it *RecycleItem, now time.Time) (UserRestoreOutcome, error) {
+func RestoreUserRows(ctx context.Context, q Q, it *RecycleItem, now time.Time, maxPeople *int64) (UserRestoreOutcome, error) {
 	var out UserRestoreOutcome
 	if it.Kind != RecycleUser {
 		return out, errors.New("not a person's item")
@@ -575,6 +575,15 @@ func RestoreUserRows(ctx context.Context, q Q, it *RecycleItem, now time.Time) (
 		}
 		if err := addUsage(ctx, q, usageDelta{kind: UsageTenant, id: it.TenantID, tenant: it.TenantID, people: 1, connected: conn, dormant: dorm}); err != nil {
 			return out, err
+		}
+		// A person who is back counts as one: a tenant at its quota.people
+		// refuses it (the count is read after the add, which holds the row).
+		if maxPeople != nil {
+			if u, err := GetUsage(ctx, q, UsageTenant, it.TenantID); err != nil {
+				return out, err
+			} else if u.People > *maxPeople {
+				return out, ErrPeopleLimit
+			}
 		}
 		for _, r := range rec.Groups.Rows {
 			gi, pi, vi, ci := rec.Groups.col("group_id"), rec.Groups.col("provider"), rec.Groups.col("value"), rec.Groups.col("created")

@@ -229,7 +229,7 @@ const (
 // read by internal/quota, not something a person sets for themselves.
 func baseDefinitions() []*Def {
 	return []*Def{
-		{Key: RegistrationMode, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: RegInvite, Choices: []string{RegOpen, RegInvite, RegClosed}, Lower: Lower{Mode: Allow}},
+		{Key: RegistrationMode, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: RegInvite, TenantDefault: RegInvite, Choices: []string{RegOpen, RegInvite, RegClosed}, Lower: Lower{Mode: Allow}},
 		{Key: RegistrationDomains, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{}, Lower: Lower{Mode: Allow}, Check: checkDomains},
 		{Key: RegistrationPerHour, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: int64(50), Min: 1, Max: 10000,
 			Lower: Lower{Mode: Restrict, Max: i64(50)}},

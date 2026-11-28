@@ -44,7 +44,7 @@ func TestTurningJoinOffFallsBackToTheTenantsDomainList(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		f := newJoinFx(t, a)
-		f.root.do("PUT", "/api/admin/settings/registration.mode", map[string]any{"value": "open"}).want(t, 200, "")
+		setMode(t, f.admB, f.tenB, "open") // the organisation's own mode: the site's does not flow into it
 		f.root.do("PUT", "/api/admin/settings/registration.domains", map[string]any{"value": []string{"other.example"}}).want(t, 200, "")
 		setJoin(f.admB, f.tenB, "acme.example", "auto").want(t, 200, "")
 		anon := a.newClient("")

@@ -423,3 +423,37 @@ func TestGitHubOrgsLaterPageFails(t *testing.T) {
 		}
 	})
 }
+
+// groups.allow on a GitHub provider holds sign-in to the organisations it names,
+// at every sign-in and through an existing link: a person who leaves the
+// organisation is refused at the next one. read:org is asked for it.
+func TestGitHubGroupsAllowCutsOffWhoLeavesTheOrganisation(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		a.setSetting(t, "registration.mode", "open")
+		gh := newFakeGitHub(t)
+		gh.users["m"] = ghFake{ID: 7, Login: "mona", Email: "mona@example.test", Verified: true, Orgs: []string{"KazuhaHub", "Elsewhere"}}
+		gh.users["out"] = ghFake{ID: 8, Login: "outsider", Orgs: []string{"Elsewhere"}}
+		admin := a.setup("kazuha", pw)
+		body := gh.body("gh", map[string]any{"groups": map[string]any{"allow": []string{"KazuhaHub"}}})
+		admin.do("POST", "/api/admin/providers", body).want(t, 201, "")
+		c := a.newClient("")
+		end, q := gh.signIn(t, c, "gh", "m", nil)
+		if end != "/" || signedInAs(t, c) != "mona" || q["scope"] != "read:user user:email read:org" {
+			t.Fatalf("%s %v", end, q)
+		}
+		if end, _ := gh.signIn(t, a.newClient(""), "gh", "out", nil); end != "/login?sso_error=not_allowed" {
+			t.Fatalf("an outsider: %s", end)
+		}
+		// Mona leaves the organisation: her link no longer signs her in.
+		gh.mu.Lock()
+		o := gh.users["m"]
+		o.Orgs = []string{"Elsewhere"}
+		gh.users["m"] = o
+		gh.mu.Unlock()
+		d := a.newClient("")
+		if end, _ := gh.signIn(t, d, "gh", "m", nil); end != "/login?sso_error=not_allowed" || signedInAs(t, d) != "" {
+			t.Fatalf("after leaving: %s", end)
+		}
+	})
+}

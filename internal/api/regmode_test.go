@@ -1,10 +1,13 @@
 package api_test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
+	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/auth/testidp"
 	"petalbook.app/server/internal/mail/mailtest"
 )
@@ -425,6 +428,96 @@ func TestRegModeWithTenancyOff(t *testing.T) {
 			} else {
 				r.want(t, 403, code)
 			}
+		}
+	})
+}
+
+// An organisation that has not set its own mode is by invitation: the site's
+// value governs personal accounts only and never flows into organisations. A
+// site administrator's rule for the one organisation does.
+func TestRegModeSiteValueNeverFlowsIntoOrganisations(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newJoinFx(t, a)
+		anon := a.newClient("")
+		for i, site := range []string{"open", "closed"} {
+			setMode(t, f.root, "", site)
+			reg(anon, map[string]any{"tenant": "acme", "username": fmt.Sprintf("n%d", i), "email": fmt.Sprintf("n%d@mail.test", i)}).want(t, 403, "invite_required")
+			if g := anon.do("GET", "/api/register?tenant=acme", nil).want(t, 200, ""); g.body["mode"] != "invite" || g.body["open"] != false {
+				t.Fatalf("under a site value of %s: %s", site, g.raw)
+			}
+			// What the organisation's administrator sees: invite, as the default.
+			s := settingOf(t, f.admB.do("GET", "/api/admin/tenants/"+f.tenB+"/settings", nil).want(t, 200, ""), "registration.mode")
+			if s["effective"] != "invite" {
+				t.Fatalf("effective under a site value of %s: %v", site, s)
+			}
+			// An invitation still works: the organisation's mode is not closed.
+			tok := f.admB.do("POST", "/api/invites", map[string]any{"role": "member"}).want(t, 201, "").body["token"]
+			a.newClient("").do("POST", "/api/invites/accept", map[string]any{"token": tok, "username": fmt.Sprintf("m%d", i), "name": "m", "password": pw}).want(t, 201, "")
+		}
+		// The site's rule for this one organisation does apply.
+		setMode(t, f.root, "", "closed")
+		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/registration.mode", map[string]any{"siteRule": map[string]any{"value": "open"}}).want(t, 200, "")
+		reg(anon, map[string]any{"tenant": "acme", "username": "ruled", "email": "ruled@mail.test"}).want(t, 202, "")
+		// And the organisation's own value beats it (a rule without a lock).
+		setMode(t, f.admB, f.tenB, "closed")
+		reg(anon, map[string]any{"tenant": "acme", "username": "ruled2", "email": "ruled2@mail.test"}).want(t, 403, "registration_closed")
+	})
+}
+
+// The cap holds when accounts are made at the same moment: with room for one
+// more person, exactly one of many parallel invite accepts makes an account
+// (the test runs on PostgreSQL too, where a check before the insert would let
+// several through).
+func TestRegModeQuotaPeopleHoldsUnderConcurrency(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newJoinFx(t, a)
+		setTotals(t, f.root, f.tenB, map[string]any{"people": 2}) // the administrator and one more
+		const n = 12
+		tokens := make([]any, n)
+		for i := range tokens {
+			tokens[i] = f.admB.do("POST", "/api/invites", map[string]any{"role": "member"}).want(t, 201, "").body["token"]
+		}
+		codes := make([]int, n)
+		var wg sync.WaitGroup
+		for i := range tokens {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				c := a.newClient("")
+				codes[i] = c.do("POST", "/api/invites/accept", map[string]any{"token": tokens[i], "username": fmt.Sprintf("race%d", i), "name": "r", "password": pw}).code
+			}()
+		}
+		wg.Wait()
+		made, refused := 0, 0
+		for _, c := range codes {
+			switch c {
+			case 201:
+				made++
+			case 409, 429: // over the cap, or held back by the address's failures
+				refused++
+			}
+		}
+		if made != 1 || refused != n-1 {
+			t.Fatalf("made %d, refused %d: %v", made, refused, codes)
+		}
+		if got := rowCount(t, a, `SELECT COUNT(*) FROM users WHERE tenant_id = ?`, f.tenB); got != 2 {
+			t.Fatalf("%d people in the organisation", got)
+		}
+	})
+}
+
+// The command line's account is held to quota.people too, except the very first.
+func TestRegModeCommandLineAccountIsHeldToTheCap(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		a.setup("root", pw)
+		a.setSetting(t, "quota.people", int64(1))
+		_, err := a.auth.CreateUser(t.Context(), auth.CreateParams{Username: "cli", Role: "member", Password: pw, FirstOK: true})
+		var ae *auth.Error
+		if !errors.As(err, &ae) || ae.Code != "people_limit" {
+			t.Fatalf("%v", err)
 		}
 	})
 }

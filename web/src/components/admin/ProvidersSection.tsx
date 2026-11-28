@@ -613,7 +613,7 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
   if (f.groups.missing !== (gb?.missing ?? 'keep')) groups.missing = f.groups.missing
   const rows = f.groups.map.filter((e) => e.value !== '' || e.groupId !== '')
   if (JSON.stringify(rows) !== JSON.stringify(gb?.map ?? [])) groups.map = rows
-  if (f.kind !== 'github' && f.groups.allow.trim() !== (gb?.allow ?? '').trim()) groups.allow = lines(f.groups.allow)
+  if (f.groups.allow.trim() !== (gb?.allow ?? '').trim()) groups.allow = lines(f.groups.allow)
   if (Object.keys(groups).length > 0) out.groups = groups
   if (f.kind === 'oidc') {
     const o = f.oidc
@@ -863,22 +863,20 @@ function GroupsFields({ f, set }: { f: F; set: (p: Partial<F>) => void }) {
         </NativeSelect>
         <p className="text-xs text-muted-foreground">{tgp.missingHelp}</p>
       </div>
-      {f.kind !== 'github' && (
-        <div className="grid gap-1.5">
-          <Label htmlFor="groups-allow">{tgp.allow}</Label>
-          <Textarea
-            id="groups-allow"
-            value={g.allow}
-            onChange={(e) => up({ allow: e.target.value })}
-            rows={3}
-            autoComplete="off"
-            spellCheck={false}
-            className="font-mono text-base break-all sm:text-sm"
-            data-slot="groups-allow"
-          />
-          <p className="text-xs text-muted-foreground">{tgp.allowHelp}</p>
-        </div>
-      )}
+      <div className="grid gap-1.5">
+        <Label htmlFor="groups-allow">{tgp.allow}</Label>
+        <Textarea
+          id="groups-allow"
+          value={g.allow}
+          onChange={(e) => up({ allow: e.target.value })}
+          rows={3}
+          autoComplete="off"
+          spellCheck={false}
+          className="font-mono text-base break-all sm:text-sm"
+          data-slot="groups-allow"
+        />
+        <p className="text-xs text-muted-foreground">{tgp.allowHelp}</p>
+      </div>
       <div className="grid gap-2" data-slot="groups-map">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <span className="text-sm font-medium">

@@ -1126,11 +1126,12 @@ func (s *Service) peopleCap(ctx context.Context, tenant string) (int64, bool) {
 	return 0, false
 }
 
-// withinPeople refuses an account that the tenant has no room for: its
-// quota.people, against the people it counts now, read in the transaction q
-// that makes the account. Every way an account is made goes through
-// CreateUser, so this is the one place that holds the cap.
-func (s *Service) withinPeople(ctx context.Context, q store.Q, tenant string) error {
+// withinPeople refuses an account that took the tenant over its quota.people,
+// called in the transaction q that made the account, after the account was
+// counted (so the count includes it). Every way an account is made goes through
+// CreateUser, so this is the one place that holds the cap. first is the command
+// line's account: the very first of the tenant is not held to it.
+func (s *Service) withinPeople(ctx context.Context, q store.Q, tenant string, first bool) error {
 	limit, ok := s.peopleCap(ctx, tenant)
 	if !ok {
 		return nil
@@ -1139,7 +1140,7 @@ func (s *Service) withinPeople(ctx context.Context, q store.Q, tenant string) er
 	if err != nil {
 		return err
 	}
-	if u.People >= limit {
+	if u.People > limit && !(first && u.People <= 1) {
 		return errPeopleLimit()
 	}
 	return nil

@@ -170,9 +170,6 @@ func (s *Service) applyGroups(ctx context.Context, b *built, in *groupsInput) er
 		g.Map = slices.Clone(list)
 	}
 	if in.Allow != nil {
-		if kind == KindGitHub && len(*in.Allow) > 0 {
-			return providerInvalid("A GitHub provider is held to its organisations: groups.allow cannot be set.")
-		}
 		if len(*in.Allow) > maxGroupMap {
 			return providerInvalid("groups.allow has at most %d values.", maxGroupMap)
 		}

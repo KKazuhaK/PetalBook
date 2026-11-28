@@ -1659,11 +1659,15 @@ A sign-in provider (see "Sign-in providers") may carry a `groups` setting:
   (default `groups`). SAML: an attribute name, every value of it
   (`memberOf`, or `http://schemas.microsoft.com/ws/2008/06/identity/claims/groups`
   for Entra ID). GitHub: not settable; the values are the organisations the
-  person belongs to (the logins 2.8 already reads, at most 500).
+  person belongs to (their logins, at most 500), read with the `read:org` scope
+  whenever the groups are synced or `allow` is set.
 - `allow` (3.6 d3): when not empty, only people whose claim names one of these
   values sign in, checked at every sign-in (also with `enabled` off: the claim
   is then read for this alone); a missing claim lets nobody in
-  (`sso_error=not_allowed`). Not settable on GitHub.
+  (`sso_error=not_allowed`). On GitHub the values are organisation logins, so an
+  `allow` of the company's organisation cuts off whoever leaves it at their
+  next sign-in, through an existing link too (if GitHub's organisation list
+  cannot be read, nobody passes).
 - `missing`: what happens when the claim is not there at all: `keep` (default:
   the person's groups from this provider stay as they are) or `clear` (as if
   the list were empty). OpenID Connect's "groups overage" (Entra ID sends
@@ -7244,7 +7248,9 @@ Whether an account is made is the **registration mode**, `registration.mode`
   organisation (a tenant that is not the default) has its own, set by its
   administrators; it is **not bounded by the site's**, and still follows the
   settings machinery (a site administrator may set a rule for one tenant, a
-  plan's rule may carry one). An organisation's mode governs every way an
+  plan's rule may carry one). An organisation that has set none, and has no
+  such rule, is `invite`: **the site's own value never flows into an
+  organisation** (a tenant's view of the setting shows `invite` as its default). An organisation's mode governs every way an
   account is made into it: its own SSO, the site's social sign-in that lands in
   it, invites into it, and its domain joins.
 - `open`: any way may make an account. Password sign-up still needs mail and
@@ -7263,9 +7269,11 @@ Whether an account is made is the **registration mode**, `registration.mode`
 - **Every way is held to `quota.people`**: an account that would take a tenant
   over it is refused, `409 people_limit` (`?sso_error=people_limit`), whichever
   way it is made (accepting an invite, confirming a registration, approving a
-  request, a sign-in). The first account and the administrator of an
-  organisation that is being made are not counted against a limit that is
-  nobody's yet.
+  request, a sign-in, a person restored from the recycle bin, `user create` on
+  the command line). The count is taken in the transaction that makes the
+  account, so parallel accounts cannot pass it together. Only the first account
+  of a server and the administrator of an organisation that is being made are
+  not counted against a limit that is nobody's yet.
 - **Organisation creation is another thing**: `features.orgCreation` (below,
   default off) lets a person make an organisation with the registration, whatever
   the mode; the organisation is an ordinary tenant afterwards.
@@ -7807,7 +7815,7 @@ not fill the log).
 | `setting_rule_needs_max` | 400 | a plan's or billing's rule with a value but no maximum or lock, for a limit the tenant also sets (`quota.*PerPerson`, `files.maxBytes`, `registration.perHour`): it would not cap the tenant |
 | `registration_closed` | 403 | making an account while the tenant's `registration.mode` is `closed` (password registration or its confirmation, accepting an invite, an organisation's creation while it is off), or while password registration needs mail and mail is not enabled |
 | `invite_required` | 403 | registering (or confirming a registration) while the tenant's mode is `invite` and no invitation or domain join applies; the same word is the `?sso_error=` of a sign-in |
-| `people_limit` | 409 | an account that would take its tenant over `quota.people`: accepting an invite, confirming a registration, approving a join request; `?sso_error=people_limit` for a sign-in |
+| `people_limit` | 409 | an account that would take its tenant over `quota.people`: accepting an invite, confirming a registration, approving a join request, restoring a person from the recycle bin (the item stays in the bin); `?sso_error=people_limit` for a sign-in |
 | `password_reset_off` | 403 | asking for a reset while mail is not enabled |
 | `mail_not_configured` | 409 | opening registration, asking for a verification, or sending a reset while mail is not enabled |
 | `mail_needs_public_url` | 400 | enabling mail without `--public-url` |
@@ -7972,9 +7980,10 @@ text above:
   after (a site-wide change reads the usage rows once: about 20 ms for 20,000
   people when nothing changes, 0.3 s when half of them cross).
 - A tenant's `quota.people` counts people, not accounts that may sign in: a
-  disabled person counts. Nobody is refused for it: the tenant, its
-  administrators and its people see it (`over`, notices), and the audit has one
-  row.
+  disabled person counts. Lowering it under the people a tenant has refuses
+  nobody who is there: the tenant, its administrators and its people see it
+  (`over`, notices), and the audit has one row. A new account over it is
+  refused (`409 people_limit`, see "Registration").
 - A space is counted for a tenant from the moment it is made, and for its first
   owner from the moment it has one; a space nobody owns counts for its tenant
   only. A tenant that is deleted takes its usage row with it.
@@ -10877,7 +10886,7 @@ username can be registered again, and the request can no longer be approved
 
 **(d) Joining through the tenant's SSO.** A tenant's SSO provider makes the
 account in its tenant at first sign-in when the tenant's `registration.mode` is
-`open` (the mode replaced the provider's `autoCreate`), with `defaultRole`. The Provider gains:
+`open` (the mode replaced a per-provider switch), with `defaultRole`. The Provider gains:
 
 ```json
 "jit": {"requireGroups": ["5f1c…-petalbook-users"]}
@@ -12238,8 +12247,9 @@ is refused with `saml_no_email` instead of going on with none.
 ```
 
 `baseUrl` is `https://github.com` or a GitHub Enterprise Server address.
-Which organisations a person belongs to is read only for the groups claim (see
-"Groups from sign-in"); it never lets anyone in.
+Which organisations a person belongs to is read only as the groups claim (see
+"Groups from sign-in"): `groups.allow` holds sign-in to the organisations it
+names, and `groups.map` maps them to groups.
 
 `groups` (any kind, from 3.2; absent or `{"enabled": false}` by default): how
 the provider's groups claim maps to synced groups; see "Groups from sign-in".

@@ -66,6 +66,16 @@ password self-registration, is replaced by a three-way setting,
   off, so the sign-in falls to the provider's own tenant (the default tenant for a
   social provider), whose mode then decides. The password path does the same with
   the tenant the page named.
+- An organisation's effective mode is its own value, else the site administrator's
+  rule for it, else `invite`: the site's own value is for the default tenant only
+  and never flows into organisations (the setting has a `TenantDefault`).
+- Quota checks run after the account is counted, inside its transaction (the
+  usage row is locked by the count), so parallel accounts cannot pass the cap
+  together on PostgreSQL. A person restored from the recycle bin is held to it too.
+- On the code-hosting provider, `groups.allow` and the group map are read from the
+  person's organisations (`read:org` when either is set): that is how access is cut
+  off when someone leaves the company's organisation, now that the organisation
+  allowlist is gone.
 - The default tenant's value is always the site's: a tenant-layer value for the
   default tenant is not read.
 - A join request waiting while its organisation turns `closed` is not cancelled

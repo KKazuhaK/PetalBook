@@ -488,7 +488,7 @@ func TestADeletedPersonIsRefusedBySSOInsteadOfGettingANewAccount(t *testing.T) {
 			t.Fatal("a deleted person signed in")
 		}
 		if after := a.countRows(t, `SELECT COUNT(*) FROM users`); after != before {
-			t.Fatalf("autoCreate made %d new accounts for a deleted person", after-before)
+			t.Fatalf("a sign-in made %d new accounts for a deleted person", after-before)
 		}
 		// Restored, the same identity signs in again.
 		items := admin.do("GET", "/api/admin/recycle?kind=user", nil).want(t, 200, "").body["items"].([]any)
@@ -1336,4 +1336,19 @@ func putTestLink(ctx context.Context, q store.Q, provider, user, subject, login 
 	_, err := store.PutRepoLink(ctx, q, store.RepoLink{ID: provider + "-" + user, ProviderID: provider, UserID: user, Subject: subject, Login: login,
 		AccessEnc: "sealed", State: store.LinkOK, Connected: now, Updated: now})
 	return err
+}
+
+// A person restored from the recycle bin counts as a person again: a tenant at
+// its quota.people refuses it, and the item stays in the bin.
+func TestRestoringAPersonIsHeldToThePeopleQuota(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newUdFix(t, a)
+		item := f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "").body["id"].(string)
+		left := int64(a.countRows(t, `SELECT COUNT(*) FROM users WHERE deleted_at IS NULL`))
+		a.setSetting(t, "quota.people", left)
+		f.admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 409, "people_limit")
+		a.setSetting(t, "quota.people", left+1)
+		f.admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 200, "")
+	})
 }
