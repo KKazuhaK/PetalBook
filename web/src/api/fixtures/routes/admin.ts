@@ -1690,6 +1690,7 @@ export const adminRoutes: Route[] = [
         emailTrusted: true,
         name: 'Test Person',
         username: 'tester',
+        unresolved: p.kind === 'oauth2' ? ['data.user.avatar'] : [],
         at: now(c),
       }
       return { url: `/admin/security/providers?provider_test=${p.id}` }
@@ -1784,6 +1785,7 @@ export const adminRoutes: Route[] = [
         emailTrusted: true,
         name: 'Test Person',
         username: 'tester',
+        unresolved: p.kind === 'oauth2' ? ['data.user.avatar'] : [],
         at: now(c),
       }
       const back = (c.body as { return?: string } | undefined)?.return ?? '/admin/settings/signin'

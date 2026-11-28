@@ -137,6 +137,7 @@
   "sso_provider_required",
   "sso_required",
   "status",
+  "subject_fixed",
   "takeover_required",
   "template_fixed",
   "template_limit",

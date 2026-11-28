@@ -82,6 +82,7 @@ GET /api/admin/tokens	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/usage	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/users/{user}/deletion	ok	ok	403 forbidden	403 token_scope
 GET /api/auth/github/{slug}/callback	ok	ok	ok	403 token_scope
+GET /api/auth/oauth2/{slug}/callback	ok	ok	ok	403 token_scope
 GET /api/auth/oidc/{slug}/callback	ok	ok	ok	403 token_scope
 GET /api/auth/providers	ok	ok	ok	403 token_scope
 GET /api/auth/saml/{slug}/metadata	ok	ok	ok	403 token_scope

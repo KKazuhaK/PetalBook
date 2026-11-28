@@ -878,11 +878,13 @@ func (s *server) adminTestResult(c *call) {
 		EmailTrusted bool   `json:"emailTrusted"`
 		Name         string `json:"name"`
 		Username     string `json:"username"`
-		At           string `json:"at"`
+		// Unresolved: the paths of a plain OAuth 2.0 provider that found nothing.
+		Unresolved []string `json:"unresolved"`
+		At         string   `json:"at"`
 	}
 	var out *result
 	if r := s.auth.TestResultOf(c.user().ID, c.r.PathValue("id")); r != nil {
-		out = &result{r.Subject, r.Email, r.EmailTrusted, r.Name, r.Username, rfc3339(r.At)}
+		out = &result{r.Subject, r.Email, r.EmailTrusted, r.Name, r.Username, append([]string{}, r.Unresolved...), rfc3339(r.At)}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Result *result `json:"result"`

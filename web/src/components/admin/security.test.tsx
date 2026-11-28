@@ -576,6 +576,43 @@ describe('the sign-in providers', () => {
     expect(cls().disabled).toBe(true)
   })
 
+  it('creates a plain OAuth 2.0 provider with a nested block, no groups, and social class', async () => {
+    await openProviders()
+    await openCustom()
+    await type(q<HTMLSelectElement>('#provider-kind')!, 'oauth2')
+    expect(q<HTMLSelectElement>('#provider-class')!.value).toBe('social')
+    expect(q('[data-slot="groups-fields"]')).toBeNull()
+    const o = tsec.providers.oauth2
+    await type(inputIn(tsec.providers.slug), 'disco')
+    await type(inputIn(tsec.providers.name), 'Disco')
+    await type(inputIn(o.authorizationEndpoint), 'https://d.example/authorize')
+    await type(inputIn(o.tokenEndpoint), 'https://d.example/token')
+    await type(inputIn(o.userinfoEndpoint), 'https://d.example/me')
+    await type(inputIn(o.scopes), 'identify email')
+    await type(inputIn(o.clientId), 'client-1')
+    await type(inputIn(o.clientSecret), 'shh')
+    await type(inputIn(o.emailVerified), 'verified')
+    await click(buttonWith(tsec.providers.create))
+    await settle(() => calls('POST', '/api/admin/providers').length === 1, 'the new provider')
+    const post = JSON.parse(calls('POST', '/api/admin/providers')[0].body!)
+    expect(post).toMatchObject({
+      slug: 'disco',
+      kind: 'oauth2',
+      class: 'social',
+      oauth2: {
+        authorizationEndpoint: 'https://d.example/authorize',
+        tokenEndpoint: 'https://d.example/token',
+        userinfoEndpoint: 'https://d.example/me',
+        scopes: ['identify', 'email'],
+        authMethod: 'client_secret_basic',
+        clientId: 'client-1',
+        clientSecret: 'shh',
+        fields: { subject: 'id', email: 'email', emailVerified: 'verified', name: '', username: '' },
+      },
+    })
+    expect(post.groups).toBeUndefined()
+  })
+
   it('creates an OpenID Connect provider with the fields of its kind, and shows the address to register and "saved · change"', async () => {
     await openProviders()
     await settle(() => text().includes(tsec.providers.empty), 'no providers yet')
@@ -744,6 +781,7 @@ describe('the sign-in providers', () => {
           emailTrusted: false,
           name: 'Test Person',
           username: 'tester',
+          unresolved: [],
           at: '2026-11-26T08:00:00Z',
         }
       },

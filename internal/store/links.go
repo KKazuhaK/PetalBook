@@ -201,3 +201,10 @@ func EnableLinkSignin(ctx context.Context, q Q, id, userID, email string, truste
 		email, b2i(trusted), label, ms(now), ms(now), id, userID)
 	return oneRow(res, err)
 }
+
+// CountLinks is how many accounts are linked at a provider, whatever the link
+// is for.
+func CountLinks(ctx context.Context, q Q, providerID string) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM linked_accounts WHERE provider_id = ?`, providerID).Scan(&n)
+	return
+}

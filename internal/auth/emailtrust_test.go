@@ -71,6 +71,9 @@ func TestTrustsEmail(t *testing.T) {
 		{"custom oidc without the opt-in", emailSource{template: tmplOIDC, email: "a@idp.test", verified: true}, false, true},
 		{"custom oidc with the opt-in, verified", emailSource{template: tmplOIDC, email: "a@idp.test", verified: true, trustOptIn: true}, true, true},
 		{"custom oidc with the opt-in, unverified", emailSource{template: tmplOIDC, email: "a@idp.test", trustOptIn: true}, false, true},
+		{"oauth2 without the opt-in, verified", emailSource{template: tmplOAuth2, email: "a@idp.test", verified: true}, false, true},
+		{"oauth2 with the opt-in, unverified", emailSource{template: tmplOAuth2, email: "a@idp.test", trustOptIn: true}, false, true},
+		{"oauth2 with the opt-in, verified", emailSource{template: tmplOAuth2, email: "a@idp.test", verified: true, trustOptIn: true}, true, true},
 		{"site saml with the opt-in", emailSource{template: tmplSAML, email: "a@idp.test", trustOptIn: true}, true, true},
 		{"site saml without the opt-in", emailSource{template: tmplSAML, email: "a@idp.test", verified: true}, false, true},
 		{"an unknown rule", emailSource{template: "", email: "a@idp.test", verified: true, trustOptIn: true}, false, true},
@@ -95,6 +98,9 @@ func TestTrustTemplate(t *testing.T) {
 		if got := trustTemplate(store.ProviderRow{Kind: KindOIDC, Template: tmpl}); got != want {
 			t.Errorf("%q: %q, want %q", tmpl, got, want)
 		}
+	}
+	if got := trustTemplate(store.ProviderRow{Kind: KindOAuth2}); got != tmplOAuth2 {
+		t.Errorf("oauth2: %q", got)
 	}
 	for addr, want := range map[string]bool{
 		"x@privaterelay.appleid.com": true, "x@PrivateRelay.AppleID.com": true,

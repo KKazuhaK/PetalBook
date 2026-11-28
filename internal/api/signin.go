@@ -66,6 +66,7 @@ var signinRoutes = []route{
 	{"GET", "/api/auth/oidc/{slug}/callback", public.always(), true, false, false, (*server).oidcSlugCallback},
 	{"POST", oidcFormPostPattern, public.always(), true, false, false, (*server).oidcFormPost},
 	{"GET", "/api/auth/github/{slug}/callback", public.always(), true, false, false, (*server).oidcSlugCallback},
+	{"GET", "/api/auth/oauth2/{slug}/callback", public.always(), true, false, false, (*server).oidcSlugCallback},
 	{"POST", samlACSPattern, public.always(), true, false, false, (*server).samlACS},
 	{"GET", "/api/auth/saml/{slug}/metadata", public.always(), true, false, false, (*server).samlMetadata},
 
@@ -170,7 +171,7 @@ func (s *server) getCaptcha(c *call) {
 // --- single sign-on ------------------------------------------------------------------
 
 func validKind(k string) bool {
-	return k == auth.KindOIDC || k == auth.KindSAML || k == auth.KindGitHub
+	return k == auth.KindOIDC || k == auth.KindSAML || k == auth.KindGitHub || k == auth.KindOAuth2
 }
 
 func (s *server) ssoStartJSON(c *call, kind, slug string) {

@@ -79,7 +79,7 @@ export interface SpaceData {
 
 export interface ProviderRec {
   slug: string
-  kind: 'oidc' | 'saml' | 'github'
+  kind: 'oidc' | 'saml' | 'github' | 'oauth2'
   name: string
   icon?: string
   order?: number
