@@ -257,7 +257,7 @@ var routeTable = []route{
 	{"GET", "/api/admin/spaces", needs(authz.TenantSpacesRead).always(), true, false, false, (*server).adminListSpaces},
 	{"GET", "/api/admin/spaces/{space}", needs(authz.TenantSpacesRead).always(), true, false, false, (*server).adminGetSpace},
 	{"POST", "/api/admin/spaces/{space}/size", needs(authz.TenantSpacesManage).always(), true, false, false, (*server).adminResizeSpace},
-	{"PUT", "/api/admin/spaces/{space}/storage", needs(authz.SiteStorageManage).always(), true, false, false, (*server).adminPutSpaceStorage},
+	{"PUT", "/api/admin/spaces/{space}/storage", needs(authz.TenantSpacesManage).always(), true, false, false, (*server).adminPutSpaceStorage},
 	{"POST", "/api/admin/spaces/{space}/evict", needs(authz.SiteStorageManage).always(), true, false, false, (*server).adminEvictSpace},
 	{"GET", "/api/admin/storage", needs(authz.TenantStorageRead).always(), true, false, false, (*server).adminGetStorage},
 	{"GET", "/api/admin/storage/people", needs(authz.TenantStorageRead).always(), true, false, false, (*server).adminListPeople},
@@ -313,6 +313,7 @@ var routeTable = []route{
 	{"GET", "/api/admin/tenants", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminListTenants},
 	{"POST", "/api/admin/tenants", needs(authz.SiteTenantsManage).on(settings.FeatureTenancy), true, false, false, (*server).adminCreateTenant},
 	{"GET", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsRead).always(), true, false, false, (*server).adminGetTenant},
+	{"GET", "/api/admin/tenants/{tenant}/usage/export", needs(authz.TenantUsageRead).always(), true, false, false, (*server).adminUsageExport},
 	{"GET", "/api/admin/tenants/{tenant}/overview", needs(authz.TenantSettingsRead).always(), true, false, false, (*server).adminTenantOverview},
 	{"PATCH", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsWrite).always(), true, false, false, (*server).adminPatchTenant},
 	{"DELETE", "/api/admin/tenants/{tenant}", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminDeleteTenant},
@@ -546,6 +547,9 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			}
 			if p.Grant != nil && !p.Grant.Write && tokenChanges(r) {
 				writeError(w, http.StatusForbidden, "token_scope", "This token is read only.")
+				return
+			}
+			if !s.meterRequest(w, p.User.TenantID, false) {
 				return
 			}
 			c.p = p

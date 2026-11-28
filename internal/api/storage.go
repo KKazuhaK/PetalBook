@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/authz"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
 )
@@ -131,8 +132,9 @@ func (s *server) adminPutSpaceStorage(c *call) {
 	}
 	id := c.r.PathValue("space")
 	ctx := c.r.Context()
-	// The site's storage (site administrators only): a space of any tenant.
-	if _, err := store.GetSpace(ctx, s.opt.Store.Q(), store.AllTenants(), id); err != nil {
+	// A tenant's administrators reach their tenant's spaces, a site administrator any.
+	sp, err := store.GetAdminSpace(ctx, s.opt.Store.Q(), c.adminReach(), id)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
 			return
@@ -140,9 +142,15 @@ func (s *server) adminPutSpaceStorage(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	// The exemption from the requirement of a remote is the site's.
+	if req.Exempt != nil {
+		if e := s.allow(c, authz.SiteStorageManage, c.tenant()); e != nil {
+			s.refuse(c.w, e)
+			return
+		}
+	}
 	if req.Pin != nil {
-		if err := s.spaces.SetPinned(ctx, id, *req.Pin); err != nil {
-			s.fail(c.w, err)
+		if !s.setPin(c, sp, *req.Pin) {
 			return
 		}
 	}
@@ -190,4 +198,33 @@ func (s *server) storageStatus(ctx context.Context) (any, error) {
 		"clonesBudget": set.Cache.ClonesBytes, "assetsBudget": assetBudget, "restoresWaiting": waiting,
 		"remotes": map[string]int{"inGrace": aff.InGrace, "overdue": aff.Overdue},
 	}, nil
+}
+
+// setPin pins or unpins a space. A tenant's administrators pin the disk the
+// pinned spaces of the tenant take, at most storage.pinnedBytes (0 by default: they
+// cannot pin until the site allows it); over it the answer is 409 quota_exceeded
+// (quota "pinnedBytes") and nothing is pinned. A site administrator is not held
+// to it, and a space already pinned is not looked at again. The limit is read from
+// the settings' cache before the pin, and the check and the pin are one
+// transaction (spaces.PinWithin), so that pins at once cannot pass it together.
+func (s *server) setPin(c *call, sp store.AdminSpace, pin bool) bool {
+	ctx := c.r.Context()
+	if !pin || sp.Storage.Pinned || c.siteWide(authz.SiteStorageManage) || s.settings == nil {
+		if err := s.spaces.SetPinned(ctx, sp.ID, pin); err != nil {
+			s.fail(c.w, err)
+			return false
+		}
+		return true
+	}
+	limit, _ := s.settings.LimitOf(ctx, sp.TenantID, settings.StoragePinnedBytes)
+	pinned, used, err := s.spaces.PinWithin(ctx, sp.ID, sp.TenantID, limit)
+	if err != nil {
+		s.fail(c.w, err)
+		return false
+	}
+	if !pinned {
+		writeJSON(c.w, http.StatusConflict, errorBody{Error: "quota_exceeded", Quota: "pinnedBytes", Limit: &limit, Used: &used,
+			Message: "Pinning this space would keep more of the server's disk than this organisation may pin."})
+	}
+	return pinned
 }

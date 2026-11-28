@@ -420,7 +420,7 @@ func (s *Service) ApproveJoinRequest(ctx context.Context, actor store.User, tena
 	if err != nil {
 		s.log.Warn("could not write a notification", "error", err)
 	}
-	if err := s.sendMail(mail.KindJoinApproved, r.Lang, r.Email, mail.Vars{Username: u.Username, Org: ref.Name, Link: strings.TrimRight(s.cfg.PublicURL, "/") + "/login"}); err != nil {
+	if err := s.sendMail(tenant, mail.KindJoinApproved, r.Lang, r.Email, mail.Vars{Username: u.Username, Org: ref.Name, Link: strings.TrimRight(s.cfg.PublicURL, "/") + "/login"}); err != nil {
 		s.log.Warn("could not queue a message", "reason", err.Error())
 	}
 	r.State, r.DecidedAt, r.DecidedBy, r.MadeUser, r.PasswordHash = store.JoinApproved, now, actor.ID, u.ID, ""
@@ -448,7 +448,7 @@ func (s *Service) DenyJoinRequest(ctx context.Context, actor store.User, tenant,
 		return r, err
 	}
 	ref, _ := s.st.TenantRefOf(tenant)
-	if err := s.sendMail(mail.KindJoinDenied, r.Lang, r.Email, mail.Vars{Username: r.Username, Org: ref.Name}); err != nil {
+	if err := s.sendMail(tenant, mail.KindJoinDenied, r.Lang, r.Email, mail.Vars{Username: r.Username, Org: ref.Name}); err != nil {
 		s.log.Warn("could not queue a message", "reason", err.Error())
 	}
 	r.State, r.DecidedAt, r.DecidedBy, r.PasswordHash = store.JoinDenied, now, actor.ID, ""

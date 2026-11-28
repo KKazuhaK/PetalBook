@@ -97,6 +97,36 @@ func SetSpacePinned(ctx context.Context, q Q, id string, v bool) error {
 	})
 }
 
+// PinSpaceWithin pins a space if the disk of its tenant's pinned spaces, this
+// one included, stays within limit (0 or less: none may be pinned). The check and
+// the pin are one transaction, and the tenant's row is locked first (a write that
+// changes nothing, which PostgreSQL treats as a lock), so that pins of two spaces
+// of the tenant at once cannot both pass. It returns what the pins would take
+// (used) and whether the space was pinned. The limit is read by the caller
+// before: nothing here reads settings.
+func PinSpaceWithin(ctx context.Context, q Q, id, tenant string, limit int64) (pinned bool, used int64, err error) {
+	err = withSpace(ctx, q, id, func(q Q) error {
+		if _, err := q.Exec(ctx, `UPDATE tenants SET updated = updated WHERE id = ?`, tenant); err != nil {
+			return err
+		}
+		others, err := PinnedBytes(ctx, q, tenant, id)
+		if err != nil {
+			return err
+		}
+		size, err := SpaceDiskBytes(ctx, q, id)
+		if err != nil {
+			return err
+		}
+		if used = others + size; limit <= 0 || used > limit {
+			return nil
+		}
+		_, err = q.Exec(ctx, `UPDATE spaces SET pinned = 1 WHERE id = ?`, id)
+		pinned = err == nil
+		return err
+	})
+	return pinned && err == nil, used, err
+}
+
 // SetSpaceExempt sets whether the requirement of a remote leaves the space out.
 func SetSpaceExempt(ctx context.Context, q Q, id string, v bool) error {
 	res, err := q.Exec(ctx, `UPDATE spaces SET exempt = ? WHERE id = ?`, b2i(v), id)

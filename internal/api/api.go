@@ -169,6 +169,9 @@ type server struct {
 	jobs *jobs.Runner
 	// prefs holds the preferences written and not committed yet (see prefs.go).
 	prefs prefsHub
+	// limits holds the per-minute allowances of tenants and the meter of their
+	// daily usage (accounts mode; limits.go).
+	limits *tenantLimits
 	// peopleGate limits the people search per person, batchGate the rows of
 	// batches per person (see batch.go).
 	peopleGate, batchGate *ratelimit.Bucket
@@ -233,6 +236,16 @@ func (s *server) close() {
 	s.bgCancel()
 	s.jobs.Close() // stops the running jobs and waits for them
 	s.bg.Wait()
+	// What was counted since the meter's own last flush (it ran when the
+	// background work was told to stop): the server has stopped answering by now,
+	// and the database is still open.
+	if s.limits != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := s.limits.meter.Flush(ctx, s.opt.Store); err != nil {
+			s.log.Warn("could not write the tenants' daily usage when closing", "error", err)
+		}
+		cancel()
+	}
 }
 
 // New returns the handler for every endpoint.
@@ -365,6 +378,7 @@ func New(opt Options) *Handler {
 	if s.auth != nil {
 		s.auth.UseSettings(s.settings)
 		s.bindQuota()
+		s.startUsage()
 		// The starts and ends of the windows of rules are audited, and the
 		// quotas looked at again, by one timer (reads are right without it).
 		s.settings.Watch(s.bgCtx, s.ruleBoundaries)

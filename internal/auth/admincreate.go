@@ -155,12 +155,12 @@ func (s *Service) mailWelcome(ctx context.Context, u store.User, lang string) st
 		s.log.Warn("could not make the mailed link of a new account", "error", err)
 		return MailNone
 	}
-	err := s.sendMail(mail.KindWelcome, mail.PickLang(lang, ""), u.Email, mail.Vars{Name: u.Name, Username: u.Username, Link: s.link("/reset-password", tok), Hours: int(welcomeTTL.Hours())})
+	err := s.sendMail(u.TenantID, mail.KindWelcome, mail.PickLang(lang, ""), u.Email, mail.Vars{Name: u.Name, Username: u.Username, Link: s.link("/reset-password", tok), Hours: int(welcomeTTL.Hours())})
 	if err == nil {
 		return MailSent
 	}
 	_ = s.st.Tx(ctx, func(q store.Q) error { return store.DeleteEmailTokens(ctx, q, u.ID, store.TokenWelcomeMail) })
-	if ae := new(Error); errors.As(err, &ae) && ae.Status == 503 {
+	if ae := new(Error); errors.As(err, &ae) && (ae.Status == 503 || ae.Kind == RateLimited) {
 		return MailLimited
 	}
 	s.log.Warn("could not queue a message", "reason", err.Error())

@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { useAdminUsage, useTenants } from '@/api/admin'
-import { useAcrossSite } from './TenantScope'
+import { useAcrossSite, useScope } from './TenantScope'
+import { useSession } from '@/api/hooks'
+import { UsageExport } from './UsageExport'
 import type { PersonUsage, Tenant, TenantQuotaKey } from '@/api/types'
 import { ErrorState, PageFallback } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -26,8 +28,13 @@ export function UsagePanel() {
   const tenants = useTenants(site)
   // Only a site administrator has tenants to choose between, and only when there is more than the default one.
   const many = site && (tenants.data?.length ?? 0) > 1
+  // A tenant's administrator exports their own tenant's usage; a site administrator, in the tenant's page, any tenant's.
+  const scope = useScope()
+  const own = useSession().data?.user?.tenant?.id
+  const exportTenant = site ? null : (scope ?? own ?? null)
   return (
     <div className="grid min-w-0 gap-8">
+      {exportTenant && <UsageExport tenant={exportTenant} />}
       {site && tenants.data && (many || tenants.data.some((t) => t.usage.over.length > 0)) && (
         <TenantUsageList
           tenants={tenants.data}

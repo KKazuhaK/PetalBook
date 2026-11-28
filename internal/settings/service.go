@@ -192,6 +192,18 @@ func (s *Service) FileLimit(ctx context.Context, tenant string) int64 {
 	return n
 }
 
+// LimitOf is a limit setting in effect for a tenant, read from the cache (one
+// map lookup, no query): ok is false when the setting has no limit (null) or
+// cannot be read.
+func (s *Service) LimitOf(ctx context.Context, tenant, key string) (n int64, ok bool) {
+	e, err := s.Get(ctx, tenant, key)
+	if err != nil {
+		return 0, false
+	}
+	n, ok = e.Value.(int64)
+	return n, ok
+}
+
 // Defs lists the definitions in order.
 func (s *Service) Defs() []*Def { return s.defs }
 

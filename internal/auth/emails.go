@@ -235,10 +235,10 @@ func (s *Service) AddEmail(ctx context.Context, u store.User, email, lang, ip st
 	if claim {
 		kind = mail.KindEmailClaim
 	}
-	if err := s.sendMail(kind, lang, e, mail.Vars{Name: u.Name, Username: u.Username, Email: e, Link: s.link("/verify-email", tok), Hours: 24}); err != nil {
+	if err := s.sendMail(u.TenantID, kind, lang, e, mail.Vars{Name: u.Name, Username: u.Username, Email: e, Link: s.link("/verify-email", tok), Hours: 24}); err != nil {
 		return err
 	}
-	s.noteAddresses(ctx, mail.KindEmailAdded, lang, e, u.Email)
+	s.noteAddresses(ctx, u.TenantID, mail.KindEmailAdded, lang, e, u.Email)
 	return nil
 }
 
@@ -277,7 +277,7 @@ func (s *Service) ResendEmailVerify(ctx context.Context, u store.User, email, la
 	}); err != nil {
 		return err
 	}
-	return s.sendMail(mail.KindVerify, mail.PickLang(lang, ""), row.Email, mail.Vars{Name: u.Name, Username: u.Username, Email: row.Email, Link: s.link("/verify-email", tok), Hours: 24})
+	return s.sendMail(u.TenantID, mail.KindVerify, mail.PickLang(lang, ""), row.Email, mail.Vars{Name: u.Name, Username: u.Username, Email: row.Email, Link: s.link("/verify-email", tok), Hours: 24})
 }
 
 // MakePrimaryEmail makes one of the person's verified addresses the primary
@@ -311,7 +311,7 @@ func (s *Service) MakePrimaryEmail(ctx context.Context, u store.User, email, lan
 	s.dropUser(u.ID)
 	u.Email, u.EmailVerified = row.Email, true
 	s.cfg.Spaces.UserChanged(ctx, u)
-	s.noteAddresses(ctx, mail.KindEmailPrimary, mail.PickLang(lang, ""), row.Email, row.Email, old)
+	s.noteAddresses(ctx, u.TenantID, mail.KindEmailPrimary, mail.PickLang(lang, ""), row.Email, row.Email, old)
 	return &u, nil
 }
 
@@ -348,7 +348,7 @@ func (s *Service) RemoveEmail(ctx context.Context, u store.User, email, lang, ip
 	if row.Holds() {
 		to = append(to, row.Email)
 	}
-	s.noteAddresses(ctx, mail.KindEmailRemoved, mail.PickLang(lang, ""), row.Email, to...)
+	s.noteAddresses(ctx, u.TenantID, mail.KindEmailRemoved, mail.PickLang(lang, ""), row.Email, to...)
 	return nil
 }
 
@@ -381,7 +381,7 @@ func (s *Service) withdrawClaim(ctx context.Context, u store.User, email, ip str
 // may be sent account mail. It is held to each address's cap, not the
 // caller's: it goes only to the account's own addresses. A note that cannot
 // go is left out.
-func (s *Service) noteAddresses(ctx context.Context, kind, lang, about string, to ...string) {
+func (s *Service) noteAddresses(ctx context.Context, tenant, kind, lang, about string, to ...string) {
 	if !s.MailEnabled() {
 		return
 	}
@@ -395,7 +395,7 @@ func (s *Service) noteAddresses(ctx context.Context, kind, lang, about string, t
 		if _, ok := s.mailSlot(addr, ""); !ok {
 			continue
 		}
-		if err := s.sendMail(kind, lang, addr, mail.Vars{Email: about}); err != nil {
+		if err := s.sendMail(tenant, kind, lang, addr, mail.Vars{Email: about}); err != nil {
 			s.log.Warn("could not queue a message", "reason", err.Error())
 		}
 	}

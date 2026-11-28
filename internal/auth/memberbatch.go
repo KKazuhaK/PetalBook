@@ -187,10 +187,10 @@ func (s *Service) InviteMany(ctx context.Context, actor store.User, access authz
 		}
 		m := mail.Render(mail.KindInvite, mail.PickLang("", ""), mail.Vars{Site: s.siteName(), Email: invs[i].Email, Link: out[i].Link, Hours: inviteDays * 24})
 		m.To = invs[i].Email
-		if err := s.mail.Enqueue(m); err != nil {
+		if err := s.enqueueFor(tenantID, mail.KindInvite, m); err != nil {
 			out[i].Mail = MailNone
-			if errors.Is(err, mail.ErrQueueFull) {
-				out[i].Mail = MailLimited
+			if ae := new(Error); errors.Is(err, mail.ErrQueueFull) || (errors.As(err, &ae) && ae.Kind == RateLimited) {
+				out[i].Mail = MailLimited // over the queue, or the tenant's day: the link is handed over instead
 			}
 			continue
 		}

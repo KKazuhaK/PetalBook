@@ -354,6 +354,7 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/admin/spaces/{space}/disable":  {kind: isoParam},
 	"POST /api/admin/spaces/{space}/enable":   {kind: isoParam},
 	"DELETE /api/admin/spaces/{space}":        {kind: isoParam},
+	"PUT /api/admin/spaces/{space}/storage":   {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"pin": false} }},
 	"GET /api/admin/groups":                   {kind: isoList},
 	"POST /api/admin/groups":                  {kind: isoList},
 	"GET /api/admin/groups/{group}":           {kind: isoParam},
@@ -378,6 +379,7 @@ var isolationRoutes = map[string]isoEntry{
 	"PATCH /api/admin/tenants/{tenant}":               {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"name": "taken over"} }},
 	"GET /api/admin/tenants/{tenant}/settings":        {kind: isoParam},
 	"GET /api/admin/tenants/{tenant}/overview":        {kind: isoParam},
+	"GET /api/admin/tenants/{tenant}/usage/export":    {kind: isoParam},
 	"GET /api/admin/tenants/{tenant}/domains":         {kind: isoParam},
 	"POST /api/admin/tenants/{tenant}/domains":        {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"domain": "evil.example"} }},
 	"POST /api/admin/tenants/{tenant}/domains/{domain}/verify": {kind: isoParam, ids: func(f *tenFx) map[string]string {

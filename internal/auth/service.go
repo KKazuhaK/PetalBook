@@ -37,6 +37,7 @@ import (
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/usage"
 )
 
 // negative is a cookie that is no session: until when to answer so without
@@ -184,6 +185,11 @@ type Service struct {
 	regCaps  *ratelimit.Window // registrations per tenant
 	joinCaps *ratelimit.Window // requests to join by domain, per address and day
 	settings atomic.Pointer[settings.Service]
+	// meter counts the tenants' daily usage: the mail of a tenant is counted
+	// there and held to rate.mailPerDay (mailDayLimit).
+	meter atomic.Pointer[usage.Meter]
+	// overDay is the day each tenant's key last wrote quota_exceeded.
+	overDay sync.Map
 }
 
 type cachedSession struct {

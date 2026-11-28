@@ -2,6 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"strings"
 	"time"
 )
 
@@ -66,4 +69,146 @@ func ListUsageDaily(ctx context.Context, q Q, tenantID, from, to string) ([]Usag
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// TenantTotals are the totals the daily recount sets for a tenant.
+type TenantTotals struct {
+	TenantID                           string
+	People, Spaces, Bytes, PinnedBytes int64
+}
+
+// pinnedBytesSQL is the disk a space keeps on the server when pinned: what the
+// last measurement found of its clone, else what the quotas count of it.
+const pinnedBytesSQL = `COALESCE(size_bytes, usage_bytes, 0)`
+
+// PinnedBytes is the disk the pinned spaces of a tenant take, leaving out the
+// space named by except ("" for none): one indexed read.
+func PinnedBytes(ctx context.Context, q Q, tenantID, except string) (int64, error) {
+	var n int64
+	err := q.QueryRow(ctx, `SELECT COALESCE(SUM(`+pinnedBytesSQL+`), 0) FROM spaces WHERE pinned <> 0 AND tenant_id = ? AND id <> ?`,
+		tenantID, except).Scan(&n)
+	return n, err
+}
+
+// SpaceDiskBytes is what pinning a space would keep on the server's disk.
+func SpaceDiskBytes(ctx context.Context, q Q, id string) (int64, error) {
+	var n int64
+	err := q.QueryRow(ctx, `SELECT `+pinnedBytesSQL+` FROM spaces WHERE id = ?`, id).Scan(&n)
+	return n, err
+}
+
+// ListTenantTotals reads the totals of every tenant: the people, spaces and
+// bytes of the usage rows (a tenant with no row has none) and the disk of its
+// pinned spaces. Two queries, whatever the number of tenants.
+func ListTenantTotals(ctx context.Context, q Q) ([]TenantTotals, error) {
+	rows, err := q.Query(ctx, `SELECT t.id, COALESCE(u.people, 0), COALESCE(u.spaces, 0), COALESCE(u.bytes, 0)
+		FROM tenants t LEFT JOIN usage u ON u.kind = 'tenant' AND u.id = t.id ORDER BY t.id`)
+	if err != nil {
+		return nil, err
+	}
+	var out []TenantTotals
+	for rows.Next() {
+		var t TenantTotals
+		if err := rows.Scan(&t.TenantID, &t.People, &t.Spaces, &t.Bytes); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	pin, err := q.Query(ctx, `SELECT tenant_id, COALESCE(SUM(`+pinnedBytesSQL+`), 0) FROM spaces WHERE pinned <> 0 GROUP BY tenant_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer pin.Close()
+	byTenant := map[string]int64{}
+	for pin.Next() {
+		var id string
+		var n int64
+		if err := pin.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		byTenant[id] = n
+	}
+	if err := pin.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].PinnedBytes = byTenant[out[i].TenantID]
+	}
+	return out, nil
+}
+
+// SetTenantTotals sets the totals of one tenant's day in one transaction's worth
+// of statements (the caller's Q).
+func SetTenantTotals(ctx context.Context, q Q, day string, t TenantTotals) error {
+	for _, kv := range []struct {
+		key string
+		v   int64
+	}{{UsageKeyPeople, t.People}, {UsageKeySpaces, t.Spaces}, {UsageKeyBytes, t.Bytes}, {UsageKeyPinnedBytes, t.PinnedBytes}} {
+		if err := SetUsageDaily(ctx, q, t.TenantID, day, kv.key, kv.v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UsageDailyValue is the value of a counter of a tenant's day (0 when none).
+func UsageDailyValue(ctx context.Context, q Q, tenantID, day, key string) (int64, error) {
+	var n int64
+	err := q.QueryRow(ctx, `SELECT value FROM tenant_usage_daily WHERE tenant_id = ? AND day = ? AND key = ?`, tenantID, day, key).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return n, err
+}
+
+// UsageDailyOfTenants returns the rows of one day of the given tenants (an
+// index range of the primary key for each), as tenant -> key -> value.
+func UsageDailyOfTenants(ctx context.Context, q Q, day string, ids []string) (map[string]map[string]int64, error) {
+	out := map[string]map[string]int64{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ")
+	args := []any{day}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := q.Query(ctx, `SELECT tenant_id, key, value FROM tenant_usage_daily WHERE day = ? AND tenant_id IN (`+marks+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t, k string
+		var v int64
+		if err := rows.Scan(&t, &k, &v); err != nil {
+			return nil, err
+		}
+		if out[t] == nil {
+			out[t] = map[string]int64{}
+		}
+		out[t][k] = v
+	}
+	return out, rows.Err()
+}
+
+// SetTenantTotalKeys sets some of the totals of a tenant's day: only the keys
+// of vals.
+func SetTenantTotalKeys(ctx context.Context, q Q, tenantID, day string, vals map[string]int64) error {
+	for k, v := range vals {
+		if err := SetUsageDaily(ctx, q, tenantID, day, k, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Values are the totals of a tenant as key -> value.
+func (t TenantTotals) Values() map[string]int64 {
+	return map[string]int64{UsageKeyPeople: t.People, UsageKeySpaces: t.Spaces, UsageKeyBytes: t.Bytes, UsageKeyPinnedBytes: t.PinnedBytes}
 }

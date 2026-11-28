@@ -107,6 +107,7 @@ var registered = []Kind{
 	{Name: "token_revoked", Category: Admin},
 	{Name: "grant_revoked", Category: Admin},
 	{Name: "quota_exceeded", Category: Admin},
+	{Name: "usage_exported", Category: Admin},
 	{Name: "bulk_started", Category: Admin},
 	{Name: "bulk_finished", Category: Admin},
 

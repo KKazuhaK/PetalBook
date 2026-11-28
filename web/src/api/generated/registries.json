@@ -663,6 +663,10 @@
           "site": false
         },
         {
+          "name": "usage_exported",
+          "site": false
+        },
+        {
           "name": "user_changed",
           "site": false
         },
