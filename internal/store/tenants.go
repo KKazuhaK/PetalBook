@@ -493,6 +493,10 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		if _, err := q.Exec(ctx, `DELETE FROM provider_installations WHERE owner_tenant = ?`, id); err != nil {
 			return err
 		}
+		// Its own storage targets (no foreign key on the owner; their sharing goes with them).
+		if _, err := q.Exec(ctx, `DELETE FROM storage_targets WHERE owner = ?`, id); err != nil {
+			return err
+		}
 		// Its custom roles, and the grants of any role held in it, go with it.
 		if _, err := q.Exec(ctx, `DELETE FROM role_grants WHERE tenant_id = ?`, id); err != nil {
 			return err

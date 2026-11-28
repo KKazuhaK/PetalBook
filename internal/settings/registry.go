@@ -199,6 +199,29 @@ const (
 	CacheMinFreeBytes       = "cache.minFreeBytes"
 	CacheAssetsBytes        = "cache.assetsBytes"
 
+	// The switches of what a tenant may borrow from the site (3.6): its SMTP
+	// when the tenant has no sender of its own (MailUseSite), the daily text's
+	// external interfaces and their allowance (DailyUseSiteAPIs), and the
+	// connections the site configured, such as its GitHub App
+	// (ConnectionsUseSiteApps). Site and tenant; on by default, as the site's
+	// are what is used today. Reserved: nothing reads them yet.
+	MailUseSite            = "mail.useSite"
+	DailyUseSiteAPIs       = "daily.useSiteApis"
+	ConnectionsUseSiteApps = "connections.useSiteApps"
+
+	// StoragePartialUnsupported is what happens when a space is connected to a
+	// remote that cannot sync partially: "allow" clones it in full, "refuse"
+	// answers 409 partial_unsupported (3.6). Site and tenant; refuse is the
+	// stricter. Reserved: nothing reads it yet.
+	StoragePartialUnsupported = "storage.partial.unsupported"
+
+	// The outgoing calls made for tenants' own configuration (docs/api.md,
+	// "Outgoing requests made for a tenant"): the cap on every tenant together,
+	// and the share of it one tenant has when its rate.outboundPerMinute rule
+	// says none. Site only. Reserved: nothing reads them yet.
+	OutboundPerMinute       = "outbound.perMinute"
+	OutboundTenantPerMinute = "outbound.tenantPerMinute"
+
 	// DailyLanguages are the languages the daily text's settings pages have a
 	// tab for, besides all languages.
 	DailyLanguages = "daily.languages"
@@ -348,6 +371,18 @@ func baseDefinitions() []*Def {
 		// checked by the daily text's code).
 		{Key: DailyLanguages, Kind: List, Layers: []Layer{Site}, Default: []string{"zh-Hans", "en"}, Lower: Lower{Mode: Allow},
 			ServerWide: "the pages of the daily text's settings are the server's"},
+
+		// What a tenant may borrow from the site, and the partial-sync policy (reserved).
+		{Key: MailUseSite, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: DailyUseSiteAPIs, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: ConnectionsUseSiteApps, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: StoragePartialUnsupported, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: "allow", Choices: []string{"allow", "refuse"}, Lower: Lower{Mode: Allow}},
+
+		// The outgoing calls made for tenants' configuration (reserved).
+		{Key: OutboundPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(600), Min: 1, Max: 1 << 30, Lower: Lower{Mode: Allow},
+			ServerWide: "the cap counts the requests made for every tenant's configuration together"},
+		{Key: OutboundTenantPerMinute, Kind: Limit, Layers: []Layer{Site}, Default: int64(120), Min: 1, Max: 1 << 30, Lower: Lower{Mode: Allow},
+			ServerWide: "it is each tenant's share of the server's outbound cap"},
 
 		// The features of 3.1: site-wide on, off for one tenant by a rule.
 		{Key: FeatureOwnSSO, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},

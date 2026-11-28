@@ -9747,6 +9747,9 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | `quota.spacesPerPerson`, `.bytesPerPerson`, `.pagesPerPerson` | limit | S, T, P |
 | `rate.apiPerMinute`, `.mcpPerMinute`, `.mailPerDay`, `.outboundPerMinute` | limit or none | S + rule |
 | `storage.mode` | choice `server`, `own`, `tenant` | S, T |
+| `storage.partial.unsupported` | choice `allow` < `refuse`, default `allow` | S, T |
+| `mail.useSite`, `daily.useSiteApis`, `connections.useSiteApps` | boolean, default on | S, T |
+| `outbound.perMinute`, `outbound.tenantPerMinute` | limit, 1 or more, default 600 and 120 | S! (the cap counts the requests made for every tenant's configuration together) |
 | `storage.assets` | choice `space` < `repository` | S, T, Sp (the owner's request when the space is made) |
 | `storage.assets.ownStorageExempt`, `storage.pinnedBytes` | boolean, limit | S + rule |
 | `storage.remotes.require`, `.scope`, `.graceDays`, `storage.localSpaces.maxBytes` | text, choice, limits | S, T (the site's lock: a tenant may only tighten) |
@@ -9763,6 +9766,12 @@ Notes:
   3.1 does; the site may loosen each to `allow` (the site's value is a default)
   or lock it. 3.1's `storage.remotes.require` is derived from `storage.mode`
   (see "Storage modes").
+- The keys `storage.partial.unsupported`, `mail.useSite`, `daily.useSiteApis`,
+  `connections.useSiteApps`, `outbound.perMinute` and `outbound.tenantPerMinute`
+  are in the registry, with their defaults, before the features that read them
+  are built; until then nothing reads them (their help says "not in effect
+  yet"). The three `useSite` switches default to on, which is what a tenant
+  gets today.
 - `storage.partial.unsupported` (owner, 2026-11-23) is the only partial-sync
   policy. With `refuse`, connecting a space to a host that 3.5's detection found
   unable to filter (`partialSync: "no"`) answers `409 partial_unsupported` with
@@ -11354,7 +11363,18 @@ SQLite and PostgreSQL.
   `tenant_usage_daily` (tenant, day, key, value; primary key
   `(tenant_id, day, key)`). 3.3's `tenants.quota` columns are dropped (the
   totals are `quota.people`, `quota.spaces`, `quota.bytes` and `quota.pages`).
-- Settings: `layered_settings.note`, `.set_by`, `.site_lock`.
+- Settings: `layered_settings.note` (text, at most 200 characters, `''` for
+  none), `.set_by`, `.site_lock`.
+- Shapes reserved ahead of their features (nothing reads them yet):
+  `tenant_integrations` (tenant, kind, id, JSON config, updated by, updated;
+  primary key `(tenant_id, kind, id)`, deleted with the tenant; the sealed
+  secrets stay in `secrets`); `tenant_usage_daily` with `day` as the UTC date
+  `YYYY-MM-DD` and the keys `people`, `spaces`, `bytes`, `pinnedBytes`,
+  `apiRequests`, `mcpRequests`, `mail` and `outgoing`, counted by one
+  `INSERT … ON CONFLICT DO UPDATE SET value = value + excluded.value`;
+  `storage_targets` with `app`, `prefix`, `state` (`checking`, `ok`, `broken`),
+  `state_error`, `checked_at`, `in_use` and `updated_by`, and
+  `storage_target_shares` (target, tenant) for a site target offered to tenants.
 - Tenant-owned: `tenant_mail`, `tenant_captcha`, `tenant_daily` (and its
   interfaces and lines, by tenant), `github_apps` (owner `site` or a tenant;
   the site's App moves into it from `site_records`, where 2.7 keeps it),

@@ -236,6 +236,10 @@ export const tenantsEn: TenantsMessages = {
     fromFlag: 'Set by a command-line flag; read only here',
     choices: {
       'storage.assets': { space: "In the space's own repository", repository: 'In a separate attachments repository' },
+      'storage.partial.unsupported': {
+        allow: 'Allow: clone it in full',
+        refuse: 'Refuse: do not connect it',
+      },
       'registration.mode': {
         open: 'Open: anyone may make an account',
         invite: 'By invitation: only with an invite link',
@@ -351,6 +355,12 @@ export const tenantsEn: TenantsMessages = {
       'features.ownDaily': "The tenant's own daily text interfaces and lines",
       'features.githubConnect': 'Installing the GitHub App on their own GitHub accounts',
       'storage.mode': 'Where new spaces may sync',
+      'storage.partial.unsupported': 'Remotes that cannot sync partially',
+      'mail.useSite': "Borrow the site's mail sender when there is none of its own",
+      'daily.useSiteApis': "Use the site's daily text interfaces",
+      'connections.useSiteApps': "Connect through the site's provider apps",
+      'outbound.perMinute': 'Outgoing calls a minute for all tenants together',
+      'outbound.tenantPerMinute': "One tenant's share of the outgoing calls a minute",
       'storage.pinnedBytes': 'Disk the tenant administrators may pin (bytes)',
       'quota.people': 'People in the tenant',
       'quota.spaces': 'Spaces in the tenant',
@@ -484,6 +494,18 @@ export const tenantsEn: TenantsMessages = {
         "Whether a new space synced to a platform keeps its attachments in its own repository or in a separate attachments repository (<name>-assets). Separate is the default. Order: the site's lock, the site's lock for one tenant, the site's default, the tenant's default, then the space's owner. A space with no remote keeps attachments in the space. When a tenant's limits table turns the attachments repository off, only the space is possible.",
       'storage.assets.ownStorageExempt':
         "On (the default): a space whose owner stores it on their own storage is exempt from the site's rule for where attachments go, so its owner decides. Off: the site's default or lock applies to those spaces too. Storage targets of their own arrive with 3.6; until then the switch is only stored.",
+      'storage.partial.unsupported':
+        'What happens when a space is connected to a remote that cannot sync partially. Allow (the default): the space is cloned in full. Refuse: connecting it is refused; spaces already connected keep working. Refuse is the stricter. Not in effect yet.',
+      'mail.useSite':
+        "On (the default): an organisation with no mail sender of its own sends through the site's, under the organisation's name. Off: it sends nothing until it sets one up. Not in effect yet.",
+      'daily.useSiteApis':
+        "On (the default): the organisation's spaces may choose the site's daily text interfaces, within the site's allowance. Off: only its own. Not in effect yet.",
+      'connections.useSiteApps':
+        "On (the default): people of the organisation with no provider app of its own connect through the site's. Off: they cannot until it adds one. Not in effect yet.",
+      'outbound.perMinute':
+        "How many outgoing requests a minute the server makes for tenants' own configuration (their mail, captcha, daily text and provider checks), all together. Over it the request is not made. Not in effect yet.",
+      'outbound.tenantPerMinute':
+        'The most of that cap one tenant may use in a minute, unless a rule for the tenant sets its own outgoing calls. Not in effect yet.',
     },
   },
   secrets: {
