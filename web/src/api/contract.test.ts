@@ -1517,6 +1517,7 @@ function suite(target: Target) {
           const anon = browser()
           expect((await call(anon, 'GET', '/api/register')).json).toEqual({
             open: false,
+            mode: 'invite',
             orgCreation: { open: false },
             domainJoin: false,
           })
