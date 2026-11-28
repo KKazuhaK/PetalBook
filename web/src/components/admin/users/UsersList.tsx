@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { Ban, CircleCheck, Ellipsis, Eye, Search, UserPlus, Trash2 } from 'lucide-react'
+import { Ban, CircleCheck, Ellipsis, Eye, Search, UserPlus, UserRoundPlus, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useUsersPage } from '@/api/admin'
@@ -33,6 +33,7 @@ import { tc } from '@/i18n/console'
 import { tg } from '@/i18n/manage'
 import { AdminPageActions } from '../AdminPageHeader'
 import { Avatar } from './Avatar'
+import { CreateAccountDialog } from './CreateAccountDialog'
 import { useUserChange } from './useUserChange'
 
 const INACTIVE_DAYS = 90
@@ -59,6 +60,7 @@ export function UsersList() {
   const [sort, setSort] = useState<{ key: UserSort; order: 'asc' | 'desc' }>({ key: 'created', order: 'asc' })
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [bulk, setBulk] = useState<ConfirmAction | null>(null)
+  const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<User | null>(null)
   const { change, busy, error, messageRef } = useUserChange()
 
@@ -252,12 +254,20 @@ export function UsersList() {
             <option value="inactive">{tc.users.inactive(INACTIVE_DAYS)}</option>
           </NativeSelect>
         </div>
-        {canInvite && (
+        {(canInvite || canManage) && (
           <AdminPageActions>
-            <Button className="h-10" render={<Link to={adminPath('users', 'invites')} />} nativeButton={false}>
-              <UserPlus aria-hidden="true" />
-              {tc.users.invite}
-            </Button>
+            {canManage && (
+              <Button className="h-10" variant="outline" onClick={() => setCreating(true)}>
+                <UserRoundPlus aria-hidden="true" />
+                {tc.users.create}
+              </Button>
+            )}
+            {canInvite && (
+              <Button className="h-10" render={<Link to={adminPath('users', 'invites')} />} nativeButton={false}>
+                <UserPlus aria-hidden="true" />
+                {tc.users.invite}
+              </Button>
+            )}
           </AdminPageActions>
         )}
       </div>
@@ -337,6 +347,7 @@ export function UsersList() {
       {deleting && (
         <DeletePersonDialog id={deleting.id} username={deleting.username} onClose={() => setDeleting(null)} />
       )}
+      {creating && <CreateAccountDialog across={site} onClose={() => setCreating(false)} />}
       {bulk && (
         <BulkDialog
           action={bulk}

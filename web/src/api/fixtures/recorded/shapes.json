@@ -765,6 +765,7 @@
      "disabled?": "boolean",
      "domain?": "string",
      "dryRun?": "boolean",
+     "email?": "string",
      "export?": "string",
      "failed?": "number",
      "from?": {
@@ -841,6 +842,7 @@
      "key?": "string",
      "layer?": "string",
      "limit?": "number",
+     "mail?": "string",
      "method?": "string",
      "name?": "string",
      "newTenant?": "boolean",
@@ -939,6 +941,7 @@
       ]
      },
      "scope?": "string",
+     "signIn?": "string",
      "siteAdmin?": "boolean",
      "slug?": "string",
      "source?": "string",
@@ -5156,6 +5159,42 @@
   "error": "string",
   "message": "string"
  },
+ "POST /api/admin/users 201": {
+  "expires": "string",
+  "link": "string",
+  "mail": "string",
+  "signIn": "string",
+  "user": {
+   "created": "string",
+   "disabled": "boolean",
+   "email": "string",
+   "emailVerified": "boolean",
+   "id": "string",
+   "name": "string",
+   "passkeyRequired": "boolean",
+   "role": "string",
+   "siteAdmin": "boolean",
+   "tenant": {
+    "id": "string",
+    "name": "string",
+    "slug": "string"
+   },
+   "username": "string"
+  }
+ },
+ "POST /api/admin/users 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/users 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/users 409": {
+  "error": "string",
+  "message": "string"
+ },
  "POST /api/admin/users/{}/view-as 200": {
   "id": "string",
   "until": "string"
@@ -5305,6 +5344,10 @@
   "message": "string"
  },
  "POST /api/password/forgot 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/password/reset 404": {
   "error": "string",
   "message": "string"
  },

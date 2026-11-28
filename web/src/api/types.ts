@@ -1372,6 +1372,15 @@ export interface CreatedInvite {
   name?: string
   email?: string
 }
+// An account an administrator made (POST /api/admin/users). The link is in this response only: `signIn` is `link` when
+// the person sets a password with it, `sso` when their organisation requires its single sign-on (no link then).
+export interface CreatedAccount {
+  user: User
+  signIn: 'link' | 'sso'
+  link: string | null
+  expires: string | null
+  mail: 'sent' | 'none' | 'limited'
+}
 export interface InviteCheck {
   role: Role
   expires: string

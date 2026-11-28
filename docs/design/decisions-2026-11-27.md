@@ -30,9 +30,24 @@ password self-registration, is replaced by a three-way setting,
   - `closed`: nothing makes an account. Invite links stop working too, so accepting
     one answers `403 registration_closed`. Domain joins are off (no automatic joins,
     no new requests); requests already pending stay approvable, because approval is
-    an administrator's act. First-administrator setup is exempt. Direct creation of
-    accounts by an administrator comes in the next step; for now closed simply
-    creates nothing.
+    an administrator's act. First-administrator setup is exempt.
+  - **Administrators make accounts by hand** (`POST /api/admin/users`; owner
+    decision of 2026-11-27: under `closed` only administrators make accounts). It is
+    not gated by the mode, nor by `registration.domains`; it is bounded by
+    `quota.people` (`409 people_limit`). A site administrator may make one in the
+    default tenant or in any organisation; an organisation administrator only in
+    their own tenant, with `member` or `admin`. The administrator never knows the
+    password: the person gets a one-time set-password link (7 days), returned once to
+    the administrator and, when mail is on and there is an address, mailed too in the
+    person's language. The address starts unverified; only the mailed link verifies it,
+    a copied one does not. Where the tenant requires its SSO for the person
+    (`signin.ssoOnly`, and `signin.ssoOnlyAdmins` for an administrator) no link is made.
+    **Known gap:** nothing then matches that person's first SSO sign-in to the account:
+    a sign-in attaches to an account by its identity link only, never by address (a
+    verified address held by another account sends the person to sign in there and link,
+    `email_in_use`, which needs a password the person cannot use). Under `closed` or
+    `invite` the sign-in is refused, and under `open` it makes a second account. A
+    pre-link or an address match for such accounts is a follow-up decision, not built.
 - **Defaults.** Invites worked while registration was closed, so the old behaviour
   is `invite`: both the site default and the organisation default are `invite`.
 - **The per-provider `autoCreate` switch is gone**, with the column, the views and

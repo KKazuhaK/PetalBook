@@ -84,6 +84,7 @@ import type {
   SecuritySettings,
   DailyAllow,
   AdminSpacesParams,
+  CreatedAccount,
   CreatedInvite,
   DailyApi,
   DailyDefault,
@@ -175,6 +176,15 @@ export const adminApi = {
     request<void>(`/users/${enc(id)}/passkeys/${enc(passkey)}`, { method: 'DELETE' }),
   createInvite: (input: { role?: Role; days?: number } = {}) =>
     request<CreatedInvite>('/invites', { method: 'POST', body: input }),
+  // An account made by hand: the person gets a one-time link that sets the password (the answer has it, once).
+  createAccount: (input: {
+    username: string
+    name?: string
+    email?: string
+    role?: Role
+    tenant?: string
+    lang?: string
+  }) => request<CreatedAccount>('/admin/users', { method: 'POST', body: input }),
   invites: (signal?: AbortSignal) => request<{ invites: Invite[] }>('/invites', { signal }),
   revokeInvite: (id: string) => request<void>(`/invites/${enc(id)}`, { method: 'DELETE' }),
 

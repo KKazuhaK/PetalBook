@@ -38,7 +38,8 @@ describe('the page header', () => {
     expect(header()!.querySelector('h1')!.textContent).toBe(tc.sections.users)
     expect(header()!.querySelector('[data-slot="page-description"]')!.textContent).toBe(tc.pageHelp['users/all'])
     await settle(
-      () => header()!.querySelector('[data-slot="admin-page-actions"]')!.textContent === tc.users.invite,
+      () =>
+        header()!.querySelector('[data-slot="admin-page-actions"]')!.textContent === tc.users.create + tc.users.invite,
       'invite',
     )
   })
