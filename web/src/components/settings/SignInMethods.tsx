@@ -59,7 +59,7 @@ interface Row {
 }
 
 // The account's one list of sign-in methods (docs/api.md, "GET /api/account"): the password, each linked sign-in
-// and each passkey, with when each was added and last used and what can be done with it. From 640px it is a table;
+// and each passkey, with when each was added and last used and what can be done with it. From 560px it is a table;
 // under that each method is a card with its actions in a menu. Below it, how to add one: link a provider, add a
 // passkey, set a password.
 export function SignInMethods({ account, onPassword }: { account: AccountInfo; onPassword: () => void }) {
@@ -198,7 +198,7 @@ export function SignInMethods({ account, onPassword }: { account: AccountInfo; o
   return (
     <SettingsSection title={ts.methods.title} id="methods-heading" description={ts.methods.help}>
       {account.user.passkeyRequired && <FormMessage tone="info">{ts.passkeys.required}</FormMessage>}
-      {/* The layout follows the width of this box, not the window: the settings dialog is narrower than the window. In a box under 640px each method is a card of its own, its actions in a menu. */}
+      {/* The layout follows the width of this box, not the window: the settings dialog is narrower than the window. In a box under 560px each method is a card of its own, its actions in a menu. */}
       <div className="@container/methods min-w-0">
         <ul
           className="divide-y rounded-lg border @min-[560px]/methods:hidden"

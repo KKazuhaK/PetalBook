@@ -923,9 +923,10 @@ Accounts mode, signed in.
 password (when there is one), each linked account that signs the person in,
 and each passkey, in that order. `added` is when it was made (for the
 password, when it was last set); `lastUsed` is when it last signed the person
-in, `null` for never. The time is written at each sign-in (one `UPDATE`), and
-a failed attempt writes nothing. `removable` is whether the row may be removed
-now: removing a way that works must leave another that works, otherwise it is
+in, `null` for never. The time is written at each sign-in (one `UPDATE`), after
+every check has passed: a refused attempt (wrong password, disabled account,
+`local_login_refused`, a provider's refusal) writes nothing. `removable` is whether the row may be removed
+now: removing a link or a passkey must leave a way that works now (the password, a passkey while passkeys are on, a link whose provider is on; one count, shared by these guards and by `removable`), otherwise it is
 `409 last_method` (an identity) or `409 conflict` (the last passkey), so the
 page can say why; the password is never removed, only changed. `canUnlink` is
 whether at least two ways work now. `passkeys` stays as above.

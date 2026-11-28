@@ -94,44 +94,29 @@ func (s *Service) Account(ctx context.Context, u store.User) (*AccountView, erro
 	if err != nil {
 		return nil, err
 	}
-	// Which of them work now: password and passkeys unless local sign-in is
-	// refused to the person (passkeys also need to be on), a link while its
-	// provider is set up and on. A method that does not work may always go; one
-	// that does may go while another one that works remains.
-	st := s.sec(ctx)
-	local := !s.localRefusedUser(ctx, st, &u)
-	works := 0
-	if v.HasPassword && local {
-		works++
+	// The same count as the guards of unlinking and deleting: a method may go
+	// while a way that works remains.
+	pkIDs := make([]string, len(v.Passkeys))
+	for i, p := range v.Passkeys {
+		pkIDs[i] = p.ID
 	}
-	pkWorks := local && s.passkeysOn(st)
-	if pkWorks {
-		works += len(v.Passkeys)
-	}
-	linkWorks := make([]bool, len(links))
-	for i, l := range links {
-		if rt := s.provs.getID(l.ProviderID); rt != nil && s.signInOn(ctx, rt) {
-			linkWorks[i] = true
-			works++
-		}
-	}
-	v.CanUnlink = works >= 2
-	removable := func(counts bool) bool { return !counts || works >= 2 }
+	ways := s.signInWaysOf(ctx, &u, v.HasPassword, links, pkIDs)
+	v.CanUnlink = ways.total() >= 2
 	if v.HasPassword {
 		// The password has no remove action: it is changed, not deleted.
 		v.Methods = append(v.Methods, MethodView{Type: MethodPassword, Added: set, LastUsed: used})
 	}
-	for i, l := range links {
+	for _, l := range links {
 		name, slug, kind := s.providerByID(l.ProviderID)
 		class := ""
 		if rt := s.provs.getID(l.ProviderID); rt != nil {
 			class = rt.row.Class
 		}
-		v.Methods = append(v.Methods, MethodView{Type: MethodIdentity, ID: l.ID, Added: l.Created, LastUsed: l.LastUsed, Removable: removable(linkWorks[i]),
+		v.Methods = append(v.Methods, MethodView{Type: MethodIdentity, ID: l.ID, Added: l.Created, LastUsed: l.LastUsed, Removable: ways.removable(wayLink, l.ID),
 			Provider: name, ProviderSlug: slug, Kind: kind, Class: class, Label: l.Label})
 	}
 	for _, p := range v.Passkeys {
-		v.Methods = append(v.Methods, MethodView{Type: MethodPasskey, ID: p.ID, Added: p.Created, LastUsed: p.LastUsed, Removable: removable(pkWorks),
+		v.Methods = append(v.Methods, MethodView{Type: MethodPasskey, ID: p.ID, Added: p.Created, LastUsed: p.LastUsed, Removable: ways.removable(wayPasskey, p.ID),
 			Name: p.Name, Synced: p.Synced})
 	}
 	return v, nil
@@ -342,11 +327,11 @@ func (s *Service) unlinkAccount(ctx context.Context, userID, linkID, actor, by, 
 		// What is left must be a way the person can sign in with now: a
 		// password or a passkey that sign-in still accepts from them, or a
 		// connected account of a provider that is set up and on.
-		ways, err := s.waysToSignIn(ctx, q, userID, linkID, ids)
+		ways, err := s.loadWays(ctx, q, userID)
 		if err != nil {
 			return err
 		}
-		if ways == 0 {
+		if !ways.removable(wayLink, linkID) {
 			if by != "user" {
 				return coded(409, "last_method", "This is the only way this person can sign in; they need a password or a passkey first.")
 			}
@@ -990,42 +975,98 @@ func (s *Service) PublicInfoFor(ctx context.Context, tenant string) PublicInfo {
 	return info
 }
 
-// waysToSignIn counts the ways a person could sign in once the identity without
-// is gone, counting only those that work now: a password or a passkey when
-// password sign-in is not refused to them, and an identity of a provider that
-// is configured and enabled.
-func (s *Service) waysToSignIn(ctx context.Context, q store.Q, userID, without string, ids []store.Link) (int, error) {
+// Kinds of way to sign in that can be removed.
+const (
+	wayLink    = "link"
+	wayPasskey = "passkey"
+)
+
+// signInWays is what a person can sign in with now: the password and the
+// passkeys when local sign-in is not refused to them (the passkeys also need to
+// be on), and each linked account whose provider is set up and on. It is the
+// one rule behind the guards of unlinking and deleting a passkey and behind the
+// `removable` of the account's list of methods.
+type signInWays struct {
+	password bool
+	links    map[string]bool // id -> works now
+	passkeys map[string]bool
+}
+
+func (s *Service) signInWaysOf(ctx context.Context, u *store.User, hasPassword bool, links []store.Link, passkeyIDs []string) *signInWays {
+	w := &signInWays{links: map[string]bool{}, passkeys: map[string]bool{}}
+	st := s.sec(ctx)
+	local := !s.localRefusedUser(ctx, st, u)
+	w.password = hasPassword && local
+	for _, id := range passkeyIDs {
+		w.passkeys[id] = local && s.passkeysOn(st)
+	}
+	for _, l := range links {
+		rt := s.provs.getID(l.ProviderID)
+		w.links[l.ID] = rt != nil && s.signInOn(ctx, rt)
+	}
+	return w
+}
+
+// loadWays reads what signInWaysOf needs, in q.
+func (s *Service) loadWays(ctx context.Context, q store.Q, userID string) (*signInWays, error) {
 	u, err := store.GetUser(ctx, q, store.AllTenants(), userID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+	hasPassword := true
+	if _, err := store.GetPasswordHash(ctx, q, userID); errors.Is(err, store.ErrNotFound) {
+		hasPassword = false
+	} else if err != nil {
+		return nil, err
+	}
+	links, err := store.ListLinks(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	pks, err := store.ListPasskeys(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(pks))
+	for i, p := range pks {
+		ids[i] = p.ID
+	}
+	return s.signInWaysOf(ctx, u, hasPassword, links, ids), nil
+}
+
+func (w *signInWays) total() int {
 	n := 0
-	for _, i := range ids {
-		if i.ID == without {
-			continue
-		}
-		if rt := s.provs.getID(i.ProviderID); rt != nil && s.signInOn(ctx, rt) {
+	if w.password {
+		n++
+	}
+	for _, ok := range w.links {
+		if ok {
 			n++
 		}
 	}
-	st := s.sec(ctx)
-	if s.localRefusedUser(ctx, st, u) {
-		return n, nil
-	}
-	if _, err := store.GetPasswordHash(ctx, q, userID); err == nil {
-		n++
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return 0, err
-	}
-	if s.passkeysOn(st) {
-		c, err := store.CountPasskeys(ctx, q, userID)
-		if err != nil {
-			return 0, err
+	for _, ok := range w.passkeys {
+		if ok {
+			n++
 		}
-		n += c
 	}
-	return n, nil
+	return n
 }
+
+// remaining counts the ways that work once one link or passkey is gone.
+func (w *signInWays) remaining(kind, id string) int {
+	n := w.total()
+	m := w.links
+	if kind == wayPasskey {
+		m = w.passkeys
+	}
+	if m[id] {
+		n--
+	}
+	return n
+}
+
+// removable says whether the link or passkey may go: a way must remain.
+func (w *signInWays) removable(kind, id string) bool { return w.remaining(kind, id) > 0 }
 
 // accountChangeFields says which of what changed someone else's account tells
 // the person (name, username, address): the fields, never the values. Nothing is
@@ -1106,8 +1147,11 @@ func (s *Service) SigninLinkRemovable(ctx context.Context, q store.Q, userID, li
 	if !found {
 		return true, nil
 	}
-	ways, err := s.waysToSignIn(ctx, q, userID, linkID, ids)
-	return ways > 0, err
+	ways, err := s.loadWays(ctx, q, userID)
+	if err != nil {
+		return false, err
+	}
+	return ways.removable(wayLink, linkID), nil
 }
 
 // ProviderInfo names a sign-in provider by its id, from memory: false when it is

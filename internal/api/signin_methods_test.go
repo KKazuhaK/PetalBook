@@ -3,6 +3,7 @@ package api_test
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // methodsOf is the account's one list of sign-in methods, by type.
@@ -63,30 +64,36 @@ func TestTheAccountListsItsSignInMethodsWithLastUsed(t *testing.T) {
 			t.Fatalf("%v", ms)
 		}
 
-		// Each way of signing in records its own use, and only its own.
+		// Each way of signing in records its own use, and only its own. The
+		// clock moves between the steps, so a write at the wrong time or to the
+		// wrong row changes a timestamp the test checks.
+		at := func() string { return a.clock.Now().UTC().Format(time.RFC3339) }
+		a.clock.Advance(time.Hour)
 		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "alice", "password": pw}).want(t, 200, "")
+		pwAt := at()
 		ms, _ = methodsOf(t, c)
-		if ms[0]["lastUsed"] == nil || ms[2]["lastUsed"] != nil {
+		if ms[0]["lastUsed"] != pwAt || ms[1]["lastUsed"] == pwAt || ms[2]["lastUsed"] != nil {
 			t.Fatalf("the password sign-in: %v", ms)
 		}
+		a.clock.Advance(time.Hour)
 		a.newClient("").signInWithPasskey(t, key, "", "").want(t, 200, "")
+		pkAt := at()
 		ms, _ = methodsOf(t, c)
-		if ms[2]["lastUsed"] == nil {
+		if ms[2]["lastUsed"] != pkAt || ms[0]["lastUsed"] != pwAt {
 			t.Fatalf("the passkey sign-in: %v", ms)
 		}
 		// Every sign-in through a link writes its time, even when the last one is recent.
-		if _, err := a.st.Q().Exec(t.Context(), `UPDATE linked_accounts SET last_used = 1000`); err != nil {
-			t.Fatal(err)
-		}
+		a.clock.Advance(time.Hour)
 		f.signIn(t, a.newClient(""), "alice", map[string]any{})
+		linkAt := at()
 		ms, _ = methodsOf(t, c)
-		if ms[1]["lastUsed"] == nil || ms[1]["lastUsed"] == "1970-01-01T00:00:01Z" {
+		if ms[1]["lastUsed"] != linkAt || ms[0]["lastUsed"] != pwAt || ms[2]["lastUsed"] != pkAt {
 			t.Fatalf("the link sign-in: %v", ms)
 		}
 		// A failed password does not count as a use.
-		before := ms[0]["lastUsed"]
+		a.clock.Advance(time.Hour)
 		a.newClient("").do("POST", "/api/login", map[string]any{"identifier": "alice", "password": "wrong password here"}).want(t, 401, "")
-		if ms, _ = methodsOf(t, c); ms[0]["lastUsed"] != before {
+		if ms, _ = methodsOf(t, c); ms[0]["lastUsed"] != pwAt || ms[1]["lastUsed"] != linkAt || ms[2]["lastUsed"] != pkAt {
 			t.Fatalf("%v", ms)
 		}
 

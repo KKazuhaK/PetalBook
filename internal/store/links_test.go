@@ -145,8 +145,8 @@ func TestConcurrentLinksOfOnePersonOrOneSubjectHaveOneWinner(t *testing.T) {
 	})
 }
 
-// Touching a link writes only when the address, its trust or the label changed,
-// or the last use is old.
+// Touching a link writes the sign-in's time every time, with the address, its
+// trust and the label as the provider gave them.
 func TestTouchLinkWritesEverySignIn(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
