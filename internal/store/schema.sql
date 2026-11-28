@@ -129,6 +129,16 @@ CREATE TABLE user_emails (
 CREATE UNIQUE INDEX user_emails_key ON user_emails(email_key) WHERE email_key <> '';
 CREATE UNIQUE INDEX user_emails_primary ON user_emails(user_id) WHERE is_primary = 1;
 
+-- An account an administrator made for a tenant that requires its single
+-- sign-on: it has no password, and waits for the first sign-in of that tenant's
+-- SSO, which claims it (the row goes) when the sign-in's trusted address is the
+-- account's. tenant_id is the tenant it waits in.
+CREATE TABLE awaiting_sso (
+  user_id   TEXT COLLATE "C" PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  tenant_id TEXT COLLATE "C" NOT NULL,
+  created   BIGINT NOT NULL
+);
+
 CREATE TABLE passwords (
   user_id TEXT COLLATE "C" PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   hash    TEXT COLLATE "C" NOT NULL,

@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"petalbook.app/server/internal/authz"
@@ -79,13 +80,23 @@ func (s *Service) AdminCreateUser(ctx context.Context, actor store.User, access 
 	if err != nil {
 		return nil, err
 	}
+	// Where the organisation requires its SSO for the person, the account has no
+	// password and waits for the SSO's first sign-in, which finds it by its
+	// address: so it needs one.
+	viaSSO := s.localRefused(ctx, s.sec(ctx), tenantID, p.Role, site)
+	if viaSSO && strings.TrimSpace(p.Email) == "" {
+		return nil, errf(Invalid, "An email address is needed: this person signs in with the organisation's single sign-on, which finds the account by it.")
+	}
 	u, err := s.CreateUser(ctx, CreateParams{Username: p.Username, Name: p.Name, Email: p.Email, Role: p.Role, TenantID: tenantID, SiteAdmin: site})
 	if err != nil {
 		return nil, err
 	}
 	out := &AdminCreated{User: u, SignIn: SignInLink, Mail: MailNone}
-	if s.localRefusedUser(ctx, s.sec(ctx), u) {
+	if viaSSO {
 		out.SignIn = SignInSSO
+		if err := store.SetAwaitingSSO(ctx, s.st.Q(), u.ID, u.TenantID, s.now()); err != nil {
+			return nil, err
+		}
 		return out, nil
 	}
 	// The link the administrator copies, and, when mail can reach the person,

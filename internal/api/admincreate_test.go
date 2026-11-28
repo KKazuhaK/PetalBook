@@ -184,6 +184,8 @@ func TestAnSSOOnlyTenantsNewPeopleGetNoSetPasswordLink(t *testing.T) {
 			f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/"+key, map[string]any{"value": v}).want(t, 200, "")
 		}
 		put("signin.ssoOnly", true)
+		// The SSO finds the account by its address, so one is needed.
+		f.admB.do("POST", adminUsers, map[string]any{"username": "m0"}).want(t, 400, "invalid")
 		r := f.admB.do("POST", adminUsers, map[string]any{"username": "m1", "email": "m1@acme.example"}).want(t, 201, "")
 		if r.body["signIn"] != "sso" || r.body["link"] != nil || r.body["mail"] != "none" {
 			t.Fatalf("a member of an ssoOnly tenant: %s", r.raw)

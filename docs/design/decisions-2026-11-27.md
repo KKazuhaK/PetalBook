@@ -42,12 +42,18 @@ password self-registration, is replaced by a three-way setting,
     person's language. The address starts unverified; only the mailed link verifies it,
     a copied one does not. Where the tenant requires its SSO for the person
     (`signin.ssoOnly`, and `signin.ssoOnlyAdmins` for an administrator) no link is made.
-    **Known gap:** nothing then matches that person's first SSO sign-in to the account:
-    a sign-in attaches to an account by its identity link only, never by address (a
-    verified address held by another account sends the person to sign in there and link,
-    `email_in_use`, which needs a password the person cannot use). Under `closed` or
-    `invite` the sign-in is refused, and under `open` it makes a second account. A
-    pre-link or an address match for such accounts is a follow-up decision, not built.
+    The account (its address is required) is marked as awaiting its first sign-in
+    (`awaiting_sso`), and that sign-in claims it: the identity is attached, the address is
+    marked verified by the provider, the wait ends, and `identity_linked` (`sso_claim`)
+    and the login are audited. It claims only through the tenant's own SSO (OIDC or SAML)
+    or a site SSO routed to the tenant for the address's verified domain, only when the
+    provider vouches for the address by the trust rules and it is the account's, and only
+    while the account is waiting, enabled and in the tenant. Site social providers and the
+    custom OAuth2 kind never claim. Any other sign-in that vouches for a waiting account's
+    address is refused `email_in_use`: a sign-in never moves such an address or makes a
+    second account for it (before, under `open`, a trusted sign-in took the address from
+    the unverified holder and made a new account; that rule for other unverified holders
+    is unchanged).
 - **Defaults.** Invites worked while registration was closed, so the old behaviour
   is `invite`: both the site default and the organisation default are `invite`.
 - **The per-provider `autoCreate` switch is gone**, with the column, the views and

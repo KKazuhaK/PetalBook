@@ -1237,12 +1237,22 @@ The administrator never learns a password. The account starts with none and an
 - `signIn` is `sso`, with `link` and `expires` `null`, when the tenant requires its
   single sign-on for this person: `signin.ssoOnly` on and the person a member, or an
   administrator while `signin.ssoOnlyAdmins` is on (a site administrator keeps the
-  password). No password link is made, since a password is refused there. The first
-  external sign-in matches an account by the link of its identity only: an address
-  alone never attaches an identity to an account (see "Which account an identity signs
-  in to"), so what an account made this way waits for is whatever the tenant's
-  registration mode lets through for that sign-in; see the decision notes of
-  2026-11-27.
+  password). No password link is made, since a password is refused there, and the
+  address is required (`400 invalid` without one). The account is marked as
+  **awaiting its first sign-in**, which claims it (below).
+
+**The first SSO sign-in claims it.** A sign-in that finds no identity link attaches its
+identity to such an account, marks the address verified by the provider
+(`verified_by` `provider:<slug>`), ends the wait and writes `identity_linked`
+(`by: "sso_claim"`) and the login, when all of these hold: the provider is the tenant's
+own SSO (OIDC or SAML), or a site SSO that routes the address's verified domain to that
+tenant; the provider vouches for the address under the trust rules (a tenant's own SSO
+only for the domains the tenant verified; an Apple relay never); that address is the
+account's; and the account is still waiting, enabled, and in that tenant. The site's
+social providers and the custom OAuth2 kind never claim. The registration mode does not
+matter: the account exists. An address a waiting account holds is never taken from it by
+a sign-in, nor made a second account's: any other sign-in that vouches for it is
+refused as `email_in_use` (`?sso_error=email_in_use`).
 
 Audit: `user_created` (the actor, the person, the tenant; `role`, `siteAdmin`, `email`,
 `signIn`, `mail`), and `password_reset` with `by: "welcome"` when the person sets the
