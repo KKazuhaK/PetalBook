@@ -30,9 +30,36 @@ password self-registration, is replaced by a three-way setting,
   - `closed`: nothing makes an account. Invite links stop working too, so accepting
     one answers `403 registration_closed`. Domain joins are off (no automatic joins,
     no new requests); requests already pending stay approvable, because approval is
-    an administrator's act. First-administrator setup is exempt. Direct creation of
-    accounts by an administrator comes in the next step; for now closed simply
-    creates nothing.
+    an administrator's act. First-administrator setup is exempt.
+  - **Administrators make accounts by hand** (`POST /api/admin/users`; owner
+    decision of 2026-11-27: under `closed` only administrators make accounts). It is
+    not gated by the mode, nor by `registration.domains`; it is bounded by
+    `quota.people` (`409 people_limit`). A site administrator may make one in the
+    default tenant or in any organisation; an organisation administrator only in
+    their own tenant, with `member` or `admin`. The administrator never knows the
+    password: the person gets a one-time set-password link (7 days), returned once to
+    the administrator and, when mail is on and there is an address, mailed too in the
+    person's language. The address starts unverified; only the mailed link verifies it,
+    a copied one does not. Where the tenant requires its SSO for the person
+    (`signin.ssoOnly`, and `signin.ssoOnlyAdmins` for an administrator) no link is made.
+    The address is required and must be on a verified domain of the tenant, or one routed to
+    it (`email_domain_not_verified`); none is made in the default tenant
+    (`sso_default_tenant`). An administrator of the default tenant made by hand must say
+    `siteAdmin` (`site_admin_explicit`). The account is marked as awaiting its first sign-in
+    (`awaiting_sso`), and that sign-in claims it: the identity is attached, the address is
+    marked verified by the provider, the wait ends, and `identity_linked` (`sso_claim`)
+    and the login are audited. It claims only through the tenant's own SSO (OIDC or SAML)
+    or a site SSO routed to the tenant for the address's verified domain, only when the
+    provider vouches for the address by the trust rules and it is the account's, and only
+    while the account is waiting, enabled and in the tenant. Site social providers and the
+    custom OAuth2 kind never claim. Any other sign-in that vouches for a waiting account's
+    address is refused `email_in_use`: a sign-in never moves such an address or makes a
+    second account for it, while its own tenant can still vouch for the address (once the
+    domain lapses or moves, the account is an ordinary unverified holder again; and changing a
+    waiting account's address off the tenant's domains is `400 email_domain_not_verified`)
+    (before, under `open`, a trusted sign-in took the address from
+    the unverified holder and made a new account; that rule for other unverified holders
+    is unchanged).
 - **Defaults.** Invites worked while registration was closed, so the old behaviour
   is `invite`: both the site default and the organisation default are `invite`.
 - **The per-provider `autoCreate` switch is gone**, with the column, the views and

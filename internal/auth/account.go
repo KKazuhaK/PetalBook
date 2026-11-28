@@ -194,7 +194,7 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 			return err
 		}
 		// A password change makes a reset link made before it unusable.
-		if err := store.DeleteEmailTokens(ctx, q, p.User.ID, store.TokenReset); err != nil {
+		if err := store.DeleteResetTokens(ctx, q, p.User.ID); err != nil {
 			return err
 		}
 		return store.DeleteUserSessions(ctx, q, p.User.ID, p.SessionID, store.EndPassword, s.now())
@@ -338,6 +338,16 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, access authz
 			return nil, err
 		}
 		email = e
+	}
+	// A waiting account (made for its tenant's SSO, which finds it by its
+	// address) keeps an address that tenant can vouch for: another would only
+	// lock that address out of every other sign-in.
+	if patch.Email != nil {
+		if wait, err := store.AwaitingSSO(ctx, s.st.Q(), targetID); err != nil {
+			return nil, err
+		} else if wait != "" && (email == "" || !s.ssoCanVouch(ctx, wait, email)) {
+			return nil, coded(400, "email_domain_not_verified", "This account waits for its organisation's single sign-on, which finds it by its address: it has to stay on a verified domain of the organisation.")
+		}
 	}
 	var name, username string
 	if patch.Name != nil {
@@ -985,7 +995,7 @@ func (s *Service) SetTemporaryPassword(ctx context.Context, actor store.User, ac
 			return err
 		}
 		// A reset link made before this stops working, and so does every session.
-		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
+		if err := store.DeleteResetTokens(ctx, q, u.ID); err != nil {
 			return err
 		}
 		if err := store.DeleteUserSessions(ctx, q, u.ID, "", store.EndPassword, s.now()); err != nil {

@@ -976,6 +976,7 @@ function suite(target: Target) {
             ['PATCH', `/api/users/${m.user.id}`],
             ['GET', '/api/invites'],
             ['POST', '/api/invites'],
+            ['POST', '/api/admin/users'],
           ]) {
             const r = await call(m.browser, method, path, method === 'GET' ? undefined : {})
             expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
@@ -1100,6 +1101,41 @@ function suite(target: Target) {
           await as(admin, () => adminApi.revokeInvite(inv.id))
           expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(404)
           expect((await as(admin, () => adminApi.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
+        })
+      })
+
+      describe('accounts made by an administrator', () => {
+        it('create: 201 with the person and a one-time set-password link; the link sets a password, once', async () => {
+          const name = uniq('mk')
+          const r = await as(admin, () =>
+            adminApi.createAccount({ username: name, name: '新人', email: `${name}@mail.test`, role: 'member' }),
+          )
+          created.users.push(r.user.id)
+          expect(r.user).toMatchObject({ username: name, name: '新人', email: `${name}@mail.test`, role: 'member' })
+          expect(r.user.emailVerified).toBe(false)
+          expect(r.signIn).toBe('link')
+          expect(Date.parse(r.expires!)).toBeGreaterThan(Date.now())
+          const token = r.link!.split('#')[1]
+          const b = browser()
+          expect((await call(b, 'POST', '/api/password/reset', { token, password: 'a-long-password' })).status).toBe(
+            204,
+          )
+          expect((await call(b, 'POST', '/api/password/reset', { token, password: 'another-long-one' })).status).toBe(
+            404,
+          )
+          const login = await call(b, 'POST', '/api/login', { username: name, password: 'a-long-password' })
+          expect(login.status).toBe(200)
+          expect(login.json.user.emailVerified).toBe(false)
+        })
+
+        it('a taken username is 409 exists, an unknown role 400, and a member is 403', async () => {
+          const m = await newMember(uniq('mk2'))
+          const taken = await call(admin, 'POST', '/api/admin/users', { username: m.user.username })
+          expect([taken.status, taken.json.error]).toEqual([409, 'exists'])
+          const bad = await call(admin, 'POST', '/api/admin/users', { username: uniq('mk3'), role: 'owner' })
+          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+          const no = await call(m.browser, 'POST', '/api/admin/users', { username: uniq('mk4') })
+          expect([no.status, no.json.error]).toEqual([403, 'forbidden'])
         })
       })
 

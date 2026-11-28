@@ -298,6 +298,9 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/users/{id}/password-reset":  {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }, body: func(f *tenFx, id string) any { return map[string]any{} }},
 	"PATCH /api/users/{id}":                {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }, body: func(f *tenFx, id string) any { return map[string]any{"disabled": true} }},
 	"POST /api/invites":                    {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"role": "member", "tenant": id} }, ids: func(f *tenFx) map[string]string { return map[string]string{} }},
+	"POST /api/admin/users": {kind: isoParam, body: func(f *tenFx, id string) any {
+		return map[string]any{"username": "iso-new", "email": "iso-new@example.test", "tenant": id}
+	}, ids: func(f *tenFx) map[string]string { return map[string]string{} }},
 	"POST /api/admin/members/batch": {kind: isoParam, body: func(f *tenFx, id string) any {
 		return map[string]any{"tenant": id, "rows": []map[string]any{{"user": "new@example.test", "role": "member"}}}
 	}, ids: func(f *tenFx) map[string]string { return map[string]string{} }},

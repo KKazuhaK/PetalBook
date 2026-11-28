@@ -359,3 +359,35 @@ func TestSiteAdministratorsOfADisabledTenantAreNotCounted(t *testing.T) {
 		}
 	})
 }
+
+// A person in the recycle bin moves to the default tenant when their tenant is
+// deleted; the wait for that tenant's SSO must not follow them (the restored
+// account would be stuck, and its address refused to every other sign-in).
+func TestDeletingATenantEndsTheWaitOfItsRecycledPeople(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Now()
+		if err := st.CreateTenant(ctx, store.Tenant{ID: tenB, Slug: "acme", Name: "Acme", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.InsertUser(ctx, st.Q(), store.User{ID: "UW", Username: "waiting", Name: "w", Role: "member", Created: now, TenantID: tenB}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetAwaitingSSO(ctx, st.Q(), "UW", tenB, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Q().Exec(ctx, `UPDATE users SET deleted_at = ? WHERE id = ?`, now.UnixMilli(), "UW"); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.DeleteTenant(ctx, tenB); err != nil {
+			t.Fatal(err)
+		}
+		if w, err := store.AwaitingSSO(ctx, st.Q(), "UW"); err != nil || w != "" {
+			t.Fatalf("still waiting in %q: %v", w, err)
+		}
+		// A wait names a tenant that exists.
+		if err := store.SetAwaitingSSO(ctx, st.Q(), "UW", "T-nowhere", now); err == nil {
+			t.Fatal("a wait for a tenant that does not exist")
+		}
+	})
+}

@@ -242,6 +242,7 @@ export function adminProbes(fx: FixtureServer): Call[] {
     ['POST', `${U}/password-reset`, {}],
     ['GET', '/api/invites'],
     ['POST', '/api/invites', { role: 'member' }],
+    ['POST', '/api/admin/users', { username: 'erin', name: 'Erin', email: 'erin@example.test', role: 'member' }],
     ['DELETE', '/api/invites/IVSEED'],
     ['GET', '/api/admin/users/01FXDAVE01/deletion'],
     ['POST', '/api/admin/users/01FXDAVE01/view-as', { reason: 'a report' }],

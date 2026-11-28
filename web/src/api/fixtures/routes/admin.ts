@@ -619,6 +619,56 @@ export const adminRoutes: Route[] = [
       return { sent: true }
     },
   ],
+  [
+    // An account made by hand: no password, a one-time link that sets it (mailed too when mail is on and there is an
+    // address). Not gated by the registration mode.
+    'POST',
+    '/api/admin/users',
+    (c) => {
+      const { username, name, email = '', role = 'member' } = c.body
+      if (!username) throw new Refusal(400, 'invalid', 'A username is needed.')
+      if (c.data.auth.users.some((u) => u.username === username))
+        throw new Refusal(409, 'exists', 'That username is taken.')
+      if (email && c.data.auth.users.some((u) => u.email === email))
+        throw new Refusal(409, 'email_taken', 'That address belongs to an account.')
+      const acting = /^tenant:(.+)$/.exec(c.fx.requests.at(-1)?.scope ?? '')?.[1]
+      const tenant = A(c).tenants.find((t) => t.id === (c.body.tenant ?? acting ?? DEFAULT_TENANT))
+      if (!tenant) throw new Refusal(404, 'not_found', 'No such tenant.')
+      if (role === 'admin' && tenant.default && signedIn(c.data).siteAdmin && c.body.siteAdmin === undefined)
+        throw new Refusal(400, 'site_admin_explicit', 'Say whether this makes a site administrator.')
+      const me = signedIn(c.data)
+      const rec: UserRec = {
+        ...me,
+        id: newId(c.data, '01FU'),
+        username,
+        name: name || username,
+        email,
+        emailVerified: false,
+        role,
+        siteAdmin: role === 'admin' && tenant.default && c.body.siteAdmin === true,
+        passkeys: undefined,
+        password: '',
+        tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },
+        created: now(c),
+        permissions: undefined,
+      }
+      add(c.data.auth.users, rec)
+      const { password: _p, passkeys: _k, permissions: _perm, ...made } = rec
+      void _p
+      void _k
+      void _perm
+      const mailed = c.data.auth.forgot && email !== ''
+      const token = `welcome-${rec.id}`
+      if (mailed) c.data.sent.mail.push({ to: email, kind: 'welcome', token: `${token}-mail` })
+      return reply(201, {
+        user: made,
+        signIn: 'link',
+        link: `https://notes.example.test/reset-password#${token}`,
+        expires: rfc3339(c.now() + 7 * 86_400_000),
+        mail: mailed ? 'sent' : 'none',
+      })
+    },
+  ],
   ['GET', '/api/invites', (c) => ({ invites: A(c).invites })],
   [
     'POST',

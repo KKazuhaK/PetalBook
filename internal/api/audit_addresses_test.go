@@ -28,6 +28,7 @@ func TestAuditAddressKindsAreHiddenFromTenantAdministrators(t *testing.T) {
 			"email_primary_changed": {"email": secret("email_primary_changed"), "old": secret("email_primary_changed_old")},
 			"email_released":        {"email": secret("email_released"), "to": f.userB},
 			"registered":            {"email": secret("registered")},
+			"user_created":          {"email": secret("user_created"), "role": "member"},
 			"user_changed":          {"email": secret("user_changed"), "old": map[string]any{"email": secret("user_changed_old"), "name": "Old"}, "name": "New"},
 		}
 		// Joining by domain (3.6 d5): the address is on the tenant's domain while

@@ -667,6 +667,10 @@
           "site": false
         },
         {
+          "name": "user_created",
+          "site": false
+        },
+        {
           "name": "user_deleted",
           "site": false
         },

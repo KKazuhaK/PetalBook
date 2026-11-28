@@ -626,6 +626,11 @@ type CreateParams struct {
 	// account as its administrator (Role must be admin; SiteAdmin and TenantID
 	// are ignored). CreateUser fills in the tenant it made.
 	NewTenant *NewTenant
+	// AfterCreate runs in the transaction that makes the account, after its row,
+	// address and space: what must stand or fall with the account (the way an
+	// administrator lets the person in) is written here. An error undoes the
+	// account. It must touch nothing but q (never the settings: see CreateUser).
+	AfterCreate func(ctx context.Context, q store.Q, u store.User) error
 }
 
 // NewTenant is the tenant an account makes with itself (an organisation a
@@ -888,7 +893,13 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			if err := store.InsertSpace(ctx, q, cand.TenantID, stg.ID(), stg.Name(), cand.ID, "", s.now()); err != nil {
 				return err
 			}
-			return store.AddMember(ctx, q, stg.ID(), cand.ID, "owner", s.now())
+			if err := store.AddMember(ctx, q, stg.ID(), cand.ID, "owner", s.now()); err != nil {
+				return err
+			}
+			if p.AfterCreate != nil {
+				return p.AfterCreate(ctx, q, cand)
+			}
+			return nil
 		})
 		if err == nil {
 			u = cand
@@ -997,7 +1008,7 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 		if err := store.SetPasswordHash(ctx, q, u.ID, hash, s.now()); err != nil {
 			return err
 		}
-		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
+		if err := store.DeleteResetTokens(ctx, q, u.ID); err != nil {
 			return err
 		}
 		return store.DeleteUserSessions(ctx, q, u.ID, "", store.EndPassword, s.now())

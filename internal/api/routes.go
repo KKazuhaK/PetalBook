@@ -239,6 +239,7 @@ var routeTable = []route{
 
 	{"GET", "/api/users", needs(authz.TenantUsersRead).always(), true, false, false, (*server).listUsers},
 	{"GET", "/api/users/{id}", needs(authz.TenantUsersRead).always(), true, false, false, (*server).getUser},
+	{"POST", "/api/admin/users", needs(authz.TenantUsersManage).always(), true, false, false, (*server).adminCreateUser},
 	{"PATCH", "/api/users/{id}", needs(authz.TenantUsersManage).always(), true, false, false, (*server).patchUser},
 	{"POST", "/api/users/{id}/password", needs(authz.TenantUsersManage).always(), true, false, false, (*server).setTemporaryPassword},
 	{"GET", "/api/users/{id}/memberships", needs(authz.TenantUsersRead).always(), true, false, false, (*server).userMemberships},

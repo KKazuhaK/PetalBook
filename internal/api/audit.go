@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"petalbook.app/server/internal/auditlog"
@@ -21,7 +22,11 @@ import (
 
 // auditDownloadMax is the most rows one download holds; the answer says so
 // (X-Audit-Truncated) when there were more.
-var auditDownloadMax = 100_000
+//
+// It is atomic: a test lowers it while other tests' requests read it.
+var auditDownloadMax atomic.Int64
+
+func init() { auditDownloadMax.Store(100_000) }
 
 // auditFilter reads the filters of the log from the query: category (repeated
 // or separated by commas), kind, user (the person a row is about), actor,
@@ -306,7 +311,7 @@ func (s *server) adminAuditDownload(c *call) {
 	flusher, _ := c.w.(http.Flusher)
 	redact, redactAddr := s.pathRedactor(c), s.addressRedactor(c)
 	rows := 0
-	n, more, err := s.auth.StreamAudit(c.r.Context(), sc, f, auditDownloadMax, func(e auth.AuditEntry) error {
+	n, more, err := s.auth.StreamAudit(c.r.Context(), sc, f, int(auditDownloadMax.Load()), func(e auth.AuditEntry) error {
 		start()
 		if err := w.Write([]string{csvCell(e.ID), rfc3339(e.At), csvCell(e.Category), csvCell(e.Kind), csvCell(e.Capacity), csvCell(e.Tenant),
 			csvCell(e.Actor), csvCell(e.User), csvCell(e.Username), csvCell(e.IP), csvCell(string(redactAddr(e.Kind, e.User, e.Tenant, redact(e.Kind, e.Detail))))}); err != nil {

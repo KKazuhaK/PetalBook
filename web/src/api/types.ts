@@ -904,6 +904,9 @@ export type ErrorCode =
   | 'people_limit'
   | 'password_reset_off'
   | 'email_domain_not_allowed'
+  | 'email_domain_not_verified'
+  | 'sso_default_tenant'
+  | 'site_admin_explicit'
   | 'email_limit'
   | 'primary_email'
   | 'terms_required'
@@ -1371,6 +1374,15 @@ export interface CreatedInvite {
   username?: string
   name?: string
   email?: string
+}
+// An account an administrator made (POST /api/admin/users). The link is in this response only: `signIn` is `link` when
+// the person sets a password with it, `sso` when their organisation requires its single sign-on (no link then).
+export interface CreatedAccount {
+  user: User
+  signIn: 'link' | 'sso'
+  link: string | null
+  expires: string | null
+  mail: 'sent' | 'none' | 'limited'
 }
 export interface InviteCheck {
   role: Role

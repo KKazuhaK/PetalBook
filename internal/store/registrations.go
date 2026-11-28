@@ -163,7 +163,8 @@ func DeleteExpiredRegistrations(ctx context.Context, q Q, now time.Time) (int64,
 	return res.RowsAffected()
 }
 
-// EmailToken is a link sent to an address: Kind is TokenVerify or TokenReset.
+// EmailToken is a link sent to an address: Kind is TokenVerify, TokenReset,
+// TokenWelcome or TokenWelcomeMail.
 type EmailToken struct {
 	Hash    string
 	Kind    string
@@ -177,6 +178,12 @@ type EmailToken struct {
 const (
 	TokenVerify = "verify"
 	TokenReset  = "reset"
+	// TokenWelcome and TokenWelcomeMail set the first password of an account an
+	// administrator made. The first is the link the administrator copies and
+	// hands over; the second is mailed to the address, so following it also
+	// proves the address (a copied link proves nothing about it).
+	TokenWelcome     = "welcome"
+	TokenWelcomeMail = "welcome_mail"
 )
 
 // ReplaceEmailToken stores a token and removes the person's earlier tokens of
@@ -232,6 +239,14 @@ func DeleteEmailTokens(ctx context.Context, q Q, userID, kind string) error {
 		return err
 	}
 	_, err := q.Exec(ctx, `DELETE FROM email_tokens WHERE user_id = ? AND kind = ?`, userID, kind)
+	return err
+}
+
+// DeleteResetTokens removes every link that sets a password for the person: a
+// reset link, and the links that set the first password of an account an
+// administrator made. A password set another way makes them all unusable.
+func DeleteResetTokens(ctx context.Context, q Q, userID string) error {
+	_, err := q.Exec(ctx, `DELETE FROM email_tokens WHERE user_id = ? AND kind IN (?, ?, ?)`, userID, TokenReset, TokenWelcome, TokenWelcomeMail)
 	return err
 }
 

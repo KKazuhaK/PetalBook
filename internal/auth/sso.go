@@ -1071,9 +1071,31 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	// provider there (email_in_use). Making an account is opt-in, and never
 	// the first: that is the administrator's, made with the setup token.
 	if e, err := s.cleanEmailFor(ctx, c.email); err == nil && e != "" && c.emailVerified && matchesByAddress(c.src) {
-		if row, err := store.EmailOwner(ctx, s.st.Q(), e); err == nil && row.Holds() {
-			return nil, false, ssoErr("email_in_use")
-		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		row, err := store.EmailOwner(ctx, s.st.Q(), e)
+		switch {
+		case err == nil:
+			// An account an administrator made for this tenant's SSO waits for
+			// this very sign-in (claimWaiting says when it is the one). Its
+			// address is never taken from it, nor made a second account's:
+			// whoever else vouches for it signs in to that account instead.
+			if u, ok, err := s.claimWaiting(ctx, rt, c, e, row, ip); err != nil {
+				return nil, false, err
+			} else if ok {
+				return u, false, nil
+			}
+			if row.Holds() {
+				return nil, false, ssoErr("email_in_use")
+			}
+			// Kept for a waiting account only while its own tenant can still
+			// vouch for the address (a verified domain of it, or routed to it):
+			// once the domain lapses or moves, it is an ordinary unverified
+			// holder's, and the address must not stay locked for nothing.
+			if tenant, err := store.AwaitingSSO(ctx, s.st.Q(), row.UserID); err != nil {
+				return nil, false, err
+			} else if tenant != "" && s.ssoCanVouch(ctx, tenant, e) {
+				return nil, false, ssoErr("email_in_use")
+			}
+		case !errors.Is(err, store.ErrNotFound):
 			return nil, false, err
 		}
 	}
@@ -1439,4 +1461,98 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 	login := clip(u.Login, 100)
 	return claimed{subject: strconv.FormatInt(u.ID, 10), name: clip(u.Name, 100), preferred: login, email: email,
 		src: emailSource{template: tmplGitHub, publicGitHub: isPublicGitHub(rt.cfg.BaseURL), verified: verified}, labelOverride: login, groups: gc}, ""
+}
+
+// claimWaiting lets a sign-in claim the account an administrator made for the
+// tenant's single sign-on (store.SetAwaitingSSO): the identity is attached to
+// it, its address is marked verified by the provider, and the wait ends. All
+// of these must hold, else nothing is claimed:
+//   - the provider is the tenant's own SSO (a tenant can own only OIDC or
+//     SAML), or a site SSO that routes the address's verified domain to that
+//     tenant (d2, d4);
+//   - the sign-in's address is one the provider vouches for under the trust
+//     rules (emailtrust.go: for a tenant's SSO only its verified domains), is
+//     not an Apple relay, and is the account's address;
+//   - the account is still waiting, enabled, not deleted, and in that tenant
+//     (and may use the provider: mayUse).
+//
+// The site's social providers and the custom OAuth2 kind never claim.
+func (s *Service) claimWaiting(ctx context.Context, rt *providerRT, c claimed, email string, row *store.EmailRow, ip string) (*store.User, bool, error) {
+	if row.UserDeleted || !c.emailVerified || !matchesByAddress(c.src) {
+		return nil, false, nil
+	}
+	tenant, err := store.AwaitingSSO(ctx, s.st.Q(), row.UserID)
+	if err != nil || tenant == "" {
+		return nil, false, err
+	}
+	switch {
+	case rt.row.Owner != store.ProviderSite:
+		if rt.row.Owner != tenant {
+			return nil, false, nil
+		}
+	case rt.row.Class == ClassSSO:
+		if s.cfg.RouteDomain == nil {
+			return nil, false, nil
+		}
+		if routed, id, ok := s.cfg.RouteDomain(ctx, email); !ok || routed != tenant || id != rt.row.ID {
+			return nil, false, nil
+		}
+	default:
+		return nil, false, nil
+	}
+	u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), row.UserID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, false, nil
+	} else if err != nil {
+		return nil, false, err
+	}
+	if u.Disabled || u.TenantID != tenant || s.st.TenantDisabled(tenant) || !row.Primary || !sameAddress(u.Email, email) {
+		return nil, false, nil
+	}
+	if err := s.mayUse(ctx, rt, *u); err != nil {
+		return nil, false, nil
+	}
+	if _, err := store.FindUserLink(ctx, s.st.Q(), rt.row.ID, u.ID); err == nil {
+		return nil, false, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return nil, false, err
+	}
+	claimedOK := false
+	err = s.st.Tx(ctx, func(q store.Q) error {
+		ok, err := store.ClearAwaitingSSO(ctx, q, u.ID)
+		if err != nil || !ok {
+			return err
+		}
+		if err := store.InsertLink(ctx, q, store.Link{ID: s.newID(), ProviderID: rt.row.ID, UserID: u.ID, Subject: c.subject, Email: c.email, EmailTrusted: true,
+			SignIn: true, Label: c.label(), Created: s.now(), LastUsed: s.now()}); err != nil {
+			return err
+		}
+		if err := store.SetEmailRowVerified(ctx, q, u.ID, row.Email, true, store.VerifiedByProvider(c.provider)); err != nil {
+			return err
+		}
+		claimedOK = true
+		return nil
+	})
+	switch {
+	case errors.Is(err, store.ErrLinkSubjectTaken):
+		return nil, false, ssoErr("identity_in_use")
+	case errors.Is(err, store.ErrLinkProviderTaken):
+		return nil, false, nil
+	case err != nil:
+		return nil, false, err
+	case !claimedOK:
+		return nil, false, nil
+	}
+	s.dropUser(u.ID)
+	u.EmailVerified = true
+	s.cfg.Spaces.UserChanged(ctx, *u)
+	s.Audit(AuditEvent{Kind: "identity_linked", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"provider": rt.row.Slug, "by": "sso_claim"}})
+	return u, true, nil
+}
+
+// sameAddress compares two addresses as every address is (store.EmailKey).
+func sameAddress(a, b string) bool {
+	ka, ok := store.EmailKey(a)
+	kb, ok2 := store.EmailKey(b)
+	return ok && ok2 && ka == kb
 }
