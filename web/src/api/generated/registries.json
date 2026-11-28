@@ -846,6 +846,7 @@
     "signin.social",
     "signin.mode",
     "signin.ssoOnly",
+    "signin.ssoOnlyAdmins",
     "signin.passkeyRoles",
     "signin.lockout.enabled",
     "signin.lockout.minutes",

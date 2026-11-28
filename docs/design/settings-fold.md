@@ -346,6 +346,7 @@ with the reason given in the registry.
 | `tenancy.enabled` | `features.tenancy` | bool, S! (whether tenants other than the default exist) |
 | `security.login.mode` | `signin.mode` | choice, S! (the sign-in page comes before any tenant; a tenant layer arrives with 3.6 d) |
 | `security.login.ssoOnly` | `signin.ssoOnly` | bool, S! (tenant layer with 3.6 d) |
+| (new, 2026-11-27) | `signin.ssoOnlyAdmins` | bool, S, T (tightens only): a tenant's ssoOnly holds its administrators too |
 | `security.passkeys.enabled` | `features.passkeys` | bool, S! |
 | `security.passkeys.requireRoles` | `signin.passkeyRoles` | list, S! |
 | `security.captcha.contexts` | `captcha.contexts` | doc, S!, validated by `auth` |

@@ -237,8 +237,13 @@ export const SETTING_DEFS: SiteSetting[] = [
   {
     key: 'signin.ssoOnly',
     kind: 'boolean',
-    layers: ['site'],
-    serverWide: 'the sign-in page comes before any tenant is known',
+    layers: ['site', 'tenant'],
+    site: { value: false, lower: { mode: 'allow' } },
+  },
+  {
+    key: 'signin.ssoOnlyAdmins',
+    kind: 'boolean',
+    layers: ['site', 'tenant'],
     site: { value: false, lower: { mode: 'allow' } },
   },
   {
@@ -440,6 +445,8 @@ export const TENANT_KEYS: string[] = [
   'audit.api',
   'accounts.multipleEmails',
   'signin.social',
+  'signin.ssoOnly',
+  'signin.ssoOnlyAdmins',
   'features.ownSso',
   'features.domains',
   'features.managedAccounts',

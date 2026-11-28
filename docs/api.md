@@ -445,7 +445,8 @@ cookie; `return` is made safe as for single sign-on.
   copied: refused, recorded in the audit log, and the stored counter is not
   moved), or the account is disabled. One code and one message for all.
 - `403 local_login_refused`: `ssoOnly` is in effect and the account is not an
-  administrator (see "Security settings").
+  administrator (or is a tenant administrator of a tenant whose
+  `signin.ssoOnlyAdmins` is on; see "Security settings").
 
 A passkey sign-in costs two indexed queries (the credential, by its id or by
 the named user's handle, and the user, by its id: a browser that is signing in
@@ -9577,6 +9578,7 @@ tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 | `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.tenantAudit`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`, `.githubConnect`; `mail.ownSender` | boolean (features) | S + rule |
 | `features.passkeys`, `features.tenancy` | boolean | S! |
 | `signin.social` | list: provider slugs, or `["*"]` (default) | S, T (3.6 d3) |
+| `signin.ssoOnly`, `signin.ssoOnlyAdmins` | boolean (`true` is stricter; tenant layer only tightens) | S, T (3.6 d4) |
 | `audit.signins`, `.reads`, `.downloads`, `.api` | boolean | S, T |
 | `audit.keepDays`, `.keepRows`, `.optionalKeepDays`, `audit.keepMode` | limits (`keepDays` 0 for no age limit), choice `or`, `and` | S! |
 | `audit.keepDays.<category>` (eight) | limit, 0 (forever) to 3,650, or none | S! |
@@ -10283,12 +10285,18 @@ tenant with a rule, as for any key.
   sign-in** (`?sso_error=sso_required`; the social buttons are left off the
   tenant's page). It is met by the tenant's own SSO and by a site SSO offered to
   the tenant.
-- **The back door.** The tenant's administrators and the site's administrators
-  are never refused by it: they keep the password (and a site administrator the
-  site's social sign-in) until 3.7's emergency accounts. *Decision recorded for
-  the owner to confirm (2026-11-27): this is 2.8's rule carried to the tenant;
-  the alternative would refuse a tenant administrator too and rely on the site's
-  administrators alone.*
+- **The back door, and `signin.ssoOnlyAdmins`.** By default (`false`) the
+  tenant's administrators and the site's administrators are not refused by it:
+  they keep the password. The tenant-layer key `signin.ssoOnlyAdmins` (boolean,
+  default `false`, site and tenant layers, tightens only, as `ssoOnly`; set with
+  `PUT /api/admin/tenants/{tenant}/settings/signin.ssoOnlyAdmins`) decides
+  whether the tenant's administrators are held to the single sign-on like its
+  members. It matters only while `ssoOnly` is in effect for the tenant. On: a
+  tenant administrator's password and passkey sign-in, a password invite for an
+  administrator, and a reset link are refused (`403 local_login_refused`, as for
+  a member), and the site's social sign-in is refused to them as to members. A
+  site administrator always keeps the password, whatever a tenant sets (owner's
+  decision, 2026-11-27).
 - Another tenant's people are not touched: the setting is per tenant.
 - **Registration.** Registering with a password answers `409 sso_required`
   with `sso` (the answer of `discover` for the address, or absent when the
@@ -10301,7 +10309,10 @@ tenant with a rule, as for any key.
   `signin.ssoOnly` is on (in its own layer or by the site's rule, whether or not
   a single sign-on meets it now), demoting, disabling or deleting its last
   enabled administrator who has a password answers `409 last_local_admin`: the
-  site's 2.8 rule, per tenant.
+  site's 2.8 rule, per tenant. It does not apply while the tenant's
+  `signin.ssoOnlyAdmins` is on (no administrator needs a password then), and
+  turning `ssoOnly` on then does not need an administrator with a password
+  (`local_admin_required`).
 - **The sign-in calls of a tenant's provider** (discovery, keys, tokens, user
   information) do **not** spend the tenant's outbound share
   (`rate.outboundPerMinute`; decided in the d4 review): anyone may start
@@ -10373,9 +10384,9 @@ The tenant's layer of `signin.ssoOnly`, `auth.loginMode`,
 contexts above, gathered as one page with 2.8's checks scoped to the tenant:
 `local_admin_required` counts the tenant's enabled administrators with a
 password; `ssoOnly` needs an enabled SSO provider of the tenant or offered to
-it. Tenant administrators are never refused a password by `ssoOnly` (2.8's back
-door, kept per tenant). A site administrator is never refused by a tenant's
-setting.
+it. Tenant administrators are not refused a password by `ssoOnly` unless the
+tenant's `signin.ssoOnlyAdmins` is on (2.8's back door, kept per tenant by
+default). A site administrator is never refused by a tenant's setting.
 
 ### Storage modes
 

@@ -869,7 +869,7 @@ func (s *Service) canUsePassword(ctx context.Context, q store.Q, u store.User) (
 	} else if err != nil {
 		return false, err
 	}
-	return !(s.ssoOnlyFor(ctx, s.sec(ctx), u.TenantID) && !u.IsAdmin()), nil
+	return !s.localRefusedUser(ctx, s.sec(ctx), &u), nil
 }
 
 // resetLinks makes a reset link for each account that can use a password and
